@@ -1,0 +1,19 @@
+# Per-user runtime state
+octo_updater_config.json
+octo_updater_hash_cache.json
+*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+
+# PyInstaller build output
+build/
+dist/
+*.spec
+
+# Local editor / OS files
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
