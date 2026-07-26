@@ -1,9 +1,8 @@
 # Octo Updater
 
 A standalone desktop updater and mod manager for the **OctoWoW** client.
-It keeps the game client patched, installs and updates community **mods**,
-applies client **tweaks**, manages **addons**, and shows server **news** — all
-from a single window, with no external dependencies.
+It updates and patches the game client, manages community **mods** and **addons**,
+applies client **tweaks**, and shows server **news**.
 
 ![Octo Updater](screenshot.png)
 
@@ -36,7 +35,6 @@ Codeberg releases and registered in `dlls.txt`:
 
 - Essential mods (★) auto-install on a fresh game folder.
 - Per-mod **update** / **retry** actions and an update-count badge on the tab.
-- **DXVK first-launch notice** about initial shader-compilation stutter.
 
 ### 🎛️ Tweaks
 Patches `WoW.exe` and writes `Config.wtf` for common quality-of-life settings:
@@ -59,8 +57,7 @@ Pulls the live announcements feed and the featured forum post.
 
 ### ⚙️ Settings
 Change the game folder, check mirror status, verify game files, view session
-logs, add the game folder to Windows Defender exclusions, toggle "clean WDB on
-launch".
+logs, add the game folder to Defender exclusions, and adjust general options.
 
 ### 🔒 Security & robustness
 - Hardened TLS (system trust store, hostname check, TLS 1.2+ floor).
@@ -75,8 +72,10 @@ launch".
 ## Requirements
 
 - **Windows** (the client, Defender-exclusion and launch features are Windows-only).
-- **Python 3.10+** — only if running from source. Uses the standard library
-  only (Tkinter ships with the official Python installer).
+- **Python 3.10+** — only if running from source. Runs on the standard
+  library, and will also use [`certifi`](https://pypi.org/project/certifi/) if
+  installed, for more robust TLS verification on machines with an out-of-date
+  root store (otherwise falls back to the system trust store).
 - The prebuilt `OctoUpdater.exe` needs nothing installed.
 
 ---
@@ -112,9 +111,13 @@ Compile a single-file Windows executable with
 [PyInstaller](https://pyinstaller.org/):
 
 ```bash
-pip install pyinstaller
+pip install pyinstaller certifi
 pyinstaller --onefile --windowed --name OctoUpdater --icon OctoUpdater.ico octo_updater.py
 ```
+
+Installing `certifi` before building bundles an up-to-date CA certificate set
+into the executable, so TLS verification works even on machines whose Windows
+root store is stale.
 
 ---
 

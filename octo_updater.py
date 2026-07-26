@@ -1,6 +1,7 @@
 """
 Octo Updater — a standalone updater for the OctoWoW client: game files,
-mods, tweaks and addons. Standard library only (tkinter); Python 3.10+.
+mods, tweaks and addons. Standard library, optional 'certifi' for TLS;
+Python 3.10+.
 """
 
 import json
@@ -24,7 +25,7 @@ from pathlib import Path
 #  Constants
 # ──────────────────────────────────────────────────────────────────────────────
 
-UPDATER_VERSION  = "1.0"
+UPDATER_VERSION  = "1.1"
 SERVER           = "https://octowow.st"
 DOWNLOAD_VERSION = "latest"
 UA               = f"OctoUpdater/{UPDATER_VERSION}"
@@ -95,6 +96,15 @@ FONT_VER    = ("Segoe UI", 8)
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = True
 SSL_CTX.verify_mode = ssl.CERT_REQUIRED
+# Trust certifi's curated roots *in addition to* the system store, so a stale
+# or incomplete Windows root store (Python's ssl uses a static snapshot and
+# never triggers Windows' on-demand root update) can't break verification.
+# If certifi isn't bundled, fall back to the system store alone.
+try:
+    import certifi
+    SSL_CTX.load_verify_locations(certifi.where())
+except Exception:
+    pass
 try:
     SSL_CTX.minimum_version = ssl.TLSVersion.TLSv1_2
 except (AttributeError, ValueError):
@@ -750,6 +760,8 @@ def write_config_wtf(client_dir: str, tweaks: dict | None = None, log_fn=None):
     nameplate = tweaks.get("nameplateRange", TWEAKS_DEFAULTS["nameplateRange"])
     fov_deg   = tweaks.get("fieldOfView",    TWEAKS_DEFAULTS["fieldOfView"])
     fov_rad   = round(fov_deg * math.pi / 180.0, 6)
+    bg_sound  = 1 if tweaks.get("soundInBackground",
+                                TWEAKS_DEFAULTS["soundInBackground"]) else 0
 
     di  = _get_display_info_safe()
     srv = "octowow.st"
@@ -795,6 +807,7 @@ def write_config_wtf(client_dir: str, tweaks: dict | None = None, log_fn=None):
         "SoundMaxHardwareChannels": 64,
         "SoundSoftwareChannels": 64,
         "UncapSounds": 1,
+        "BackgroundSound": bg_sound,
         "NP_NameplateDistance": nameplate,
         "NP_SpellQueueWindowMs": 150,
         "NP_EnableAuraCastEvents": 1,
@@ -831,12 +844,15 @@ def update_config_wtf(client_dir: str, tweaks: dict, log_fn=None):
     nameplate = tweaks.get("nameplateRange", TWEAKS_DEFAULTS["nameplateRange"])
     fov_deg   = tweaks.get("fieldOfView",    TWEAKS_DEFAULTS["fieldOfView"])
     fov_rad   = round(fov_deg * math.pi / 180.0, 6)
+    bg_sound  = 1 if tweaks.get("soundInBackground",
+                                TWEAKS_DEFAULTS["soundInBackground"]) else 0
     updates = {
         "farClip":              str(far_clip),
         "CameraDistanceMax":    str(cam_dist),
         "NP_NameplateDistance": str(nameplate),
         "FoV":                  str(fov_rad),
         "NameplateRange":       str(nameplate),
+        "BackgroundSound":      str(bg_sound),
     }
 
     with open(cfg_path, "r", encoding="utf-8") as f:
@@ -1716,20 +1732,6 @@ def _api_json(url: str, timeout=10):
         return json.load(r)
 
 
-def addon_default_branch(git_url: str) -> str:
-    kind, _repo_url, owner, repo, api = _git_parts(git_url)
-    try:
-        if kind == "gitlab":
-            from urllib.parse import quote
-            proj = quote(f"{owner}/{repo}", safe="")
-            return _api_json(f"{api}/projects/{proj}").get(
-                "default_branch") or "master"
-        return _api_json(f"{api}/repos/{owner}/{repo}").get(
-            "default_branch") or "master"
-    except Exception:
-        return "master"
-
-
 def _describe_net_error(e: Exception) -> str:
     """Human-readable cause for a failed API request."""
     import urllib.error
@@ -1777,27 +1779,32 @@ def addon_remote_sha(git_url: str, branch=None, ref=None,
             return entry.get("sha")
 
     kind, _repo_url, owner, repo, api = _git_parts(git_url)
+    pin = ref or branch          # explicit branch/ref when the caller has one
     sha = None
     try:
-        target = ref or branch or addon_default_branch(git_url)
         if kind == "github":
-            sha = _api_json(
-                f"{api}/repos/{owner}/{repo}/commits/{target}").get("sha")
+            if pin:
+                sha = _api_json(
+                    f"{api}/repos/{owner}/{repo}/commits/{pin}").get("sha")
+            else:
+                lst = _api_json(
+                    f"{api}/repos/{owner}/{repo}/commits?per_page=1")
+                sha = lst[0].get("sha") if lst else None
         elif kind == "gitlab":
             from urllib.parse import quote
             proj = quote(f"{owner}/{repo}", safe="")
-            sha = _api_json(
-                f"{api}/projects/{proj}/repository/commits/"
-                f"{quote(target, safe='')}").get("id")
-        else:
-            try:
-                data = _api_json(
-                    f"{api}/repos/{owner}/{repo}/branches/{target}")
-                sha = (data.get("commit") or {}).get("id")
-            except Exception:
-                lst = _api_json(f"{api}/repos/{owner}/{repo}/commits"
-                                f"?sha={target}&limit=1")
-                sha = lst[0].get("sha") if lst else None
+            if pin:
+                sha = _api_json(
+                    f"{api}/projects/{proj}/repository/commits/"
+                    f"{quote(pin, safe='')}").get("id")
+            else:
+                lst = _api_json(
+                    f"{api}/projects/{proj}/repository/commits?per_page=1")
+                sha = lst[0].get("id") if lst else None
+        else:  # gitea / codeberg
+            q = f"?sha={pin}&limit=1" if pin else "?limit=1"
+            lst = _api_json(f"{api}/repos/{owner}/{repo}/commits{q}")
+            sha = lst[0].get("sha") if lst else None
     except Exception as e:
         if raise_errors:
             raise RuntimeError(_describe_net_error(e)) from e
@@ -2602,6 +2609,8 @@ class OctoUpdaterApp(tk.Tk):
 
         self._clear_wdb_var = tk.BooleanVar(
             value=bool(self._cfg.get("clear_wdb_on_launch", False)))
+        self._close_on_launch_var = tk.BooleanVar(
+            value=bool(self._cfg.get("close_on_launch", False)))
 
     def _draw_logo(self, hover: bool = False):
         cv = self._hdr_canvas
@@ -4808,9 +4817,16 @@ class OctoUpdaterApp(tk.Tk):
         tk.Label(rcol, text="GENERAL",
                  font=("Segoe UI", 10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(anchor="w")
-        tk.Checkbutton(rcol, text=" Clean WDB on each launch",
+        tk.Checkbutton(rcol, text=" Clear WDB on game launch",
                        variable=self._clear_wdb_var,
                        command=self._toggle_clear_wdb,
+                       font=("Segoe UI", 10), fg=C_TEXT, bg=P_BG,
+                       activebackground=P_BG, activeforeground=C_TEXT,
+                       selectcolor=P_INP, highlightthickness=0, bd=0,
+                       cursor="hand2").pack(anchor="w", pady=(10, 0))
+        tk.Checkbutton(rcol, text=" Close Updater on game launch",
+                       variable=self._close_on_launch_var,
+                       command=self._toggle_close_on_launch,
                        font=("Segoe UI", 10), fg=C_TEXT, bg=P_BG,
                        activebackground=P_BG, activeforeground=C_TEXT,
                        selectcolor=P_INP, highlightthickness=0, bd=0,
@@ -4902,6 +4918,11 @@ class OctoUpdaterApp(tk.Tk):
         val = self._clear_wdb_var.get()
         self._cfg = update_config(
             lambda c: c.__setitem__("clear_wdb_on_launch", val))
+
+    def _toggle_close_on_launch(self):
+        val = self._close_on_launch_var.get()
+        self._cfg = update_config(
+            lambda c: c.__setitem__("close_on_launch", val))
 
     def _verify_game_files(self):
         """Full re-verification: drop the hash cache and the patched-exe
@@ -5084,12 +5105,24 @@ class OctoUpdaterApp(tk.Tk):
             remove_wdb(client_dir, lambda m, t="": self._log_line(m + "\n", t))
 
         try:
-            flags = getattr(subprocess, "DETACHED_PROCESS", 0)
-            subprocess.Popen([exe], cwd=client_dir, creationflags=flags)
+            flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
+                     | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0))
+            try:
+                subprocess.Popen([exe], cwd=client_dir,
+                                 creationflags=flags, close_fds=True)
+            except OSError:
+                # The job object doesn't permit breakaway — retry without it.
+                flags &= ~getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+                subprocess.Popen([exe], cwd=client_dir,
+                                 creationflags=flags, close_fds=True)
             self._log_line(f"Launched {exe_lbl}!\n", "ok")
             # Briefly disable PLAY so a double-click can't spawn two clients.
             self._set_btn_busy("PLAY")
             self._status_var.set("Launching...")
+            # Optionally close the updater shortly after launch.
+            if self._cfg.get("close_on_launch", False):
+                self.after(1000, self._on_close)
+                return
             self.after(5000, self._refresh_ready_state)
         except Exception as e:
             self._log_line(f"Failed to launch {exe_lbl}: {e}\n", "err")
