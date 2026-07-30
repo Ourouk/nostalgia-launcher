@@ -12,6 +12,7 @@ import ssl
 import urllib.request
 from urllib.parse import urlsplit
 import shutil
+import stat
 import struct
 import time
 import math
@@ -25,7 +26,7 @@ from pathlib import Path
 #  Constants
 # ──────────────────────────────────────────────────────────────────────────────
 
-UPDATER_VERSION  = "1.1"
+UPDATER_VERSION  = "1.2"
 SERVER           = "https://octowow.st"
 DOWNLOAD_VERSION = "latest"
 UA               = f"OctoUpdater/{UPDATER_VERSION}"
@@ -45,7 +46,7 @@ CONFIG_FILE      = os.path.join(APP_DIR, "octo_updater_config.json")
 # First-run default game folder, anchored to the app dir (not the CWD).
 DEFAULT_OUT_DIR  = os.path.join(APP_DIR, "OctoWoW")
 
-# News feed: announcements come from the forum list endpoint (not /news.json).
+# News feed: announcements come from the forum list endpoint.
 NEWS_URL          = f"{SERVER}/forum/octonews.php?mode=list&forum=2&limit=8"
 NEWS_FEATURED_URL = f"{SERVER}/forum/octonews.php?forum=35&mode=full"
 NEWS_TIMEOUT      = 8
@@ -213,18 +214,30 @@ def ensure_dir(path):
     Path(path).mkdir(parents=True, exist_ok=True)
 
 
-def remove_wdb(client_dir: str, log_fn=None):
+# ── logging ─────────────────────────────────────────────────────────────────
+# One thread-safe log sink for the whole app. Any function — worker thread or
+# main — calls log(); the GUI drains _LOG_Q on the main thread (see
+# OctoUpdaterApp._poll) and renders each line. This keeps all Tk access on the
+# main thread without threading a log_fn argument through every function.
+_LOG_Q: queue.Queue = queue.Queue()
+
+
+def log(msg: str, tag: str = ""):
+    """Append a line to the app log. Thread-safe; safe to call before the GUI
+    exists (the queue just buffers until it's drained)."""
+    _LOG_Q.put((msg, tag))
+
+
+def remove_wdb(client_dir: str):
     """Delete the client's WDB folder (server-data cache, safe to drop)."""
     wdb = os.path.join(client_dir, "WDB")
     if not os.path.isdir(wdb):
         return
     try:
         shutil.rmtree(wdb)
-        if log_fn:
-            log_fn("WDB cache cleared.", "dim")
+        log("WDB cache cleared.", "dim")
     except Exception as e:
-        if log_fn:
-            log_fn(f"Could not clear WDB: {e}", "err")
+        log(f"Could not clear WDB: {e}", "err")
 
 
 def get_client_version(out_dir: str) -> str:
@@ -308,13 +321,15 @@ def already_updated(dest, expected_hash) -> bool:
 class VerifyWorker:
     def __init__(self, out_dir: str, log_q: queue.Queue, prog_q: queue.Queue,
                  expected_patched_wow_hash: str = "",
-                 original_server_wow_hash: str = ""):
+                 original_server_wow_hash: str = "",
+                 overwrite_config: bool = False):
         self.out_dir = out_dir
         self.log_q   = log_q
         self.prog_q  = prog_q
         self._cancel = False
         self.expected_patched_wow_hash = expected_patched_wow_hash
         self.original_server_wow_hash  = original_server_wow_hash
+        self.overwrite_config = overwrite_config
         self._cache: dict = load_cache()
 
     def cancel(self):
@@ -379,6 +394,14 @@ class VerifyWorker:
 
             self.progress(1.0, "")
             save_cache(self._cache)
+
+            # Config.wtf isn't part of the manifest — it's user game config.
+            # Create it when missing, or overwrite it when the user
+            # committed to this folder.
+            cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
+            if self.overwrite_config or not os.path.exists(cfg_wtf):
+                write_config_wtf(self.out_dir)
+
             if stale_nodes:
                 self.log("Update available.", "acct")
                 self.log_q.put(("__UPDATE_NEEDED__", ""))
@@ -674,11 +697,6 @@ class UpdateWorker:
         patched_hash = sha1_file(exe)
         self.log_q.put((f"__PATCHED_HASH__{patched_hash}", ""))
 
-    def patch_config(self, tweaks: dict | None = None):
-        self.log("\nApplying Config.wtf…")
-        write_config_wtf(self.out_dir, tweaks, log_fn=self.log)
-
-
     @staticmethod
     def _nodes_contain_wow_exe(nodes) -> bool:
         if nodes is None:
@@ -719,7 +737,7 @@ class UpdateWorker:
                 return
 
             self.log("\nDownload complete.", "ok")
-            remove_wdb(self.out_dir, self.log)
+            remove_wdb(self.out_dir)
 
             wow_exe_updated = self._nodes_contain_wow_exe(diff_nodes)
             if wow_exe_updated:
@@ -729,8 +747,9 @@ class UpdateWorker:
                 self.log("\nWoW.exe unchanged — skipping patch.", "dim")
                 self.progress(0.95, "")
 
-            self.progress(0.97, "Writing Config.wtf…")
-            self.patch_config()
+            # Config.wtf is user config — never written here. It's created when
+            # missing during verification and overwritten only on a folder
+            # change; a regular update must never touch it.
             self.progress(1.0, "")
             save_cache(self._cache)
             self.log("\n✓  Everything is up to date!", "ok")
@@ -748,11 +767,10 @@ class UpdateWorker:
             self.log_q.put(("__ERROR__", ""))
 
 
-def write_config_wtf(client_dir: str, tweaks: dict | None = None, log_fn=None):
-    """Write a fresh Config.wtf from scratch, overwriting any existing one."""
-    cfg_dir  = os.path.join(client_dir, "WTF")
-    ensure_dir(cfg_dir)
-    cfg_path = os.path.join(cfg_dir, "Config.wtf")
+def write_config_wtf(client_dir: str, tweaks: dict | None = None):
+    """Write a fresh Config.wtf from scratch, overwriting any existing one.
+    Never raises — logs the error if the file can't be written (read-only,
+    locked by a running game, or an unwritable folder)."""
     if tweaks is None:
         tweaks = load_tweaks_config()
     far_clip  = tweaks.get("farClip",        TWEAKS_DEFAULTS["farClip"])
@@ -826,17 +844,22 @@ def write_config_wtf(client_dir: str, tweaks: dict | None = None, log_fn=None):
         "NP_ChatBubblesBattleground": 1,
         "ChatBubblesParty": 1,
     }
-    with open(cfg_path, "w", encoding="utf-8") as f:
-        for k, v in vars_.items():
-            f.write(f'SET {k} "{v}"\n')
-    if log_fn:
-        log_fn("Config.wtf written.", "ok")
+    try:
+        cfg_dir = os.path.join(client_dir, "WTF")
+        ensure_dir(cfg_dir)
+        with open(os.path.join(cfg_dir, "Config.wtf"), "w",
+                  encoding="utf-8") as f:
+            for k, v in vars_.items():
+                f.write(f'SET {k} "{v}"\n')
+        log("Config.wtf written.", "ok")
+    except Exception as e:
+        log(f"Could not write Config.wtf: {e}", "err")
 
 
-def update_config_wtf(client_dir: str, tweaks: dict, log_fn=None):
+def update_config_wtf(client_dir: str, tweaks: dict):
     cfg_path = os.path.join(client_dir, "WTF", "Config.wtf")
     if not os.path.exists(cfg_path):
-        write_config_wtf(client_dir, tweaks, log_fn)
+        write_config_wtf(client_dir, tweaks)
         return
 
     far_clip  = tweaks.get("farClip",        TWEAKS_DEFAULTS["farClip"])
@@ -878,10 +901,9 @@ def update_config_wtf(client_dir: str, tweaks: dict, log_fn=None):
     with open(cfg_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
 
-    if log_fn:
-        log_fn(f"  Config.wtf updated: farClip={far_clip}, CameraDistanceMax={cam_dist}, "
-               f"NameplateRange={nameplate}, NP_NameplateDistance={nameplate}, "
-               f"FoV={fov_rad}", "dim")
+    log(f"  Config.wtf updated: farClip={far_clip}, CameraDistanceMax={cam_dist}, "
+        f"NameplateRange={nameplate}, NP_NameplateDistance={nameplate}, "
+        f"FoV={fov_rad}", "dim")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1142,11 +1164,11 @@ dxvk.numCompilerThreads = 2
 """
 
 
-def _write_dxvk_conf(client_dir: str, log_fn):
+def _write_dxvk_conf(client_dir: str):
     path = os.path.join(client_dir, "dxvk.conf")
     with open(path, "w", encoding="utf-8") as f:
         f.write(DXVK_CONF_CONTENT)
-    log_fn("  Wrote dxvk.conf")
+    log("  Wrote dxvk.conf")
 
 
 def _github_latest(owner: str, repo: str, raise_errors=False) -> dict | None:
@@ -1255,7 +1277,7 @@ def fetch_mod_latest_version_cached(mod: dict, force: bool = False) -> str | Non
     return None
 
 
-def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None) -> list:
+def install_mod(mod: dict, client_dir: str, release: dict | None = None) -> list:
     src     = mod["source"]
     written = []
 
@@ -1274,7 +1296,7 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
         if not asset:
             raise RuntimeError(
                 f"No matching asset '{src['asset_pattern']}' in {mod['id']} release")
-        log_fn(f"  Downloading {asset['name']} ({asset['size']//1024} KB)...")
+        log(f"  Downloading {asset['name']} ({asset['size']//1024} KB)...")
         req = urllib.request.Request(asset["browser_download_url"],
                                      headers={"User-Agent": MOD_UA})
         with secure_urlopen(req, timeout=120,
@@ -1287,7 +1309,7 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
             with open(dest, "wb") as f:
                 f.write(data)
             written.append(dest_rel)
-            log_fn(f"  Installed {dest_rel}")
+            log(f"  Installed {dest_rel}")
         else:
             import zipfile
             tmp_path = os.path.join(client_dir, f"_mod_tmp_{mod['id']}.zip")
@@ -1299,14 +1321,14 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
                         try:
                             zip_data = zf.read(zip_path)
                         except KeyError:
-                            log_fn(f"  Warning: {zip_path} not in zip, skipping")
+                            log(f"  Warning: {zip_path} not in zip, skipping")
                             continue
                         dest = os.path.join(client_dir, dest_rel)
                         os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
                         with open(dest, "wb") as f:
                             f.write(zip_data)
                         written.append(dest_rel)
-                        log_fn(f"  Installed {dest_rel}")
+                        log(f"  Installed {dest_rel}")
             finally:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
@@ -1320,7 +1342,7 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
         if not asset:
             raise RuntimeError(
                 f"No matching asset '{src['asset_pattern']}' in {mod['id']} release")
-        log_fn(f"  Downloading {asset['name']} ({asset['size']//1024} KB)...")
+        log(f"  Downloading {asset['name']} ({asset['size']//1024} KB)...")
         req = urllib.request.Request(asset["browser_download_url"],
                                      headers={"User-Agent": MOD_UA})
         with secure_urlopen(req, timeout=120,
@@ -1334,7 +1356,7 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
             with open(dest, "wb") as f:
                 f.write(data)
             written.append(dest_rel)
-            log_fn(f"  Installed {dest_rel}")
+            log(f"  Installed {dest_rel}")
         elif asset["name"].endswith(".tar.gz") or asset["name"].endswith(".tgz"):
             import tarfile, io, fnmatch as _fnmatch
             with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
@@ -1348,7 +1370,7 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
                         )
                     )
                     if matched is None:
-                        log_fn(f"  Warning: no file matching '{pattern}' in tar, skipping")
+                        log(f"  Warning: no file matching '{pattern}' in tar, skipping")
                         continue
                     f_obj    = tf.extractfile(tf.getmember(matched))
                     tar_data = f_obj.read()
@@ -1357,7 +1379,7 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
                     with open(dest, "wb") as f:
                         f.write(tar_data)
                     written.append(dest_rel)
-                    log_fn(f"  Installed {dest_rel}")
+                    log(f"  Installed {dest_rel}")
         else:
             import zipfile
             tmp_path = os.path.join(client_dir, f"_mod_tmp_{mod['id']}.zip")
@@ -1369,20 +1391,20 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
                         try:
                             zip_data = zf.read(zip_path)
                         except KeyError:
-                            log_fn(f"  Warning: {zip_path} not found in zip, skipping")
+                            log(f"  Warning: {zip_path} not found in zip, skipping")
                             continue
                         dest = os.path.join(client_dir, dest_rel)
                         os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
                         with open(dest, "wb") as f:
                             f.write(zip_data)
                         written.append(dest_rel)
-                        log_fn(f"  Installed {dest_rel}")
+                        log(f"  Installed {dest_rel}")
             finally:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
 
     elif src["kind"] == "direct_tar":
-        log_fn(f"  Downloading {src['url'].split('/')[-1]}...")
+        log(f"  Downloading {src['url'].split('/')[-1]}...")
         req = urllib.request.Request(src["url"], headers={"User-Agent": MOD_UA})
         with secure_urlopen(req, timeout=120,
                             allowed_hosts=ALLOWED_DOWNLOAD_HOSTS) as r:
@@ -1394,7 +1416,7 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
                 matched = pattern if pattern in all_names else next(
                     (n for n in all_names if _fnmatch.fnmatch(n, pattern)), None)
                 if matched is None:
-                    log_fn(f"  Warning: no file matching '{pattern}' in tar, skipping")
+                    log(f"  Warning: no file matching '{pattern}' in tar, skipping")
                     continue
                 tar_data = tf.extractfile(tf.getmember(matched)).read()
                 dest = os.path.join(client_dir, dest_rel)
@@ -1402,13 +1424,13 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
                 with open(dest, "wb") as f:
                     f.write(tar_data)
                 written.append(dest_rel)
-                log_fn(f"  Installed {dest_rel}")
+                log(f"  Installed {dest_rel}")
         if src.get("pinned_version"):
             mod["_resolved_version"] = src["pinned_version"]
 
     elif src["kind"] == "direct_file":
         url = src["url"]
-        log_fn(f"  Downloading {url.rsplit('/', 1)[-1]}...")
+        log(f"  Downloading {url.rsplit('/', 1)[-1]}...")
         req = urllib.request.Request(url, headers={"User-Agent": MOD_UA})
         with secure_urlopen(req, timeout=120,
                             allowed_hosts=ALLOWED_DOWNLOAD_HOSTS) as r:
@@ -1421,7 +1443,7 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
             with open(dest, "wb") as f:
                 f.write(data)
             written.append(dest_rel)
-            log_fn(f"  Installed {dest_rel}")
+            log(f"  Installed {dest_rel}")
         elif url.endswith(".tar.gz") or url.endswith(".tgz"):
             import tarfile, io, fnmatch as _fnmatch
             with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
@@ -1435,7 +1457,7 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
                         )
                     )
                     if matched is None:
-                        log_fn(f"  Warning: no file matching '{pattern}' in tar, skipping")
+                        log(f"  Warning: no file matching '{pattern}' in tar, skipping")
                         continue
                     f_obj    = tf.extractfile(tf.getmember(matched))
                     tar_data = f_obj.read()
@@ -1444,7 +1466,7 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
                     with open(dest, "wb") as f:
                         f.write(tar_data)
                     written.append(dest_rel)
-                    log_fn(f"  Installed {dest_rel}")
+                    log(f"  Installed {dest_rel}")
         else:
             import zipfile
             tmp_path = os.path.join(client_dir, f"_mod_tmp_{mod['id']}.zip")
@@ -1456,14 +1478,14 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
                         try:
                             zip_data = zf.read(zip_path)
                         except KeyError:
-                            log_fn(f"  Warning: {zip_path} not in zip, skipping")
+                            log(f"  Warning: {zip_path} not in zip, skipping")
                             continue
                         dest = os.path.join(client_dir, dest_rel)
                         os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
                         with open(dest, "wb") as f:
                             f.write(zip_data)
                         written.append(dest_rel)
-                        log_fn(f"  Installed {dest_rel}")
+                        log(f"  Installed {dest_rel}")
             finally:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
@@ -1473,13 +1495,13 @@ def install_mod(mod: dict, client_dir: str, log_fn, release: dict | None = None)
 
     for hook in src.get("post_install", []):
         if hook == "write_dxvk_conf":
-            _write_dxvk_conf(client_dir, log_fn)
+            _write_dxvk_conf(client_dir)
             written.append("dxvk.conf")
 
     return written
 
 
-def uninstall_mod(mod: dict, client_dir: str, log_fn):
+def uninstall_mod(mod: dict, client_dir: str):
     cfg   = load_config()
     state = cfg.get("mods", {}).get(mod["id"], {})
     files = state.get("installed_files", mod.get("installed_files", []))
@@ -1487,7 +1509,7 @@ def uninstall_mod(mod: dict, client_dir: str, log_fn):
         full = os.path.join(client_dir, rel)
         if os.path.exists(full):
             os.remove(full)
-            log_fn(f"  Removed {rel}")
+            log(f"  Removed {rel}")
 
 
 def _dlls_txt_path(client_dir: str) -> str:
@@ -1829,14 +1851,23 @@ def addon_zip_url(git_url: str, sha: str) -> str:
     return f"{repo_url}/archive/{sha}.zip"
 
 
-def install_addon_files(client_dir: str, folder: str, git_url: str,
-                        sha: str, log_fn=None):
+def _rmtree_force(path):
+    """Like shutil.rmtree, but also removes read-only files. Plain rmtree
+    raises PermissionError on Windows when it meets a read-only file (e.g. a
+    .git object store from a manual clone, or a read-only addon shipped in an
+    old zip); this clears the read-only bit and retries."""
+    def handler(func, p, _exc):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=handler)      # onerror deprecated in 3.12
+    else:
+        shutil.rmtree(path, onerror=handler)
+
+
+def install_addon_files(client_dir: str, folder: str, git_url: str, sha: str):
     """Download the repo archive at `sha` and unpack it into
     Interface/AddOns/<folder>, atomically replacing any existing copy."""
-    def log(msg):
-        if log_fn:
-            log_fn(msg)
-
     url = addon_zip_url(git_url, sha)
     log(f"  Downloading {folder} @ {sha[:10]}…")
     req = urllib.request.Request(url, headers={"User-Agent": UA})
@@ -1850,28 +1881,37 @@ def install_addon_files(client_dir: str, folder: str, git_url: str,
     tmp_root  = dest_root + ".tmp_install"
     tmp_abs   = os.path.abspath(tmp_root)
     if os.path.isdir(tmp_root):
-        shutil.rmtree(tmp_root)
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        for info in zf.infolist():
-            if info.is_dir():
-                continue
-            # Strip the archive's top-level "<repo>-<sha>/" directory and
-            # normalise separators (a zip entry may use "/" or "\").
-            parts = [p for p in info.filename.replace("\\", "/").split("/")[1:]
-                     if p not in ("", ".")]
-            if not parts or ".." in parts:
-                continue
-            target = os.path.join(tmp_root, *parts)
-            # Defence in depth: never write outside the target folder even if
-            # the guards above are somehow bypassed.
-            if not os.path.abspath(target).startswith(tmp_abs + os.sep):
-                continue
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            with zf.open(info) as src, open(target, "wb") as dst:
-                shutil.copyfileobj(src, dst)
-    if os.path.isdir(dest_root):
-        shutil.rmtree(dest_root)
-    os.replace(tmp_root, dest_root)
+        _rmtree_force(tmp_root)
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                # Strip the archive's top-level "<repo>-<sha>/" directory and
+                # normalise separators (a zip entry may use "/" or "\").
+                parts = [p for p in info.filename.replace("\\", "/").split("/")[1:]
+                         if p not in ("", ".")]
+                if not parts or ".." in parts:
+                    continue
+                target = os.path.join(tmp_root, *parts)
+                # Defence in depth: never write outside the target folder even
+                # if the guards above are somehow bypassed.
+                if not os.path.abspath(target).startswith(tmp_abs + os.sep):
+                    continue
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with zf.open(info) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+        if os.path.isdir(dest_root):
+            _rmtree_force(dest_root)
+        os.replace(tmp_root, dest_root)
+    except BaseException:
+        # Never leave a half-written ".tmp_install" behind on failure
+        if os.path.isdir(tmp_root):
+            try:
+                _rmtree_force(tmp_root)
+            except Exception:
+                pass
+        raise
     log(f"  Installed addon {folder}")
 
 
@@ -1912,15 +1952,11 @@ _PFUI_CHAT_END   = "-- OCTO_UPDATER_CHAT_SKIP_END"
 _PFUI_STRIP_RE = r"[ \t]*-- OCTO_UPDATER_[A-Z_]+?_BEGIN.*?-- OCTO_UPDATER_[A-Z_]+?_END\n?"
 
 
-def patch_pfui_default_profile(client_dir: str, log_fn=None):
+def patch_pfui_default_profile(client_dir: str):
     """Add the curated 'Default' profile to a freshly installed/updated pfUI
     and make it the firstrun default. Idempotent; degrades gracefully if
     pfUI's file layout has changed."""
     import re
-
-    def log(msg):
-        if log_fn:
-            log_fn(msg)
 
     base = os.path.join(addons_path(client_dir), "pfUI")
     profiles_lua = os.path.join(base, "env", "profiles.lua")
@@ -2279,6 +2315,11 @@ class OctoUpdaterApp(tk.Tk):
         # current dir. If the user closes it without changing the folder or
         # adding a Defender exclusion, recommend the exclusion once on close.
         self._first_run_av_pending = self._first_run
+        # On first run we don't verify (fetch the manifest / touch Config.wtf)
+        # until the user closes Settings, so nothing is written to the default
+        # folder before they've picked their real game folder. A folder change
+        # supersedes this (it verifies the new folder right away).
+        self._first_run_verify_pending = self._first_run
         self._cfg        = load_config()
         self._running    = False
         # True only after a verify/update confirmed the client files are up
@@ -2360,7 +2401,10 @@ class OctoUpdaterApp(tk.Tk):
             self._client_ver_var.set(live_ver)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll()
-        self.after(300, self._start_verify)
+        # On first run, defer verification until Settings is closed (see
+        # _close_settings / _first_run_verify_pending).
+        if not self._first_run:
+            self.after(300, self._start_verify)
         self.after(600, self._load_news)
         # Check mod updates at launch too — but only once mods have actually
         # been used (mod_release_cache exists). On a first run or right after a
@@ -2387,11 +2431,14 @@ class OctoUpdaterApp(tk.Tk):
     # ── build ─────────────────────────────────────────────────────────────────
 
     def _on_close(self):
-        """Exit immediately. Tk's normal shutdown destroys every widget one
-        by one — noticeably slow now that all tab panels stay fully built —
-        and it buys nothing: config/caches are saved at write time, and the
-        worker threads are daemons that die at exit either way."""
-        os._exit(0)
+        """Hide the window first so the close feels instant
+        Config/caches are already saved at write time,
+        and the worker threads are daemons, so nothing blocks the exit."""
+        try:
+            self.withdraw()
+        except Exception:
+            pass
+        self.quit()
 
     def _add_tooltip(self, widget, text: str):
         """Attach a small hover tooltip to a widget."""
@@ -2611,6 +2658,14 @@ class OctoUpdaterApp(tk.Tk):
             value=bool(self._cfg.get("clear_wdb_on_launch", False)))
         self._close_on_launch_var = tk.BooleanVar(
             value=bool(self._cfg.get("close_on_launch", False)))
+        self._auto_mods_var = tk.BooleanVar(
+            value=bool(self._cfg.get("auto_install_mods", True)))
+        self._auto_addons_var = tk.BooleanVar(
+            value=bool(self._cfg.get("auto_install_addons", True)))
+        # Deferred "install missing" pending from turning an auto-install
+        # option on in Settings — applied on close (see _close_settings).
+        self._auto_mods_retrigger = False
+        self._auto_addons_retrigger = False
 
     def _draw_logo(self, hover: bool = False):
         cv = self._hdr_canvas
@@ -3130,10 +3185,9 @@ class OctoUpdaterApp(tk.Tk):
         self._refresh_tweaks_panel()
         out = self._path_var.get().strip()
         if out and os.path.exists(os.path.join(out, "WoW.exe")):
-            self._set_btn_busy("Applying…")
+            self._set_btn_busy("Patching…")
             self._status_var.set("Applying tweaks…")
-            # Pass the same defaults that were saved — including the
-            # display-ratio-based FoV, not the static TWEAKS_DEFAULTS one.
+            # Pass the same defaults that were saved
             threading.Thread(target=self._apply_tweaks_worker,
                              args=(out, defaults), daemon=True).start()
 
@@ -3155,7 +3209,7 @@ class OctoUpdaterApp(tk.Tk):
             return
 
         self._log_line("\nApplying tweaks to WoW.exe...\n", "acct")
-        self._set_btn_busy("Applying…")
+        self._set_btn_busy("Patching…")
         self._status_var.set("Applying tweaks…")
         threading.Thread(target=self._apply_tweaks_worker,
                          args=(out, values), daemon=True).start()
@@ -3186,7 +3240,7 @@ class OctoUpdaterApp(tk.Tk):
             worker.patch_exe(tweaks)
             drain()
 
-            update_config_wtf(client_dir, tweaks, log_fn=lambda m, t="": self._log_line(m + "\n", t))
+            update_config_wtf(client_dir, tweaks)
 
             local_after = sha1_file(exe_path) if os.path.exists(exe_path) else ""
 
@@ -3559,6 +3613,13 @@ class OctoUpdaterApp(tk.Tk):
         # the batch doesn't re-fire on the next verify.
         update_config(lambda c: c.setdefault("addons", {}))
 
+        # "Install recommended addons" (Settings → General): when
+        # off, skip the batch install but still verify so the ADDONS tab lists
+        # them as available for manual install.
+        if not load_config().get("auto_install_addons", True):
+            self._addons_verify()
+            return
+
         ap = addons_path(out)
         recs = [{"folder": name, "status": "available", "git": url,
                  "branch": None, "ref": None, "toc": {},
@@ -3598,8 +3659,13 @@ class OctoUpdaterApp(tk.Tk):
 
         self._default_mods_install_started = True
 
+        # "Install essential mods" (Settings → General) gates the
+        # full essential set. VanillaFixes is exempt — it's the loader the other
+        # mods depend on, so it's always auto-installed.
+        auto_mods = cfg.get("auto_install_mods", True)
         for mod in MODS_REGISTRY:
-            if mod.get("essential", False):
+            if mod.get("essential", False) and (auto_mods
+                                                or mod["id"] == "VanillaFixes"):
                 self._mod_pending_state.setdefault(mod["id"], {})["enabled"] = True
 
         self._log_line("\nInstalling essential mods...\n", "acct")
@@ -3685,13 +3751,10 @@ class OctoUpdaterApp(tk.Tk):
             self.after(0, lambda a=action, n=mod["name"]:
                        self._status_var.set(f"{a} {n}…"))
 
-            def log(msg, mid=mid):
-                self.after(0, lambda m=msg: self._log_line(m + "\n"))
-
             try:
                 if needs_install:
                     log(f"\nInstalling {mod['name']} {latest_ver}...")
-                    written = install_mod(mod, client_dir, log, release=mod_release)
+                    written = install_mod(mod, client_dir, release=mod_release)
                     if mod.get("register_dll"):
                         add_dll(client_dir, mod["register_dll"])
                     resolved_ver = mod.pop("_resolved_version", None) or latest_ver or "unknown"
@@ -3708,7 +3771,7 @@ class OctoUpdaterApp(tk.Tk):
 
                 elif needs_uninstall:
                     log(f"\nUninstalling {mod['name']}...")
-                    uninstall_mod(mod, client_dir, log)
+                    uninstall_mod(mod, client_dir)
                     if mod.get("register_dll"):
                         remove_dll(client_dir, mod["register_dll"])
                     mods_cfg[mid] = {
@@ -3722,8 +3785,8 @@ class OctoUpdaterApp(tk.Tk):
 
                 elif needs_update:
                     log(f"\nUpdating {mod['name']} {installed_ver} \u2192 {latest_ver}...")
-                    uninstall_mod(mod, client_dir, log)
-                    written = install_mod(mod, client_dir, log, release=mod_release)
+                    uninstall_mod(mod, client_dir)
+                    written = install_mod(mod, client_dir, release=mod_release)
                     if mod.get("register_dll"):
                         add_dll(client_dir, mod["register_dll"])
                     mods_cfg[mid] = {
@@ -4068,9 +4131,6 @@ class OctoUpdaterApp(tk.Tk):
         self._set_btn_busy("Installing…")
         self._status_var.set("Downloading addons…")
 
-        def log(msg):
-            self.after(0, lambda m=msg: self._log_line(m + "\n"))
-
         def worker():
             for rec in recs:
                 self.after(0, lambda n=rec["folder"]:
@@ -4084,10 +4144,9 @@ class OctoUpdaterApp(tk.Tk):
                                            raise_errors=True)
                     if not sha:
                         raise RuntimeError("Could not resolve remote commit")
-                    install_addon_files(client, rec["folder"], rec["git"],
-                                        sha, log)
+                    install_addon_files(client, rec["folder"], rec["git"], sha)
                     if rec["folder"] == "pfUI":
-                        patch_pfui_default_profile(client, log)
+                        patch_pfui_default_profile(client)
                     record = {"git": rec["git"], "branch": rec.get("branch"),
                               "ref": rec.get("ref"), "sha": sha}
                     update_config(lambda c, f=rec["folder"], r=record:
@@ -4416,7 +4475,7 @@ class OctoUpdaterApp(tk.Tk):
         elif status == "invalid" or rec.get("error"):
             # Short marker on the right; the full reason gets its own line
             # under the row (long messages would squeeze the description).
-            tk.Label(row, text="⛔ Invalid addon", font=("Segoe UI", 10),
+            tk.Label(row, text="⛔ Addon error", font=("Segoe UI", 10),
                      fg=C_ERR, bg=C_PANEL).pack(side="right", padx=4)
         elif status == "outOfDate" and installed:
             upd = tk.Label(row, text="Update", font=("Segoe UI", 10, "bold"),
@@ -4604,7 +4663,7 @@ class OctoUpdaterApp(tk.Tk):
         # Only touch WDB when the path is a real client folder — this trace
         # fires on every keystroke while a path is being typed.
         if os.path.exists(os.path.join(new_val, "WoW.exe")):
-            remove_wdb(new_val, lambda m, t="": self._log_line(m + "\n", t))
+            remove_wdb(new_val)
 
         # Wipe folder-scoped config (patched-exe hashes + mods/addons install
         # records) and set the new path — one atomic merge into the live
@@ -4642,7 +4701,11 @@ class OctoUpdaterApp(tk.Tk):
             "\nGame folder changed — cache reset, everything will be re-verified.\n",
             "acct")
 
-        self.after(100, self._start_verify)
+        # This verify covers the new folder — overwrite its Config.wtf with our
+        # defaults + realmList. It also supersedes the first-run settings-close
+        # verify.
+        self._first_run_verify_pending = False
+        self.after(100, lambda: self._start_verify(overwrite_config=True))
 
         # A deliberate folder change already covers the antivirus
         # recommendation, so the first-run settings-close shouldn't ask again.
@@ -4662,6 +4725,20 @@ class OctoUpdaterApp(tk.Tk):
                 "Do you want to add the game folder to Defender exclusions?",
                 parent=self):
             self._allow_through_antivirus()
+
+    def _render_log(self, msg: str, tag: str = ""):
+        """Normalize a raw log message (ensure a trailing newline, auto-tag
+        when untagged) and append it to the log panel. Main thread only."""
+        line = msg if msg.endswith("\n") else msg + "\n"
+        if not tag:
+            ml = line.lower()
+            if "✓" in line or "success" in ml or "complete" in ml or "up to date" in ml:
+                tag = "ok"
+            elif "✗" in line or "error" in ml or "fail" in ml or "mismatch" in ml:
+                tag = "err"
+            elif line.strip().startswith("["):
+                tag = "acct"
+        self._log_line(line, tag)
 
     def _log_line(self, text: str, tag: str = ""):
         self._log_buffer.append((text, tag))
@@ -4691,9 +4768,8 @@ class OctoUpdaterApp(tk.Tk):
 
         self.bind("<Escape>", lambda e: self._close_settings())
 
-        # Match the updater's purple-dark theme (was a warm-brown scheme).
         P_BG, P_HDR, P_BDR, P_INP = C_PANEL, C_HDR, C_PANEL_BDR, "#0f0b16"
-        MW, MH = 560, 500
+        MW, MH = 800, 500
         panel = tk.Frame(ov, bg=P_BG, highlightthickness=1,
                          highlightbackground=P_BDR, highlightcolor=P_BDR)
         panel.place(x=(WIN_W - MW) // 2, y=(WIN_H - MH) // 2 - 20,
@@ -4824,9 +4900,27 @@ class OctoUpdaterApp(tk.Tk):
                        activebackground=P_BG, activeforeground=C_TEXT,
                        selectcolor=P_INP, highlightthickness=0, bd=0,
                        cursor="hand2").pack(anchor="w", pady=(10, 0))
-        tk.Checkbutton(rcol, text=" Close Updater on game launch",
+        tk.Checkbutton(rcol, text=" Close Octo Updater on game launch",
                        variable=self._close_on_launch_var,
                        command=self._toggle_close_on_launch,
+                       font=("Segoe UI", 10), fg=C_TEXT, bg=P_BG,
+                       activebackground=P_BG, activeforeground=C_TEXT,
+                       selectcolor=P_INP, highlightthickness=0, bd=0,
+                       cursor="hand2").pack(anchor="w", pady=(10, 0))
+        cb_auto_mods = tk.Checkbutton(
+            rcol, text=" Install essential mods",
+            variable=self._auto_mods_var, command=self._toggle_auto_mods,
+            font=("Segoe UI", 10), fg=C_TEXT, bg=P_BG,
+            activebackground=P_BG, activeforeground=C_TEXT,
+            selectcolor=P_INP, highlightthickness=0, bd=0, cursor="hand2")
+        cb_auto_mods.pack(anchor="w", pady=(10, 0))
+        self._add_tooltip(
+            cb_auto_mods,
+            "VanillaFixes will always be installed, even when this "
+            "option is turned off")
+        tk.Checkbutton(rcol, text=" Install recommended addons",
+                       variable=self._auto_addons_var,
+                       command=self._toggle_auto_addons,
                        font=("Segoe UI", 10), fg=C_TEXT, bg=P_BG,
                        activebackground=P_BG, activeforeground=C_TEXT,
                        selectcolor=P_INP, highlightthickness=0, bd=0,
@@ -4837,6 +4931,20 @@ class OctoUpdaterApp(tk.Tk):
         if self._settings_overlay is not None:
             self._settings_overlay.destroy()
             self._settings_overlay = None
+        # First run: the user has now committed to a game folder (kept the
+        # default). Run the deferred verification against it and (over)write a
+        # fresh Config.wtf with our defaults + realmList.
+        if self._first_run_verify_pending:
+            self._first_run_verify_pending = False
+            self.after(100, lambda: self._start_verify(overwrite_config=True))
+        # Apply any auto-install option the user turned on this session
+        # (idempotent — a no-op when nothing is missing).
+        if self._auto_mods_retrigger:
+            self._auto_mods_retrigger = False
+            self._install_missing_essential_mods()
+        if self._auto_addons_retrigger:
+            self._auto_addons_retrigger = False
+            self._install_missing_recommended_addons()
         # First run: the user accepted the auto-selected folder (never changed
         # it) and never added a Defender exclusion — recommend it now, once.
         if self._first_run_av_pending:
@@ -4923,6 +5031,66 @@ class OctoUpdaterApp(tk.Tk):
         val = self._close_on_launch_var.get()
         self._cfg = update_config(
             lambda c: c.__setitem__("close_on_launch", val))
+
+    def _toggle_auto_mods(self):
+        val = self._auto_mods_var.get()
+        self._cfg = update_config(
+            lambda c: c.__setitem__("auto_install_mods", val))
+        # Install the missing essential mods only when Settings is closed;
+        # turning it back off cancels the pending install.
+        self._auto_mods_retrigger = val
+
+    def _toggle_auto_addons(self):
+        val = self._auto_addons_var.get()
+        self._cfg = update_config(
+            lambda c: c.__setitem__("auto_install_addons", val))
+        self._auto_addons_retrigger = val
+
+    def _install_missing_essential_mods(self):
+        """Install every essential mod not already present. Used when the user
+        turns 'Install essential mods' on after the fact."""
+        if self._running:
+            return
+        out = self._path_var.get().strip()
+        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
+            return  # no client yet — the fresh-folder auto-install handles it
+        mods_cfg = load_config().get("mods", {})
+        pending = False
+        for mod in MODS_REGISTRY:
+            if not mod.get("essential", False):
+                continue
+            state = mods_cfg.get(mod["id"], {})
+            if (state.get("installed_version")
+                    and mod_installed_files_present(mod, out)):
+                continue  # already installed
+            self._mod_pending_state.setdefault(mod["id"], {})["enabled"] = True
+            pending = True
+        if not pending:
+            return
+        self._log_line("\nInstalling essential mods...\n", "acct")
+        self._set_btn_busy("Installing…")
+        self._status_var.set("Downloading mods…")
+        threading.Thread(target=self._apply_mods_worker,
+                         args=(out,), daemon=True).start()
+
+    def _install_missing_recommended_addons(self):
+        """Install every recommended addon not already present. Used when the
+        user turns 'Install recommended addons' on afterwards."""
+        if self._addons_busy:
+            return
+        out = self._path_var.get().strip()
+        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
+            return
+        ap = addons_path(out)
+        recs = [{"folder": name, "status": "available", "git": url,
+                 "branch": None, "ref": None, "toc": {},
+                 "description": None, "error": None}
+                for name, url in RECOMMENDED_ADDONS.items()
+                if not os.path.isdir(os.path.join(ap, name))]
+        if not recs:
+            return
+        self._log_line("\nInstalling recommended addons...\n", "acct")
+        self._addon_apply(recs)
 
     def _verify_game_files(self):
         """Full re-verification: drop the hash cache and the patched-exe
@@ -5102,7 +5270,7 @@ class OctoUpdaterApp(tk.Tk):
                 parent=self)
 
         if self._cfg.get("clear_wdb_on_launch", False):
-            remove_wdb(client_dir, lambda m, t="": self._log_line(m + "\n", t))
+            remove_wdb(client_dir)
 
         try:
             flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -5129,7 +5297,7 @@ class OctoUpdaterApp(tk.Tk):
 
     # ── verify lifecycle ──────────────────────────────────────────────────────────
 
-    def _start_verify(self):
+    def _start_verify(self, overwrite_config: bool = False):
         out = self._path_var.get().strip()
         if not out:
             self._set_btn_update()
@@ -5148,7 +5316,8 @@ class OctoUpdaterApp(tk.Tk):
         self._prog_q = queue.Queue()
         patched_hash  = self._cfg.get("expected_patched_wow_hash", "")
         original_hash = self._cfg.get("original_server_wow_hash", "")
-        worker = VerifyWorker(out, self._log_q, self._prog_q, patched_hash, original_hash)
+        worker = VerifyWorker(out, self._log_q, self._prog_q, patched_hash,
+                              original_hash, overwrite_config=overwrite_config)
         self._verify_worker = worker
         threading.Thread(target=worker.run, daemon=True).start()
 
@@ -5247,16 +5416,15 @@ class OctoUpdaterApp(tk.Tk):
                     ver = msg[len("__VERSION__"):]
                     self._client_ver_var.set(ver)
                 else:
-                    line = msg if msg.endswith("\n") else msg + "\n"
-                    if not tag:
-                        ml = line.lower()
-                        if "✓" in line or "success" in ml or "complete" in ml or "up to date" in ml:
-                            tag = "ok"
-                        elif "✗" in line or "error" in ml or "fail" in ml or "mismatch" in ml:
-                            tag = "err"
-                        elif line.strip().startswith("["):
-                            tag = "acct"
-                    self._log_line(line, tag)
+                    self._render_log(msg, tag)
+        except queue.Empty:
+            pass
+
+        # Drain the global app-log queue that helper functions write to.
+        try:
+            while True:
+                msg, tag = _LOG_Q.get_nowait()
+                self._render_log(msg, tag)
         except queue.Empty:
             pass
 
