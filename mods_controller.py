@@ -39,6 +39,7 @@ class ModsController:
         self.state = ModsState()
         self.state.records = self._load_records()
         self._default_mods_install_started = False
+        self._busy = False
         if get_out_dir is None:
             get_out_dir = lambda: config_store.load_config().get(
                 "out_dir", DEFAULT_OUT_DIR)
@@ -55,6 +56,10 @@ class ModsController:
     @property
     def updates_count(self) -> int:
         return self.state.updates_count
+
+    @property
+    def busy(self) -> bool:
+        return self._busy
 
     def load_latest_versions(self):
         """Background-fetch every registry mod's latest release and publish a
@@ -96,12 +101,16 @@ class ModsController:
             return "update"
         return None
 
-    def apply(self, only_mod_id: str | None = None):
+    def apply(self, only_mod_id: str | None = None) -> bool:
+        if self._busy:
+            return False
         out = (self._get_out_dir() or "").strip()
         if not out:
-            return
+            return False
+        self._busy = True
         threading.Thread(target=self._apply_worker, args=(out, only_mod_id),
                          daemon=True).start()
+        return True
 
     def maybe_install_essential_mods(self) -> bool:
         """One-shot auto-install of every essential mod for a fresh game
@@ -371,8 +380,10 @@ class ModsController:
 
             self._dispatcher.post(ProgressChanged(1.0, ""))
             self._dispatcher.post(ModsLoaded(self.state))
+            self._busy = False
             self._dispatcher.post(OperationFinished("mods", True, ""))
 
         except Exception as e:
+            self._busy = False
             self._dispatcher.post(ProgressChanged(0.0, ""))
             self._dispatcher.post(OperationFinished("mods", False, str(e)))

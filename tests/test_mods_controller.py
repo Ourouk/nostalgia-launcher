@@ -6,6 +6,7 @@ version fetch, install helpers, config store) are swapped for fakes via
 monkeypatch so nothing touches the network or the real filesystem.
 """
 
+import threading
 import time
 
 import pytest
@@ -303,6 +304,39 @@ def test_apply_targeted_mod_keeps_pending(controller, cfg, apply_backends):
     assert cfg["mods"]["AlphaMod"]["installed_version"] == "2.0"
     assert cfg["mods"]["BetaMod"]["installed_version"] == "0.5"
     assert "BetaMod" in controller.state.pending
+
+
+def test_apply_ignores_concurrent_apply(controller, cfg, apply_backends,
+                                        monkeypatch):
+    """A second apply() while the first worker is mid-flight is rejected."""
+    started = threading.Event()
+    release_event = threading.Event()
+    install_calls = []
+
+    def blocking_install(mod, cd, release=None):
+        install_calls.append(mod["id"])
+        started.set()
+        assert release_event.wait(2.0)
+        return ["new.dll"]
+
+    monkeypatch.setattr(mc.mods, "install_mod", blocking_install)
+    cfg["mods"] = {
+        "AlphaMod": {"enabled": True, "installed_version": "0.5",
+                     "installed_files": ["old.dll"]},
+    }
+    controller.state.records = controller._load_records()
+    controller.state.pending["AlphaMod"] = ModPending(enabled=True)
+
+    assert controller.apply() is True
+    assert started.wait(2.0)
+    assert controller.busy is True
+    assert controller.apply() is False
+    assert install_calls == ["AlphaMod"]
+
+    release_event.set()
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, OperationFinished))
+    assert install_calls == ["AlphaMod"]
+    assert controller.busy is False
 
 
 # ── maybe_install_essential_mods ───────────────────────────────────────
