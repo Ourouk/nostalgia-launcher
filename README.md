@@ -159,6 +159,7 @@ standard library):
 | `news.py` | News feed fetching |
 | `errors.py` | Human-readable install/update error messages |
 | `log_sink.py` | Thread-safe global log channel |
+| `platform_support.py` | Platform detection, capabilities, per-OS helpers |
 | `constants.py` | Shared constants and filesystem paths |
 
 Run the tests (requires `uv`):
