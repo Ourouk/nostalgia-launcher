@@ -95,11 +95,17 @@ logs, add the game folder to Defender exclusions, and adjust general options.
 
 ### Configuration location
 
-On Linux/macOS the config and hash-cache files live in the OS-appropriate
-per-user directories (e.g. `~/.config/octo-updater` and `~/.cache/octo-updater`
-on Linux, `~/Library/Application Support/OctoUpdater` on macOS) instead of
-next to the executable. Any previous config next to the executable is copied
-over automatically on first run.
+Where the config and hash-cache files live depends on the platform (see
+`platform_support.config_dir()` / `cache_dir()`):
+
+| Platform | Config & cache location |
+|----------|-------------------------|
+| Windows | Next to the executable |
+| Linux | `$XDG_CONFIG_HOME/octo-updater` and `$XDG_CACHE_HOME/octo-updater` (defaults: `~/.config/octo-updater` and `~/.cache/octo-updater`) |
+| macOS | `~/Library/Application Support/OctoUpdater` and `~/Library/Caches/OctoUpdater` |
+
+All are safe to delete — they're recreated on next run (deleting the config
+re-runs first-time setup).
 
 ### Display scaling & resizing
 
@@ -129,7 +135,9 @@ and **PLAY** when it finishes.
 python octo_updater.py
 ```
 
-The updater writes two files next to itself:
+The updater writes two JSON files — see
+[Configuration location](#configuration-location) for where each platform
+keeps them:
 
 | File | Purpose |
 |------|---------|
@@ -258,11 +266,11 @@ converts the events into Qt signals on the main thread.
 | `ui_metrics.py` | Responsive layout math |
 | `constants.py` | Shared constants and filesystem paths |
 
-### Migration status
+### Backend status
 
-The **Qt (PySide6)** implementation is feature-complete: all panels, dialogs,
-footer workflows and the startup schedule are ported and covered by tests.
-It is the only backend; the legacy Tk interface has been removed.
+The **Qt (PySide6)** interface is feature-complete: all panels, dialogs,
+footer workflows and the startup schedule are covered by tests. It is the
+only backend.
 
 ### Testing
 

@@ -1,12 +1,11 @@
 """Qt controller bridge — dispatcher events → Qt signals.
 
-Phase 2 of the PySide6 migration: `ControllerBridge` is the Qt-side receiver
-that turns events posted on the toolkit-agnostic `EventDispatcher` (by the
-Phase 1b controllers' worker threads) into Qt signals on the Qt main thread.
-A QTimer polls the dispatcher every 50 ms and emits one signal per event, so
-the UI connects to plain signals instead of polling the bus itself. Workers
-never emit signals directly; the timer guarantees delivery happens on the
-main thread.
+`ControllerBridge` turns events posted on the toolkit-agnostic
+`EventDispatcher` (by the controllers' worker threads) into Qt signals on the
+Qt main thread. A QTimer polls the dispatcher every 50 ms and emits one
+signal per event, so the UI connects to plain signals instead of polling the
+bus itself. Workers never emit signals directly; the timer guarantees
+delivery happens on the main thread.
 
 Event → signal mapping:
 
@@ -22,9 +21,8 @@ Event → signal mapping:
 
 The object-typed signals carry the full event dataclass (kind + payload); the
 scalar signals carry the event's fields in argument order. `ControllerHub` is a
-thin convenience that assembles the six Phase 1b controllers on one shared
-dispatcher together with the bridge — the main window (C15) may equally do the
-assembly by hand.
+thin convenience that assembles the six controllers on one shared dispatcher
+together with the bridge — the main window may equally do the assembly by hand.
 """
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot

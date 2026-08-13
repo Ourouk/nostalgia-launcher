@@ -1,7 +1,6 @@
 """Pure, dependency-free helpers shared across Octo Updater modules.
 
-No tkinter, no global state, no I/O — deterministic and easy to test in
-isolation.
+No global state, no I/O — deterministic and easy to test in isolation.
 """
 
 import html as html_mod
@@ -61,7 +60,7 @@ def strip_wow_colors(text: str) -> str:
 
 
 def strip_html(raw: str) -> str:
-    """Reduce forum HTML to readable plain text for a Tk widget."""
+    """Reduce forum HTML to readable plain text."""
     txt = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", "", raw)
     txt = re.sub(r"(?i)<br\s*/?>", "\n", txt)
     txt = re.sub(r"(?i)<li[^>]*>", "\n• ", txt)

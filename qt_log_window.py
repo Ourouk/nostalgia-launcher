@@ -1,11 +1,10 @@
 """Octo Updater Qt (PySide6) session-log window.
 
-C21 of the Qt migration: port of the Tk "Show logs" window (app.py
-_show_logs / _log_line). A non-modal QWidget titled "Session log" whose
-read-only text area renders (text, tag) log lines in the Tk colours —
-ok→green, err→red, acct→gold, dim→dim gray, default→text. The MainWindow
-owns the session-log buffer and feeds this window through append(); seed()
-renders the accumulated buffer when the window is (re)opened.
+A non-modal QWidget titled "Session log" whose read-only text area renders
+(text, tag) log lines in the colour scheme — ok→green, err→red, acct→gold,
+dim→dim gray, default→text. The MainWindow owns the session-log buffer and
+feeds this window through append(); seed() renders the accumulated buffer
+when the window is (re)opened.
 """
 
 from PySide6.QtGui import QFontDatabase, QTextCharFormat, QTextCursor

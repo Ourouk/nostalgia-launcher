@@ -1,7 +1,5 @@
 """Octo Updater Qt (PySide6) addons panel.
 
-C20 of the Qt migration: port of the Tk ADDONS tab (app.py _build_addons_panel
-/ _render_addons / _addon_section_header / _addon_row / _refresh_addons_footer).
 Renders the controller's AddonsState into a searchable, collapsible two-section
 list of `AddonRow` widgets — recommendation star, colored title, word-wrapped
 description, repo link, status text and an install/update/remove action — plus
@@ -45,8 +43,7 @@ def _clear_layout(layout):
 
 
 class _ClickableLabel(QLabel):
-    """A QLabel that emits clicked on a left mouse release, like the Tk
-    clickable labels."""
+    """A QLabel that emits clicked on a left mouse release."""
 
     clicked = Signal()
 
@@ -57,7 +54,7 @@ class _ClickableLabel(QLabel):
 
 
 class _LinkLabel(_ClickableLabel):
-    """A QLabel that opens a URL on left-click, like the Tk link labels."""
+    """A QLabel that opens a URL on left-click."""
 
     def __init__(self, text, url, parent=None):
         super().__init__(text, parent)

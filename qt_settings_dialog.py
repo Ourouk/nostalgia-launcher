@@ -1,13 +1,12 @@
 """Octo Updater Qt (PySide6) settings dialog.
 
-C20 of the Qt migration: port of the Tk SETTINGS overlay (app.py
-_open_settings / _close_settings). A dark QDialog rendering the GAME FOLDER
-row (open-folder link, readonly path entry, Change), the DOWNLOAD MIRROR row
-(status dot + Iceland + status label + refresh), the TROUBLESHOOTING and
-SUPPORT THE DEVELOPER clickable rows and the GENERAL checkboxes. It renders
-the SettingsController's state and forwards user actions straight into the
-toolkit-agnostic controller; mirror results arrive as MirrorStatusChanged
-events through the ControllerBridge and are rendered here.
+A dark QDialog rendering the GAME FOLDER row (open-folder link, readonly path
+entry, Change), the DOWNLOAD MIRROR row (status dot + Iceland + status label
++ refresh), the TROUBLESHOOTING and SUPPORT THE DEVELOPER clickable rows and
+the GENERAL checkboxes. It renders the SettingsController's state and forwards
+user actions straight into the toolkit-agnostic controller; mirror results
+arrive as MirrorStatusChanged events through the ControllerBridge and are
+rendered here.
 """
 
 import os
@@ -49,8 +48,8 @@ class _ClickableLabel(QLabel):
 
 
 class _ClickableRow(QWidget):
-    """A clickable icon+text row, like the Tk settings rows. Children are
-    mouse-transparent so a click anywhere on the row fires clicked."""
+    """A clickable icon+text row. Children are mouse-transparent so a click
+    anywhere on the row fires clicked."""
 
     clicked = Signal()
 
@@ -101,12 +100,11 @@ class _ClickableRow(QWidget):
 
 
 class SettingsDialog(QDialog):
-    """The SETTINGS dialog — port of the Tk overlay.
+    """The SETTINGS dialog.
 
     Constructible and closable headlessly: it reads the controller's state,
     renders the mirror status it already holds, and only starts work when the
-    user clicks a row/button. `showLogsRequested` fires for the Show logs row
-    (the log window itself lands in C21).
+    user clicks a row/button. `showLogsRequested` fires for the Show logs row.
     """
 
     showLogsRequested = Signal()

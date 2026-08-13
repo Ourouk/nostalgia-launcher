@@ -1,9 +1,9 @@
 """One thread-safe log sink for the whole app.
 
 Any function — worker thread or main — calls `log()`; the GUI drains
-`_LOG_Q` on the main thread (see OctoUpdaterApp._poll) and renders each
-line. This keeps all Tk access on the main thread without threading a
-log_fn argument through every function.
+`_LOG_Q` on the main thread and renders each line. This keeps all UI access
+on the main thread without threading a log_fn argument through every
+function.
 """
 
 import queue

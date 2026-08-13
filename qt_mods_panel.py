@@ -1,7 +1,5 @@
 """Octo Updater Qt (PySide6) mods panel.
 
-C19 of the Qt migration: port of the Tk MODS tab (app.py _build_mods_panel /
-_render_mod_rows / _refresh_apply_btn_visibility / _style_mod_action_label).
 Renders the mod registry into a scrollable list of `ModRow` widgets —
 essential star badge, install state, enable/ignore checkboxes, repo link,
 retry/update action and error line — plus an Apply footer and a nav-badge
@@ -39,7 +37,7 @@ def _clear_layout(layout):
 
 
 class _LinkLabel(QLabel):
-    """A QLabel that opens a URL on left-click, like the Tk link labels."""
+    """A QLabel that opens a URL on left-click."""
 
     def __init__(self, text, url, parent=None):
         super().__init__(text, parent)

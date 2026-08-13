@@ -1,10 +1,8 @@
 """Octo Updater Qt (PySide6) custom git addon dialog.
 
-C21 of the Qt migration: port of the Tk "ADD CUSTOM GIT ADDON" overlay
-(app.py _open_custom_addon_dialog). A QDialog with a mono URL entry, an
-allowed-hosts hint, an error label and Install/Cancel buttons; on a valid
-URL it emits `addonRequested` with the same record the Tk overlay passed to
-AddonsController.apply.
+A QDialog with a mono URL entry, an allowed-hosts hint, an error label and
+Install/Cancel buttons; on a valid URL it emits `addonRequested` with the
+record AddonsController.apply expects.
 """
 
 from PySide6.QtCore import Qt, Signal

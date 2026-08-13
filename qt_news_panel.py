@@ -1,11 +1,9 @@
 """Octo Updater Qt (PySide6) news panel — featured post + announcements.
 
-C16 of the Qt migration: port of the Tk NEWS tab (app.py _build_panel /
-_render_featured / _render_announcements). The left `FeaturedPanel` shows the
-featured forum post on the parchment background, the right
-`AnnouncementsPanel` lists the dated announcements on the dark panel. Both
-render the `NewsLoaded` events the ControllerBridge forwards and keep their
-state so switching tabs preserves the content.
+The left `FeaturedPanel` shows the featured forum post on the parchment
+background, the right `AnnouncementsPanel` lists the dated announcements on
+the dark panel. Both render the `NewsLoaded` events the ControllerBridge
+forwards and keep their state so switching tabs preserves the content.
 """
 
 import webbrowser
@@ -34,7 +32,7 @@ _BODY_LIMIT = 260
 
 
 class _LinkLabel(QLabel):
-    """A QLabel that opens a URL on left-click, like the Tk link labels."""
+    """A QLabel that opens a URL on left-click."""
 
     def __init__(self, text, url, parent=None):
         super().__init__(text, parent)

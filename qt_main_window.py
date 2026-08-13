@@ -1,16 +1,12 @@
 """Octo Updater Qt (PySide6) main window — chrome, tab switching, footer.
 
-Phase 3 of the Qt migration: `MainWindow` is the PySide6 counterpart of the
-Tk OctoUpdaterApp chrome — the header (wordmark, nav tabs, settings gear),
-the stacked content area and the footer (status, UPDATE/PLAY button, version,
-progress). It owns no business logic: the controllers' events arrive through
-the `ControllerHub` bridge and are rendered here, exactly like the Tk
-adapter renders the same events. Qt layouts (not absolute positioning) do
-all sizing; the look comes from `qt_theme.theme_qss`.
+`MainWindow` owns no business logic: the controllers' events arrive through
+the `ControllerHub` bridge and are rendered here. Qt layouts (not absolute
+positioning) do all sizing; the look comes from `qt_theme.theme_qss`.
 
-The C16-C19 panel ports build their content into the placeholder pages of
-`self._stack`, keyed by tab name in `self._pages`; the nav gear and footer
-widgets are exposed as attributes for the settings/update workflows (C20+).
+The panels build their content into the placeholder pages of `self._stack`,
+keyed by tab name in `self._pages`; the nav gear and footer widgets are
+exposed as attributes for the settings and update workflows.
 """
 
 import queue
@@ -84,15 +80,14 @@ class MainWindow(QMainWindow):
         self._navButtons["NEWS"].setChecked(True)
 
         # Seed the client-version footer label from disk and sync the
-        # button/status with the controller's current readiness (the Tk
-        # __init__ sets _client_ver_var the same way).
+        # button/status with the controller's current readiness.
         if self._hub.updater.read_client_version():
             self._versionLabel.setText(self._hub.updater.state.client_version)
         self._refresh_ready_state()
 
         # Session-log drain: the global log_sink queue receives lines written
-        # from worker threads (app.py's _poll drains the same queue); a
-        # periodic QTimer mirrors that here and feeds the shared buffer.
+        # from worker threads; a periodic QTimer drains it here and feeds the
+        # shared buffer.
         self._logTimer = QTimer(self)
         self._logTimer.setInterval(50)
         self._logTimer.timeout.connect(self._drain_log_q)
@@ -100,15 +95,13 @@ class MainWindow(QMainWindow):
 
         # Update workers publish into UpdateController's queues; poll them on
         # the Qt event loop so verify/update progress, completion markers and
-        # the self-update-available flag are actually processed (the Tk UI
-        # drained the same queues in its _poll loop).
+        # the self-update-available flag are actually processed.
         self._pollTimer = QTimer(self)
         self._pollTimer.setInterval(50)
         self._pollTimer.timeout.connect(self._poll_updater)
         self._pollTimer.start()
 
-        # First run: auto-open the settings dialog once, like the Tk
-        # after(500, _open_settings).
+        # First run: auto-open the settings dialog once.
         if hub.settings.state.first_run:
             self._firstRunTimer = QTimer(self)
             self._firstRunTimer.setSingleShot(True)
@@ -426,8 +419,7 @@ class MainWindow(QMainWindow):
         self._render_log(text, tag)
 
     def _drain_log_q(self):
-        """Drain the global worker log queue into the session buffer (the Qt
-        counterpart of app.py's _poll)."""
+        """Drain the global worker log queue into the session buffer."""
         try:
             while True:
                 msg, tag = _LOG_Q.get_nowait()
@@ -477,8 +469,8 @@ class MainWindow(QMainWindow):
         value = max(0.0, min(1.0, float(value)))
         self._progressBar.setValue(int(round(value * 100)))
         self._progressLabel.setText(label)
-        # Hide the bar when idle (0) or finished/full (1), like the Tk
-        # version — it only shows while something is downloading.
+        # Hide the bar when idle (0) or finished/full (1) — it only shows
+        # while something is downloading.
         if value <= 0.0 or value >= 1.0:
             self._progressBar.hide()
         else:
@@ -505,8 +497,8 @@ class MainWindow(QMainWindow):
     # ── footer button / update workflow ──────────────────────────────────────
 
     def _on_update_button_clicked(self):
-        """Footer PLAY/UPDATE click — launch when ready, update otherwise
-        (the Tk _btn_click). Busy states are ignored."""
+        """Footer PLAY/UPDATE click — launch when ready, update otherwise.
+        Busy states are ignored."""
         updater = self._hub.updater
         if updater.running:
             return
@@ -597,10 +589,9 @@ class MainWindow(QMainWindow):
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def schedule_startup_tasks(self):
-        """Mirror the Tk startup timing (app.py __init__): background verify,
-        news load, mod/addon checks and the self-update check, all cancelled
-        on close. On first run the settings dialog defers verification to its
-        close, exactly like the Tk flow."""
+        """Schedule the background verify, news load, mod/addon checks and
+        the self-update check, all cancelled on close. On first run the
+        settings dialog defers verification to its close."""
         hub = self._hub
         if not hub.settings.state.first_run_verify_pending:
             self._after(300, self._start_verify)

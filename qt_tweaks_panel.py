@@ -1,12 +1,11 @@
 """Octo Updater Qt (PySide6) tweaks panel.
 
-C18 of the Qt migration: port of the Tk TWEAKS tab (app.py _build_tweaks_panel
-/ _build_tweaks_rows / _refresh_tweaks_buttons). Renders TWEAKS_ITEMS into a
-scrollable form — gold section headers, checkbox rows and numeric entry rows
-with word-wrapped descriptions — plus an Apply/Reset footer whose buttons
-follow the same dirty/custom rules the Tk panel used. All values, clamping
-and dirty/custom decisions come from the toolkit-agnostic TweaksController;
-the panel only renders its events and forwards user actions into it.
+Renders TWEAKS_ITEMS into a scrollable form — gold section headers, checkbox
+rows and numeric entry rows with word-wrapped descriptions — plus an
+Apply/Reset footer whose buttons follow the same dirty/custom rules. All
+values, clamping and dirty/custom decisions come from the toolkit-agnostic
+TweaksController; the panel only renders its events and forwards user actions
+into it.
 """
 
 from PySide6.QtCore import Qt
@@ -197,7 +196,7 @@ class TweaksPanel(QWidget):
 
     def _entry_bad(self, tid) -> bool:
         """True when a number entry holds an unparseable or out-of-range
-        value (the Tk red-paint rule)."""
+        value."""
         lo, hi = TWEAKS_LIMITS.get(tid, (None, None))
         try:
             v = int(self._entries[tid].text())
@@ -207,7 +206,7 @@ class TweaksPanel(QWidget):
             return True
 
     def _clamp(self, tid):
-        """The Tk FocusOut/Return clamp: parse, clamp to limits, write back."""
+        """FocusOut/Return clamp: parse, clamp to limits, write back."""
         entry = self._entries[tid]
         lo, hi = TWEAKS_LIMITS.get(tid, (None, None))
         try:
@@ -247,7 +246,7 @@ class TweaksPanel(QWidget):
 
     def _update_buttons(self):
         """Apply is offered when the UI differs from the saved config, Reset
-        when it differs from the defaults (Tk _refresh_tweaks_buttons)."""
+        when it differs from the defaults."""
         dirty, custom = self._tweaks.dirty_and_custom(self._ui_values())
         self._apply_button.setVisible(dirty)
         self._reset_button.setVisible(custom)

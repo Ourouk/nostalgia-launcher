@@ -75,7 +75,7 @@ Scale = OS display scaling. ✅ = good, ⚠️ = needs a look, ✗ = broken, —
 - **Resize reflows** — resizing the window reflows content (news splitter,
   rows, footer) instead of clipping or leaving dead space.
 
-### Known-good reference (Oct 2026, Dev box)
+### Known-good reference (Dev box)
 
 | Platform | Scale | DPR reported by Qt | Notes |
 | --- | --- | --- | --- |

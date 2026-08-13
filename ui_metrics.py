@@ -11,8 +11,7 @@ and reflow:
   `layout_mode`) place panels and dialogs for a given window size.
 
 Display scaling needs no detection here: Qt renders in logical pixels and
-applies the display scale factor internally. The Tk-only DPI detection
-(`UIScale` and friends) was removed along with the legacy UI.
+applies the display scale factor internally.
 """
 
 # Logical design size and chrome heights (in "100%" pixels).
