@@ -2,6 +2,8 @@
 octo_updater_config.json
 octo_updater_hash_cache.json
 *.tmp
+# Default game folder (created next to the app on first use)
+OctoWoW/
 
 # Python
 __pycache__/
