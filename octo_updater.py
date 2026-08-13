@@ -5,13 +5,10 @@ Python 3.10+.
 """
 
 import json
-import hashlib
 import os
-import sys
 import urllib.request
 from urllib.parse import urlsplit
 import shutil
-import struct
 import time
 import threading
 import queue
@@ -68,38 +65,30 @@ from tweaks import (
     update_config_wtf,
 )
 
+from client_update import VerifyWorker, UpdateWorker
+
 # ──────────────────────────────────────────────────────────────────────────────
-#  Constants
+#  Constants  (see constants.py)
 # ──────────────────────────────────────────────────────────────────────────────
 
-UPDATER_VERSION  = "1.2"
-SERVER           = "https://octowow.st"
-DOWNLOAD_VERSION = "latest"
-UA               = f"OctoUpdater/{UPDATER_VERSION}"
-DOWNLOAD_RETRY   = 5
-DOWNLOAD_TIMEOUT = 10    # seconds without any data before a transfer aborts
-
-# Where the app keeps its files: next to the .exe when frozen (PyInstaller),
-# otherwise next to this script — never the current working directory, which
-# varies with how the app was launched.
-if getattr(sys, "frozen", False):
-    APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
-else:
-    APP_DIR = os.path.dirname(os.path.abspath(__file__))
-
-CONFIG_FILE      = os.path.join(APP_DIR, "octo_updater_config.json")
-CACHE_FILE       = os.path.join(APP_DIR, "octo_updater_hash_cache.json")
+from constants import (
+    UPDATER_VERSION,
+    SERVER,
+    DOWNLOAD_VERSION,
+    UA,
+    DOWNLOAD_RETRY,
+    DOWNLOAD_TIMEOUT,
+    APP_DIR,
+    CONFIG_FILE,
+    CACHE_FILE,
+    DEFAULT_OUT_DIR,
+    NEWS_URL,
+    NEWS_FEATURED_URL,
+    NEWS_TIMEOUT,
+    NEWS_CACHE_TTL,
+)
 
 config_store.configure(CONFIG_FILE, CACHE_FILE)
-
-# First-run default game folder, anchored to the app dir (not the CWD).
-DEFAULT_OUT_DIR  = os.path.join(APP_DIR, "OctoWoW")
-
-# News feed: announcements come from the forum list endpoint.
-NEWS_URL          = f"{SERVER}/forum/octonews.php?mode=list&forum=2&limit=8"
-NEWS_FEATURED_URL = f"{SERVER}/forum/octonews.php?forum=35&mode=full"
-NEWS_TIMEOUT      = 8
-NEWS_CACHE_TTL    = 300
 
 WIN_W, WIN_H = 1000, 700
 FOOT_H       = 130
@@ -144,383 +133,8 @@ FONT_VER    = ("Segoe UI", 8)
 # ── logging ─────────────────────────────────────────────────────────────────
 # See log_sink.py — log()/_LOG_Q are the shared, thread-safe log channel.
 
-
-class VerifyWorker:
-    def __init__(self, out_dir: str, log_q: queue.Queue, prog_q: queue.Queue,
-                 expected_patched_wow_hash: str = "",
-                 original_server_wow_hash: str = "",
-                 overwrite_config: bool = False):
-        self.out_dir = out_dir
-        self.log_q   = log_q
-        self.prog_q  = prog_q
-        self._cancel = False
-        self.expected_patched_wow_hash = expected_patched_wow_hash
-        self.original_server_wow_hash  = original_server_wow_hash
-        self.overwrite_config = overwrite_config
-        self._cache: dict = load_cache()
-
-    def cancel(self):
-        self._cancel = True
-
-    def log(self, msg, tag=""):
-        self.log_q.put((msg, tag))
-
-    def progress(self, value, label=""):
-        self.prog_q.put((value, label))
-
-    def _file_ok(self, dest, server_hash, name):
-        if not os.path.exists(dest):
-            return False
-        local_hash = cached_sha1(dest, self._cache)
-        if local_hash == server_hash:
-            return True
-        if name == "WoW.exe" and self.expected_patched_wow_hash:
-            return (local_hash == self.expected_patched_wow_hash
-                    and server_hash == self.original_server_wow_hash)
-        return False
-
-    def _traverse(self, node, path_parts):
-        if self._cancel:
-            return None
-        t    = node["type"]
-        name = node["name"]
-        cur  = path_parts + [name]
-
-        if t == "dir":
-            stale = [c for child in node.get("files", [])
-                     if (c := self._traverse(child, cur)) is not None]
-            return {**node, "files": stale} if stale else None
-
-        dest = os.path.join(self.out_dir, os.path.join(*cur))
-
-        if t == "del":
-            return node if os.path.exists(dest) else None
-
-        if t == "file":
-            return None if self._file_ok(dest, node["hash"], name) else node
-
-        if t == "mpq":
-            mpq_dest = os.path.join(self.out_dir, os.path.join(*(path_parts + [name + ".mpq"])))
-            return None if self._file_ok(mpq_dest, node["hash"], name + ".mpq") else node
-
-        return None
-
-    def run(self):
-        try:
-            self.progress(0.02, "Fetching manifest...")
-            self.log("Verifying files...", "acct")
-            req = urllib.request.Request(
-                f"{SERVER}/api/file/{DOWNLOAD_VERSION}/manifest.json",
-                headers={"User-Agent": UA})
-            with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
-                manifest = json.load(r)
-            self.progress(0.5, "Checking...")
-
-            stale_nodes = [c for child in manifest["root"].get("files", [])
-                           if (c := self._traverse(child, [])) is not None]
-
-            self.progress(1.0, "")
-            save_cache(self._cache)
-
-            # Config.wtf isn't part of the manifest — it's user game config.
-            # Create it when missing, or overwrite it when the user
-            # committed to this folder.
-            cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
-            if self.overwrite_config or not os.path.exists(cfg_wtf):
-                write_config_wtf(self.out_dir)
-
-            if stale_nodes:
-                self.log("Update available.", "acct")
-                self.log_q.put(("__UPDATE_NEEDED__", ""))
-                self.log_q.put(("__DIFF_TREE__", stale_nodes))
-            else:
-                self.log("Everything is up to date!", "ok")
-                self.log_q.put(("__UP_TO_DATE__", ""))
-        except Exception as e:
-            self.log(f"Verification failed: {e}", "err")
-            self.log_q.put(("__UPDATE_NEEDED__", ""))
-            self.log_q.put(("__DIFF_TREE__", None))
-
-
-class UpdateWorker:
-    def __init__(self, out_dir: str, log_q: queue.Queue, prog_q: queue.Queue,
-                 expected_patched_wow_hash: str = ""):
-        self.out_dir = out_dir
-        self.log_q   = log_q
-        self.prog_q  = prog_q
-        self._cancel = False
-        self._cache: dict = load_cache()
-        self.expected_patched_wow_hash = expected_patched_wow_hash
-        self.original_server_wow_hash  = ""
-
-    def cancel(self):
-        self._cancel = True
-
-    def log(self, msg: str, tag: str = ""):
-        self.log_q.put((msg, tag))
-
-    def progress(self, value: float, label: str = ""):
-        self.prog_q.put((value, label))
-
-    def download(self, url, dest, size, name=""):
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        tmp  = dest + ".tmp"
-        name = name or os.path.basename(dest)
-        total_str = fmt_size(size) if size else "?"
-
-        for attempt in range(1, DOWNLOAD_RETRY + 1):
-            if self._cancel:
-                raise RuntimeError("Cancelled")
-            try:
-                # Resume a previous partial download when one is present.
-                got = os.path.getsize(tmp) if os.path.exists(tmp) else 0
-                if size and got >= size:
-                    os.remove(tmp)   # oversized/stale leftover — start clean
-                    got = 0
-
-                headers = {"User-Agent": UA}
-                mode    = "wb"
-                if got:
-                    headers["Range"] = f"bytes={got}-"
-                    mode = "ab"
-                    self.log(f"  Resuming ({fmt_size(got)} / {total_str})…")
-                else:
-                    self.log(f"  Downloading ({total_str})…")
-
-                req = urllib.request.Request(url, headers=headers)
-                downloaded = got
-                # Hash on the fly when starting from byte 0 — saves a full
-                # re-read of the file for verification. A resumed download
-                # can't be hashed incrementally (the prefix wasn't seen).
-                hasher = hashlib.sha1() if not got else None
-                # Speed sampling over a short sliding window.
-                t0 = time.monotonic()
-                bytes_at_t0 = downloaded
-                speed_str = ""
-                with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT,
-                                    allowed_hosts=ALLOWED_DOWNLOAD_HOSTS) as r:
-                    status = getattr(r, "status", None) or r.getcode()
-                    if got and status != 206:
-                        # Server ignored the Range header — start over.
-                        downloaded, mode = 0, "wb"
-                        hasher = hashlib.sha1()
-                        bytes_at_t0 = 0
-                    with open(tmp, mode) as f:
-                        while True:
-                            if self._cancel:
-                                raise RuntimeError("Cancelled")
-                            chunk = r.read(256 * 1024)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                            if hasher is not None:
-                                hasher.update(chunk)
-                            downloaded += len(chunk)
-                            now = time.monotonic()
-                            dt  = now - t0
-                            if dt >= 0.5:
-                                speed_str = "   •   " + fmt_speed(
-                                    (downloaded - bytes_at_t0) / dt)
-                                t0, bytes_at_t0 = now, downloaded
-                            if size:
-                                self.progress(
-                                    downloaded / size,
-                                    f"{name}   •   {fmt_size(downloaded)}"
-                                    f" / {total_str}{speed_str}")
-
-                # A dropped connection looks like a clean EOF — never accept
-                # a short file as a finished download.
-                if size and downloaded != size:
-                    raise IOError("connection lost at "
-                                  f"{fmt_size(downloaded)} / {total_str}")
-
-                shutil.move(tmp, dest)
-                if hasher is not None:
-                    digest = hasher.hexdigest().upper()
-                    try:
-                        # Seed the verify cache so the next verify pass
-                        # doesn't need to rehash this file either.
-                        self._cache[dest] = [digest, os.path.getmtime(dest)]
-                    except OSError:
-                        self._cache.pop(dest, None)
-                    return digest
-                self._cache.pop(dest, None)
-                return None
-            except Exception as e:
-                if self._cancel:
-                    raise RuntimeError("Cancelled")
-                # Keep tmp — the next attempt resumes from where this one
-                # stopped instead of redownloading from zero.
-                self.log(f"  Attempt {attempt} failed: {e}", "err")
-                if attempt < DOWNLOAD_RETRY:
-                    wait = min(2 ** attempt, 10)
-                    part = os.path.getsize(tmp) if os.path.exists(tmp) else 0
-                    self.progress(
-                        (part / size) if size else 0.0,
-                        f"{name} — retrying ({attempt}/{DOWNLOAD_RETRY})…")
-                    self.log(f"  Retrying in {wait} s…", "dim")
-                    time.sleep(wait)
-        raise RuntimeError(f"Download failed after {DOWNLOAD_RETRY} attempts: {url}")
-
-    def traverse(self, node, path_parts):
-        if self._cancel:
-            return
-        t    = node["type"]
-        name = node["name"]
-        cur  = path_parts + [name]
-
-        rel  = os.path.join(*cur)
-        dest = os.path.join(self.out_dir, rel)
-
-        if t == "dir":
-            for child in node.get("files", []):
-                self.traverse(child, cur)
-
-        elif t == "file":
-            self.log(f"[file] {rel}", "acct")
-            url = f"{SERVER}/client/{DOWNLOAD_VERSION}/{'/'.join(cur)}"
-
-            if name == "WoW.exe" and self.expected_patched_wow_hash:
-                server_hash = node["hash"]
-                original_server_hash = self.original_server_wow_hash
-                local_hash = sha1_file(dest) if os.path.exists(dest) else ""
-                already_patched = (
-                    local_hash == self.expected_patched_wow_hash
-                    and server_hash == original_server_hash
-                )
-                if already_patched:
-                    self.log("  Already up to date (patched).", "dim")
-                    return
-            elif already_updated(dest, node["hash"]):
-                self.log("  Already up to date.", "dim")
-                return
-
-            got_hash = self.download(url, dest, node["size"], rel)
-            if (got_hash or sha1_file(dest)) != node["hash"]:
-                self.log("  Hash mismatch — retrying", "err")
-                os.remove(dest)
-                got_hash = self.download(url, dest, node["size"], rel)
-                if (got_hash or sha1_file(dest)) != node["hash"]:
-                    raise RuntimeError(f"Hash mismatch after redownload: {rel}")
-
-        elif t == "mpq":
-            mpq_name = name + ".mpq"
-            cur_mpq  = path_parts + [mpq_name]
-            rel      = os.path.join(*cur_mpq)
-            dest     = os.path.join(self.out_dir, rel)
-            url      = f"{SERVER}/client/{DOWNLOAD_VERSION}/{'/'.join(cur_mpq)}"
-            self.log(f"[mpq]  {rel}", "acct")
-            if already_updated(dest, node["hash"]):
-                self.log("  Already up to date.", "dim")
-                return
-            got_hash = self.download(url, dest, node["size"], rel)
-            if (got_hash or sha1_file(dest)) != node["hash"]:
-                self.log("  Hash mismatch — retrying", "err")
-                os.remove(dest)
-                got_hash = self.download(url, dest, node["size"], rel)
-                if (got_hash or sha1_file(dest)) != node["hash"]:
-                    raise RuntimeError(f"Hash mismatch after redownload: {rel}")
-
-        elif t == "del":
-            self.log(f"[del]  {rel}", "dim")
-            if os.path.exists(dest):
-                os.remove(dest)
-
-    def patch_exe(self, tweaks: dict | None = None):
-        exe = os.path.join(self.out_dir, "WoW.exe")
-        if not os.path.exists(exe):
-            raise RuntimeError(f"WoW.exe not found in {self.out_dir}")
-        self.log("\nApplying binary tweaks to WoW.exe…")
-        original_hash = sha1_file(exe)
-        self.log_q.put((f"__ORIGINAL_HASH__{original_hash}", ""))
-        with open(exe, "rb") as f:
-            buf = bytearray(f.read())
-        for label, kind, offset, value in build_tweaks(buf, tweaks):
-            self.log(f"  {label}", "dim")
-            if kind == "float":
-                struct.pack_into("<f",  buf, offset, value)
-            elif kind == "int8":
-                struct.pack_into("<b",  buf, offset, value)
-            elif kind == "uint16":
-                struct.pack_into("<H",  buf, offset, value)
-            elif kind == "bytes":
-                for off, data in value:
-                    buf[off: off + len(data)] = data
-        with open(exe, "wb") as f:
-            f.write(buf)
-        self.log("WoW.exe patched.", "ok")
-
-        patched_hash = sha1_file(exe)
-        self.log_q.put((f"__PATCHED_HASH__{patched_hash}", ""))
-
-    @staticmethod
-    def _nodes_contain_wow_exe(nodes) -> bool:
-        if nodes is None:
-            return True
-        for node in nodes:
-            if node.get("type") == "file" and node.get("name") == "WoW.exe":
-                return True
-            if node.get("type") == "dir":
-                if UpdateWorker._nodes_contain_wow_exe(node.get("files", [])):
-                    return True
-        return False
-
-    def run(self, diff_nodes=None):
-        try:
-            if diff_nodes is not None:
-                self.log("\nStarting client update…\n")
-                self.progress(0.05, "Downloading…")
-                for child in diff_nodes:
-                    self.traverse(child, [])
-            else:
-                self.progress(0.02, "Fetching manifest…")
-                self.log("Fetching manifest.json…")
-                req = urllib.request.Request(
-                    f"{SERVER}/api/file/{DOWNLOAD_VERSION}/manifest.json",
-                    headers={"User-Agent": UA})
-                with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
-                    manifest = json.load(r)
-                self.log("Manifest received.", "ok")
-                self.progress(0.05, "Downloading…")
-                self.log("\nStarting client update…\n")
-                for child in manifest["root"].get("files", []):
-                    self.traverse(child, [])
-
-            if self._cancel:
-                self.log("\nUpdate cancelled.", "err")
-                self.progress(0.0, "Cancelled")
-                self.log_q.put(("__ERROR__", ""))
-                return
-
-            self.log("\nDownload complete.", "ok")
-            remove_wdb(self.out_dir)
-
-            wow_exe_updated = self._nodes_contain_wow_exe(diff_nodes)
-            if wow_exe_updated:
-                self.progress(0.92, "Patching…")
-                self.patch_exe()
-            else:
-                self.log("\nWoW.exe unchanged — skipping patch.", "dim")
-                self.progress(0.95, "")
-
-            # Config.wtf is user config — never written here. It's created when
-            # missing during verification and overwritten only on a folder
-            # change; a regular update must never touch it.
-            self.progress(1.0, "")
-            save_cache(self._cache)
-            self.log("\n✓  Everything is up to date!", "ok")
-            client_ver = get_client_version(self.out_dir)
-            if client_ver:
-                self.log(f"Client version: {client_ver}", "dim")
-                self.log_q.put((f"__VERSION__{client_ver}", ""))
-            else:
-                self.log("Could not read client version from WoW.exe", "dim")
-            self.log_q.put(("__DONE__", ""))
-
-        except Exception as e:
-            self.log(f"\n✗  {e}", "err")
-            self.progress(0.0, "")
-            self.log_q.put(("__ERROR__", ""))
+# ── client update engine ─────────────────────────────────────────────────────
+# See client_update.py — VerifyWorker / UpdateWorker.
 
 
 # ──────────────────────────────────────────────────────────────────────────────
