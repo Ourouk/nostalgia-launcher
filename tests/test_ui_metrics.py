@@ -74,10 +74,30 @@ def test_scale_s_rounds_up_minimum():
 
 def test_font_scales_and_keeps_weight():
     s = UIScale(None)
-    s.factor = 2.0
-    fam, pts = s.font(10)[0], s.font(10)[1]
-    assert pts == 20
+    s.factor = 1.5
+    fam, px = s.font(10)[0], s.font(10)[1]
+    assert px == -int(round(10 * 1.5 * (96 / 72)))   # pixel-sized (negative)
     assert s.font(9, "bold")[2] == "bold"
+
+
+def test_font_uses_negative_pixel_size():
+    s = UIScale(None)
+    s.factor = 1.0
+    assert s.font(10)[1] < 0
+
+
+def test_font_accepts_family():
+    s = UIScale(None)
+    s.factor = 1.0
+    assert s.font(11, family="Segoe UI Symbol")[0] == "Segoe UI Symbol"
+
+
+def test_mono_font_family():
+    s = UIScale(None)
+    s.factor = 1.0
+    spec = s.mono(9)
+    assert spec[0] == "Consolas"
+    assert spec[1] < 0
 
 
 def test_tk_scaling_matches_factor():

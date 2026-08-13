@@ -125,9 +125,6 @@ C_PARCH_LINK  = "#a3561c"
 C_PARCH_EDGE  = "#b7a678"
 
 _UI_FONT = ui_font_family()
-FONT_BODY   = (_UI_FONT, 9)
-FONT_MONO   = ("Consolas", 9)
-FONT_VER    = (_UI_FONT, 8)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -331,9 +328,12 @@ class OctoUpdaterApp(tk.Tk):
         self.title("Octo Updater")
         self.configure(bg=C_BG)
 
-        # DPI-aware scaling: detect the display scale factor, apply it to Tk
-        # so every font/geometry scales, then size the window for it.
+        # DPI-aware scaling: detect the display scale factor and size the
+        # window for it. Fonts are emitted by _ui.font()/_ui.mono() as
+        # pixel-based specs, so they scale even where Tk ignores `tk scaling`.
         self._ui = UIScale(self)
+        self._font = self._ui.font
+        self._mono = self._ui.mono
         try:
             self.tk.call("tk", "scaling", self._ui.tk_scaling())
         except tk.TclError:
@@ -420,7 +420,7 @@ class OctoUpdaterApp(tk.Tk):
             tw = tk.Toplevel(self)
             tw.wm_overrideredirect(True)
             tw.wm_geometry(f"+{x}+{y}")
-            tk.Label(tw, text=text, font=(_UI_FONT, 9),
+            tk.Label(tw, text=text, font=self._font(9),
                      fg=C_TEXT, bg="#0f0b16",
                      highlightthickness=1, highlightbackground=C_PANEL_BDR,
                      padx=6, pady=2).pack()
@@ -472,7 +472,7 @@ class OctoUpdaterApp(tk.Tk):
         tag = f"nav_{tab}"
         cv.delete(tag)
         cx, cy = self._nav_pos[tab], 54
-        font = (_UI_FONT, 11, "bold")
+        font = self._font(11, "bold")
         if tab == self._active_tab:
             for r, col in ((2, "#42340f"), (1, "#7a5c1d")):
                 for dx, dy in ((-r, 0), (r, 0), (0, -r), (0, r),
@@ -502,7 +502,7 @@ class OctoUpdaterApp(tk.Tk):
             cv.create_oval(bx - 8, by - 8, bx + 8, by + 8,
                            fill=C_GOLD, outline="", tags=tag)
             cv.create_text(bx, by, text=str(count),
-                           font=(_UI_FONT, 8, "bold"),
+                           font=self._font(8, "bold"),
                            fill="#1a1408", tags=tag)
 
     def _switch_tab(self, tab: str):
@@ -660,7 +660,8 @@ class OctoUpdaterApp(tk.Tk):
         self._logo_y = HDR_H // 2 - 6
         self._draw_logo()
 
-        nav_font = tkfont.Font(family=_UI_FONT, size=11, weight="bold")
+        nav_font = tkfont.Font(family=_UI_FONT,
+                               size=-self._ui.px(11), weight="bold")
         tabs = ["NEWS", "TWEAKS", "ADDONS", "MODS"]
         self._active_tab  = "NEWS"
         self._nav_pos     = {}
@@ -723,7 +724,7 @@ class OctoUpdaterApp(tk.Tk):
         cv = self._hdr_canvas
         cv.delete("logo")
         cv.create_text(24, self._logo_y, text="Octo Updater",
-                       font=(_UI_FONT, 24, "bold"),
+                       font=self._font(24, "bold"),
                        fill="#b478d9" if hover else "#9a5cbf",
                        anchor="w", tags="logo")
 
@@ -735,7 +736,7 @@ class OctoUpdaterApp(tk.Tk):
             return
         cv.create_text(self._logo_cx, self._logo_y + 26,
                        text="Update available!",
-                       font=(_UI_FONT, 10, "bold"),
+                       font=self._font(10, "bold"),
                        fill=C_GOLD_LT if hover else C_GOLD,
                        anchor="n", tags="upd_label")
         lb = cv.bbox("upd_label")
@@ -746,7 +747,7 @@ class OctoUpdaterApp(tk.Tk):
     def _draw_gear(self, hover: bool = False):
         cv = self._hdr_canvas
         cv.delete("gear_icon")
-        cv.create_text(self._win_w - 10, 8, text="⚙", font=(_UI_FONT, 13),
+        cv.create_text(self._win_w - 10, 8, text="⚙", font=self._font(13),
                        fill=C_GOLD if hover else C_TEXT_DIM,
                        anchor="ne", tags="gear_icon")
 
@@ -895,12 +896,12 @@ class OctoUpdaterApp(tk.Tk):
         hdr.pack(fill="x", padx=20, pady=(16, 12))
         tk.Label(hdr,
                  text=title.upper() if title else "NEWS",
-                 font=(_UI_FONT, 13, "bold"),
+                 font=self._font(13, "bold"),
                  fg=C_PARCH_TITLE, bg=C_PARCH_BAND,
                  wraplength=self._news_left_w - 100,
                  justify="left", anchor="w").pack(side="left",
                                                   fill="x", expand=True)
-        rf = tk.Label(hdr, text="⟳", font=(_UI_FONT, 14),
+        rf = tk.Label(hdr, text="⟳", font=self._font(14),
                       fg=C_PARCH_DIM, bg=C_PARCH_BAND, cursor="hand2")
         rf.pack(side="right")
         rf.bind("<Button-1>", lambda e: self._load_featured(force=True))
@@ -910,7 +911,7 @@ class OctoUpdaterApp(tk.Tk):
         if not post:
             msg = error or ("Loading…" if loading
                             else "No news yet — check back later.")
-            tk.Label(f, text=msg, font=(_UI_FONT, 10),
+            tk.Label(f, text=msg, font=self._font(10),
                      fg=C_PARCH_DIM, bg=C_PARCH).pack(padx=20, pady=16,
                                                       anchor="w")
             return
@@ -922,7 +923,7 @@ class OctoUpdaterApp(tk.Tk):
         bl = tk.Frame(f, bg=C_PARCH_BAND)
         bl.pack(fill="x")
         tk.Label(bl, text=" · ".join(byline),
-                 font=(_UI_FONT, 10, "italic"),
+                 font=self._font(10, "italic"),
                  fg=C_PARCH_DIM, bg=C_PARCH_BAND,
                  anchor="w").pack(fill="x", padx=20, pady=10)
         tk.Frame(f, bg=C_PARCH_LINE, height=1).pack(fill="x")
@@ -932,7 +933,7 @@ class OctoUpdaterApp(tk.Tk):
         # only the remaining area instead of clipping the link off the panel.
         if post.get("url"):
             link = tk.Label(f, text="⧉  Read full post on the forum",
-                            font=(_UI_FONT, 11),
+                            font=self._font(11),
                             fg=C_PARCH_LINK, bg=C_PARCH,
                             cursor="hand2", anchor="w")
             link.pack(side="bottom", fill="x", padx=20, pady=(4, 16))
@@ -943,7 +944,7 @@ class OctoUpdaterApp(tk.Tk):
 
         body = _strip_html(post.get("html", ""))
         txt = tk.Text(f, bg=C_PARCH, fg=C_PARCH_TEXT, relief="flat",
-                      font=(_UI_FONT, 11), wrap="word", height=1,
+                      font=self._font(11), wrap="word", height=1,
                       padx=2, pady=8, spacing2=4, spacing3=4,
                       highlightthickness=0, cursor="arrow")
         txt.insert("1.0", body)
@@ -958,9 +959,9 @@ class OctoUpdaterApp(tk.Tk):
         hdr = tk.Frame(f, bg=C_PANEL)
         hdr.pack(fill="x", padx=14, pady=(16, 10))
         tk.Label(hdr, text="ANNOUNCEMENTS",
-                 font=(_UI_FONT, 12, "bold"),
+                 font=self._font(12, "bold"),
                  fg=C_GOLD, bg=C_PANEL).pack(side="left")
-        rf = tk.Label(hdr, text="⟳", font=(_UI_FONT, 14),
+        rf = tk.Label(hdr, text="⟳", font=self._font(14),
                       fg=C_TEXT_DIM, bg=C_PANEL, cursor="hand2")
         rf.pack(side="right")
         rf.bind("<Button-1>", lambda e: self._load_announcements(force=True))
@@ -972,13 +973,13 @@ class OctoUpdaterApp(tk.Tk):
         if items is None or error:
             msg = error or ("Loading…" if loading
                             else "Couldn't reach the news feed.")
-            tk.Label(f, text=msg, font=FONT_BODY,
+            tk.Label(f, text=msg, font=self._font(9),
                      fg=C_TEXT_DIM, bg=C_PANEL).pack(padx=14, pady=12,
                                                      anchor="w")
             return
         if not items:
             tk.Label(f, text="No news yet — check back later.",
-                     font=FONT_BODY, fg=C_TEXT_DIM,
+                     font=self._font(9), fg=C_TEXT_DIM,
                      bg=C_PANEL).pack(padx=14, pady=12, anchor="w")
             return
 
@@ -1001,17 +1002,17 @@ class OctoUpdaterApp(tk.Tk):
             top = tk.Frame(inner, bg=C_PANEL)
             top.pack(fill="x", pady=(12, 0))
             tk.Label(top, text=_format_news_date(item.get("date", "")),
-                     font=(_UI_FONT, 9), fg=C_TEXT_DIM,
+                     font=self._font(9), fg=C_TEXT_DIM,
                      bg=C_PANEL).pack(side="right", anchor="n")
             tk.Label(top, text=item.get("title", ""),
-                     font=(_UI_FONT, 11, "bold"),
+                     font=self._font(11, "bold"),
                      fg=C_GOLD, bg=C_PANEL,
                      wraplength=wrap_w - 85, justify="left",
                      anchor="w").pack(side="left", fill="x", expand=True)
 
             if item.get("author"):
                 tk.Label(inner, text=f"by {item['author']}",
-                         font=(_UI_FONT, 10, "italic"),
+                         font=self._font(10, "italic"),
                          fg=C_TEXT_DIM, bg=C_PANEL,
                          anchor="w").pack(fill="x", pady=(2, 0))
 
@@ -1019,14 +1020,14 @@ class OctoUpdaterApp(tk.Tk):
             if len(body) > 260:
                 body = body[:260].rstrip() + "…"
             if body:
-                tk.Label(inner, text=body, font=(_UI_FONT, 10),
+                tk.Label(inner, text=body, font=self._font(10),
                          fg=C_TEXT, bg=C_PANEL,
                          wraplength=wrap_w, justify="left",
                          anchor="w").pack(fill="x", pady=(5, 0))
 
             if item.get("url"):
                 lnk = tk.Label(inner, text="⧉ Read more",
-                               font=(_UI_FONT, 10),
+                               font=self._font(10),
                                fg=C_GOLD, bg=C_PANEL,
                                cursor="hand2", anchor="w")
                 lnk.pack(fill="x", pady=(5, 0))
@@ -1057,7 +1058,7 @@ class OctoUpdaterApp(tk.Tk):
         # Packed on demand by _refresh_tweaks_buttons(): Apply appears only
         # when UI values differ from the saved config, Reset only when the
         # saved values differ from the defaults.
-        apl = tk.Label(foot, text="Apply", font=(_UI_FONT, 11),
+        apl = tk.Label(foot, text="Apply", font=self._font(11),
                        fg=C_TEXT, bg=C_PANEL_BDR, cursor="hand2",
                        padx=16, pady=4)
         apl.bind("<Button-1>", lambda e: self._apply_tweaks())
@@ -1065,7 +1066,7 @@ class OctoUpdaterApp(tk.Tk):
         apl.bind("<Leave>",    lambda e: apl.configure(bg=C_PANEL_BDR, fg=C_TEXT))
         self._tweaks_apply_btn = apl
 
-        rst = tk.Label(foot, text="Reset", font=(_UI_FONT, 11),
+        rst = tk.Label(foot, text="Reset", font=self._font(11),
                        fg=C_TEXT, bg=C_PANEL_BDR, cursor="hand2",
                        padx=16, pady=4)
         rst.bind("<Button-1>", lambda e: self._reset_tweaks())
@@ -1090,7 +1091,7 @@ class OctoUpdaterApp(tk.Tk):
         for (tid, label, kind, recommended, _, desc, mn, mx, step) in TWEAKS_ITEMS:
             if kind == "section":
                 tk.Label(self._tweaks_inner, text=label,
-                         font=(_UI_FONT, 11, "bold"),
+                         font=self._font(11, "bold"),
                          fg=C_GOLD, bg=C_PANEL,
                          anchor="w").pack(fill="x", padx=PAD_X, pady=(10, 2))
                 tk.Frame(self._tweaks_inner, bg=C_DIVIDER, height=1).pack(
@@ -1101,7 +1102,7 @@ class OctoUpdaterApp(tk.Tk):
             row.pack(fill="x", padx=PAD_X, pady=3)
 
             tk.Label(row, text=label,
-                     font=(_UI_FONT, 10, "bold"),
+                     font=self._font(10, "bold"),
                      fg=C_TEXT, bg=C_PANEL,
                      width=22, anchor="w").pack(side="left")
 
@@ -1123,7 +1124,7 @@ class OctoUpdaterApp(tk.Tk):
                 entry = tk.Entry(row, textvariable=var,
                                  bg="#18181e", fg=C_TEXT,
                                  insertbackground=C_GOLD,
-                                 relief="flat", font=FONT_MONO,
+                                 relief="flat", font=self._mono(9),
                                  width=7,
                                  highlightthickness=1,
                                  highlightbackground=C_PANEL_BDR,
@@ -1146,7 +1147,7 @@ class OctoUpdaterApp(tk.Tk):
 
             if desc:
                 tk.Label(row, text=desc,
-                         font=(_UI_FONT, 10), fg=C_TEXT_DIM, bg=C_PANEL,
+                         font=self._font(10), fg=C_TEXT_DIM, bg=C_PANEL,
                          wraplength=self._row_wrap(), justify="left",
                          anchor="w"
                          ).pack(side="left", fill="x", expand=True)
@@ -1339,12 +1340,12 @@ class OctoUpdaterApp(tk.Tk):
         note = tk.Frame(outer, bg=C_PANEL)
         note.pack(fill="x", padx=16, pady=(14, 8), anchor="w")
         tk.Label(note, text="Mods marked with ",
-                 font=(_UI_FONT, 10), fg=C_TEXT_DIM,
+                 font=self._font(10), fg=C_TEXT_DIM,
                  bg=C_PANEL).pack(side="left")
-        tk.Label(note, text="★", font=(_UI_FONT, 10),
+        tk.Label(note, text="★", font=self._font(10),
                  fg=C_GOLD, bg=C_PANEL).pack(side="left")
         tk.Label(note, text=" are essential",
-                 font=(_UI_FONT, 10), fg=C_TEXT_DIM,
+                 font=self._font(10), fg=C_TEXT_DIM,
                  bg=C_PANEL).pack(side="left")
 
         tk.Frame(outer, bg=C_DIVIDER, height=1).pack(fill="x", padx=16, pady=(0, 4))
@@ -1376,7 +1377,7 @@ class OctoUpdaterApp(tk.Tk):
         # Packed on demand by _refresh_apply_btn_visibility(): shown only
         # when there are unapplied checkbox changes or a mod is in error.
         self._apply_btn = tk.Label(foot, text="Apply",
-                                   font=(_UI_FONT, 11),
+                                   font=self._font(11),
                                    fg=C_TEXT, bg=C_PANEL_BDR,
                                    cursor="hand2", padx=16, pady=4)
         self._apply_btn.bind("<Button-1>", lambda e: self._apply_mods())
@@ -1472,17 +1473,17 @@ class OctoUpdaterApp(tk.Tk):
             # Essential mods get a gold star badge; a fixed-width slot keeps
             # the names aligned whether or not the star is present.
             star = tk.Label(name_f, text="★" if essential else "",
-                            font=(_UI_FONT, 9), fg=C_GOLD, bg=C_PANEL,
+                            font=self._font(9), fg=C_GOLD, bg=C_PANEL,
                             width=2, anchor="w")
             star.pack(side="left")
             if essential:
                 self._add_tooltip(star, "Essential mod")
             name_label = tk.Label(name_f, text=mod["name"],
-                                  font=(_UI_FONT, 10, "bold"),
+                                  font=self._font(10, "bold"),
                                   fg=name_col, bg=C_PANEL, anchor="w")
             name_label.pack(side="left")
             ver_label = tk.Label(name_f, text=f"  {latest_ver}",
-                                 font=(_UI_FONT, 9), fg=C_TEXT_DIM, bg=C_PANEL)
+                                 font=self._font(9), fg=C_TEXT_DIM, bg=C_PANEL)
             ver_label.pack(side="left")
 
             enabled_var = tk.BooleanVar(value=enabled)
@@ -1507,10 +1508,10 @@ class OctoUpdaterApp(tk.Tk):
                            command=lambda m=mid, v=ignore_var: self._set_ignore(m, v)
                            ).pack(side="left")
             tk.Label(ig_f, text="Ignore updates",
-                     font=(_UI_FONT, 9), fg=C_TEXT_DIM, bg=C_PANEL).pack(side="left")
+                     font=self._font(9), fg=C_TEXT_DIM, bg=C_PANEL).pack(side="left")
 
             link = tk.Label(row, text="⧉",
-                            font=(_UI_FONT, 12), fg=C_TEXT_DIM,
+                            font=self._font(12), fg=C_TEXT_DIM,
                             bg=C_PANEL, cursor="hand2")
             link.pack(side="right", padx=4)
             link.bind("<Button-1>", lambda e, u=mod["repo_url"]: self._open_url(u))
@@ -1518,7 +1519,7 @@ class OctoUpdaterApp(tk.Tk):
             link.bind("<Leave>",    lambda e, l=link: l.configure(fg=C_TEXT_DIM))
 
             update_label = tk.Label(row, text="update",
-                                    font=(_UI_FONT, 10, "bold"),
+                                    font=self._font(10, "bold"),
                                     fg=C_GOLD, bg=C_PANEL, cursor="hand2")
             update_label.bind("<Button-1>", lambda e, m=mid: self._update_mod(m))
             update_label.bind("<Enter>", lambda e, l=update_label:
@@ -1528,7 +1529,7 @@ class OctoUpdaterApp(tk.Tk):
             self._style_mod_action_label(update_label, mod, state, live)
 
             desc_label = tk.Label(row, text=mod["description"],
-                                  font=(_UI_FONT, 10),
+                                  font=self._font(10),
                                   fg=(C_TEXT if enabled else C_TEXT_DIM),
                                   bg=C_PANEL, wraplength=self._row_wrap(),
                                   justify="left", anchor="w")
@@ -1536,7 +1537,7 @@ class OctoUpdaterApp(tk.Tk):
 
             existing_err = state.get("error")
             error_label = tk.Label(container, text="",
-                                   font=(_UI_FONT, 9), fg=C_ERR,
+                                   font=self._font(9), fg=C_ERR,
                                    bg=C_PANEL, anchor="w", padx=16)
             if existing_err:
                 name_label.configure(fg=C_ERR)
@@ -1960,23 +1961,23 @@ class OctoUpdaterApp(tk.Tk):
             "write", self._on_addon_filter_changed)
         ent = tk.Entry(top, textvariable=self._addon_filter_var,
                        bg="#2b2244", fg=C_TEXT, insertbackground=C_GOLD,
-                       relief="flat", font=(_UI_FONT, 10), width=24,
+                       relief="flat", font=self._font(10), width=24,
                        highlightthickness=1,
                        highlightbackground="#4a3c6e",
                        highlightcolor=C_GOLD)
-        tk.Label(top, text="⌕", font=(_UI_FONT, 18),
+        tk.Label(top, text="⌕", font=self._font(18),
                  fg=C_TEXT, bg=C_PANEL).pack(side="right")
         ent.pack(side="right", ipady=4, padx=(0, 6))
 
         legend = tk.Frame(top, bg=C_PANEL)
         legend.pack(side="left")
         tk.Label(legend, text="Addons marked with ",
-                 font=(_UI_FONT, 10), fg=C_TEXT_DIM,
+                 font=self._font(10), fg=C_TEXT_DIM,
                  bg=C_PANEL).pack(side="left")
-        tk.Label(legend, text="★", font=(_UI_FONT, 10),
+        tk.Label(legend, text="★", font=self._font(10),
                  fg=C_GOLD, bg=C_PANEL).pack(side="left")
         tk.Label(legend, text=" are recommended",
-                 font=(_UI_FONT, 10), fg=C_TEXT_DIM,
+                 font=self._font(10), fg=C_TEXT_DIM,
                  bg=C_PANEL).pack(side="left")
 
         list_frame = tk.Frame(outer, bg=C_PANEL)
@@ -2003,7 +2004,7 @@ class OctoUpdaterApp(tk.Tk):
         foot.columnconfigure(2, weight=1)
 
         chk = tk.Label(foot, text="⟳  Check for updates",
-                       font=(_UI_FONT, 10), fg=C_TEXT_DIM, bg=C_PANEL,
+                       font=self._font(10), fg=C_TEXT_DIM, bg=C_PANEL,
                        cursor="hand2")
         chk.grid(row=0, column=0, sticky="w")
         chk.bind("<Button-1>", lambda e: self._addons_verify(force=True))
@@ -2011,7 +2012,7 @@ class OctoUpdaterApp(tk.Tk):
         chk.bind("<Leave>", lambda e: chk.configure(fg=C_TEXT_DIM))
 
         add = tk.Label(foot, text="+  Add custom git addon",
-                       font=(_UI_FONT, 10, "bold"), fg="#d76f9e",
+                       font=self._font(10, "bold"), fg="#d76f9e",
                        bg=C_PANEL, cursor="hand2")
         add.grid(row=0, column=1)
         add.bind("<Button-1>", lambda e: self._open_custom_addon_dialog())
@@ -2019,7 +2020,7 @@ class OctoUpdaterApp(tk.Tk):
         add.bind("<Leave>", lambda e: add.configure(fg="#d76f9e"))
 
         self._addons_right_lbl = tk.Label(foot, text="",
-                                          font=(_UI_FONT, 10, "bold"),
+                                          font=self._font(10, "bold"),
                                           bg=C_PANEL, cursor="hand2")
         self._addons_right_lbl.grid(row=0, column=2, sticky="e")
         self._addons_right_lbl.bind("<Button-1>",
@@ -2280,9 +2281,9 @@ class OctoUpdaterApp(tk.Tk):
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
         tk.Label(hdr, text="ADD CUSTOM GIT ADDON",
-                 font=(_UI_FONT, 13, "bold"),
+                 font=self._font(13, "bold"),
                  fg=C_PURPLE, bg=P_HDR).pack(side="left", padx=18)
-        x_btn = tk.Label(hdr, text="✕", font=(_UI_FONT, 12),
+        x_btn = tk.Label(hdr, text="✕", font=self._font(12),
                          fg=C_TEXT_DIM, bg=P_HDR, cursor="hand2")
         x_btn.pack(side="right", padx=16)
         x_btn.bind("<Button-1>", lambda e: self._close_settings())
@@ -2293,17 +2294,17 @@ class OctoUpdaterApp(tk.Tk):
         body = tk.Frame(panel, bg=P_BG)
         body.pack(fill="both", expand=True, padx=22, pady=(16, 12))
         tk.Label(body, text="REPOSITORY URL",
-                 font=(_UI_FONT, 10, "bold"),
+                 font=self._font(10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(anchor="w")
         url_var = tk.StringVar()
         tk.Entry(body, textvariable=url_var, bg=P_INP, fg=C_TEXT,
-                 insertbackground=C_GOLD, relief="flat", font=FONT_MONO,
+                 insertbackground=C_GOLD, relief="flat", font=self._mono(9),
                  highlightthickness=1, highlightbackground=P_BDR,
                  highlightcolor=C_GOLD).pack(fill="x", ipady=7, pady=(6, 6))
         tk.Label(body,
                  text="Allowed hosts: " + ", ".join(ADDON_GIT_HOSTS),
-                 font=(_UI_FONT, 9), fg=C_TEXT_DIM, bg=P_BG).pack(anchor="w")
-        err = tk.Label(body, text="", font=(_UI_FONT, 9),
+                 font=self._font(9), fg=C_TEXT_DIM, bg=P_BG).pack(anchor="w")
+        err = tk.Label(body, text="", font=self._font(9),
                        fg=C_ERR, bg=P_BG)
         err.pack(anchor="w")
 
@@ -2325,7 +2326,7 @@ class OctoUpdaterApp(tk.Tk):
                                 "toc": {}, "description": None,
                                 "error": None}])
 
-        btn = tk.Label(body, text="Install", font=(_UI_FONT, 11, "bold"),
+        btn = tk.Label(body, text="Install", font=self._font(11, "bold"),
                        fg=C_TEXT, bg=P_BDR, cursor="hand2", padx=16, pady=7)
         btn.pack(anchor="e", pady=(8, 0))
         btn.bind("<Button-1>", lambda e: submit())
@@ -2434,14 +2435,14 @@ class OctoUpdaterApp(tk.Tk):
         hdr = tk.Frame(f, bg=C_PANEL)
         hdr.pack(fill="x", pady=(10, 2))
         arrow = tk.Label(hdr, text="▾" if is_open else "▸",
-                         font=(_UI_FONT, 14, "bold"),
+                         font=self._font(14, "bold"),
                          fg=C_GOLD, bg=C_PANEL, cursor="hand2", width=2)
         arrow.pack(side="left")
         lbl = tk.Label(hdr, text=title,
-                       font=(_UI_FONT, 12, "bold"),
+                       font=self._font(12, "bold"),
                        fg=C_GOLD, bg=C_PANEL, cursor="hand2")
         lbl.pack(side="left")
-        tk.Label(hdr, text=f"  {len(rows)}", font=(_UI_FONT, 10),
+        tk.Label(hdr, text=f"  {len(rows)}", font=self._font(10),
                  fg=C_TEXT_DIM, bg=C_PANEL).pack(side="left")
 
         def toggle(_e=None, t=title):
@@ -2454,7 +2455,7 @@ class OctoUpdaterApp(tk.Tk):
         if is_open and not rows:
             msg = ("Verifying…" if self._addons_status["state"] == "verifying"
                    else "Nothing here.")
-            tk.Label(f, text=msg, font=(_UI_FONT, 10), fg=C_TEXT_DIM,
+            tk.Label(f, text=msg, font=self._font(10), fg=C_TEXT_DIM,
                      bg=C_PANEL).pack(anchor="w", padx=8)
 
     def _addon_row(self, rec: dict):
@@ -2522,7 +2523,7 @@ class OctoUpdaterApp(tk.Tk):
         if rec.get("git"):
             repo_url = rec["git"][:-4] if rec["git"].endswith(".git") \
                 else rec["git"]
-            lnk = tk.Label(row, text="⧉", font=(_UI_FONT, 10),
+            lnk = tk.Label(row, text="⧉", font=self._font(10),
                            fg=C_TEXT_DIM, bg=C_PANEL, cursor="hand2")
             lnk.pack(side="right", padx=(4, 2))
             lnk.bind("<Button-1>", lambda e, u=repo_url: self._open_url(u))
@@ -2531,15 +2532,15 @@ class OctoUpdaterApp(tk.Tk):
 
         status = rec["status"]
         if status == "downloading":
-            tk.Label(row, text="downloading…", font=(_UI_FONT, 10),
+            tk.Label(row, text="downloading…", font=self._font(10),
                      fg=C_TEXT_DIM, bg=C_PANEL).pack(side="right", padx=4)
         elif status == "invalid" or rec.get("error"):
             # Short marker on the right; the full reason gets its own line
             # under the row (long messages would squeeze the description).
-            tk.Label(row, text="⛔ Addon error", font=(_UI_FONT, 10),
+            tk.Label(row, text="⛔ Addon error", font=self._font(10),
                      fg=C_ERR, bg=C_PANEL).pack(side="right", padx=4)
         elif status == "outOfDate" and installed:
-            upd = tk.Label(row, text="Update", font=(_UI_FONT, 10, "bold"),
+            upd = tk.Label(row, text="Update", font=self._font(10, "bold"),
                            fg=C_GOLD, bg=C_PANEL, cursor="hand2")
             upd.pack(side="right", padx=4)
             upd.bind("<Button-1>",
@@ -2547,13 +2548,13 @@ class OctoUpdaterApp(tk.Tk):
             upd.bind("<Enter>", lambda e, w=upd: w.configure(fg=C_GOLD_LT))
             upd.bind("<Leave>", lambda e, w=upd: w.configure(fg=C_GOLD))
         elif warnings:
-            tk.Label(row, text=f"⚠ {warnings[0]}", font=(_UI_FONT, 10),
+            tk.Label(row, text=f"⚠ {warnings[0]}", font=self._font(10),
                      fg="#d4b43c", bg=C_PANEL).pack(side="right", padx=4)
         elif status == "upToDate":
-            tk.Label(row, text="Up to date", font=(_UI_FONT, 10),
+            tk.Label(row, text="Up to date", font=self._font(10),
                      fg=C_TEXT_DIM, bg=C_PANEL).pack(side="right", padx=4)
         elif status == "unknown":
-            tk.Label(row, text="Not versioned", font=(_UI_FONT, 10),
+            tk.Label(row, text="Not versioned", font=self._font(10),
                      fg=C_TEXT_DIM, bg=C_PANEL).pack(side="right", padx=4)
 
         # name (WoW colour codes honoured) + repo link
@@ -2564,25 +2565,25 @@ class OctoUpdaterApp(tk.Tk):
         # titles aligned whether or not the star is present.
         is_recommended = rec["folder"] in RECOMMENDED_ADDONS
         star = tk.Label(name_f, text="★" if is_recommended else "",
-                        font=(_UI_FONT, 9), fg=C_GOLD, bg=C_PANEL,
+                        font=self._font(9), fg=C_GOLD, bg=C_PANEL,
                         width=2, anchor="w")
         star.pack(side="left")
         if is_recommended:
             self._add_tooltip(star, "Recommended addon")
         title = toc.get("Title") or rec["folder"]
         for seg, col in parse_wow_colored(title)[:6]:
-            tk.Label(name_f, text=seg, font=(_UI_FONT, 10, "bold"),
+            tk.Label(name_f, text=seg, font=self._font(10, "bold"),
                      fg=col or C_TEXT, bg=C_PANEL).pack(side="left")
 
         desc = strip_wow_colors(toc.get("Notes")
                                 or rec.get("description") or "")
-        tk.Label(row, text=desc, font=(_UI_FONT, 10), fg=C_TEXT_DIM,
+        tk.Label(row, text=desc, font=self._font(10), fg=C_TEXT_DIM,
                  bg=C_PANEL, wraplength=self._row_wrap(), justify="left",
                  anchor="w").pack(side="left", fill="x", expand=True)
 
         if rec.get("error"):
             tk.Label(f, text=f"  ⚠  {rec['error']}",
-                     font=(_UI_FONT, 9), fg=C_ERR, bg=C_PANEL,
+                     font=self._font(9), fg=C_ERR, bg=C_PANEL,
                      wraplength=840, justify="left",
                      anchor="w").pack(fill="x", pady=(0, 3))
 
@@ -2622,7 +2623,7 @@ class OctoUpdaterApp(tk.Tk):
 
         self._status_var = tk.StringVar(value="Ready to update")
         tk.Label(left, textvariable=self._status_var,
-                 font=(_UI_FONT, 10, "bold"),
+                 font=self._font(10, "bold"),
                  fg=C_TEXT, bg=C_BG).pack(anchor="w")
 
         # Thin halo frame around the button gives a soft glow that follows
@@ -2631,7 +2632,7 @@ class OctoUpdaterApp(tk.Tk):
         self._btn_glow = tk.Frame(left, bg="#4a3812")
         self._btn_glow.pack(anchor="w", pady=(6, 6))
         self._upd_btn = tk.Label(self._btn_glow, text="UPDATE",
-                                 font=(_UI_FONT, 11, "bold"),
+                                 font=self._font(11, "bold"),
                                  fg="#ffffff", bg=C_GOLD,
                                  cursor="hand2",
                                  width=14, pady=7,
@@ -2643,7 +2644,7 @@ class OctoUpdaterApp(tk.Tk):
 
         self._client_ver_var = tk.StringVar(value="")
         tk.Label(left, textvariable=self._client_ver_var,
-                 font=FONT_VER, fg=C_TEXT_DIM, bg=C_BG).pack(
+                 font=self._font(8), fg=C_TEXT_DIM, bg=C_BG).pack(
                  anchor="w", pady=(0, 36))
 
         pb_frame = tk.Frame(foot, bg=C_BG)
@@ -2660,13 +2661,13 @@ class OctoUpdaterApp(tk.Tk):
 
         self._prog_label_var = tk.StringVar(value="")
         tk.Label(pb_frame, textvariable=self._prog_label_var,
-                 font=(_UI_FONT, 10), fg=C_TEXT, bg=C_BG).pack(
+                 font=self._font(10), fg=C_TEXT, bg=C_BG).pack(
                  side="bottom", pady=(0, 6))
 
         self._draw_progress(0.0)
 
         tk.Label(foot, text=f"v{UPDATER_VERSION}",
-                 font=("Courier New", 8),
+                 font=self._mono(8),
                  fg="#555560", bg=C_BG).place(relx=1.0, rely=1.0,
                                               x=-10, y=-6, anchor="se")
 
@@ -2845,9 +2846,9 @@ class OctoUpdaterApp(tk.Tk):
         hdr = tk.Frame(panel, bg=P_HDR, height=46)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
-        tk.Label(hdr, text="SETTINGS", font=(_UI_FONT, 13, "bold"),
+        tk.Label(hdr, text="SETTINGS", font=self._font(13, "bold"),
                  fg=C_PURPLE, bg=P_HDR).pack(side="left", padx=18)
-        x_btn = tk.Label(hdr, text="✕", font=(_UI_FONT, 12),
+        x_btn = tk.Label(hdr, text="✕", font=self._font(12),
                          fg=C_TEXT_DIM, bg=P_HDR, cursor="hand2")
         x_btn.pack(side="right", padx=16)
         x_btn.bind("<Button-1>", lambda e: self._close_settings())
@@ -2862,9 +2863,9 @@ class OctoUpdaterApp(tk.Tk):
         loc_row = tk.Frame(body, bg=P_BG)
         loc_row.pack(fill="x")
         tk.Label(loc_row, text="GAME FOLDER",
-                 font=(_UI_FONT, 10, "bold"),
+                 font=self._font(10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(side="left")
-        opn = tk.Label(loc_row, text="Open folder", font=FONT_BODY,
+        opn = tk.Label(loc_row, text="Open folder", font=self._font(9),
                        fg=C_TEXT_DIM, bg=P_BG, cursor="hand2")
         opn.pack(side="left", padx=(16, 0))
         opn.bind("<Button-1>", lambda e: self._open_client_folder())
@@ -2876,13 +2877,13 @@ class OctoUpdaterApp(tk.Tk):
         path_row = tk.Frame(body, bg=P_BG)
         path_row.pack(fill="x", pady=(8, 0))
         ent = tk.Entry(path_row, textvariable=self._path_var,
-                       bg=P_INP, fg=C_TEXT, relief="flat", font=FONT_MONO,
+                       bg=P_INP, fg=C_TEXT, relief="flat", font=self._mono(9),
                        state="readonly", readonlybackground=P_INP,
                        highlightthickness=1, highlightbackground=P_BDR,
                        highlightcolor=P_BDR)
         ent.pack(side="left", fill="x", expand=True, ipady=7)
         chg = tk.Label(path_row, text="Change",
-                       font=(_UI_FONT, 10, "bold"),
+                       font=self._font(10, "bold"),
                        fg=C_TEXT, bg=P_BDR, cursor="hand2", padx=16, pady=7)
         chg.pack(side="left", padx=(8, 0))
         chg.bind("<Button-1>", lambda e: self._settings_change_dir())
@@ -2890,19 +2891,19 @@ class OctoUpdaterApp(tk.Tk):
         chg.bind("<Leave>",    lambda e: chg.configure(bg=P_BDR, fg=C_TEXT))
 
         tk.Label(body, text="DOWNLOAD MIRROR",
-                 font=(_UI_FONT, 10, "bold"),
+                 font=self._font(10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(anchor="w", pady=(20, 4))
         mir = tk.Frame(body, bg=P_BG)
         mir.pack(fill="x")
-        tk.Label(mir, text="●", font=(_UI_FONT, 9),
+        tk.Label(mir, text="●", font=self._font(9),
                  fg=C_OK, bg=P_BG).pack(side="left")
-        tk.Label(mir, text=" Iceland", font=(_UI_FONT, 10, "bold"),
+        tk.Label(mir, text=" Iceland", font=self._font(10, "bold"),
                  fg=C_TEXT, bg=P_BG).pack(side="left")
         self._mirror_status_lbl = tk.Label(mir, text="checking…",
-                                           font=(_UI_FONT, 9),
+                                           font=self._font(9),
                                            fg=C_TEXT_DIM, bg=P_BG)
         self._mirror_status_lbl.pack(side="left", padx=(8, 0))
-        rf = tk.Label(mir, text="⟳", font=(_UI_FONT, 11),
+        rf = tk.Label(mir, text="⟳", font=self._font(11),
                       fg=C_TEXT_DIM, bg=P_BG, cursor="hand2")
         rf.pack(side="left", padx=(6, 0))
         rf.bind("<Button-1>", lambda e: self._check_mirror_status())
@@ -2923,7 +2924,7 @@ class OctoUpdaterApp(tk.Tk):
         rcol.grid(row=0, column=1, sticky="nw")
 
         tk.Label(lcol, text="TROUBLESHOOTING",
-                 font=(_UI_FONT, 10, "bold"),
+                 font=self._font(10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(anchor="w")
 
         def _titem(icon, text, cmd, icon_color=C_GOLD):
@@ -2931,10 +2932,10 @@ class OctoUpdaterApp(tk.Tk):
             r.pack(anchor="w", pady=(12, 0))
             # Monochrome glyphs in a fixed-width slot so all icons line up
             # and read at the same size (color emoji would render larger).
-            ic = tk.Label(r, text=icon, font=("Segoe UI Symbol", 11),
+            ic = tk.Label(r, text=icon, font=self._font(11, family="Segoe UI Symbol"),
                           fg=icon_color, bg=P_BG, width=2, anchor="w")
             ic.pack(side="left")
-            tl = tk.Label(r, text=text, font=(_UI_FONT, 10),
+            tl = tk.Label(r, text=text, font=self._font(10),
                           fg=C_TEXT, bg=P_BG)
             tl.pack(side="left")
             for w in (r, ic, tl):
@@ -2949,7 +2950,7 @@ class OctoUpdaterApp(tk.Tk):
                    self._allow_through_antivirus)
 
         tk.Label(lcol, text="SUPPORT THE DEVELOPER",
-                 font=(_UI_FONT, 10, "bold"),
+                 font=self._font(10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(anchor="w", pady=(22, 0))
         _titem("♥", "Ko-fi",
                lambda: self._open_url("https://ko-fi.com/rebased"),
@@ -2959,27 +2960,27 @@ class OctoUpdaterApp(tk.Tk):
                icon_color="#b5854f")
 
         tk.Label(rcol, text="GENERAL",
-                 font=(_UI_FONT, 10, "bold"),
+                 font=self._font(10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(anchor="w")
         if can_launch_client():
             tk.Checkbutton(rcol, text=" Clear WDB on game launch",
                            variable=self._clear_wdb_var,
                            command=self._toggle_clear_wdb,
-                           font=(_UI_FONT, 10), fg=C_TEXT, bg=P_BG,
+                           font=self._font(10), fg=C_TEXT, bg=P_BG,
                            activebackground=P_BG, activeforeground=C_TEXT,
                            selectcolor=P_INP, highlightthickness=0, bd=0,
                            cursor="hand2").pack(anchor="w", pady=(10, 0))
             tk.Checkbutton(rcol, text=" Close Octo Updater on game launch",
                            variable=self._close_on_launch_var,
                            command=self._toggle_close_on_launch,
-                           font=(_UI_FONT, 10), fg=C_TEXT, bg=P_BG,
+                           font=self._font(10), fg=C_TEXT, bg=P_BG,
                            activebackground=P_BG, activeforeground=C_TEXT,
                            selectcolor=P_INP, highlightthickness=0, bd=0,
                            cursor="hand2").pack(anchor="w", pady=(10, 0))
         cb_auto_mods = tk.Checkbutton(
             rcol, text=" Install essential mods",
             variable=self._auto_mods_var, command=self._toggle_auto_mods,
-            font=(_UI_FONT, 10), fg=C_TEXT, bg=P_BG,
+            font=self._font(10), fg=C_TEXT, bg=P_BG,
             activebackground=P_BG, activeforeground=C_TEXT,
             selectcolor=P_INP, highlightthickness=0, bd=0, cursor="hand2")
         cb_auto_mods.pack(anchor="w", pady=(10, 0))
@@ -2990,7 +2991,7 @@ class OctoUpdaterApp(tk.Tk):
         tk.Checkbutton(rcol, text=" Install recommended addons",
                        variable=self._auto_addons_var,
                        command=self._toggle_auto_addons,
-                       font=(_UI_FONT, 10), fg=C_TEXT, bg=P_BG,
+                       font=self._font(10), fg=C_TEXT, bg=P_BG,
                        activebackground=P_BG, activeforeground=C_TEXT,
                        selectcolor=P_INP, highlightthickness=0, bd=0,
                        cursor="hand2").pack(anchor="w", pady=(10, 0))
@@ -3207,7 +3208,7 @@ class OctoUpdaterApp(tk.Tk):
 
         top = tk.Frame(win, bg=C_BG)
         top.pack(fill="x", padx=12, pady=(10, 4))
-        tk.Label(top, text="SESSION LOG", font=(_UI_FONT, 9, "bold"),
+        tk.Label(top, text="SESSION LOG", font=self._font(9, "bold"),
                  fg=C_GOLD, bg=C_BG).pack(side="left")
 
         outer = tk.Frame(win, bg=C_BG)
@@ -3216,7 +3217,7 @@ class OctoUpdaterApp(tk.Tk):
         sb.pack(side="right", fill="y")
         txt = tk.Text(outer, bg=C_LOG_BG, fg=C_TEXT,
                       insertbackground=C_TEXT, relief="flat",
-                      font=FONT_MONO, wrap="word", state="disabled",
+                      font=self._mono(9), wrap="word", state="disabled",
                       padx=10, pady=8, yscrollcommand=sb.set,
                       cursor="arrow", selectbackground=C_PANEL_BDR)
         txt.pack(side="left", fill="both", expand=True)

@@ -4,8 +4,9 @@ The interface was designed around fixed logical dimensions (1000x700). To
 make it work well across display scalings (100%–200%) and window sizes,
 all geometry flows through these helpers:
 
-- `UIScale` maps a logical point size / pixel size to the detected display
-  scale factor, and drives Tk's `tk scaling` so every font scales too.
+- `UIScale` maps a logical point size to the detected display scale factor
+  and produces *pixel-sized* Tk font specs (negative size), so fonts scale
+  reliably even on platforms where Tk's `tk scaling` is ignored.
 - Pure layout helpers (`panel_rect`, `news_columns`, `settings_rect`,
   `layout_mode`) compute placements from a *current* window size instead of
   hardcoded constants, so the UI can resize and reflow.
@@ -54,12 +55,25 @@ class UIScale:
         """Scale a logical (100% DPI) pixel size to the display size."""
         return max(1, int(round(value * self.factor)))
 
-    def font(self, size, weight=None):
-        """A font tuple at the given logical point size, DPI-scaled."""
-        pts = max(7, int(round(size * self.factor)))
+    def px(self, size):
+        """Scaled pixel size for a logical (100% DPI) point size."""
+        return max(7, int(round(size * self.factor * TK_BASE_SCALING)))
+
+    def font(self, size, weight=None, family=None):
+        """A Tk font spec at the given logical point size, DPI-scaled.
+
+        The size is negative (Tk pixel mode) so the rendered size is exactly
+        `px(size)` pixels regardless of the platform's `tk scaling` handling.
+        """
+        fam = family or ui_font_family()
+        spec = (fam, -self.px(size))
         if weight:
-            return (ui_font_family(), pts, weight)
-        return (ui_font_family(), pts)
+            spec += (weight,)
+        return spec
+
+    def mono(self, size, weight=None):
+        """A monospace Tk font spec at the given logical point size."""
+        return self.font(size, weight, family="Consolas")
 
     def tk_scaling(self) -> float:
         """The `tk scaling` value that makes points render at factor×96 DPI."""

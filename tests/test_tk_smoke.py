@@ -76,6 +76,20 @@ def test_relayout_repositions_panels(app):
     assert pw > 100 and ph > 100
 
 
+def test_widget_font_is_dpi_scaled(app):
+    import tkinter.font as tkfont
+
+    fam, px = app._font(10)
+    label = tkinter.Label(app, text="sample", font=app._font(10))
+    try:
+        f = tkfont.Font(family=fam, size=px)
+        # Tk keeps the requested negative (pixel) size as-is.
+        assert f.cget("size") == px
+        assert px == -app._ui.px(10)
+    finally:
+        label.destroy()
+
+
 def test_mouse_wheel_and_button_handlers_exist(app):
     assert hasattr(app, "_on_mousewheel")
     assert hasattr(app, "_on_wheel_button")
