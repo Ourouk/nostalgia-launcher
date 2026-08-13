@@ -44,6 +44,9 @@ from config_store import (
 import security_http
 from security_http import secure_urlopen, ALLOWED_DOWNLOAD_HOSTS
 
+import log_sink
+from log_sink import log, _LOG_Q
+
 # ──────────────────────────────────────────────────────────────────────────────
 #  Constants
 # ──────────────────────────────────────────────────────────────────────────────
@@ -122,17 +125,7 @@ def ensure_dir(path):
 
 
 # ── logging ─────────────────────────────────────────────────────────────────
-# One thread-safe log sink for the whole app. Any function — worker thread or
-# main — calls log(); the GUI drains _LOG_Q on the main thread (see
-# OctoUpdaterApp._poll) and renders each line. This keeps all Tk access on the
-# main thread without threading a log_fn argument through every function.
-_LOG_Q: queue.Queue = queue.Queue()
-
-
-def log(msg: str, tag: str = ""):
-    """Append a line to the app log. Thread-safe; safe to call before the GUI
-    exists (the queue just buffers until it's drained)."""
-    _LOG_Q.put((msg, tag))
+# See log_sink.py — log()/_LOG_Q are the shared, thread-safe log channel.
 
 
 def remove_wdb(client_dir: str):
