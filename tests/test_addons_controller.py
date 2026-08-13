@@ -1,0 +1,425 @@
+"""Unit tests for the addons controller (addons_controller).
+
+No Tk involved: the controller is driven directly and its effects are read
+from the shared EventDispatcher and its AddonsState. Backends (catalog fetch,
+remote/cached sha lookup, install helpers, .toc parsing, config store, folder
+deletion) are swapped for fakes via monkeypatch so nothing touches the
+network or the real filesystem.
+"""
+
+import os
+import time
+
+import pytest
+
+import addons_controller as ac
+from addons_controller import C_OK, C_TEXT_DIM, AddonsController
+from ui_events import (
+    AddonsLoaded,
+    EventDispatcher,
+    LogMessage,
+    OperationFinished,
+    StatusChanged,
+)
+from ui_state import AddonError, AddonState
+
+
+@pytest.fixture
+def cfg(monkeypatch, tmp_path):
+    state = {"out_dir": str(tmp_path), "addons": {}}
+    monkeypatch.setattr(ac.config_store, "load_config", lambda: state)
+    monkeypatch.setattr(ac.config_store, "update_config",
+                        lambda mutator: (mutator(state), state)[1])
+    return state
+
+
+@pytest.fixture
+def backends(monkeypatch):
+    monkeypatch.setattr(ac.addons, "fetch_addons_catalog",
+                        lambda force=False: [])
+    monkeypatch.setattr(ac.addons, "addon_remote_sha",
+                        lambda git, branch=None, ref=None, force=False,
+                               raise_errors=False: "REMOTE")
+    monkeypatch.setattr(ac.addons, "addon_cached_sha",
+                        lambda git, branch=None, ref=None: "REMOTE")
+    monkeypatch.setattr(ac.addons, "install_addon_files",
+                        lambda client, folder, git, sha: None)
+    monkeypatch.setattr(ac.addons, "patch_pfui_default_profile",
+                        lambda client: None)
+    monkeypatch.setattr(ac.addons, "read_toc_file",
+                        lambda path: {"Title": "X"})
+    monkeypatch.setattr(ac.addons, "addons_path",
+                        lambda client: os.path.join(client, "Interface",
+                                                    "AddOns"))
+    monkeypatch.setattr(ac.addons, "is_allowed_git_url", lambda url: True)
+    monkeypatch.setattr(ac.shutil, "rmtree", lambda path: None)
+
+
+@pytest.fixture
+def controller(cfg, backends):
+    return AddonsController(EventDispatcher())
+
+
+def _drain_for(dispatcher, predicate, timeout=2.0):
+    """Drain until an event matching `predicate` arrives; return everything
+    drained along the way (assertion failure on timeout)."""
+    deadline = time.monotonic() + timeout
+    collected = []
+    while True:
+        collected.extend(dispatcher.drain())
+        if any(predicate(e) for e in collected):
+            return collected
+        if time.monotonic() > deadline:
+            raise AssertionError("expected event never arrived")
+        time.sleep(0.005)
+
+
+def _install_folder(client, name):
+    """Create a real installed-addon folder with a .toc on disk."""
+    addon_dir = os.path.join(client, "Interface", "AddOns", name)
+    os.makedirs(addon_dir)
+    with open(os.path.join(addon_dir, f"{name}.toc"), "w",
+              encoding="utf-8") as f:
+        f.write(f"## Title: {name}\n")
+    return addon_dir
+
+
+# ── verify ──────────────────────────────────────────────────────────────
+
+def test_verify_scans_and_posts_addons_loaded(controller, cfg, tmp_path):
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["addons"]["Foo"] = {"git": "https://github.com/x/y",
+                            "branch": None, "ref": None, "sha": "REMOTE"}
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+
+    assert controller.state.state == "done"
+    assert controller.state.busy is False
+    assert controller.state.verified_ts > 0
+    assert controller.state.addons["Foo"].status == "upToDate"
+    assert controller.state.addons["Foo"].git == "https://github.com/x/y"
+    # The empty catalog still yields the curated recommendations (and Foo is
+    # installed, so it must not also show as available).
+    assert {a.folder for a in controller.state.available} == set(
+        ac.addons.RECOMMENDED_ADDONS)
+    assert controller.updates_count == 0
+
+
+def test_verify_offline_falls_back_to_cached_catalog(controller, cfg,
+                                                     monkeypatch):
+    cfg["addons_catalog_cache"] = {"catalog": [{"name": "Foo",
+                                                "git": "https://github.com/x/y"}]}
+    monkeypatch.setattr(ac.addons, "fetch_addons_catalog",
+                        lambda force=False: (_ for _ in ()).throw(
+                            ConnectionError("offline")))
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+
+    assert any(a.folder == "Foo" for a in controller.state.available)
+
+
+def test_verify_ttl_skips_second_unless_force(controller, cfg, tmp_path):
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["addons"]["Foo"] = {"git": "https://github.com/x/y",
+                            "branch": None, "ref": None, "sha": "REMOTE"}
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    # Within the TTL a plain verify is a no-op; force() bypasses it.
+    assert controller.verify() is False
+    assert controller.verify(force=True) is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+
+
+def test_verify_skips_when_busy(controller, cfg, monkeypatch):
+    controller.state.busy = True
+    assert controller.verify() is False
+    assert controller._dispatcher.drain() == []
+
+
+def test_verify_remote_checks_false_never_calls_remote_sha(controller, cfg,
+                                                           tmp_path,
+                                                           monkeypatch):
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["addons"]["Foo"] = {"git": "https://github.com/x/y",
+                            "branch": None, "ref": None, "sha": "CACHED"}
+    calls = []
+    monkeypatch.setattr(ac.addons, "addon_remote_sha",
+                        lambda *a, **k: calls.append(1) or "LIVE")
+    monkeypatch.setattr(ac.addons, "addon_cached_sha",
+                        lambda git, branch=None, ref=None: "CACHED")
+
+    assert controller.verify(remote_checks=False) is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+
+    assert calls == []
+    # The cached sha matches the saved one — current without any API call.
+    assert controller.state.addons["Foo"].status == "upToDate"
+
+
+# ── apply ───────────────────────────────────────────────────────────────
+
+def test_apply_success_records_and_posts_finished(controller, cfg, tmp_path):
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["out_dir"] = client
+    cfg["addons"] = {}
+    rec = {"folder": "Foo", "status": "available",
+           "git": "https://github.com/a/b", "branch": None, "ref": None,
+           "toc": {}, "description": None, "error": None}
+
+    assert controller.apply([rec]) is True
+
+    collected = _drain_for(controller._dispatcher,
+                           lambda e: isinstance(e, OperationFinished))
+    assert OperationFinished("addons", True, "") in collected
+    assert any(isinstance(e, StatusChanged)
+               and e.text == "Downloading addons…" for e in collected)
+    assert any(isinstance(e, LogMessage)
+               and "✓ Addon Foo installed." in e.text for e in collected)
+    assert cfg["addons"]["Foo"] == {"git": "https://github.com/a/b",
+                                    "branch": None, "ref": None,
+                                    "sha": "REMOTE"}
+    assert controller.state.errors == {}
+
+    # The install resolved/cached the sha, so the follow-up re-verify is
+    # cache-only and marks the addon up to date.
+    collected = _drain_for(controller._dispatcher,
+                           lambda e: isinstance(e, AddonsLoaded))
+    assert any(isinstance(e, AddonsLoaded) for e in collected)
+    assert controller.state.addons["Foo"].status == "upToDate"
+    assert controller.state.installing is False
+    assert controller.state.busy is False
+
+
+def test_apply_failure_records_error_and_posts_finished(controller, cfg,
+                                                        monkeypatch):
+    client = str(cfg["out_dir"])
+
+    def boom(client, folder, git, sha):
+        raise RuntimeError("download blocked")
+    monkeypatch.setattr(ac.addons, "install_addon_files", boom)
+    rec = {"folder": "Foo", "status": "available",
+           "git": "https://github.com/a/b", "branch": None, "ref": None,
+           "toc": {}, "description": None, "error": None}
+
+    assert controller.apply([rec]) is True
+    collected = _drain_for(controller._dispatcher,
+                           lambda e: isinstance(e, OperationFinished))
+    assert OperationFinished("addons", False, "Failed addons: Foo") in collected
+    assert any(isinstance(e, LogMessage)
+               and "✗ Addon Foo: download blocked" in e.text
+               for e in collected)
+    assert controller.state.errors["Foo"].error == "download blocked"
+    assert controller.state.errors["Foo"].git == "https://github.com/a/b"
+    # The failed install never touched the config.
+    assert cfg["addons"] == {}
+
+    # The follow-up re-verify synthesizes an available row carrying the error.
+    collected = _drain_for(controller._dispatcher,
+                           lambda e: isinstance(e, AddonsLoaded))
+    avail = {a.folder: a for a in controller.state.available}
+    assert "Foo" in avail
+    assert avail["Foo"].error == "download blocked"
+
+
+def test_apply_without_folder_is_noop(controller, cfg):
+    cfg["out_dir"] = ""
+    rec = {"folder": "Foo", "status": "available", "git": "url",
+           "branch": None, "ref": None, "toc": {},
+           "description": None, "error": None}
+    assert controller.apply([rec]) is False
+    assert controller._dispatcher.drain() == []
+
+
+def test_apply_marks_pfui_for_profile_patch(controller, cfg, tmp_path,
+                                            monkeypatch):
+    client = str(tmp_path)
+    _install_folder(client, "pfUI")
+    cfg["out_dir"] = client
+    cfg["addons"] = {}
+    patched = []
+    monkeypatch.setattr(ac.addons, "patch_pfui_default_profile",
+                        lambda client: patched.append(client))
+    rec = {"folder": "pfUI", "status": "available",
+           "git": "https://github.com/a/pfui", "branch": None, "ref": None,
+           "toc": {}, "description": None, "error": None}
+
+    assert controller.apply([rec]) is True
+    _drain_for(controller._dispatcher,
+               lambda e: isinstance(e, OperationFinished))
+    assert patched == [client]
+
+
+# ── update_all / remove ─────────────────────────────────────────────────
+
+def test_update_all_only_collects_out_of_date(controller):
+    controller.state.addons["A"] = AddonState(folder="A", status="outOfDate")
+    controller.state.addons["B"] = AddonState(folder="B", status="upToDate")
+    controller.state.addons["C"] = AddonState(folder="C", status="outOfDate")
+
+    recs = controller.update_all()
+    assert [r["folder"] for r in recs] == ["A", "C"]
+
+
+def test_remove_deletes_folder_and_cleans(controller, cfg, tmp_path,
+                                          monkeypatch):
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["out_dir"] = client
+    cfg["addons"]["Foo"] = {"git": "https://github.com/x/y", "sha": "S"}
+    controller.state.addons["Foo"] = AddonState(folder="Foo",
+                                                status="outOfDate")
+    controller.state.errors["Foo"] = AddonError("oops", "https://github.com/x/y")
+    deleted = []
+    monkeypatch.setattr(ac.shutil, "rmtree", lambda path: deleted.append(path))
+
+    controller.remove("Foo")
+
+    assert deleted
+    assert "Foo" not in cfg["addons"]
+    assert "Foo" not in controller.state.addons
+    assert "Foo" not in controller.state.errors
+    events = controller._dispatcher.drain()
+    assert any(isinstance(e, LogMessage)
+               and "Removed addon Foo" in e.text for e in events)
+    assert any(isinstance(e, AddonsLoaded) for e in events)
+
+
+def test_remove_logs_failure(controller, cfg, tmp_path, monkeypatch):
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["out_dir"] = client
+    cfg["addons"]["Foo"] = {"git": "https://github.com/x/y", "sha": "S"}
+
+    def boom(path):
+        raise OSError("locked")
+    monkeypatch.setattr(ac.shutil, "rmtree", boom)
+
+    controller.remove("Foo")
+
+    assert any(isinstance(e, LogMessage)
+               and "Failed to remove addon Foo: locked" in e.text
+               for e in controller._dispatcher.drain())
+
+
+# ── footer / badge data ─────────────────────────────────────────────────
+
+def test_footer_state_and_updates_count(controller):
+    assert controller.footer_state() == ("Everything up to date",
+                                         C_TEXT_DIM, "arrow")
+    assert controller.updates_count == 0
+
+    controller.state.state = "verifying"
+    assert controller.footer_state() == ("Checking…", C_TEXT_DIM, "arrow")
+    controller.state.state = "done"
+
+    controller.state.busy = True
+    assert controller.footer_state()[0] == "Checking…"
+    controller.state.busy = False
+
+    controller.state.addons["A"] = AddonState(folder="A", status="outOfDate")
+    controller.state.updates_count = 1
+    assert controller.footer_state() == ("Update all", C_OK, "hand2")
+    assert controller.updates_count == 1
+
+
+# ── maybe_install_default_addons ────────────────────────────────────────
+
+def test_maybe_install_default_addons_one_shot(controller, cfg, tmp_path,
+                                               monkeypatch):
+    (tmp_path / "WoW.exe").write_bytes(b"MZ")
+    cfg.pop("addons", None)
+    started = []
+    monkeypatch.setattr(controller, "apply",
+                        lambda recs: started.append(recs) or True)
+
+    assert controller.maybe_install_default_addons() is True
+    assert controller.maybe_install_default_addons() is False
+
+    assert len(started) == 1
+    folders = {r["folder"] for r in started[0]}
+    assert folders == set(ac.addons.RECOMMENDED_ADDONS)
+    assert cfg.get("addons") == {}   # marked initialized for this folder
+
+
+def test_maybe_install_default_addons_auto_off_verifies_only(
+        controller, cfg, tmp_path, monkeypatch):
+    (tmp_path / "WoW.exe").write_bytes(b"MZ")
+    cfg.pop("addons", None)
+    cfg["auto_install_addons"] = False
+    calls = []
+    monkeypatch.setattr(controller, "verify",
+                        lambda *a, **k: calls.append(("verify",)) or True)
+    monkeypatch.setattr(controller, "apply",
+                        lambda *a, **k: calls.append(("apply",)))
+
+    assert controller.maybe_install_default_addons() is True
+    assert calls == [("verify",)]
+    assert cfg.get("addons") == {}
+
+
+def test_maybe_install_default_addons_skips_when_initialized(controller, cfg):
+    cfg["addons"] = {"Foo": {"git": "u", "sha": "s"}}
+    assert controller.maybe_install_default_addons() is False
+
+
+def test_maybe_install_default_addons_skips_without_client(controller, cfg,
+                                                           tmp_path):
+    cfg["out_dir"] = str(tmp_path)  # no WoW.exe in the folder
+    cfg.pop("addons", None)
+    assert controller.maybe_install_default_addons() is False
+
+
+def test_maybe_install_default_addons_verifies_when_all_installed(
+        controller, cfg, tmp_path, monkeypatch):
+    (tmp_path / "WoW.exe").write_bytes(b"MZ")
+    cfg.pop("addons", None)
+    # Every recommended addon already exists on disk — nothing to install.
+    ap = os.path.join(str(tmp_path), "Interface", "AddOns")
+    for name in ac.addons.RECOMMENDED_ADDONS:
+        os.makedirs(os.path.join(ap, name))
+    calls = []
+    monkeypatch.setattr(controller, "verify",
+                        lambda *a, **k: calls.append(("verify",)) or True)
+    monkeypatch.setattr(controller, "apply",
+                        lambda *a, **k: calls.append(("apply",)))
+
+    assert controller.maybe_install_default_addons() is True
+    assert calls == [("verify",)]
+
+
+# ── reset ───────────────────────────────────────────────────────────────
+
+def test_reset_clears_state_and_rearms_one_shot(controller, cfg, tmp_path,
+                                                monkeypatch):
+    controller.state.verified_ts = 123.0
+    controller.state.state = "done"
+    controller.state.addons["A"] = AddonState(folder="A", status="outOfDate")
+    controller.state.available = [AddonState(folder="B")]
+    controller.state.errors["A"] = AddonError("oops")
+    controller.state.updates_count = 3
+    controller.state.sections_open["INSTALLED"] = False
+    controller._default_addons_install_started = True
+
+    controller.reset()
+
+    assert controller.state.verified_ts == 0.0
+    assert controller.state.state == "idle"
+    assert controller.state.addons == {}
+    assert controller.state.available == []
+    assert controller.state.errors == {}
+    assert controller.state.updates_count == 0
+    # Section open/closed state survives a folder change.
+    assert controller.state.sections_open["INSTALLED"] is False
+
+    # The one-shot auto-install is re-armed for the new folder.
+    (tmp_path / "WoW.exe").write_bytes(b"MZ")
+    cfg.pop("addons", None)
+    monkeypatch.setattr(controller, "apply", lambda recs: True)
+    assert controller.maybe_install_default_addons() is True

@@ -7,15 +7,12 @@ store paths at import time and owns the whole Tk interface.
 
 import os
 import urllib.request
-import shutil
-import time
 import threading
 import queue
 import tkinter as tk
 from tkinter import filedialog
 
 from helpers import (
-    same_git_repo as _same_git_repo,
     parse_wow_colored,
     strip_wow_colors,
     strip_html as _strip_html,
@@ -51,6 +48,7 @@ from tweaks import (
 from client_update import UpdateWorker
 
 from ui_events import (
+    AddonsLoaded,
     EventDispatcher,
     LogMessage,
     ModsLoaded,
@@ -63,6 +61,7 @@ from ui_events import (
 from update_controller import UpdateController
 from news_controller import NewsController
 from mods_controller import ModsController
+from addons_controller import AddonsController
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Constants  (see constants.py)
@@ -166,25 +165,15 @@ from self_update import (
     updater_update_available,
 )
 
-from errors import describe_install_error
-
 # ──────────────────────────────────────────────────────────────────────────────
 #  Addons definition & engine  (see addons.py)
 # ──────────────────────────────────────────────────────────────────────────────
 
 from addons import (
-    ADDONS_VERIFY_TTL,
     RECOMMENDED_ADDONS,
-    BLOCKED_ADDONS,
     ADDON_GIT_HOSTS,
     addons_path,
     is_allowed_git_url,
-    fetch_addons_catalog,
-    read_toc_file,
-    addon_remote_sha,
-    addon_cached_sha,
-    install_addon_files,
-    patch_pfui_default_profile,
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -272,10 +261,6 @@ class OctoUpdaterApp(tk.Tk):
         self._logwin = None
         self._logwin_text = None
         self._settings_overlay = None
-        # Guards against triggering the recommended-addons auto-install more
-        # than once per app session (the default-mods guard lives in the
-        # ModsController).
-        self._default_addons_install_started = False
 
         # Game folder path — shared by the Settings modal; changing it fires
         # the folder-change reset via the trace.
@@ -293,6 +278,8 @@ class OctoUpdaterApp(tk.Tk):
         self._news = NewsController(self._events)
         self._mods = ModsController(
             self._events, get_out_dir=lambda: self._path_var.get().strip())
+        self._addons = AddonsController(
+            self._events, get_out_dir=lambda: self._path_var.get().strip())
         self._events.subscribe(self._on_status_changed)
         self._events.subscribe(self._on_progress_changed)
         self._events.subscribe(self._on_log_message)
@@ -300,23 +287,18 @@ class OctoUpdaterApp(tk.Tk):
         self._events.subscribe(self._on_operation_failed)
         self._events.subscribe(self._on_news_loaded)
         self._events.subscribe(self._on_mods_loaded)
+        self._events.subscribe(self._on_addons_loaded)
 
         # Count of mods with an update available — shown as a badge on the
         # MODS nav tab. Mirror of the ModsController's updates_count.
         self._mod_updates_count = self._mods.updates_count
 
-        # Addons state
-        self._addons_status = {"state": "idle", "addons": {}, "available": []}
-        self._addons_busy = False
-        # True only while addons are actually downloading/installing (not
-        # during a verify) — gates the PLAY button, like mods installs do.
-        self._addons_installing = False
-        self._addons_verified_ts = 0.0
-        self._addon_updates_count = 0
-        # {folder: {"error": msg, "git": url}} for failed installs/updates —
-        # survives the post-operation rescan so rows can show what went wrong.
-        self._addon_errors = {}
-        self._addon_sections_open = {"INSTALLED": True, "AVAILABLE": True}
+        # Mirror of the AddonsController's updates_count — shown as a badge
+        # on the ADDONS nav tab; only redrawn when it actually changes.
+        self._addon_updates_count = self._addons.updates_count
+        # Last-rendered addon content (addons dict, available list) — lets
+        # the AddonsLoaded handler skip a full rebuild when nothing changed.
+        self._addons_rendered = None
 
         # Scrollable list canvases that respond to the mouse wheel whenever
         # the pointer is anywhere over them (not just over the scrollbar).
@@ -1589,48 +1571,19 @@ class OctoUpdaterApp(tk.Tk):
         self._mods.apply()
 
     def _maybe_install_default_addons(self):
-        """Auto-install the recommended addons the first time this game
-        folder is ready — the same one-shot mechanism as the default mods:
-        the absence of the "addons" key in config means "never initialized
-        for this folder", and a game-folder change wipes it to re-arm.
-        Runs after the default mods finished (chained from the mods apply
-        completion) or directly when mods were already initialized."""
-        if self._default_addons_install_started:
+        """Thin forwarder — the one-shot recommended-addons auto-install
+        lives in the AddonsController (same fresh-folder mechanism as the
+        default mods); this only kicks the panel chrome for whichever flow —
+        batch install or plain verify — actually started."""
+        if not self._addons.maybe_install_default_addons():
             return
-        if load_config().get("addons") is not None:
-            return  # already initialized for this folder
-
-        out = self._path_var.get().strip()
-        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
-            return  # game isn't actually installed here yet
-
-        self._default_addons_install_started = True
-
-        # Mark this folder as initialized even if every install fails, so
-        # the batch doesn't re-fire on the next verify.
-        update_config(lambda c: c.setdefault("addons", {}))
-
-        # "Install recommended addons" (Settings → General): when
-        # off, skip the batch install but still verify so the ADDONS tab lists
-        # them as available for manual install.
-        if not load_config().get("auto_install_addons", True):
-            self._addons_verify()
-            return
-
-        ap = addons_path(out)
-        recs = [{"folder": name, "status": "available", "git": url,
-                 "branch": None, "ref": None, "toc": {},
-                 "description": None, "error": None}
-                for name, url in RECOMMENDED_ADDONS.items()
-                if not os.path.isdir(os.path.join(ap, name))]
-        if not recs:
-            # Nothing to install (e.g. switched to a folder that already has
-            # the addons) — still run a verify so the ADDONS tab badge shows
-            # any available updates without the user opening the tab.
-            self._addons_verify()
-            return
-        self._log_line("\nInstalling recommended addons...\n", "acct")
-        self._addon_apply(recs)
+        if self._addons.state.installing:
+            self._render_addons()
+            self._set_btn_busy("Installing…")
+        elif self._addons.state.addons or self._addons.state.available:
+            self._refresh_addons_footer()
+        else:
+            self._render_addons()
 
     def _maybe_install_essential_mods(self):
         """Auto-install every mod flagged essential the first time this game
@@ -1727,212 +1680,27 @@ class OctoUpdaterApp(tk.Tk):
     # ── addons engine (app side) ─────────────────────────────────────────────
 
     def _addons_verify(self, force=False, remote_checks=True):
-        """Scan Interface/AddOns, match against the catalog, and check every
-        tracked addon's remote commit sha (config-cached). With
-        remote_checks=False the scan is guaranteed network-free: shas come
-        from the cache only (used for post-install/update refreshes)."""
-        if self._addons_busy:
+        """Thin forwarder — the catalog fetch, scan and sha verification
+        live in the AddonsController; this only kicks the panel chrome while
+        the background verify runs."""
+        if not self._addons.verify(force=force, remote_checks=remote_checks):
             return
-        # A recent verify result is already rendered — plain tab switches
-        # within the TTL don't need a rescan or a rebuild at all.
-        if (not force and self._addons_status["state"] == "done"
-                and (time.time() - self._addons_verified_ts)
-                < ADDONS_VERIFY_TTL):
-            return
-        client = self._path_var.get().strip()
-        self._addons_busy = True
-        had_content = bool(self._addons_status["addons"]
-                           or self._addons_status["available"])
-        self._addons_status = {**self._addons_status, "state": "verifying"}
-        if had_content:
-            # Keep showing the existing list while checking in background.
+        if self._addons.state.addons or self._addons.state.available:
             self._refresh_addons_footer()
         else:
             self._render_addons()
 
-        def worker():
-            try:
-                catalog = fetch_addons_catalog(force=force)
-            except Exception:
-                # offline — fall back to whatever the config still holds
-                catalog = (load_config().get("addons_catalog_cache", {})
-                           .get("catalog") or [])
-
-            available = [{"folder": a.get("name"), "status": "available",
-                          "git": a.get("git"), "branch": a.get("branch"),
-                          "ref": a.get("ref"), "toc": a.get("toc") or {},
-                          "description": a.get("description"), "error": None}
-                         for a in catalog
-                         if a.get("name") and a["name"] not in BLOCKED_ADDONS]
-
-            # Curated recommendations: apply git-URL overrides on top of the
-            # catalog, and synthesize entries for recommended addons the
-            # catalog doesn't carry (or has renamed). Overridden forks may
-            # use a different default branch, so branch/ref are reset.
-            by_name = {a["folder"]: a for a in available}
-            for name, override in RECOMMENDED_ADDONS.items():
-                rec = by_name.get(name)
-                if rec is None:
-                    available.append(
-                        {"folder": name, "status": "available",
-                         "git": override, "branch": None, "ref": None,
-                         "toc": {}, "description": None, "error": None})
-                elif not _same_git_repo(rec.get("git"), override):
-                    rec.update(git=override, branch=None, ref=None)
-
-            addons = {}
-            records = load_config().get("addons", {})
-            ap = addons_path(client) if client else ""
-            if ap and os.path.isdir(ap):
-                for name in sorted(os.listdir(ap)):
-                    if name.startswith(("Blizzard_", "Turtle_")):
-                        continue
-                    dirp = os.path.join(ap, name)
-                    if not os.path.isdir(dirp):
-                        continue
-                    rec = {"folder": name, "status": "unknown", "git": None,
-                           "branch": None, "ref": None, "toc": {},
-                           "description": None, "error": None}
-                    toc_path = os.path.join(dirp, f"{name}.toc")
-                    if not os.path.exists(toc_path):
-                        rec.update(status="invalid",
-                                   error="Missing .toc file")
-                        addons[name] = rec
-                        continue
-                    rec["toc"] = read_toc_file(toc_path)
-                    avail = next((a for a in available
-                                  if a["folder"] == name), None)
-                    if avail:
-                        rec["description"] = avail["description"]
-                    saved = records.get(name)
-                    override = RECOMMENDED_ADDONS.get(name)
-                    if (saved and saved.get("git") and override
-                            and not _same_git_repo(saved["git"], override)):
-                        # Installed from a different repo than the curated
-                        # fork — offer an update that migrates to the fork.
-                        rec.update(git=override, branch=None, ref=None,
-                                   status="outOfDate")
-                    elif saved and saved.get("git"):
-                        rec.update(git=saved.get("git"),
-                                   branch=saved.get("branch"),
-                                   ref=saved.get("ref"))
-                        if remote_checks:
-                            remote = addon_remote_sha(
-                                rec["git"], rec["branch"], rec["ref"],
-                                force=force)
-                        else:
-                            remote = addon_cached_sha(
-                                rec["git"], rec["branch"], rec["ref"])
-                            if remote is None:
-                                # no cached answer — assume current rather
-                                # than hitting the network
-                                remote = saved.get("sha")
-                        if remote is None:
-                            rec.update(status="invalid",
-                                       error="Failed to verify")
-                        elif remote == saved.get("sha"):
-                            rec["status"] = "upToDate"
-                        else:
-                            rec["status"] = "outOfDate"
-                    elif avail:
-                        # Known catalog addon installed outside the updater —
-                        # offer to take it over via a fresh install.
-                        rec.update(git=avail["git"], branch=avail["branch"],
-                                   ref=avail["ref"], status="outOfDate")
-                    addons[name] = rec
-
-            # Overlay install failures from this session: the rescan drops
-            # them (a failed install leaves no folder on disk), so re-attach
-            # errors to the matching available row — or synthesize one for a
-            # failed custom addon. Errors for now-installed folders are stale
-            # and dropped.
-            for folder in [f for f in self._addon_errors if f in addons]:
-                self._addon_errors.pop(folder, None)
-            by_name = {a["folder"]: a for a in available}
-            for folder, info in self._addon_errors.items():
-                rec = by_name.get(folder)
-                if rec is None:
-                    rec = {"folder": folder, "status": "available",
-                           "git": info.get("git"), "branch": None,
-                           "ref": None, "toc": {}, "description": None,
-                           "error": None}
-                    available.append(rec)
-                rec["error"] = info["error"]
-
-            def done():
-                changed = (addons != self._addons_status["addons"]
-                           or available != self._addons_status["available"])
-                self._addons_status = {"state": "done", "addons": addons,
-                                       "available": available}
-                self._addons_verified_ts = time.time()
-                self._addons_busy = False
-                self._refresh_addons_badge()
-                if changed:
-                    self._render_addons()
-                else:
-                    self._refresh_addons_footer()
-            self.after(0, done)
-        threading.Thread(target=worker, daemon=True).start()
-
     def _addon_apply(self, recs):
-        """Install/update the given addon records sequentially."""
-        client = self._path_var.get().strip()
-        if not client or self._addons_busy or not recs:
+        """Thin forwarder — the sequential install worker lives in the
+        AddonsController; this kicks the "downloading" render and the busy
+        button for it."""
+        if not self._addons.apply(recs):
             return
-        self._addons_busy = True
-        self._addons_installing = True
-        for rec in recs:
-            rec["status"] = "downloading"
-            self._addons_status["addons"].setdefault(rec["folder"], rec)
         self._render_addons()
-        # PLAY is inactive while addons download/install, same as for mods.
         self._set_btn_busy("Installing…")
-        self._status_var.set("Downloading addons…")
-
-        def worker():
-            for rec in recs:
-                self.after(0, lambda n=rec["folder"]:
-                           self._status_var.set(f"Installing {n}…"))
-                try:
-                    if not rec.get("git") or not is_allowed_git_url(rec["git"]):
-                        raise RuntimeError("Addon URL is not from an "
-                                           "allowed git host")
-                    sha = addon_remote_sha(rec["git"], rec.get("branch"),
-                                           rec.get("ref"), force=True,
-                                           raise_errors=True)
-                    if not sha:
-                        raise RuntimeError("Could not resolve remote commit")
-                    install_addon_files(client, rec["folder"], rec["git"], sha)
-                    if rec["folder"] == "pfUI":
-                        patch_pfui_default_profile(client)
-                    record = {"git": rec["git"], "branch": rec.get("branch"),
-                              "ref": rec.get("ref"), "sha": sha}
-                    update_config(lambda c, f=rec["folder"], r=record:
-                                  c.setdefault("addons", {}).__setitem__(f, r))
-                    self._addon_errors.pop(rec["folder"], None)
-                    log(f"  ✓ Addon {rec['folder']} installed.")
-                except Exception as e:
-                    err = describe_install_error(e)
-                    log(f"  ✗ Addon {rec['folder']}: {err}")
-                    rec.update(status="invalid", error=err)
-                    self._addon_errors[rec["folder"]] = {
-                        "error": err, "git": rec.get("git")}
-
-            def done():
-                self._addons_busy = False
-                self._addons_installing = False
-                self._addons_verified_ts = 0.0   # make the re-verify run
-                self._refresh_ready_state()      # PLAY active again
-                # Cache-only refresh: the install itself already resolved and
-                # cached the shas — no further API requests are needed.
-                self._addons_verify(remote_checks=False)
-            self.after(0, done)
-        threading.Thread(target=worker, daemon=True).start()
 
     def _addon_update_all(self):
-        recs = [r for r in self._addons_status["addons"].values()
-                if r["status"] == "outOfDate"]
-        self._addon_apply(recs)
+        self._addon_apply(self._addons.update_all())
 
     def _addon_remove(self, folder: str):
         from tkinter import messagebox
@@ -1940,21 +1708,7 @@ class OctoUpdaterApp(tk.Tk):
                 "Remove addon",
                 f"Delete {folder} and all of its files?"):
             return
-        client = self._path_var.get().strip()
-        if not client or self._addons_busy:
-            return
-        try:
-            dirp = os.path.join(addons_path(client), folder)
-            if os.path.isdir(dirp):
-                shutil.rmtree(dirp)
-            update_config(lambda c: c.get("addons", {}).pop(folder, None))
-            self._log_line(f"Removed addon {folder}\n", "dim")
-        except Exception as e:
-            self._log_line(f"Failed to remove addon {folder}: {e}\n", "err")
-        self._addons_status["addons"].pop(folder, None)
-        self._addon_errors.pop(folder, None)
-        self._refresh_addons_badge()
-        self._render_addons()
+        self._addons.remove(folder)
 
     def _open_custom_addon_dialog(self):
         if self._settings_overlay is not None:
@@ -2071,7 +1825,10 @@ class OctoUpdaterApp(tk.Tk):
         gen = self._addons_render_gen
         self._reset_addons_inner()
 
-        st  = self._addons_status
+        st  = self._addons.state.to_status_dict()
+        # Snapshot the rendered content so AddonsLoaded can tell "nothing
+        # changed" from a real update and skip the expensive rebuild.
+        self._addons_rendered = (st["addons"], st["available"])
         flt = self._addon_filter_var.get().strip().lower()
         flt_compact = flt.replace(" ", "")
 
@@ -2101,7 +1858,7 @@ class OctoUpdaterApp(tk.Tk):
         for title, rows in (("INSTALLED", installed),
                             ("AVAILABLE", available)):
             work.append(("header", title, rows))
-            if self._addon_sections_open.get(title, True):
+            if self._addons.state.sections_open.get(title, True):
                 work.extend(("row", rec) for rec in rows)
         self._addons_build_queue = work
         self._refresh_addons_footer()
@@ -2126,7 +1883,7 @@ class OctoUpdaterApp(tk.Tk):
 
     def _addon_section_header(self, title: str, rows: list):
         f = self._addons_inner
-        is_open = self._addon_sections_open.get(title, True)
+        is_open = self._addons.state.sections_open.get(title, True)
 
         hdr = tk.Frame(f, bg=C_PANEL)
         hdr.pack(fill="x", pady=(10, 2))
@@ -2142,21 +1899,21 @@ class OctoUpdaterApp(tk.Tk):
                  fg=C_TEXT_DIM, bg=C_PANEL).pack(side="left")
 
         def toggle(_e=None, t=title):
-            self._addon_sections_open[t] = \
-                not self._addon_sections_open.get(t, True)
+            self._addons.state.sections_open[t] = \
+                not self._addons.state.sections_open.get(t, True)
             self._render_addons()
         arrow.bind("<Button-1>", toggle)
         lbl.bind("<Button-1>", toggle)
 
         if is_open and not rows:
-            msg = ("Verifying…" if self._addons_status["state"] == "verifying"
+            msg = ("Verifying…" if self._addons.state.state == "verifying"
                    else "Nothing here.")
             tk.Label(f, text=msg, font=self._font(10), fg=C_TEXT_DIM,
                      bg=C_PANEL).pack(anchor="w", padx=8)
 
     def _addon_row(self, rec: dict):
         f = self._addons_inner
-        installed = rec["folder"] in self._addons_status["addons"]
+        installed = rec["folder"] in self._addons.state.addons
         toc = rec.get("toc") or {}
 
         warnings = []
@@ -2169,7 +1926,7 @@ class OctoUpdaterApp(tk.Tk):
                     (toc.get("Dependencies") or "").replace(";", ",").split(",")
                     if d.strip()]
             missing = [d for d in deps
-                       if d not in self._addons_status["addons"]]
+                       if d not in self._addons.state.addons]
             if missing:
                 warnings.append("Missing deps: " + ", ".join(missing))
 
@@ -2286,23 +2043,13 @@ class OctoUpdaterApp(tk.Tk):
         tk.Frame(f, bg=C_DIVIDER, height=1).pack(fill="x", pady=(3, 0))
 
     def _refresh_addons_badge(self):
-        count = sum(1 for r in self._addons_status["addons"].values()
-                    if r["status"] == "outOfDate")
-        if count != self._addon_updates_count:
-            self._addon_updates_count = count
+        if self._addons.updates_count != self._addon_updates_count:
+            self._addon_updates_count = self._addons.updates_count
             self._draw_nav_tab("ADDONS")
 
     def _refresh_addons_footer(self):
-        lbl = self._addons_right_lbl
-        st  = self._addons_status
-        if st["state"] == "verifying" or self._addons_busy:
-            lbl.configure(text="Checking…", fg=C_TEXT_DIM, cursor="arrow")
-        elif any(r["status"] == "outOfDate"
-                 for r in st["addons"].values()):
-            lbl.configure(text="Update all", fg=C_OK, cursor="hand2")
-        else:
-            lbl.configure(text="Everything up to date", fg=C_TEXT_DIM,
-                          cursor="arrow")
+        text, fg, cursor = self._addons.footer_state()
+        self._addons_right_lbl.configure(text=text, fg=fg, cursor=cursor)
 
     # ── footer ────────────────────────────────────────────────────────────────
 
@@ -2437,18 +2184,15 @@ class OctoUpdaterApp(tk.Tk):
         self._cfg = update_config(_reset_for_new_folder)
 
         self._mods.reset()
-        self._default_addons_install_started = False
+        self._addons.reset()
         self._updater.invalidate()
 
         # Reset every session-level TTL/state so nothing from the previous
         # folder is served from memory: addons verify + its rendered list,
         # news feed timers, and the nav-tab update badges.
-        self._addons_verified_ts = 0.0
-        self._addons_status = {"state": "idle", "addons": {}, "available": []}
-        self._addon_errors = {}
         self._news.invalidate()
         self._mod_updates_count = self._mods.updates_count
-        self._addon_updates_count = 0
+        self._addon_updates_count = self._addons.updates_count
         self._draw_nav_tab("MODS")
         self._draw_nav_tab("ADDONS")
         self._render_addons()
@@ -2840,7 +2584,7 @@ class OctoUpdaterApp(tk.Tk):
     def _install_missing_recommended_addons(self):
         """Install every recommended addon not already present. Used when the
         user turns 'Install recommended addons' on afterwards."""
-        if self._addons_busy:
+        if self._addons.state.busy:
             return
         out = self._path_var.get().strip()
         if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
@@ -2969,7 +2713,7 @@ class OctoUpdaterApp(tk.Tk):
         is in an error state — otherwise the button stays grey and inactive.
         The decision itself lives in UpdateController.compute_readiness."""
         r = self._updater.compute_readiness(
-            addons_installing=self._addons_installing)
+            addons_installing=self._addons.installing)
         if r.mode == "play":
             self._set_btn_play()
         elif r.mode == "update":
@@ -3094,6 +2838,9 @@ class OctoUpdaterApp(tk.Tk):
         if event.kind == "mods":
             self._on_mods_finished(event)
             return
+        if event.kind == "addons":
+            self._on_addons_finished(event)
+            return
         if event.ok:
             # The update worker reports the (post-patch) client version just
             # before finishing; surface it when a fresh one arrived.
@@ -3140,6 +2887,25 @@ class OctoUpdaterApp(tk.Tk):
             return
         self._render_mod_rows()
         self._refresh_mods_badge()
+        self._refresh_ready_state()
+
+    def _on_addons_loaded(self, event):
+        if not isinstance(event, AddonsLoaded):
+            return
+        st = event.state.to_status_dict()
+        if (self._addons_rendered is None
+                or st["addons"] != self._addons_rendered[0]
+                or st["available"] != self._addons_rendered[1]):
+            self._render_addons()
+        else:
+            self._refresh_addons_footer()
+        self._refresh_addons_badge()
+        self._refresh_ready_state()
+
+    def _on_addons_finished(self, event):
+        """Completion of an addons install/update/remove worker — the READY
+        state is recomputed so PLAY unlocks again (the readiness gate reads
+        the controller's installing flag)."""
         self._refresh_ready_state()
 
     def _on_operation_failed(self, event):
