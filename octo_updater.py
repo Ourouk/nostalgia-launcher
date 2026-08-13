@@ -4,10 +4,8 @@ mods, tweaks and addons. Standard library, optional 'certifi' for TLS;
 Python 3.10+.
 """
 
-import json
 import os
 import urllib.request
-from urllib.parse import urlsplit
 import shutil
 import time
 import threading
@@ -16,9 +14,6 @@ import tkinter as tk
 from tkinter import filedialog
 
 from helpers import (
-    fmt_size,
-    fmt_speed,
-    parse_version as _parse_version,
     same_git_repo as _same_git_repo,
     parse_wow_colored,
     strip_wow_colors,
@@ -76,15 +71,9 @@ from constants import (
     SERVER,
     DOWNLOAD_VERSION,
     UA,
-    DOWNLOAD_RETRY,
-    DOWNLOAD_TIMEOUT,
-    APP_DIR,
     CONFIG_FILE,
     CACHE_FILE,
     DEFAULT_OUT_DIR,
-    NEWS_URL,
-    NEWS_FEATURED_URL,
-    NEWS_TIMEOUT,
     NEWS_CACHE_TTL,
 )
 
@@ -144,8 +133,6 @@ FONT_VER    = ("Segoe UI", 8)
 
 from mods import (
     MODS_REGISTRY,
-    GITHUB_API,
-    MOD_UA,
     _codeberg_latest,
     DXVK_CONF_CONTENT,
     _write_dxvk_conf,
@@ -202,28 +189,10 @@ from addons import (
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  News feed
+#  News feed  (see news.py)
 # ──────────────────────────────────────────────────────────────────────────────
 
-
-def fetch_news_items() -> list:
-    """news.json → [{id, title, date, body, url?, author?}, …]"""
-    req = urllib.request.Request(NEWS_URL, headers={"User-Agent": UA})
-    with secure_urlopen(req, timeout=NEWS_TIMEOUT) as r:
-        data = json.load(r)
-    items = data.get("items", [])
-    # news.json lists topics in forum order — show newest first (ISO dates
-    # with a fixed offset sort correctly as strings).
-    items.sort(key=lambda it: it.get("date", ""), reverse=True)
-    return items
-
-
-def fetch_featured_post() -> dict | None:
-    """Latest announcements-forum post → {id, title, author?, date, url, html}"""
-    req = urllib.request.Request(NEWS_FEATURED_URL, headers={"User-Agent": UA})
-    with secure_urlopen(req, timeout=NEWS_TIMEOUT) as r:
-        data = json.load(r)
-    return data if isinstance(data, dict) and data.get("id") else None
+from news import fetch_news_items, fetch_featured_post
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  GUI
