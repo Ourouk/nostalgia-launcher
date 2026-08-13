@@ -4,8 +4,12 @@ These verify the DPI scaling path, initial window sizing and relayout
 actually work against Tk. They skip when tkinter (or a display) isn't
 available, e.g. on headless CI.
 
-Run with a virtual display where Xvfb is installed:
-    xvfb-run -a uv run pytest tests/test_tk_smoke.py
+The Qt smoke suite (tests/test_qt_smoke.py) is the required GUI target and
+runs headless by default; this legacy Tk suite is opt-in. It is excluded
+from the default run via the `qt_legacy` marker (see pyproject.toml
+`addopts = -m "not qt_legacy"`). Opt in explicitly with:
+
+    xvfb-run -a uv run pytest tests/test_tk_smoke.py -m qt_legacy
 """
 
 import importlib.util
@@ -28,9 +32,12 @@ def _tk_usable() -> bool:
     return True
 
 
-pytestmark = pytest.mark.skipif(
-    not _tk_usable(),
-    reason="tkinter not usable on this host (no libtk / no display)")
+pytestmark = [
+    pytest.mark.qt_legacy,  # legacy Tk UI — excluded from the default run
+    pytest.mark.skipif(
+        not _tk_usable(),
+        reason="tkinter not usable on this host (no libtk / no display)"),
+]
 
 
 @pytest.fixture

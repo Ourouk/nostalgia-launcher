@@ -15,4 +15,7 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not qt_legacy'"
+markers = [
+    "qt_legacy: legacy Tk smoke suite, opt-in (excluded from the default run)",
+]
