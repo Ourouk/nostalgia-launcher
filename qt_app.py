@@ -6,16 +6,20 @@ the entry point imports for `OCTO_UI_BACKEND=qt`. It is the PySide6
 counterpart of app.py and deliberately never imports the Tk UI, so the two
 backends coexist in one process tree.
 
-Phase 3 will fill the QMainWindow with the ported panels; for now it only
-owns the window chrome (title, sizing, centering) and the event loop.
+Phase 3 owns the QMainWindow chrome (header, tabs, footer) via
+`qt_main_window.MainWindow`; the panels are still placeholders and land in
+C16-C19.
 """
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import QApplication
 
 import ui_metrics
 from ui_metrics import UIScale, initial_window_size
+
+from qt_bridge import ControllerHub
+from qt_main_window import MainWindow
 
 
 def create_qt_app():
@@ -57,7 +61,7 @@ def _center(window, app):
 
 
 class QtOctoUpdaterApp:
-    """Qt application shell — window chrome only; panels arrive in Phase 3.
+    """Qt application shell — wires the controller hub into the main window.
 
     Construction never opens a window or starts the event loop, so it works
     headlessly (e.g. `QT_QPA_PLATFORM=offscreen`) and under tests.
@@ -65,8 +69,8 @@ class QtOctoUpdaterApp:
 
     def __init__(self):
         self._app = create_qt_app()
-        self._window = QMainWindow()
-        self._window.setWindowTitle("Octo Updater")
+        self._hub = ControllerHub()
+        self._window = MainWindow(self._hub)
         w, h = _initial_size(self._app)
         self._window.resize(w, h)
         _center(self._window, self._app)
