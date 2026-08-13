@@ -95,6 +95,15 @@ on Linux, `~/Library/Application Support/OctoUpdater` on macOS) instead of
 next to the executable. Any previous config next to the executable is copied
 over automatically on first run.
 
+### Display scaling & resizing
+
+The window detects the display DPI at startup, scales fonts accordingly
+(100%–200% displays) and is resizable. Panels, the news split, the settings
+dialog and row descriptions reflow to the current window size, with a compact
+layout on narrow windows. The pure layout math lives in `ui_metrics.py` and
+is covered by unit tests; a Tk smoke suite exercises the real window under a
+display (`xvfb-run -a uv run pytest tests/test_tk_smoke.py`).
+
 ---
 
 ## Usage
@@ -160,6 +169,7 @@ standard library):
 | `errors.py` | Human-readable install/update error messages |
 | `log_sink.py` | Thread-safe global log channel |
 | `platform_support.py` | Platform detection, capabilities, per-OS helpers |
+| `ui_metrics.py` | DPI-aware scaling and responsive layout math |
 | `constants.py` | Shared constants and filesystem paths |
 
 Run the tests (requires `uv`):
