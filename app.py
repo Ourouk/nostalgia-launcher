@@ -53,6 +53,7 @@ from client_update import UpdateWorker
 from ui_events import (
     EventDispatcher,
     LogMessage,
+    ModsLoaded,
     NewsLoaded,
     OperationFailed,
     OperationFinished,
@@ -61,6 +62,7 @@ from ui_events import (
 )
 from update_controller import UpdateController
 from news_controller import NewsController
+from mods_controller import ModsController
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Constants  (see constants.py)
@@ -157,15 +159,7 @@ _UI_FONT = ui_font_family()
 
 from mods import (
     MODS_REGISTRY,
-    _release_version,
-    _fetch_release_cached,
-    fetch_mod_latest_version_cached,
-    install_mod,
-    uninstall_mod,
-    add_dll,
-    remove_dll,
     mod_installed_files_present,
-    mod_update_available,
 )
 from self_update import (
     fetch_updater_latest_tag,
@@ -278,10 +272,9 @@ class OctoUpdaterApp(tk.Tk):
         self._logwin = None
         self._logwin_text = None
         self._settings_overlay = None
-        # Guards against triggering the default-mods / recommended-addons
-        # auto-install more than once per app session (e.g. verify firing
-        # twice in quick succession).
-        self._default_mods_install_started = False
+        # Guards against triggering the recommended-addons auto-install more
+        # than once per app session (the default-mods guard lives in the
+        # ModsController).
         self._default_addons_install_started = False
 
         # Game folder path — shared by the Settings modal; changing it fires
@@ -298,16 +291,19 @@ class OctoUpdaterApp(tk.Tk):
         self._updater = UpdateController(
             self._events, get_out_dir=lambda: self._path_var.get().strip())
         self._news = NewsController(self._events)
+        self._mods = ModsController(
+            self._events, get_out_dir=lambda: self._path_var.get().strip())
         self._events.subscribe(self._on_status_changed)
         self._events.subscribe(self._on_progress_changed)
         self._events.subscribe(self._on_log_message)
         self._events.subscribe(self._on_operation_finished)
         self._events.subscribe(self._on_operation_failed)
         self._events.subscribe(self._on_news_loaded)
+        self._events.subscribe(self._on_mods_loaded)
 
         # Count of mods with an update available — shown as a badge on the
-        # MODS nav tab.
-        self._mod_updates_count = 0
+        # MODS nav tab. Mirror of the ModsController's updates_count.
+        self._mod_updates_count = self._mods.updates_count
 
         # Addons state
         self._addons_status = {"state": "idle", "addons": {}, "available": []}
@@ -384,8 +380,7 @@ class OctoUpdaterApp(tk.Tk):
         # game-folder change nothing is installed yet, so there's nothing to
         # check; the MODS tab will do it when opened.
         if self._cfg.get("mod_release_cache"):
-            self.after(900, lambda: threading.Thread(
-                target=self._load_mods_state, daemon=True).start())
+            self.after(900, self._mods.load_latest_versions)
         # Same parity for addons: background verify at launch (feeds the
         # ADDONS tab badge), but only once addons were initialized for this
         # folder — never on a first run / fresh folder.
@@ -536,7 +531,7 @@ class OctoUpdaterApp(tk.Tk):
         self._active_panel = target
 
         if tab == "MODS":
-            threading.Thread(target=self._load_mods_state, daemon=True).start()
+            self._mods.load_latest_versions()
         elif tab == "TWEAKS":
             self._refresh_tweaks_panel()
         elif tab == "ADDONS":
@@ -1352,59 +1347,60 @@ class OctoUpdaterApp(tk.Tk):
         self._apply_btn.bind("<Enter>",    lambda e: self._apply_btn.configure(bg=C_GOLD, fg="#000"))
         self._apply_btn.bind("<Leave>",    lambda e: self._apply_btn.configure(bg=C_PANEL_BDR, fg=C_TEXT))
 
-        self._mod_row_vars:     dict = {}
-        self._mods_state:       list = []
-        self._mod_pending_state: dict = {}
+        self._mod_row_vars: dict = {}
         self._render_mod_rows()
         self._refresh_apply_btn_visibility()
 
     def _render_mod_rows(self):
-        cfg      = load_config()
-        mods_cfg = cfg.get("mods", {})
+        records = self._mods.state.records
+        pending = self._mods.state.pending
+        latest  = self._mods.state.latest_versions
 
         mods_sorted = sorted(MODS_REGISTRY, key=lambda m: m["name"].lower())
 
         if self._mod_row_vars:
             for mod in mods_sorted:
                 mid   = mod["id"]
-                state = mods_cfg.get(mid, {})
-                live  = next((m for m in self._mods_state if m["id"] == mid), None)
+                rec   = records.get(mid)
                 refs  = self._mod_row_vars.get(mid, {})
                 if not refs:
                     continue
 
-                if live is not None and "ver_label" in refs:
-                    # Installed mods show their installed version; others
-                    # show the latest available.
-                    ver = state.get("installed_version") or live.get("latest_version") or "unknown"
+                installed_version = rec.installed_version if rec else None
+                enabled = rec.enabled if rec else False
+                ignore_updates = rec.ignore_updates if rec else False
+                has_error = rec.error if rec else None
+                installed = bool(installed_version)
+
+                if "ver_label" in refs:
+                    # Installed mods show their installed version; others show
+                    # the latest available.
+                    ver = installed_version or latest.get(mid) or "unknown"
                     refs["ver_label"].configure(text=f"  {ver}")
 
                 # Checkbox always reflects config only — never a registry default.
                 # A mod only shows checked if it's actually recorded as installed.
-                if mid not in self._mod_pending_state:
+                if mid not in pending:
                     if "enabled" in refs:
-                        refs["enabled"].set(state.get("enabled", False))
+                        refs["enabled"].set(enabled)
                     if "ignore" in refs:
-                        refs["ignore"].set(state.get("ignore_updates", False))
+                        refs["ignore"].set(ignore_updates)
 
-                has_error = bool(state.get("error"))
-                installed = bool(state.get("installed_version"))
                 if "name_label" in refs:
                     refs["name_label"].configure(
                         fg=C_ERR if has_error else (C_MOD_HL if installed else C_TEXT))
                 if "desc_label" in refs:
                     refs["desc_label"].configure(
-                        fg=C_TEXT if state.get("enabled", False) else C_TEXT_DIM)
+                        fg=C_TEXT if enabled else C_TEXT_DIM)
                 if "error_label" in refs:
                     if has_error:
-                        refs["error_label"].configure(text=f"  \u26a0  {state['error']}")
+                        refs["error_label"].configure(text=f"  \u26a0  {has_error}")
                         refs["error_label"].pack(fill="x", pady=(0, 4))
                     else:
                         refs["error_label"].pack_forget()
 
                 if "update_label" in refs:
-                    self._style_mod_action_label(refs["update_label"],
-                                                 mod, state, live)
+                    self._style_mod_action_label(refs["update_label"], mod)
             return
 
         for w in self._mods_inner.winfo_children():
@@ -1413,21 +1409,25 @@ class OctoUpdaterApp(tk.Tk):
 
         for mod in mods_sorted:
             mid   = mod["id"]
-            state = mods_cfg.get(mid, {})
-            live  = next((m for m in self._mods_state if m["id"] == mid), {})
-
-            # Installed mods show their installed version; others show latest.
-            latest_ver  = state.get("installed_version") or live.get("latest_version") or "unknown"
+            rec   = records.get(mid)
+            pend  = pending.get(mid)
+            installed_version = rec.installed_version if rec else None
             # Checkbox reflects only what's actually recorded in config — never
             # a registry default. Pending (not-yet-applied) UI changes still
             # win so an in-progress toggle survives a background re-render.
-            enabled     = self._mod_pending_state.get(mid, {}).get("enabled", state.get("enabled", False))
-            ignore_upd  = state.get("ignore_updates", False)
-            essential   = mod.get("essential", False)
-            installed   = bool(state.get("installed_version"))
+            enabled = (pend.enabled
+                       if pend is not None and pend.enabled is not None
+                       else (rec.enabled if rec else False))
+            ignore_upd = rec.ignore_updates if rec else False
+            has_error  = rec.error if rec else None
+            essential  = mod.get("essential", False)
+            installed  = bool(installed_version)
             # Installed mods are highlighted green; the name is neutral text
             # otherwise (error state overrides to red in the refresh paths).
-            name_col    = C_MOD_HL if installed else C_TEXT
+            name_col   = C_MOD_HL if installed else C_TEXT
+
+            # Installed mods show their installed version; others show latest.
+            latest_ver = installed_version or latest.get(mid) or "unknown"
 
             container = tk.Frame(self._mods_inner, bg=C_PANEL)
             container.pack(fill="x")
@@ -1494,7 +1494,7 @@ class OctoUpdaterApp(tk.Tk):
                               l.configure(fg=getattr(l, "_hover", C_GOLD_LT)))
             update_label.bind("<Leave>", lambda e, l=update_label:
                               l.configure(fg=getattr(l, "_base", C_GOLD)))
-            self._style_mod_action_label(update_label, mod, state, live)
+            self._style_mod_action_label(update_label, mod)
 
             desc_label = tk.Label(row, text=mod["description"],
                                   font=self._font(10),
@@ -1503,13 +1503,12 @@ class OctoUpdaterApp(tk.Tk):
                                   justify="left", anchor="w")
             desc_label.pack(side="left", fill="x", expand=True)
 
-            existing_err = state.get("error")
             error_label = tk.Label(container, text="",
                                    font=self._font(9), fg=C_ERR,
                                    bg=C_PANEL, anchor="w", padx=16)
-            if existing_err:
+            if has_error:
                 name_label.configure(fg=C_ERR)
-                error_label.configure(text=f"  \u26a0  {existing_err}")
+                error_label.configure(text=f"  \u26a0  {has_error}")
                 error_label.pack(fill="x", pady=(0, 4))
 
             divider = tk.Frame(self._mods_inner, bg=C_DIVIDER, height=1)
@@ -1525,33 +1524,9 @@ class OctoUpdaterApp(tk.Tk):
                 "update_label": update_label,
             }
 
-    def _load_mods_state(self):
-        state = []
-        for mod in MODS_REGISTRY:
-            try:
-                v = fetch_mod_latest_version_cached(mod)
-            except Exception:
-                v = None
-            if v:
-                state.append({"id": mod["id"], "latest_version": v})
-        self._mods_state = state
-        self.after(0, self._render_mod_rows)
-        self.after(0, self._refresh_mods_badge)
-
-    def _count_mod_updates(self) -> int:
-        mods_cfg = load_config().get("mods", {})
-        count = 0
-        for mod in MODS_REGISTRY:
-            state = mods_cfg.get(mod["id"], {})
-            live  = next((m for m in self._mods_state
-                          if m["id"] == mod["id"]), None)
-            if not state.get("error") and mod_update_available(mod, state, live):
-                count += 1
-        return count
-
     def _refresh_mods_badge(self):
         try:
-            count = self._count_mod_updates()
+            count = self._mods.updates_count
         except Exception:
             count = 0
         if count != self._mod_updates_count:
@@ -1559,19 +1534,17 @@ class OctoUpdaterApp(tk.Tk):
             self._draw_nav_tab("MODS")
 
     def _toggle_mod(self, mod_id: str, var: tk.BooleanVar):
-        self._mod_pending_state.setdefault(mod_id, {})["enabled"] = var.get()
+        self._mods.toggle(mod_id, var.get())
         self._refresh_apply_btn_visibility()
 
     def _set_ignore(self, mod_id: str, var: tk.BooleanVar):
-        self._mod_pending_state.setdefault(mod_id, {})["ignore_updates"] = var.get()
+        self._mods.set_ignore(mod_id, var.get())
         self._refresh_apply_btn_visibility()
 
     def _refresh_apply_btn_visibility(self):
         """Apply is offered only when there is something to apply: pending
         checkbox changes, or a failed mod the user may want to retry."""
-        has_error = any(bool(s.get("error"))
-                        for s in load_config().get("mods", {}).values())
-        if self._mod_pending_state or has_error:
+        if self._mods.state.has_pending_changes or self._mods.state.has_errors:
             if not self._apply_btn.winfo_ismapped():
                 self._apply_btn.pack(side="left")
         else:
@@ -1581,18 +1554,14 @@ class OctoUpdaterApp(tk.Tk):
         import webbrowser
         webbrowser.open(url)
 
-    @staticmethod
-    def _style_mod_action_label(lbl, mod, state, live):
+    def _style_mod_action_label(self, lbl, mod):
         """Drive the per-mod action label: 'retry' (red) when the mod is in
         an error state, 'update' (gold) when a newer version is available,
         hidden otherwise. Both do the same thing — reinstall the mod."""
-        if state.get("error"):
+        action = self._mods.action_for(mod["id"])
+        if action in ("retry", "update"):
             lbl._base, lbl._hover = C_GOLD, C_GOLD_LT
-            lbl.configure(text="retry", fg=C_GOLD)
-            lbl.pack(side="right", padx=(2, 8))
-        elif mod_update_available(mod, state, live):
-            lbl._base, lbl._hover = C_GOLD, C_GOLD_LT
-            lbl.configure(text="update", fg=C_GOLD)
+            lbl.configure(text=action, fg=C_GOLD)
             lbl.pack(side="right", padx=(2, 8))
         else:
             lbl.pack_forget()
@@ -1608,8 +1577,7 @@ class OctoUpdaterApp(tk.Tk):
         self._log_line(f"\nUpdating {mod['name']}...\n", "acct")
         self._set_btn_busy("Installing…")
         self._status_var.set("Downloading mods…")
-        threading.Thread(target=self._apply_mods_worker,
-                         args=(out, mod_id), daemon=True).start()
+        self._mods.apply(only_mod_id=mod_id)
 
     def _apply_mods(self):
         out = self._path_var.get().strip()
@@ -1618,8 +1586,7 @@ class OctoUpdaterApp(tk.Tk):
         self._apply_btn.configure(text="Applying...", bg="#2a2a32", fg=C_TEXT_DIM)
         self._set_btn_busy("Installing…")
         self._status_var.set("Downloading mods…")
-        threading.Thread(target=self._apply_mods_worker,
-                         args=(out,), daemon=True).start()
+        self._mods.apply()
 
     def _maybe_install_default_addons(self):
         """Auto-install the recommended addons the first time this game
@@ -1668,249 +1635,10 @@ class OctoUpdaterApp(tk.Tk):
     def _maybe_install_essential_mods(self):
         """Auto-install every mod flagged essential the first time this game
         folder is ready to use — i.e. on a brand-new install, or right after
-        the game folder was changed to a new location. Both cases wipe the
-        "mods" key from config, which is what this checks for, so once this
-        has run (successfully or not — failures are recorded per-mod) it
-        won't fire again until the folder changes.
-
-        Reuses the normal apply worker so failures land in config exactly
-        like a manual Apply would (per-mod "error" field, mod left disabled,
-        installed_version cached the same way)."""
-        if self._default_mods_install_started:
-            return
-
-        cfg = load_config()
-        if cfg.get("mods"):
-            return  # already initialized for this folder
-
-        out = self._path_var.get().strip()
-        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
-            return  # game isn't actually installed here yet
-
-        self._default_mods_install_started = True
-
-        # "Install essential mods" (Settings → General) gates the
-        # full essential set. VanillaFixes is exempt — it's the loader the other
-        # mods depend on, so it's always auto-installed.
-        auto_mods = cfg.get("auto_install_mods", True)
-        for mod in MODS_REGISTRY:
-            if mod.get("essential", False) and (auto_mods
-                                                or mod["id"] == "VanillaFixes"):
-                self._mod_pending_state.setdefault(mod["id"], {})["enabled"] = True
-
-        self._log_line("\nInstalling essential mods...\n", "acct")
-        self._set_btn_busy("Installing…")
-        self._status_var.set("Downloading mods…")
-        threading.Thread(target=self._apply_mods_worker,
-                         args=(out,), daemon=True).start()
-
-    def _apply_mods_worker(self, client_dir: str, only_mod_id: str | None = None):
-        # Work on a detached copy of the "mods" section; it's merged back into
-        # the live config atomically at the end (update_config).
-        mods_cfg = load_config().get("mods", {})
-
-        # Registry order is install order (VanillaFixes first).
-        ordered = MODS_REGISTRY
-
-        pending = self._mod_pending_state
-        # Arm the one-time "DXVK first launch" notice if dxvk gets (re)installed
-        # this run — the new d3d9.dll invalidates the shader cache.
-        set_dxvk_notice = False
-
-        for mod in ordered:
-            mid   = mod["id"]
-            if only_mod_id is not None and mid != only_mod_id:
-                continue
-            state = mods_cfg.get(mid, {})
-
-            # Read enabled/ignore from pending UI changes first, fall back to
-            # saved config. No registry-default fallback here: a mod is only
-            # ever "enabled" because the user (or the one-time default-mods
-            # seed in _maybe_install_essential_mods) explicitly said so.
-            enabled    = pending.get(mid, {}).get("enabled",        state.get("enabled", False))
-            ignore_upd = pending.get(mid, {}).get("ignore_updates", state.get("ignore_updates", False))
-
-            # A targeted single-mod update/retry always means "install this
-            # mod". Without this, retrying a failed install is a no-op: the
-            # error handler recorded enabled=False, so needs_install stays
-            # False and the mod is skipped (only its error gets cleared).
-            if only_mod_id is not None and mid == only_mod_id:
-                enabled = True
-
-            installed_ver = state.get("installed_version")
-            is_installed  = (bool(installed_ver) and
-                             mod_installed_files_present(mod, client_dir))
-
-            needs_install   = enabled and not is_installed
-            needs_uninstall = not enabled and is_installed
-
-            needs_version_lookup = needs_install or (enabled and is_installed and not ignore_upd)
-            latest_ver  = None
-            mod_release = None
-            if needs_version_lookup:
-                try:
-                    if mod["source"]["kind"] in ("github_release", "codeberg_release"):
-                        mod_release = _fetch_release_cached(mod)
-                        latest_ver  = _release_version(mod, mod_release) if mod_release else None
-                    else:
-                        latest_ver = fetch_mod_latest_version_cached(mod)
-                except Exception:
-                    pass
-
-            update_avail = (is_installed and
-                            latest_ver is not None and
-                            latest_ver != installed_ver and
-                            not ignore_upd)
-            needs_update = enabled and update_avail
-
-            if not (needs_install or needs_uninstall or needs_update):
-                if mid in pending:
-                    mods_cfg.setdefault(mid, {}).update({
-                        "enabled":        enabled,
-                        "ignore_updates": ignore_upd,
-                    })
-                # A previously failed mod that the user leaves disabled on a
-                # later Apply counts as dismissed — clear the error so it
-                # stops blocking the PLAY button.
-                if not enabled and state.get("error"):
-                    mods_cfg.setdefault(mid, {})["error"] = None
-                continue
-
-            action = ("Installing" if needs_install else
-                      "Updating" if needs_update else "Removing")
-            self.after(0, lambda a=action, n=mod["name"]:
-                       self._status_var.set(f"{a} {n}…"))
-
-            try:
-                if needs_install:
-                    log(f"\nInstalling {mod['name']} {latest_ver}...")
-                    written = install_mod(mod, client_dir, release=mod_release)
-                    if mod.get("register_dll"):
-                        add_dll(client_dir, mod["register_dll"])
-                    resolved_ver = mod.pop("_resolved_version", None) or latest_ver or "unknown"
-                    mods_cfg[mid] = {
-                        "enabled":           True,
-                        "installed_version": resolved_ver,
-                        "installed_files":   written,
-                        "ignore_updates":    ignore_upd,
-                        "error":             None,
-                    }
-                    if mid == "dxvk":
-                        set_dxvk_notice = True
-                    log(f"  \u2713 {mod['name']} installed.")
-
-                elif needs_uninstall:
-                    log(f"\nUninstalling {mod['name']}...")
-                    uninstall_mod(mod, client_dir)
-                    if mod.get("register_dll"):
-                        remove_dll(client_dir, mod["register_dll"])
-                    mods_cfg[mid] = {
-                        "enabled":           False,
-                        "installed_version": None,
-                        "installed_files":   [],
-                        "ignore_updates":    ignore_upd,
-                        "error":             None,
-                    }
-                    log(f"  \u2713 {mod['name']} uninstalled.")
-
-                elif needs_update:
-                    log(f"\nUpdating {mod['name']} {installed_ver} \u2192 {latest_ver}...")
-                    uninstall_mod(mod, client_dir)
-                    written = install_mod(mod, client_dir, release=mod_release)
-                    if mod.get("register_dll"):
-                        add_dll(client_dir, mod["register_dll"])
-                    mods_cfg[mid] = {
-                        "enabled":           True,
-                        "installed_version": latest_ver,
-                        "installed_files":   written,
-                        "ignore_updates":    ignore_upd,
-                        "error":             None,
-                    }
-                    if mid == "dxvk":
-                        set_dxvk_notice = True
-                    log(f"  \u2713 {mod['name']} updated.")
-
-            except Exception as e:
-                err = describe_install_error(e)
-                log(f"  \u2717 {mod['name']}: {err}")
-                mods_cfg[mid] = {
-                    "enabled":           False,
-                    "installed_version": None,
-                    "installed_files":   [],
-                    "ignore_updates":    ignore_upd,
-                    "error":             err,
-                }
-
-        # Merge just the "mods" key into the current on-disk config (which
-        # other threads may have written to during this long install), rather
-        # than saving our stale whole-config snapshot.
-        sorted_mods = dict(sorted(mods_cfg.items(),
-                                  key=lambda kv: kv[0].lower()))
-        def _merge(c):
-            c["mods"] = sorted_mods
-            if set_dxvk_notice:
-                c["dxvk_notice_pending"] = True
-        fresh_cfg  = update_config(_merge)
-        fresh_mods = fresh_cfg.get("mods", {})
-        # Keep pending checkbox toggles on a targeted single-mod update —
-        # they were never applied and would be lost otherwise.
-        if only_mod_id is None:
-            self._mod_pending_state = {}
-
-        def _do_inplace_update():
-            for mod in MODS_REGISTRY:
-                mid         = mod["id"]
-                state       = fresh_mods.get(mid, {})
-                refs        = self._mod_row_vars.get(mid, {})
-                if not refs:
-                    continue
-                has_error   = bool(state.get("error"))
-                installed   = bool(state.get("installed_version"))
-
-                if mid not in self._mod_pending_state:
-                    refs["enabled"].set(state.get("enabled", False))
-                    refs["ignore"].set(state.get("ignore_updates", False))
-
-                live = next((m for m in self._mods_state if m["id"] == mid), {})
-                ver  = state.get("installed_version") or live.get("latest_version") or "unknown"
-                if "ver_label" in refs:
-                    refs["ver_label"].configure(text=f"  {ver}")
-
-                if "name_label" in refs:
-                    refs["name_label"].configure(
-                        fg=C_ERR if has_error else (C_MOD_HL if installed else C_TEXT))
-
-                if "desc_label" in refs:
-                    refs["desc_label"].configure(
-                        fg=C_TEXT if state.get("enabled", False) else C_TEXT_DIM)
-
-                if "error_label" in refs:
-                    if has_error:
-                        refs["error_label"].configure(
-                            text=f"  \u26a0  {state['error']}")
-                        refs["error_label"].pack(fill="x", pady=(0, 4))
-                    else:
-                        refs["error_label"].pack_forget()
-
-                if "update_label" in refs:
-                    self._style_mod_action_label(refs["update_label"],
-                                                 mod, state, live)
-
-            self._apply_btn.configure(text="Apply", bg=C_PANEL_BDR, fg=C_TEXT)
-            self._refresh_apply_btn_visibility()
-            self._refresh_mods_badge()
-            # Fresh setup chain: once the default mods finished installing,
-            # the recommended addons follow (no-op if already initialized).
-            self._maybe_install_default_addons()
-
-            # Any mod in an error state (download blocked, API limit, AV
-            # deleted the archive, …) — bring the MODS tab up so the error
-            # is visible. PLAY stays disabled via _refresh_ready_state.
-            if any(bool(s.get("error")) for s in fresh_mods.values()):
-                self._switch_tab("MODS")
-            self._refresh_ready_state()
-
-        self.after(0, _do_inplace_update)
+        the game folder was changed to a new location. The one-shot guard,
+        the pending seed and the apply worker live in the ModsController."""
+        if self._mods.maybe_install_essential_mods():
+            self._set_btn_busy("Installing…")
 
     # ── addons panel ─────────────────────────────────────────────────────────
 
@@ -2708,8 +2436,7 @@ class OctoUpdaterApp(tk.Tk):
                 c.pop(k, None)
         self._cfg = update_config(_reset_for_new_folder)
 
-        self._mod_pending_state = {}
-        self._default_mods_install_started = False
+        self._mods.reset()
         self._default_addons_install_started = False
         self._updater.invalidate()
 
@@ -2720,7 +2447,7 @@ class OctoUpdaterApp(tk.Tk):
         self._addons_status = {"state": "idle", "addons": {}, "available": []}
         self._addon_errors = {}
         self._news.invalidate()
-        self._mod_updates_count = 0
+        self._mod_updates_count = self._mods.updates_count
         self._addon_updates_count = 0
         self._draw_nav_tab("MODS")
         self._draw_nav_tab("ADDONS")
@@ -3101,15 +2828,14 @@ class OctoUpdaterApp(tk.Tk):
             if (state.get("installed_version")
                     and mod_installed_files_present(mod, out)):
                 continue  # already installed
-            self._mod_pending_state.setdefault(mod["id"], {})["enabled"] = True
+            self._mods.toggle(mod["id"], True)
             pending = True
         if not pending:
             return
         self._log_line("\nInstalling essential mods...\n", "acct")
         self._set_btn_busy("Installing…")
         self._status_var.set("Downloading mods…")
-        threading.Thread(target=self._apply_mods_worker,
-                         args=(out,), daemon=True).start()
+        self._mods.apply()
 
     def _install_missing_recommended_addons(self):
         """Install every recommended addon not already present. Used when the
@@ -3365,6 +3091,9 @@ class OctoUpdaterApp(tk.Tk):
     def _on_operation_finished(self, event):
         if not isinstance(event, OperationFinished):
             return
+        if event.kind == "mods":
+            self._on_mods_finished(event)
+            return
         if event.ok:
             # The update worker reports the (post-patch) client version just
             # before finishing; surface it when a fresh one arrived.
@@ -3375,14 +3104,43 @@ class OctoUpdaterApp(tk.Tk):
             # Game files are confirmed present now — install essential mods
             # if this is a fresh folder (first launch or folder just changed).
             self._maybe_install_essential_mods()
-            # When mods were already initialized, the addons chain from
-            # _do_inplace_update never runs — trigger it directly.
+            # When mods were already initialized, the addons chain from the
+            # mods operation never runs — trigger it directly.
             if load_config().get("mods"):
                 self._maybe_install_default_addons()
         else:
             self._status_var.set("Update available!")
             self._draw_progress(0.0)
             self._set_btn_update()
+
+    def _on_mods_finished(self, event):
+        """Completion path for a mods apply (the old _do_inplace_update). The
+        per-row widget refresh already happened on ModsLoaded; here the panel
+        chrome and the fresh-setup chain are driven."""
+        if not event.ok:
+            self._status_var.set("Mods install failed — check the log")
+            self._refresh_ready_state()
+            return
+        self._apply_btn.configure(text="Apply", bg=C_PANEL_BDR, fg=C_TEXT)
+        self._refresh_apply_btn_visibility()
+        self._refresh_mods_badge()
+        # Fresh setup chain: once the default mods finished installing, the
+        # recommended addons follow (no-op if already initialized).
+        self._maybe_install_default_addons()
+
+        # Any mod in an error state (download blocked, API limit, AV deleted
+        # the archive, …) — bring the MODS tab up so the error is visible.
+        # PLAY stays disabled via _refresh_ready_state.
+        if self._mods.state.has_errors:
+            self._switch_tab("MODS")
+        self._refresh_ready_state()
+
+    def _on_mods_loaded(self, event):
+        if not isinstance(event, ModsLoaded):
+            return
+        self._render_mod_rows()
+        self._refresh_mods_badge()
+        self._refresh_ready_state()
 
     def _on_operation_failed(self, event):
         if isinstance(event, OperationFailed):
