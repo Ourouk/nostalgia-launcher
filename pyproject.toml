@@ -1,6 +1,6 @@
 [project]
 name = "octo-updater"
-version = "1.2.0"
+version = "1.2"
 description = "Standalone updater and mod manager for the OctoWoW client"
 requires-python = ">=3.10"
 dependencies = [
