@@ -13,13 +13,16 @@ The C16-C19 panel ports build their content into the placeholder pages of
 widgets are exposed as attributes for the settings/update workflows (C20+).
 """
 
-from PySide6.QtCore import Qt
+import queue
+
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QStackedWidget,
@@ -29,9 +32,11 @@ from PySide6.QtWidgets import (
 )
 
 from constants import UPDATER_VERSION
-from log_sink import log
+from log_sink import _LOG_Q, log
 from qt_addons_panel import AddonsPanel
 from qt_bridge import ControllerHub
+from qt_custom_addon_dialog import CustomAddonDialog
+from qt_log_window import LogWindow
 from qt_mods_panel import ModsPanel
 from qt_news_panel import NewsPanel
 from qt_settings_dialog import SettingsDialog
@@ -55,6 +60,10 @@ class MainWindow(QMainWindow):
         self._hub = hub
         self._palette = Palette()
         self._settingsDialog = None
+        self._log_buffer: list = []
+        self._logWindow = None
+        self._customAddonDialog = None
+        self._firstRunTimer = None
         self.setStyleSheet(theme_qss(self._palette))
         self.setWindowTitle("Octo Updater")
         self.setMinimumSize(clamp(BASE_W // 2, 560, 800),
@@ -71,6 +80,23 @@ class MainWindow(QMainWindow):
 
         self._wire_signals()
         self._navButtons["NEWS"].setChecked(True)
+
+        # Session-log drain: the global log_sink queue receives lines written
+        # from worker threads (app.py's _poll drains the same queue); a
+        # periodic QTimer mirrors that here and feeds the shared buffer.
+        self._logTimer = QTimer(self)
+        self._logTimer.setInterval(50)
+        self._logTimer.timeout.connect(self._drain_log_q)
+        self._logTimer.start()
+
+        # First run: auto-open the settings dialog once, like the Tk
+        # after(500, _open_settings).
+        if hub.settings.state.first_run:
+            self._firstRunTimer = QTimer(self)
+            self._firstRunTimer.setSingleShot(True)
+            self._firstRunTimer.setInterval(500)
+            self._firstRunTimer.timeout.connect(self._open_settings_dialog)
+            self._firstRunTimer.start()
 
     # ── build ────────────────────────────────────────────────────────────────
 
@@ -251,6 +277,7 @@ class MainWindow(QMainWindow):
         bridge.progressChanged.connect(self._onProgressChanged)
         bridge.operationFinished.connect(self._onOperationFinished)
         bridge.operationFailed.connect(self._onOperationFailed)
+        bridge.logMessage.connect(self._on_log_message)
 
     # ── tabs ─────────────────────────────────────────────────────────────────
 
@@ -276,8 +303,23 @@ class MainWindow(QMainWindow):
             badge.hide()
 
     def _on_custom_addon_requested(self):
-        """Placeholder — the custom-addon dialog wiring lands in C21."""
-        log("Custom addon dialog lands in C21.\n", "acct")
+        """Open the custom-addon dialog; its addonRequested record is handed
+        to the AddonsController."""
+        if self._customAddonDialog is None:
+            dialog = CustomAddonDialog(self._palette, self)
+            dialog.addonRequested.connect(self._on_custom_addon_apply)
+            dialog.finished.connect(self._on_custom_addon_finished)
+            self._customAddonDialog = dialog
+        self._customAddonDialog.show()
+        self._customAddonDialog.raise_()
+        self._customAddonDialog.activateWindow()
+
+    def _on_custom_addon_apply(self, rec: dict):
+        log(f"\nInstalling custom addon {rec['folder']}…\n", "acct")
+        self._hub.addons.apply([rec])
+
+    def _on_custom_addon_finished(self):
+        self._customAddonDialog = None
 
     # ── settings dialog ─────────────────────────────────────────────────────
 
@@ -292,14 +334,78 @@ class MainWindow(QMainWindow):
             dialog = SettingsDialog(
                 self._hub.settings, self._hub.bridge, self._palette, self)
             dialog.showLogsRequested.connect(self._on_show_logs_requested)
+            dialog.finished.connect(self._on_settings_finished)
             self._settingsDialog = dialog
         self._settingsDialog.show()
         self._settingsDialog.raise_()
         self._settingsDialog.activateWindow()
 
+    def _on_settings_finished(self):
+        """First-run close: recommend the Defender exclusion once, then mark
+        the prompt done so closing Settings again never re-asks."""
+        if not self._hub.settings.state.first_run_av_pending:
+            return
+        if self._hub.settings.should_prompt_av():
+            ret = QMessageBox.question(
+                self, "Game folder changed",
+                "It is highly recommended to add the game folder to your "
+                "antivirus exclusions. Antivirus software may incorrectly "
+                "detect some mods as threats and prevent them from being "
+                "downloaded or installed properly.\n\n"
+                "Do you want to add the game folder to Defender exclusions?",
+                QMessageBox.Yes | QMessageBox.No)
+            if ret == QMessageBox.Yes:
+                self._hub.settings.allow_through_antivirus()
+        self._hub.settings.av_prompt_dismissed()
+
     def _on_show_logs_requested(self):
-        """Placeholder — the session-log window lands in C21."""
-        log("Logs window lands in C21.\n", "acct")
+        """Open (or re-raise) the session-log window, seeded from the
+        buffer so a freshly-opened window shows the whole session."""
+        if self._logWindow is None:
+            win = LogWindow(self._palette, self)
+            win.seed(self._log_buffer)
+            win.setAttribute(Qt.WA_DeleteOnClose, True)
+            win.destroyed.connect(self._on_log_window_closed)
+            self._logWindow = win
+        self._logWindow.show()
+        self._logWindow.raise_()
+        self._logWindow.activateWindow()
+
+    def _on_log_window_closed(self):
+        self._logWindow = None
+
+    # ── session log ─────────────────────────────────────────────────────────
+
+    def _on_log_message(self, text: str, tag: str):
+        self._render_log(text, tag)
+
+    def _drain_log_q(self):
+        """Drain the global worker log queue into the session buffer (the Qt
+        counterpart of app.py's _poll)."""
+        try:
+            while True:
+                msg, tag = _LOG_Q.get_nowait()
+                self._render_log(msg, tag)
+        except queue.Empty:
+            pass
+
+    def _render_log(self, msg: str, tag: str = ""):
+        """Normalize a raw log message (trailing newline, auto-tag when
+        untagged) into the session buffer and any open log window."""
+        line = msg if msg.endswith("\n") else msg + "\n"
+        if not tag:
+            ml = line.lower()
+            if "✓" in line or "success" in ml or "complete" in ml \
+                    or "up to date" in ml:
+                tag = "ok"
+            elif "✗" in line or "error" in ml or "fail" in ml \
+                    or "mismatch" in ml:
+                tag = "err"
+            elif line.strip().startswith("["):
+                tag = "acct"
+        self._log_buffer.append((line, tag))
+        if self._logWindow is not None:
+            self._logWindow.append(line, tag)
 
     # ── slots ────────────────────────────────────────────────────────────────
 
@@ -333,9 +439,16 @@ class MainWindow(QMainWindow):
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     def close(self):
+        self._stop_timers()
         self._hub.close()
         return super().close()
 
     def closeEvent(self, event):
+        self._stop_timers()
         self._hub.close()
         super().closeEvent(event)
+
+    def _stop_timers(self):
+        self._logTimer.stop()
+        if self._firstRunTimer is not None:
+            self._firstRunTimer.stop()
