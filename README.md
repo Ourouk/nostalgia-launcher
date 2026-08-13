@@ -104,6 +104,20 @@ layout on narrow windows. The pure layout math lives in `ui_metrics.py` and
 is covered by unit tests; a Tk smoke suite exercises the real window under a
 display (`xvfb-run -a uv run pytest tests/test_tk_smoke.py`).
 
+Scale detection supports the desktop environments' *fractional* scaling
+(e.g. 125%) where the X11/XWayland geometry report would otherwise be wrong:
+
+- **GNOME** (`GDK_SCALE`/`GDK_DPI_SCALE`) and **KDE Plasma**
+  (`QT_SCALE_FACTOR`/`QT_SCREEN_SCALE_FACTORS`) toolkit variables.
+- Tk's own `tk scaling` on Linux as the next fallback.
+- Physical screen DPI for Windows/macOS.
+
+If detection is ever wrong on your setup, set the scale explicitly:
+
+```bash
+OCTO_UI_SCALE=1.25 octo_updater
+```
+
 ---
 
 ## Usage

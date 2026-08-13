@@ -11,12 +11,22 @@ all geometry flows through these helpers:
   `layout_mode`) compute placements from a *current* window size instead of
   hardcoded constants, so the UI can resize and reflow.
 
+Scale detection honors, in order of precedence:
+
+1. The explicit `OCTO_UI_SCALE` environment variable (e.g. `OCTO_UI_SCALE=1.25`).
+2. The active desktop's toolkit scaling — GNOME/GTK (`GDK_SCALE`,
+   `GDK_DPI_SCALE`) and KDE/Qt (`QT_SCALE_FACTOR`, `QT_SCREEN_SCALE_FACTORS`)
+   — which is what reliably reports *fractional* scaling like 125%.
+3. Tk's own `tk scaling` on Linux, where the X11/XWayland physical geometry
+   report is often bogus under Wayland.
+4. The physical screen DPI as a last resort (primary on Windows/macOS).
+
 The pure helpers take no Tk dependency, which keeps them unit-testable.
 """
 
-import math
+import os
 
-from platform_support import ui_font_family
+from platform_support import is_linux, is_macos, ui_font_family
 
 # Logical design size and chrome heights (in "100%" pixels).
 BASE_W = 1000
@@ -35,21 +45,17 @@ class UIScale:
     factor == 1.0 at 96 DPI; 1.25 at 125%, 1.5 at 150%, 2.0 at 200%.
     """
 
-    def __init__(self, root=None):
+    def __init__(self, root=None, env=None, platform=None):
         self.factor = 1.0
+        self._env = env if env is not None else os.environ
+        self._platform = platform
         if root is not None:
             self.update(root)
 
     def update(self, root):
-        """Re-derive the scale factor from the (now-mapped) root window.
-
-        Prefers the DPI inferred from the physical screen size, falling back
-        to Tk's own `tk scaling` value.
-        """
-        factor = _detect_scale_from_screen(root)
-        if factor is None:
-            factor = _detect_scale_from_tk(root)
-        self.factor = clamp(factor, 0.75, 3.0)
+        """Re-derive the scale factor from the environment and root window."""
+        factor = _detect_scale(root, env=self._env, platform=self._platform)
+        self.factor = clamp(factor if factor is not None else 1.0, 0.75, 3.0)
 
     def s(self, value):
         """Scale a logical (100% DPI) pixel size to the display size."""
@@ -84,8 +90,127 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
+def _auto_platform() -> str:
+    """'linux', 'macos' or 'windows' for the current host."""
+    if is_linux():
+        return "linux"
+    if is_macos():
+        return "macos"
+    return "windows"
+
+
+def _detect_scale(root, env=None, platform=None):
+    """Ordered scale-factor detection (see the module docstring).
+
+    Returns a positive factor, or None when nothing usable was found.
+    """
+    env = env if env is not None else os.environ
+    if platform is None:
+        platform = _auto_platform()
+    factor = _detect_scale_from_override(env)
+    if factor is None:
+        factor = _detect_scale_from_desktop(env)
+    if factor is None:
+        # On Linux the X11/XWayland physical report is often wrong under
+        # Wayland, so trust Tk's own scaling first. Windows/macOS report
+        # physical geometry reliably, so prefer that there.
+        if platform == "linux":
+            factor = _detect_scale_from_tk(root)
+            if factor is None:
+                factor = _detect_scale_from_screen(root)
+        else:
+            factor = _detect_scale_from_screen(root)
+            if factor is None:
+                factor = _detect_scale_from_tk(root)
+    return factor
+
+
+def _detect_scale_from_override(env):
+    """OCTO_UI_SCALE explicit override (invalid values are ignored)."""
+    raw = env.get("OCTO_UI_SCALE")
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _desktop_kind(env):
+    """'gnome', 'kde' or None, from the desktop session environment."""
+    cur = (env.get("XDG_CURRENT_DESKTOP") or "").lower()
+    sess = (env.get("XDG_SESSION_DESKTOP") or "").lower()
+    gdm = (env.get("GDMSESSION") or "").lower()
+    kde_full = (env.get("KDE_FULL_SESSION") or "").lower() == "true"
+    if kde_full or "kde" in cur or "kde" in sess \
+            or "plasma" in sess or "plasma" in gdm:
+        return "kde"
+    if "gnome" in cur or "gnome" in sess or "gnome" in gdm \
+            or "ubuntu" in cur:
+        return "gnome"
+    return None
+
+
+def _detect_scale_from_gnome(env):
+    """GDK integer scale × fractional DPI scale (GNOME/GTK)."""
+    gdk = env.get("GDK_SCALE")
+    dpi = env.get("GDK_DPI_SCALE")
+    if gdk is None and dpi is None:
+        return None
+    try:
+        s = float(gdk) if gdk else 1.0
+        d = float(dpi) if dpi else 1.0
+    except (TypeError, ValueError):
+        return None
+    if s <= 0 or d <= 0:
+        return None
+    return s * d
+
+
+def _detect_scale_from_kde(env):
+    """Qt global scale factor, else the largest per-screen factor."""
+    qf = env.get("QT_SCALE_FACTOR")
+    if qf:
+        try:
+            v = float(qf)
+        except (TypeError, ValueError):
+            v = 0.0
+        if v > 0:
+            return v
+    qs = env.get("QT_SCREEN_SCALE_FACTORS")
+    if qs:
+        values = []
+        for entry in qs.split(";"):
+            if "=" in entry:
+                try:
+                    values.append(float(entry.split("=", 1)[1]))
+                except (TypeError, ValueError):
+                    pass
+        if values:
+            return max(values)
+    return None
+
+
+def _detect_scale_from_desktop(env):
+    """Scale from the active GNOME/KDE desktop's toolkit variables."""
+    kind = _desktop_kind(env)
+    if kind == "gnome":
+        factor = _detect_scale_from_gnome(env)
+        if factor is not None:
+            return factor
+    elif kind == "kde":
+        factor = _detect_scale_from_kde(env)
+        if factor is not None:
+            return factor
+    # Honor explicit toolkit overrides even on unrecognized desktops.
+    factor = _detect_scale_from_kde(env)
+    if factor is not None:
+        return factor
+    return _detect_scale_from_gnome(env)
+
+
 def _detect_scale_from_screen(root):
-    """Scale factor from the physical screen diagonal (Windows/macOS/Linux).
+    """Scale factor from the physical screen diagonal (Windows/macOS).
 
     Returns None when the reported screen geometry is unusable.
     """
@@ -107,9 +232,9 @@ def _detect_scale_from_tk(root):
     try:
         scaling = float(root.tk.call("tk", "scaling"))
     except Exception:
-        return 1.0
+        return None
     if scaling <= 0:
-        return 1.0
+        return None
     return scaling / TK_BASE_SCALING
 
 
