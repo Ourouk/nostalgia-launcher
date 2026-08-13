@@ -1,7 +1,8 @@
 """Tests for GUI backend selection in octo_updater.py.
 
-Only the resolver and startup error paths are exercised here — no GUI is
-instantiated, so these run headless.
+Only the resolver and startup wiring are exercised here. The Qt backend
+runs headless (it never opens a display in these tests); the Tk path is
+not instantiated.
 """
 
 import octo_updater
@@ -21,15 +22,18 @@ def test_resolve_backend_default_is_tk(monkeypatch):
     assert octo_updater.resolve_backend() is app.OctoUpdaterApp
 
 
-def test_resolve_backend_qt_unavailable_raises_import_error():
-    with pytest.raises(ImportError):
-        octo_updater.resolve_backend("qt")
+def test_resolve_backend_qt_returns_app_class():
+    import qt_app
+    assert octo_updater.resolve_backend("qt") is qt_app.QtOctoUpdaterApp
 
 
-def test_qt_backend_message_is_friendly():
-    with pytest.raises(ImportError) as excinfo:
-        octo_updater.resolve_backend("qt")
-    msg = octo_updater.backend_error_message("qt", excinfo.value)
+def test_resolve_backend_pyside6_returns_app_class():
+    import qt_app
+    assert octo_updater.resolve_backend("pyside6") is qt_app.QtOctoUpdaterApp
+
+
+def test_qt_backend_error_message_is_friendly():
+    msg = octo_updater.backend_error_message("qt", ImportError("broken"))
     assert QT_UNAVAILABLE in msg
 
 
@@ -45,17 +49,18 @@ def test_main_exits_1_for_unknown_backend(monkeypatch, capsys):
     assert "Unknown OCTO_UI_BACKEND: bogus" in capsys.readouterr().err
 
 
-def test_main_exits_1_for_qt_backend(monkeypatch, capsys):
-    monkeypatch.setenv("OCTO_UI_BACKEND", "qt")
-    with pytest.raises(SystemExit) as excinfo:
-        octo_updater.main()
-    assert excinfo.value.code == 1
-    assert QT_UNAVAILABLE in capsys.readouterr().err
+@pytest.mark.parametrize("backend", ["qt", "pyside6"])
+def test_main_constructs_and_runs_qt_backend(monkeypatch, backend):
+    calls = []
 
+    class FakeQtApp:
+        def __init__(self):
+            calls.append("constructed")
 
-def test_main_exits_1_for_pyside6_backend(monkeypatch, capsys):
-    monkeypatch.setenv("OCTO_UI_BACKEND", "pyside6")
-    with pytest.raises(SystemExit) as excinfo:
-        octo_updater.main()
-    assert excinfo.value.code == 1
-    assert QT_UNAVAILABLE in capsys.readouterr().err
+        def mainloop(self):
+            calls.append("mainloop")
+
+    monkeypatch.setenv("OCTO_UI_BACKEND", backend)
+    monkeypatch.setattr(octo_updater, "resolve_backend", lambda name: FakeQtApp)
+    octo_updater.main()
+    assert calls == ["constructed", "mainloop"]
