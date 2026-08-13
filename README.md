@@ -121,6 +121,38 @@ root store is stale.
 
 ---
 
+## Development
+
+The codebase is split into focused modules (no dependencies beyond the
+standard library):
+
+| Module | Responsibility |
+|--------|----------------|
+| `octo_updater.py` | Entry point (PyInstaller target) |
+| `app.py` | Tk GUI: `OctoUpdaterApp`, `SlimScrollbar` |
+| `client_update.py` | Manifest verification, resumable downloads, patching |
+| `mods.py` | Mod registry, release lookup, install/uninstall |
+| `addons.py` | Addon catalog, git commit resolution, archive install, pfUI patch |
+| `tweaks.py` | Tweak definitions, Config.wtf, WoW.exe patch builder |
+| `security_http.py` | TLS context, HTTPS-only enforcement, host allowlists |
+| `config_store.py` | Atomic JSON config/hash-cache persistence |
+| `filesystem.py` | Hashing, path/archive helpers |
+| `helpers.py` | Pure, tkinter-free helpers |
+| `self_update.py` | Updater release checks |
+| `news.py` | News feed fetching |
+| `errors.py` | Human-readable install/update error messages |
+| `log_sink.py` | Thread-safe global log channel |
+| `constants.py` | Shared constants and filesystem paths |
+
+Run the tests (requires `uv`):
+
+```bash
+uv sync --dev
+uv run pytest
+```
+
+---
+
 ## Support the Developer
 
 If Octo Updater is useful to you, consider supporting its development:

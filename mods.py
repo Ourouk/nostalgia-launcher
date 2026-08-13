@@ -14,7 +14,6 @@ import urllib.request
 from config_store import load_config, update_config
 from constants import GITHUB_API, MOD_UA
 from errors import describe_net_error
-from helpers import parse_version
 from log_sink import log
 from security_http import secure_urlopen, ALLOWED_DOWNLOAD_HOSTS
 

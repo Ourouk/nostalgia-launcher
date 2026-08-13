@@ -25,30 +25,19 @@ from helpers import (
 import config_store
 from config_store import (
     load_config,
-    save_config,
     update_config,
-    load_cache,
-    save_cache,
 )
 
-import security_http
-from security_http import secure_urlopen, ALLOWED_DOWNLOAD_HOSTS
+from security_http import secure_urlopen
 
-import log_sink
 from log_sink import log, _LOG_Q
 
-import filesystem
 from filesystem import (
-    ensure_dir,
     sha1_file,
-    cached_sha1,
-    already_updated,
     remove_wdb,
     get_client_version,
-    rmtree_force,
 )
 
-import tweaks
 from tweaks import (
     TWEAKS_DEFAULTS,
     TWEAKS_ITEMS,
@@ -56,8 +45,6 @@ from tweaks import (
     fov_default_for_display,
     load_tweaks_config,
     save_tweaks_config,
-    build_tweaks,
-    write_config_wtf,
     update_config_wtf,
 )
 
@@ -134,57 +121,38 @@ FONT_VER    = ("Segoe UI", 8)
 
 from mods import (
     MODS_REGISTRY,
-    _codeberg_latest,
-    DXVK_CONF_CONTENT,
-    _write_dxvk_conf,
-    _github_latest,
-    _pick_asset,
     _release_version,
-    fetch_mod_latest_version,
-    _slim_release,
     _fetch_release_cached,
     fetch_mod_latest_version_cached,
     install_mod,
     uninstall_mod,
-    _dlls_txt_path,
     add_dll,
     remove_dll,
     mod_installed_files_present,
-    mod_supports_update_check,
     mod_update_available,
 )
 from self_update import (
-    UPDATER_REPO,
-    UPDATER_CHECK_TTL,
     fetch_updater_latest_tag,
     updater_update_available,
 )
 
-from errors import describe_net_error as _describe_net_error, describe_install_error
+from errors import describe_install_error
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Addons definition & engine  (see addons.py)
 # ──────────────────────────────────────────────────────────────────────────────
 
 from addons import (
-    ADDONS_URL,
-    ADDONS_CATALOG_TTL,
-    ADDON_SHA_CACHE_TTL,
     ADDONS_VERIFY_TTL,
     RECOMMENDED_ADDONS,
     BLOCKED_ADDONS,
     ADDON_GIT_HOSTS,
-    ADDON_ZIP_HOSTS,
     addons_path,
     is_allowed_git_url,
-    _slim_addon_catalog,
     fetch_addons_catalog,
     read_toc_file,
-    _git_parts,
-    _api_json,
     addon_remote_sha,
     addon_cached_sha,
-    addon_zip_url,
     install_addon_files,
     patch_pfui_default_profile,
 )
