@@ -6,7 +6,6 @@ store paths at import time and owns the whole Tk interface.
 """
 
 import os
-import urllib.request
 import threading
 import queue
 import tkinter as tk
@@ -24,8 +23,6 @@ from config_store import (
     load_config,
     update_config,
 )
-
-from security_http import secure_urlopen
 
 from log_sink import log, _LOG_Q
 
@@ -62,6 +59,7 @@ from update_controller import UpdateController
 from news_controller import NewsController
 from mods_controller import ModsController
 from addons_controller import AddonsController
+from settings_controller import SettingsController
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Constants  (see constants.py)
@@ -69,9 +67,6 @@ from addons_controller import AddonsController
 
 from constants import (
     UPDATER_VERSION,
-    SERVER,
-    DOWNLOAD_VERSION,
-    UA,
     CONFIG_FILE,
     CACHE_FILE,
     DEFAULT_OUT_DIR,
@@ -86,7 +81,6 @@ from platform_support import (
     can_patch_client,
     can_manage_antivirus,
     ui_font_family,
-    open_folder,
 )
 
 import ui_metrics
@@ -158,7 +152,6 @@ _UI_FONT = ui_font_family()
 
 from mods import (
     MODS_REGISTRY,
-    mod_installed_files_present,
 )
 from self_update import (
     fetch_updater_latest_tag,
@@ -172,7 +165,6 @@ from self_update import (
 from addons import (
     RECOMMENDED_ADDONS,
     ADDON_GIT_HOSTS,
-    addons_path,
     is_allowed_git_url,
 )
 
@@ -244,17 +236,8 @@ class OctoUpdaterApp(tk.Tk):
         # never flashes at the default top-left corner before centering.
         self.withdraw()
 
-        # Detect first run before anything writes the config.
-        self._first_run  = not os.path.exists(CONFIG_FILE)
-        # On first run Settings auto-opens with the folder auto-set to the
-        # current dir. If the user closes it without changing the folder or
-        # adding a Defender exclusion, recommend the exclusion once on close.
-        self._first_run_av_pending = self._first_run and can_manage_antivirus()
-        # On first run we don't verify (fetch the manifest / touch Config.wtf)
-        # until the user closes Settings, so nothing is written to the default
-        # folder before they've picked their real game folder. A folder change
-        # supersedes this (it verifies the new folder right away).
-        self._first_run_verify_pending = self._first_run
+        # First-run flags live in the SettingsController's SettingsState;
+        # they were detected here before anything writes the config.
         self._cfg        = load_config()
         # Session log lives in memory; the "Show logs" window renders it.
         self._log_buffer: list = []
@@ -267,11 +250,10 @@ class OctoUpdaterApp(tk.Tk):
         self._path_var = tk.StringVar(
             value=os.path.normpath(self._cfg.get("out_dir", DEFAULT_OUT_DIR)))
         self._last_path_val = os.path.normpath(self._path_var.get().strip())
-        self._path_var.trace_add("write", self._on_path_changed)
 
-        # Phase 1b controller owns the update/verify service logic; this
-        # class renders its events. All UI updates arrive via the dispatcher
-        # on the main thread.
+        # Phase 1b controllers own the update/verify/mod/news/addons service
+        # logic; this class renders their events. All UI updates arrive via
+        # the dispatcher on the main thread.
         self._events = EventDispatcher()
         self._updater = UpdateController(
             self._events, get_out_dir=lambda: self._path_var.get().strip())
@@ -280,6 +262,15 @@ class OctoUpdaterApp(tk.Tk):
             self._events, get_out_dir=lambda: self._path_var.get().strip())
         self._addons = AddonsController(
             self._events, get_out_dir=lambda: self._path_var.get().strip())
+
+        # Settings/game-folder controller — owns SettingsState.path, which is
+        # mirrored against _path_var below (and kept in sync by the trace).
+        self._settings = SettingsController(
+            self._events, self._updater, self._mods, self._addons, self._news)
+        self._settings.state.path = os.path.normpath(
+            self._path_var.get().strip())
+        self._path_var.trace_add("write", self._on_path_changed)
+
         self._events.subscribe(self._on_status_changed)
         self._events.subscribe(self._on_progress_changed)
         self._events.subscribe(self._on_log_message)
@@ -353,8 +344,8 @@ class OctoUpdaterApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll()
         # On first run, defer verification until Settings is closed (see
-        # _close_settings / _first_run_verify_pending).
-        if not self._first_run:
+        # _close_settings / first_run_verify_pending).
+        if not self._settings.state.first_run:
             self.after(300, self._start_verify)
         self.after(600, self._load_news)
         # Check mod updates at launch too — but only once mods have actually
@@ -372,7 +363,7 @@ class OctoUpdaterApp(tk.Tk):
         self.after(2000, lambda: threading.Thread(
             target=self._check_updater_update, daemon=True).start())
         # First launch: open Settings so the user sets the game folder etc.
-        if self._first_run:
+        if self._settings.state.first_run:
             self.after(500, self._open_settings)
 
         # Everything is positioned and built — reveal the centered window.
@@ -1533,8 +1524,7 @@ class OctoUpdaterApp(tk.Tk):
             self._apply_btn.pack_forget()
 
     def _open_url(self, url: str):
-        import webbrowser
-        webbrowser.open(url)
+        self._settings.open_url(url)
 
     def _style_mod_action_label(self, lbl, mod):
         """Drive the per-mod action label: 'retry' (red) when the mod is in
@@ -2148,76 +2138,42 @@ class OctoUpdaterApp(tk.Tk):
 
     def _on_path_changed(self, *args):
         """Fires whenever the Game folder entry's value actually changes (typed,
-        pasted, or set via Browse…). Resets the hash caches so the next verify
-        re-checks every file from scratch and tweaks/mods get re-applied/installed
-        against the new folder instead of reusing stale state from the old one."""
+        pasted, or set via Browse…). Delegates the folder-change reset (hash
+        cache, config wipe, controller resets, re-verify) to the
+        SettingsController and re-renders the panels it reset."""
         new_val = os.path.normpath(self._path_var.get().strip())
         last_val = os.path.normpath(self._last_path_val)
 
         if new_val == last_val:
             return
 
+        changed = self._settings.set_path(new_val)
         self._last_path_val = new_val
-        if not new_val:
+        if not changed:
             return
-
-        try:
-            if os.path.exists(CACHE_FILE):
-                os.remove(CACHE_FILE)
-        except Exception:
-            pass
-
-        # Only touch WDB when the path is a real client folder — this trace
-        # fires on every keystroke while a path is being typed.
-        if os.path.exists(os.path.join(new_val, "WoW.exe")):
-            remove_wdb(new_val)
-
-        # Wipe folder-scoped config (patched-exe hashes + mods/addons install
-        # records) and set the new path — one atomic merge into the live
-        # config. This also re-arms the default-mods and recommended-addons
-        # auto-install for the new folder.
-        def _reset_for_new_folder(c):
-            c["out_dir"] = new_val
-            for k in ("expected_patched_wow_hash", "original_server_wow_hash",
-                      "mods", "addons"):
-                c.pop(k, None)
-        self._cfg = update_config(_reset_for_new_folder)
-
-        self._mods.reset()
-        self._addons.reset()
-        self._updater.invalidate()
+        self._cfg = load_config()
 
         # Reset every session-level TTL/state so nothing from the previous
         # folder is served from memory: addons verify + its rendered list,
         # news feed timers, and the nav-tab update badges.
-        self._news.invalidate()
         self._mod_updates_count = self._mods.updates_count
         self._addon_updates_count = self._addons.updates_count
         self._draw_nav_tab("MODS")
         self._draw_nav_tab("ADDONS")
         self._render_addons()
-
-        self._log_line(
-            "\nGame folder changed — cache reset, everything will be re-verified.\n",
-            "acct")
-
-        # This verify covers the new folder — overwrite its Config.wtf with our
-        # defaults + realmList. It also supersedes the first-run settings-close
-        # verify.
-        self._first_run_verify_pending = False
-        self.after(100, lambda: self._start_verify(overwrite_config=True))
+        self._refresh_ready_state()
 
         # A deliberate folder change already covers the antivirus
-        # recommendation, so the first-run settings-close shouldn't ask again.
-        self._first_run_av_pending = False
-        self._prompt_av_exclusion()
+        # recommendation — but on Windows still offer the exclusion once.
+        if self._settings.should_prompt_av():
+            self._prompt_av_exclusion()
 
     def _prompt_av_exclusion(self):
         """Ask whether to add the current game folder to Windows Defender
         exclusions (some mods can be mistakenly flagged by antivirus).
-        Windows-only — a no-op elsewhere."""
-        if not can_manage_antivirus():
-            self._first_run_av_pending = False
+        Windows-only — a no-op elsewhere. The gating lives in the
+        SettingsController; the dialog stays here."""
+        if not self._settings.should_prompt_av():
             return
         from tkinter import messagebox
         if messagebox.askyesno(
@@ -2228,7 +2184,7 @@ class OctoUpdaterApp(tk.Tk):
                 "downloaded or installed properly.\n\n"
                 "Do you want to add the game folder to Defender exclusions?",
                 parent=self):
-            self._allow_through_antivirus()
+            self._settings.allow_through_antivirus()
 
     def _render_log(self, msg: str, tag: str = ""):
         """Normalize a raw log message (ensure a trailing newline, auto-tag
@@ -2440,8 +2396,8 @@ class OctoUpdaterApp(tk.Tk):
         # First run: the user has now committed to a game folder (kept the
         # default). Run the deferred verification against it and (over)write a
         # fresh Config.wtf with our defaults + realmList.
-        if self._first_run_verify_pending:
-            self._first_run_verify_pending = False
+        if self._settings.state.first_run_verify_pending:
+            self._settings.state.first_run_verify_pending = False
             self.after(100, lambda: self._start_verify(overwrite_config=True))
         # Apply any auto-install option the user turned on this session
         # (idempotent — a no-op when nothing is missing).
@@ -2453,20 +2409,12 @@ class OctoUpdaterApp(tk.Tk):
             self._install_missing_recommended_addons()
         # First run: the user accepted the auto-selected folder (never changed
         # it) and never added a Defender exclusion — recommend it now, once.
-        if self._first_run_av_pending:
-            self._first_run_av_pending = False
+        if self._settings.state.first_run_av_pending:
+            self._settings.av_prompt_dismissed()
             self._prompt_av_exclusion()
 
     def _open_client_folder(self):
-        path = os.path.normpath(self._path_var.get().strip())
-        if os.path.isdir(path):
-            try:
-                open_folder(path)
-                self._log_line(f"Opened folder: {path}\n", "dim")
-            except OSError as e:
-                self._log_line(f"Could not open folder: {e}\n", "err")
-        else:
-            self._log_line(f"Folder not found: {path}\n", "err")
+        self._settings.open_client_folder()
 
     def _settings_change_dir(self):
         cur     = self._path_var.get()
@@ -2480,147 +2428,61 @@ class OctoUpdaterApp(tk.Tk):
 
     def _settings_verify(self):
         self._close_settings()
-        self._verify_game_files()
+        self._settings.verify_files()
+        self._refresh_ready_state()
 
     def _allow_through_antivirus(self):
-        """Add a Windows Defender exclusion for the game folder (asks for
-        admin elevation via UAC). Windows-only — a no-op elsewhere."""
-        if not can_manage_antivirus():
-            self._log_line(
-                "Windows Defender exclusions are not available on this "
-                "platform.\n", "err")
-            return
-        # The user handled the exclusion themselves — no need to prompt again
-        # when the first-run Settings window closes.
-        self._first_run_av_pending = False
-        client_dir = os.path.normpath(self._path_var.get().strip())
-        if not client_dir or client_dir == ".":
-            return
-        import ctypes
-        cmd = f"Add-MpPreference -ExclusionPath '{client_dir}'"
-        r = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", "powershell.exe",
-            f'-NoProfile -WindowStyle Hidden -Command "{cmd}"', None, 0)
-        if r > 32:
-            self._log_line(
-                f"Requested Defender exclusion for: {client_dir}\n", "ok")
-        else:
-            self._log_line("Antivirus exclusion cancelled.\n", "err")
+        """Thin forwarder — the Defender-exclusion logic and its log events
+        live in the SettingsController."""
+        self._settings.allow_through_antivirus()
 
     def _check_mirror_status(self):
         lbl = self._mirror_status_lbl
         lbl.configure(text="checking…", fg=C_TEXT_DIM)
+        self._settings.check_mirror()
 
-        def worker():
-            ok = False
-            try:
-                req = urllib.request.Request(
-                    f"{SERVER}/api/file/{DOWNLOAD_VERSION}/manifest.json",
-                    headers={"User-Agent": UA})
-                with secure_urlopen(req, timeout=6):
-                    ok = True
-            except Exception:
-                ok = False
-
-            def upd():
-                try:
-                    lbl.configure(text="online" if ok else "offline",
-                                  fg=C_OK if ok else C_ERR)
-                except tk.TclError:
-                    pass
-            self.after(0, upd)
-        threading.Thread(target=worker, daemon=True).start()
+    def _update_mirror_status(self, status: str):
+        """Render a mirror-status result (from a StatusChanged event) into the
+        Settings modal's label."""
+        lbl = getattr(self, "_mirror_status_lbl", None)
+        if lbl is None:
+            return
+        ok = status == "online"
+        lbl.configure(text=status, fg=C_OK if ok else C_ERR)
 
     def _toggle_clear_wdb(self):
         val = self._clear_wdb_var.get()
-        self._cfg = update_config(
-            lambda c: c.__setitem__("clear_wdb_on_launch", val))
+        self._cfg = self._settings.set_clear_wdb(val)
 
     def _toggle_close_on_launch(self):
         val = self._close_on_launch_var.get()
-        self._cfg = update_config(
-            lambda c: c.__setitem__("close_on_launch", val))
+        self._cfg = self._settings.set_close_on_launch(val)
 
     def _toggle_auto_mods(self):
         val = self._auto_mods_var.get()
-        self._cfg = update_config(
-            lambda c: c.__setitem__("auto_install_mods", val))
+        self._cfg = self._settings.set_auto_mods(val)
         # Install the missing essential mods only when Settings is closed;
         # turning it back off cancels the pending install.
         self._auto_mods_retrigger = val
 
     def _toggle_auto_addons(self):
         val = self._auto_addons_var.get()
-        self._cfg = update_config(
-            lambda c: c.__setitem__("auto_install_addons", val))
+        self._cfg = self._settings.set_auto_addons(val)
         self._auto_addons_retrigger = val
 
     def _install_missing_essential_mods(self):
-        """Install every essential mod not already present. Used when the user
-        turns 'Install essential mods' on after the fact."""
-        if self._updater.running:
-            return
-        out = self._path_var.get().strip()
-        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
-            return  # no client yet — the fresh-folder auto-install handles it
-        mods_cfg = load_config().get("mods", {})
-        pending = False
-        for mod in MODS_REGISTRY:
-            if not mod.get("essential", False):
-                continue
-            state = mods_cfg.get(mod["id"], {})
-            if (state.get("installed_version")
-                    and mod_installed_files_present(mod, out)):
-                continue  # already installed
-            self._mods.toggle(mod["id"], True)
-            pending = True
-        if not pending:
-            return
-        self._log_line("\nInstalling essential mods...\n", "acct")
-        self._set_btn_busy("Installing…")
-        self._status_var.set("Downloading mods…")
-        self._mods.apply()
+        """Thin forwarder — the missing-essential-mods logic (and the
+        delegate to the ModsController) lives in the SettingsController."""
+        if self._settings.install_missing_essential_mods():
+            self._set_btn_busy("Installing…")
+            self._status_var.set("Downloading mods…")
 
     def _install_missing_recommended_addons(self):
-        """Install every recommended addon not already present. Used when the
-        user turns 'Install recommended addons' on afterwards."""
-        if self._addons.state.busy:
-            return
-        out = self._path_var.get().strip()
-        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
-            return
-        ap = addons_path(out)
-        recs = [{"folder": name, "status": "available", "git": url,
-                 "branch": None, "ref": None, "toc": {},
-                 "description": None, "error": None}
-                for name, url in RECOMMENDED_ADDONS.items()
-                if not os.path.isdir(os.path.join(ap, name))]
-        if not recs:
-            return
-        self._log_line("\nInstalling recommended addons...\n", "acct")
-        self._addon_apply(recs)
-
-    def _verify_game_files(self):
-        """Full re-verification: drop the hash cache and the patched-exe
-        bookkeeping so every file is re-hashed against the manifest and
-        WoW.exe gets re-downloaded and re-patched (tweaks reapplied). Unlike
-        a game-folder change, installed mods are left alone."""
-        if self._updater.running:
-            return
-        try:
-            if os.path.exists(CACHE_FILE):
-                os.remove(CACHE_FILE)
-        except Exception:
-            pass
-        def _drop_hashes(c):
-            c.pop("expected_patched_wow_hash", None)
-            c.pop("original_server_wow_hash", None)
-        self._cfg = update_config(_drop_hashes)
-        self._updater.invalidate()
-        self._log_line(
-            "\nVerify game files — cache dropped, re-checking everything.\n",
-            "acct")
-        self._start_verify()
+        """Thin forwarder — the missing-recommended-addons logic (and the
+        delegate to the AddonsController) lives in the SettingsController."""
+        if self._settings.install_missing_recommended_addons():
+            self._render_addons()
+            self._set_btn_busy("Installing…")
 
     def _show_logs(self):
         if self._logwin is not None:
@@ -2820,8 +2682,12 @@ class OctoUpdaterApp(tk.Tk):
     # ── event handlers (Phase 1b controllers post; this class renders) ──────────
 
     def _on_status_changed(self, event):
-        if isinstance(event, StatusChanged):
-            self._status_var.set(event.text)
+        if not isinstance(event, StatusChanged):
+            return
+        if event.text.startswith("mirror:"):
+            self._update_mirror_status(event.text[len("mirror:"):])
+            return
+        self._status_var.set(event.text)
 
     def _on_progress_changed(self, event):
         if isinstance(event, ProgressChanged):

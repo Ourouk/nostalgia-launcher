@@ -183,6 +183,11 @@ standard library):
 | `errors.py` | Human-readable install/update error messages |
 | `log_sink.py` | Thread-safe global log channel |
 | `platform_support.py` | Platform detection, capabilities, per-OS helpers |
+| `update_controller.py` | Update/verify orchestration + footer readiness (Phase 1b, no Tk) |
+| `news_controller.py` | News-feed fetch + TTL caching (Phase 1b, no Tk) |
+| `mods_controller.py` | Mods panel: latest-version fetch, apply worker, auto-install (Phase 1b, no Tk) |
+| `addons_controller.py` | Addons panel: catalog scan, git install worker, auto-install (Phase 1b, no Tk) |
+| `settings_controller.py` | Settings/game-folder: folder-change reset, AV exclusion, mirror check, toggles (Phase 1b, no Tk) |
 | `ui_metrics.py` | DPI-aware scaling and responsive layout math |
 | `constants.py` | Shared constants and filesystem paths |
 
