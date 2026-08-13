@@ -1,0 +1,6 @@
+#!/bin/sh
+# AppImage AppRun launcher: exec the bundled PyInstaller app. The AppDir may
+# be mounted read-only and from anywhere, so always resolve relative to the
+# launcher's own real path (readlink -f) rather than $PWD.
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/bin/OctoUpdater" "$@"

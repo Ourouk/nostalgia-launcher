@@ -203,6 +203,38 @@ config collection automatically:
 uv run pyside6-deploy octo_updater.py
 ```
 
+### AppImage (Linux)
+
+The Linux build is a PyInstaller **directory** bundle wrapped into an
+AppImage, so it runs on any modern Linux distribution without installing Qt.
+Everything lives in `packaging/linux/`:
+
+| File | Purpose |
+|------|---------|
+| `OctoUpdater-linux.spec` | PyInstaller onedir spec (no outer onefile — AppImage provides that) |
+| `build-appimage.sh` | Full build: PyInstaller → AppDir assembly → `linuxdeploy` |
+| `AppRun` | Launcher script resolved relative to the AppImage mount point |
+| `OctoUpdater.desktop` | Desktop entry used by linuxdeploy + for app-menu integration |
+
+Prerequisites: `uv`, ImageMagick (`magick`), and a
+[`linuxdeploy`](https://github.com/linuxdeploy/linuxdeploy) AppImage matching
+your architecture (set `LINUXDEPLOY=/path/to/linuxdeploy-x86_64.AppImage` if
+it isn't on `PATH`).
+
+```bash
+uv sync --dev
+./packaging/linux/build-appimage.sh        # → dist/OctoUpdater-$(uname -m).AppImage
+```
+
+Build on (or inside a container of) the oldest distribution you want to
+support — AppImages do not solve glibc compatibility. Test both session
+types:
+
+```bash
+QT_QPA_PLATFORM=xcb     ./dist/OctoUpdater-x86_64.AppImage
+QT_QPA_PLATFORM=wayland ./dist/OctoUpdater-x86_64.AppImage
+```
+
 ### Notes
 
 - Installing `certifi` before building bundles an up-to-date CA certificate

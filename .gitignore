@@ -16,6 +16,7 @@ build/
 dist/
 *.spec
 !OctoUpdater.spec
+!OctoUpdater-linux.spec
 
 # Local editor / OS files
 .vscode/
