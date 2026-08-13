@@ -25,25 +25,25 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QWidget
 
-import addons as addons_module
-import config_store
-import constants
-import mods as mods_module
-import news as news_module
-import news_controller
-import platform_support
-import settings_controller
-import update_controller
-from qt_app import QtOctoUpdaterApp, create_qt_app
-from qt_settings_dialog import SettingsDialog
-from ui_events import (
+import octo_updater.services.addons as addons_module
+import octo_updater.core.config_store as config_store
+import octo_updater.core.constants as constants
+import octo_updater.services.mods as mods_module
+import octo_updater.services.news as news_module
+import octo_updater.controllers.news as news_controller
+import octo_updater.core.platform_support as platform_support
+import octo_updater.controllers.settings as settings_controller
+import octo_updater.controllers.update as update_controller
+from octo_updater.ui.qt.app import QtOctoUpdaterApp, create_qt_app
+from octo_updater.ui.qt.settings_dialog import SettingsDialog
+from octo_updater.state.events import (
     AddonsLoaded,
     ModsLoaded,
     OperationFinished,
     ProgressChanged,
     StatusChanged,
 )
-from ui_state import AddonsState, AddonState, ModsState
+from octo_updater.state.models import AddonsState, AddonState, ModsState
 
 
 @pytest.fixture(autouse=True)

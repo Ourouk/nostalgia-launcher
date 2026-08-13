@@ -5,9 +5,9 @@ import os
 
 import pytest
 
-import mods
-import self_update
-import config_store
+import octo_updater.services.mods as mods
+import octo_updater.services.self_update as self_update
+import octo_updater.core.config_store as config_store
 
 
 # ── registry ────────────────────────────────────────────────────────────────

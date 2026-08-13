@@ -11,17 +11,17 @@ import time
 
 import pytest
 
-import client_update
-import mods_controller as mc
-from mods_controller import ModsController
-from ui_events import (
+import octo_updater.services.client_update as client_update
+import octo_updater.controllers.mods as mc
+from octo_updater.controllers.mods import ModsController
+from octo_updater.state.events import (
     EventDispatcher,
     LogMessage,
     ModsLoaded,
     OperationFinished,
     StatusChanged,
 )
-from ui_state import ModPending
+from octo_updater.state.models import ModPending
 
 # Small synthetic registry so tests don't depend on the real one.
 MOD_A = {

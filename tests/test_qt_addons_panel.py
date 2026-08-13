@@ -20,12 +20,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QLineEdit, QMessageBox, QWidget
 
-from qt_addons_panel import AddonsPanel
-from qt_app import create_qt_app
-from qt_bridge import ControllerHub
-from qt_main_window import MainWindow
-from ui_events import AddonsLoaded
-from ui_state import AddonsState, AddonState
+from octo_updater.ui.qt.addons_panel import AddonsPanel
+from octo_updater.ui.qt.app import create_qt_app
+from octo_updater.ui.qt.bridge import ControllerHub
+from octo_updater.ui.qt.main_window import MainWindow
+from octo_updater.state.events import AddonsLoaded
+from octo_updater.state.models import AddonsState, AddonState
 
 MIX_ADDONS = {
     "SellValue": dict(
@@ -279,7 +279,7 @@ def test_remove_action_confirms_then_removes(qapp, window, hub, monkeypatch):
     remove_mock = Mock()
     monkeypatch.setattr(hub.addons, "remove", remove_mock)
     monkeypatch.setattr(
-        "qt_addons_panel.QMessageBox.question",
+        "octo_updater.ui.qt.addons_panel.QMessageBox.question",
         lambda *a, **k: QMessageBox.Yes)
 
     panel.findChild(QWidget, "addonsAction_ManualInstall").click()
@@ -292,7 +292,7 @@ def test_remove_action_skips_when_declined(qapp, window, hub, monkeypatch):
     remove_mock = Mock()
     monkeypatch.setattr(hub.addons, "remove", remove_mock)
     monkeypatch.setattr(
-        "qt_addons_panel.QMessageBox.question",
+        "octo_updater.ui.qt.addons_panel.QMessageBox.question",
         lambda *a, **k: QMessageBox.No)
 
     panel.findChild(QWidget, "addonsAction_ManualInstall").click()

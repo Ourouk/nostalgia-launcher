@@ -55,8 +55,8 @@ wheels = [
 
 [[package]]
 name = "octo-updater"
-version = "1.2.0"
-source = { virtual = "." }
+version = "1.2"
+source = { editable = "." }
 dependencies = [
     { name = "pyside6" },
 ]

@@ -2,7 +2,7 @@
 
 import json
 
-import news
+import octo_updater.services.news as news
 
 
 def _fake_resp(payload):

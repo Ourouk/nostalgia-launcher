@@ -21,12 +21,12 @@ from unittest.mock import Mock
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMessageBox
 
-from qt_app import create_qt_app
-from qt_bridge import ControllerHub
-from qt_main_window import MainWindow
-from qt_theme import Palette
-from ui_events import OperationFailed, OperationFinished
-from update_controller import Readiness
+from octo_updater.ui.qt.app import create_qt_app
+from octo_updater.ui.qt.bridge import ControllerHub
+from octo_updater.ui.qt.main_window import MainWindow
+from octo_updater.ui.qt.theme import Palette
+from octo_updater.state.events import OperationFailed, OperationFinished
+from octo_updater.controllers.update import Readiness
 
 _PLAY = Readiness("play", "PLAY", "Everything up to date!")
 _UPDATE = Readiness("update", "UPDATE", "Update available!")

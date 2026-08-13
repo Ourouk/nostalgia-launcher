@@ -14,8 +14,8 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from qt_app import QtOctoUpdaterApp, create_qt_app
-from qt_theme import HEX, Palette, theme_qss
+from octo_updater.ui.qt.app import QtOctoUpdaterApp, create_qt_app
+from octo_updater.ui.qt.theme import HEX, Palette, theme_qss
 
 
 @pytest.fixture(autouse=True)

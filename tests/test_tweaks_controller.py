@@ -10,10 +10,10 @@ import time
 
 import pytest
 
-import tweaks_controller as tc
-from tweaks import TWEAKS_DEFAULTS, fov_default_for_display
-from tweaks_controller import TweaksController
-from ui_events import (
+import octo_updater.controllers.tweaks as tc
+from octo_updater.services.tweaks import TWEAKS_DEFAULTS, fov_default_for_display
+from octo_updater.controllers.tweaks import TweaksController
+from octo_updater.state.events import (
     EventDispatcher,
     LogMessage,
     OperationFinished,

@@ -27,17 +27,17 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 
-import platform_support
-import settings_controller
-from log_sink import log
-from qt_app import create_qt_app
-from qt_bridge import ControllerHub
-from qt_custom_addon_dialog import CustomAddonDialog
-from qt_log_window import LogWindow
-from qt_main_window import MainWindow
-from qt_settings_dialog import SettingsDialog
-from qt_theme import Palette
-from ui_events import LogMessage
+import octo_updater.core.platform_support as platform_support
+import octo_updater.controllers.settings as settings_controller
+from octo_updater.core.log_sink import log
+from octo_updater.ui.qt.app import create_qt_app
+from octo_updater.ui.qt.bridge import ControllerHub
+from octo_updater.ui.qt.custom_addon_dialog import CustomAddonDialog
+from octo_updater.ui.qt.log_window import LogWindow
+from octo_updater.ui.qt.main_window import MainWindow
+from octo_updater.ui.qt.settings_dialog import SettingsDialog
+from octo_updater.ui.qt.theme import Palette
+from octo_updater.state.events import LogMessage
 
 
 @pytest.fixture(autouse=True)
@@ -221,7 +221,7 @@ def test_custom_addon_host_only_url_folder_error(qapp):
 
 
 def test_custom_addon_hint_lists_allowed_hosts(qapp):
-    import addons
+    import octo_updater.services.addons as addons
     dlg = CustomAddonDialog(Palette())
     hint = dlg.findChild(QLabel, "customAddonHint")
     assert hint.text() == "Allowed hosts: " + ", ".join(addons.ADDON_GIT_HOSTS)

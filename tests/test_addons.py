@@ -7,8 +7,8 @@ import zipfile
 
 import pytest
 
-import addons
-import config_store
+import octo_updater.services.addons as addons
+import octo_updater.core.config_store as config_store
 
 
 def test_is_allowed_git_url():

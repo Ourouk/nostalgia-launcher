@@ -19,13 +19,13 @@ from unittest.mock import Mock
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QLineEdit
 
-import tweaks
-import tweaks_controller as tc
-from qt_app import create_qt_app
-from qt_bridge import ControllerHub
-from qt_main_window import MainWindow
-from qt_tweaks_panel import TweaksPanel
-from tweaks import TWEAKS_DEFAULTS
+import octo_updater.services.tweaks as tweaks
+import octo_updater.controllers.tweaks as tc
+from octo_updater.ui.qt.app import create_qt_app
+from octo_updater.ui.qt.bridge import ControllerHub
+from octo_updater.ui.qt.main_window import MainWindow
+from octo_updater.ui.qt.tweaks_panel import TweaksPanel
+from octo_updater.services.tweaks import TWEAKS_DEFAULTS
 
 
 @pytest.fixture(autouse=True)

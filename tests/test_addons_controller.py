@@ -12,16 +12,16 @@ import time
 
 import pytest
 
-import addons_controller as ac
-from addons_controller import C_OK, C_TEXT_DIM, AddonsController
-from ui_events import (
+import octo_updater.controllers.addons as ac
+from octo_updater.controllers.addons import C_OK, C_TEXT_DIM, AddonsController
+from octo_updater.state.events import (
     AddonsLoaded,
     EventDispatcher,
     LogMessage,
     OperationFinished,
     StatusChanged,
 )
-from ui_state import AddonError, AddonState
+from octo_updater.state.models import AddonError, AddonState
 
 
 @pytest.fixture

@@ -1,6 +1,6 @@
 """Unit tests for the shared application-state models (ui_state)."""
 
-from ui_state import (
+from octo_updater.state.models import (
     AddonError,
     AddonsState,
     AddonState,

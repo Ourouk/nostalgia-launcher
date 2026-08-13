@@ -3,7 +3,7 @@
 import pytest
 import urllib.request
 
-import security_http
+import octo_updater.core.security_http as security_http
 
 
 @pytest.mark.parametrize("url", [

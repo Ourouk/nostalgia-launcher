@@ -7,8 +7,8 @@ import urllib.request
 
 import pytest
 
-import client_update
-from client_update import UpdateWorker, VerifyWorker
+import octo_updater.services.client_update as client_update
+from octo_updater.services.client_update import UpdateWorker, VerifyWorker
 
 
 def _mk_client(tmp_path):

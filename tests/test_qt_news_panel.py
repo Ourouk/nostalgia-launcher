@@ -17,13 +17,13 @@ pytest.importorskip("PySide6")
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel
 
-from helpers import format_news_date
-from news_controller import NewsResult
-from qt_app import create_qt_app
-from qt_bridge import ControllerHub
-from qt_main_window import MainWindow
-from qt_news_panel import NewsPanel
-from ui_events import NewsLoaded
+from octo_updater.core.helpers import format_news_date
+from octo_updater.controllers.news import NewsResult
+from octo_updater.ui.qt.app import create_qt_app
+from octo_updater.ui.qt.bridge import ControllerHub
+from octo_updater.ui.qt.main_window import MainWindow
+from octo_updater.ui.qt.news_panel import NewsPanel
+from octo_updater.state.events import NewsLoaded
 
 SAMPLE_POST = {
     "id": 1,

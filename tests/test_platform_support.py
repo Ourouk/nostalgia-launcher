@@ -7,8 +7,8 @@ import unittest.mock as mock
 
 import pytest
 
-import platform_support
-from platform_support import (
+import octo_updater.core.platform_support as platform_support
+from octo_updater.core.platform_support import (
     can_launch_client,
     can_manage_antivirus,
     can_patch_client,

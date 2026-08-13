@@ -11,9 +11,9 @@ import time
 
 import pytest
 
-import update_controller as uc
-from update_controller import UpdateController
-from ui_events import (
+import octo_updater.controllers.update as uc
+from octo_updater.controllers.update import UpdateController
+from octo_updater.state.events import (
     EventDispatcher,
     LogMessage,
     OperationFailed,

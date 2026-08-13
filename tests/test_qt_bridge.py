@@ -16,9 +16,9 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtTest import QTest
 
-from qt_app import create_qt_app
-from qt_bridge import ControllerBridge, ControllerHub
-from ui_events import (
+from octo_updater.ui.qt.app import create_qt_app
+from octo_updater.ui.qt.bridge import ControllerBridge, ControllerHub
+from octo_updater.state.events import (
     AddonsLoaded,
     EventDispatcher,
     LogMessage,
@@ -30,7 +30,7 @@ from ui_events import (
     ProgressChanged,
     StatusChanged,
 )
-from ui_state import AddonsState, ModsState
+from octo_updater.state.models import AddonsState, ModsState
 
 
 @pytest.fixture(autouse=True)

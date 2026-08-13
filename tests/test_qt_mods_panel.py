@@ -20,13 +20,13 @@ from unittest.mock import Mock
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QWidget
 
-import mods as mods_module
-from qt_app import create_qt_app
-from qt_bridge import ControllerHub
-from qt_main_window import MainWindow
-from qt_mods_panel import ModsPanel
-from ui_events import ModsLoaded
-from ui_state import ModsState, ModState
+import octo_updater.services.mods as mods_module
+from octo_updater.ui.qt.app import create_qt_app
+from octo_updater.ui.qt.bridge import ControllerHub
+from octo_updater.ui.qt.main_window import MainWindow
+from octo_updater.ui.qt.mods_panel import ModsPanel
+from octo_updater.state.events import ModsLoaded
+from octo_updater.state.models import ModsState, ModState
 
 FAKE_REGISTRY = [
     {

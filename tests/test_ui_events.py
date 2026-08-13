@@ -2,7 +2,7 @@
 
 import threading
 
-from ui_events import (
+from octo_updater.state.events import (
     AddonsLoaded,
     Event,
     EventDispatcher,

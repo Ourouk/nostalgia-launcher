@@ -1,6 +1,6 @@
 """Unit tests for the UI metrics / responsive layout helpers."""
 
-from ui_metrics import initial_window_size
+from octo_updater.ui.qt.metrics import initial_window_size
 
 
 # ── layout math ─────────────────────────────────────────────────────────────

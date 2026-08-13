@@ -2,8 +2,8 @@
 
 import struct
 
-import tweaks
-import config_store
+import octo_updater.services.tweaks as tweaks
+import octo_updater.core.config_store as config_store
 
 
 def test_tweak_limits_cover_all_numeric_items():

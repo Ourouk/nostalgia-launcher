@@ -5,7 +5,7 @@ import stat
 
 import pytest
 
-import filesystem
+import octo_updater.core.filesystem as filesystem
 
 
 def test_sha1_file(tmp_path):

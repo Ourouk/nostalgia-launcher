@@ -10,9 +10,9 @@ import time
 
 import pytest
 
-import settings_controller as sc
-from settings_controller import SettingsController
-from ui_events import (
+import octo_updater.controllers.settings as sc
+from octo_updater.controllers.settings import SettingsController
+from octo_updater.state.events import (
     EventDispatcher,
     LogMessage,
     MirrorStatusChanged,

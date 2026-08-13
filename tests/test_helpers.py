@@ -2,7 +2,7 @@
 
 import pytest
 
-from helpers import (
+from octo_updater.core.helpers import (
     fmt_size,
     fmt_speed,
     format_news_date,

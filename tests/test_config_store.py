@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-import config_store
+import octo_updater.core.config_store as config_store
 
 
 @pytest.fixture(autouse=True)

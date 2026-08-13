@@ -3,7 +3,7 @@
 import pathlib
 import tomllib
 
-from constants import UPDATER_VERSION
+from octo_updater.core.constants import UPDATER_VERSION
 
 
 def test_updater_version_matches_pyproject():

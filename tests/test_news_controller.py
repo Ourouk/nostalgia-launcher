@@ -10,9 +10,9 @@ import time
 
 import pytest
 
-import news_controller as nc
-from news_controller import NewsController
-from ui_events import EventDispatcher, LogMessage, NewsLoaded
+import octo_updater.controllers.news as nc
+from octo_updater.controllers.news import NewsController
+from octo_updater.state.events import EventDispatcher, LogMessage, NewsLoaded
 
 
 class FakeFeed:

@@ -30,13 +30,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import platform_support
-from qt_app import create_qt_app
-from qt_bridge import ControllerHub
-from qt_main_window import MainWindow
-from qt_theme import Palette
-from qt_settings_dialog import SettingsDialog
-from ui_events import MirrorStatusChanged
+import octo_updater.core.platform_support as platform_support
+from octo_updater.ui.qt.app import create_qt_app
+from octo_updater.ui.qt.bridge import ControllerHub
+from octo_updater.ui.qt.main_window import MainWindow
+from octo_updater.ui.qt.theme import Palette
+from octo_updater.ui.qt.settings_dialog import SettingsDialog
+from octo_updater.state.events import MirrorStatusChanged
 
 
 @pytest.fixture(autouse=True)
