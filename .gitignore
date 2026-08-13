@@ -6,6 +6,8 @@ octo_updater_hash_cache.json
 # Python
 __pycache__/
 *.py[cod]
+.venv/
+.pytest_cache/
 
 # PyInstaller build output
 build/
