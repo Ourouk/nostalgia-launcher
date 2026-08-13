@@ -132,6 +132,20 @@ def test_close_stops_delivery(qapp):
     bridge.close()
 
 
+def test_close_is_idempotent(qapp):
+    dispatcher = EventDispatcher()
+    bridge = ControllerBridge(dispatcher)
+    bridge.close()
+    assert bridge._closed
+    # Repeated shutdown must be a safe no-op (window close + test teardown
+    # both close the hub) — no crash, no double unsubscribe.
+    bridge.close()
+    bridge.stop()
+    dispatcher.post(StatusChanged("after close"))
+    QTest.qWait(100)
+    assert len(dispatcher.drain()) == 1
+
+
 def test_stop_alias_closes(qapp):
     dispatcher = EventDispatcher()
     bridge = ControllerBridge(dispatcher)

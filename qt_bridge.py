@@ -73,6 +73,7 @@ class ControllerBridge(QObject):
     def __init__(self, dispatcher: EventDispatcher, parent=None):
         super().__init__(parent)
         self._dispatcher = dispatcher
+        self._closed = False
         self._subscription = self._on_event
         dispatcher.subscribe(self._subscription)
         self._timer = QTimer(self)
@@ -107,7 +108,13 @@ class ControllerBridge(QObject):
             self.operationFailed.emit(event.kind, event.message)
 
     def close(self):
-        """Stop polling and unsubscribe from the dispatcher."""
+        """Stop polling and unsubscribe from the dispatcher.
+
+        Idempotent: repeated shutdown (e.g. the window close and test
+        teardown both closing the hub) is a safe no-op."""
+        if self._closed:
+            return
+        self._closed = True
         self._timer.stop()
         self._dispatcher.unsubscribe(self._subscription)
 

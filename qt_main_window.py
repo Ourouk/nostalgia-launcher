@@ -98,6 +98,15 @@ class MainWindow(QMainWindow):
         self._logTimer.timeout.connect(self._drain_log_q)
         self._logTimer.start()
 
+        # Update workers publish into UpdateController's queues; poll them on
+        # the Qt event loop so verify/update progress, completion markers and
+        # the self-update-available flag are actually processed (the Tk UI
+        # drained the same queues in its _poll loop).
+        self._pollTimer = QTimer(self)
+        self._pollTimer.setInterval(50)
+        self._pollTimer.timeout.connect(self._poll_updater)
+        self._pollTimer.start()
+
         # First run: auto-open the settings dialog once, like the Tk
         # after(500, _open_settings).
         if hub.settings.state.first_run:
@@ -122,7 +131,20 @@ class MainWindow(QMainWindow):
         font.setBold(True)
         self._wordmark.setFont(font)
         self._wordmark.setStyleSheet(f"color: {p.purple.name()};")
-        layout.addWidget(self._wordmark)
+        # "Update available!" sits under the wordmark (hidden until the
+        # daily self-update check finds a newer release).
+        wordmarkBox = QWidget(header)
+        wmLayout = QVBoxLayout(wordmarkBox)
+        wmLayout.setContentsMargins(0, 0, 0, 0)
+        wmLayout.setSpacing(0)
+        wmLayout.addWidget(self._wordmark)
+        self._updateAvailableLabel = QLabel("Update available!", wordmarkBox)
+        self._updateAvailableLabel.setStyleSheet(
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 8pt;")
+        self._updateAvailableLabel.hide()
+        wmLayout.addWidget(self._updateAvailableLabel)
+        self._updateAvailableShown = False
+        layout.addWidget(wordmarkBox)
 
         navRow = QWidget(header)
         navLayout = QHBoxLayout(navRow)
@@ -413,6 +435,18 @@ class MainWindow(QMainWindow):
         except queue.Empty:
             pass
 
+    def _poll_updater(self):
+        """Process the update controller's worker queues and render the
+        self-update availability flag (driven by _pollTimer)."""
+        self._hub.updater.poll()
+        available = self._hub.updater.updater_update_available
+        if available != self._updateAvailableShown:
+            self._updateAvailableShown = available
+            if available:
+                self._updateAvailableLabel.show()
+            else:
+                self._updateAvailableLabel.hide()
+
     def _render_log(self, msg: str, tag: str = ""):
         """Normalize a raw log message (trailing newline, auto-tag when
         untagged) into the session buffer and any open log window."""
@@ -588,17 +622,30 @@ class MainWindow(QMainWindow):
         return timer
 
     def close(self):
-        self._stop_timers()
-        self._hub.close()
+        self._teardown()
         return super().close()
 
     def closeEvent(self, event):
-        self._stop_timers()
-        self._hub.close()
+        self._teardown()
         super().closeEvent(event)
+
+    def _teardown(self):
+        """One-shot shutdown: stop timers, cancel live update workers and
+        tear the hub down. Idempotent so the explicit close() and the Qt
+        closeEvent can both fire without double-tearing."""
+        if getattr(self, "_torn_down", False):
+            return
+        self._torn_down = True
+        self._stop_timers()
+        # Ask live update workers to stop before the UI goes away, so a
+        # background download/verify can't keep mutating files or config
+        # after the window is closed.
+        self._hub.updater.cancel()
+        self._hub.close()
 
     def _stop_timers(self):
         self._logTimer.stop()
+        self._pollTimer.stop()
         for timer in self._oneShotTimers:
             timer.stop()
         self._oneShotTimers.clear()

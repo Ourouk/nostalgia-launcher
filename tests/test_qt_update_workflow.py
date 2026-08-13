@@ -224,6 +224,49 @@ def test_operation_failed_refreshes_readiness(qapp, window, monkeypatch):
     assert window._updateButton.text() == "UPDATE"
 
 
+# ── worker polling (event-loop driven) ────────────────────────────────────
+
+
+def test_poll_timer_processes_worker_completion(qapp, window):
+    """The event-loop poll must drain the update controller's queues without
+    a manual poll() call — a worker's __DONE__ marker has to unstick the
+    busy state and finish the operation."""
+    hub = window._hub
+    spy = []
+    hub.bridge.operationFinished.connect(lambda *a: spy.append(a))
+
+    hub.updater.state.running = True
+    hub.updater._log_q.put(("__DONE__", ""))
+
+    QTest.qWait(250)
+
+    assert hub.updater.state.running is False
+    assert hub.updater.state.client_ready is True
+    assert ("update", True, "") in spy
+
+
+def test_poll_timer_renders_update_available(qapp, window):
+    """check_updater_update() sets the flag in a worker thread; the poll
+    timer must surface it as the header 'Update available!' label."""
+    hub = window._hub
+    assert not window._updateAvailableLabel.isVisible()
+
+    hub.updater.updater_update_available = True
+    QTest.qWait(250)
+    assert window._updateAvailableLabel.isVisible()
+
+    hub.updater.updater_update_available = False
+    QTest.qWait(250)
+    assert not window._updateAvailableLabel.isVisible()
+
+
+def test_close_cancels_active_workers(qapp, window, monkeypatch):
+    hub = window._hub
+    monkeypatch.setattr(hub.updater, "cancel", Mock())
+    window.close()
+    hub.updater.cancel.assert_called_once_with()
+
+
 # ── first-run verify deferral ─────────────────────────────────────────────
 
 
