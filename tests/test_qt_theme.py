@@ -15,7 +15,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from qt_app import QtOctoUpdaterApp, create_qt_app
-from qt_theme import HEX, Palette, default_window_size, theme_qss
+from qt_theme import HEX, Palette, theme_qss
 
 
 @pytest.fixture(autouse=True)
@@ -66,19 +66,6 @@ def test_theme_qss_uses_palette_colors():
     qss = theme_qss(Palette())
     assert HEX["C_BG"] in qss
     assert HEX["C_GOLD"] in qss
-
-
-def test_default_window_size_without_screen():
-    w, h = default_window_size(None)
-    assert isinstance(w, int) and isinstance(h, int)
-    assert w > 0 and h > 0
-
-
-def test_default_window_size_from_qapp_screen(qapp):
-    screen = qapp.primaryScreen()
-    w, h = default_window_size(screen)
-    assert isinstance(w, int) and isinstance(h, int)
-    assert w > 0 and h > 0
 
 
 def test_qapp_is_singleton():

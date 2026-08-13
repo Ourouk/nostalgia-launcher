@@ -5,14 +5,9 @@ Pure Qt (PySide6) — no other GUI toolkit involved.
 
 - `Palette` exposes the palette colors as QColor values.
 - `theme_qss(palette)` renders the dark-purple/gold stylesheet.
-- `default_window_size(screen)` derives the initial window size from the
-  toolkit-agnostic ui_metrics helpers. Qt works in logical pixels and applies
-  the display scale factor internally, so the ui_metrics scale stays at 1.0.
 """
 
 from PySide6.QtGui import QColor
-
-from ui_metrics import initial_window_size
 
 # Hex values of the Octo Updater palette (dark backgrounds, gold accents,
 # the parchment addon cards, and the semantic ok/err colors).
@@ -226,16 +221,3 @@ QToolButton:hover {{
     color: {p.gold_lt.name()};
 }}
 """
-
-
-def default_window_size(screen):
-    """Initial logical window size for a QScreen (or fallback 1920x1080).
-
-    The ui_metrics scale is fixed at 1.0: Qt renders in logical pixels and
-    applies the display scale factor internally, so there is nothing to scale
-    here — only the 90%-of-screen cap from `ui_metrics.initial_window_size`.
-    """
-    if screen is None:
-        return initial_window_size(1920, 1080)
-    geo = screen.availableGeometry()
-    return initial_window_size(geo.width(), geo.height())

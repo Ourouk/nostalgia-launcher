@@ -16,10 +16,6 @@ import sys
 CLIENT_EXE = "WoW.exe"
 
 
-def system_name() -> str:
-    return sys.platform
-
-
 def is_windows() -> bool:
     return sys.platform.startswith("win")
 
