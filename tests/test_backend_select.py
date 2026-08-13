@@ -55,12 +55,15 @@ def test_main_exits_1_for_unknown_backend(monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("backend", ["qt", "pyside6"])
-def test_main_constructs_and_runs_qt_backend(monkeypatch, backend):
+def test_main_constructs_shows_and_runs_qt_backend(monkeypatch, backend):
     calls = []
 
     class FakeQtApp:
         def __init__(self):
             calls.append("constructed")
+
+        def show(self):
+            calls.append("shown")
 
         def mainloop(self):
             calls.append("mainloop")
@@ -68,4 +71,4 @@ def test_main_constructs_and_runs_qt_backend(monkeypatch, backend):
     monkeypatch.setenv("OCTO_UI_BACKEND", backend)
     monkeypatch.setattr(octo_updater, "resolve_backend", lambda name: FakeQtApp)
     octo_updater.main()
-    assert calls == ["constructed", "mainloop"]
+    assert calls == ["constructed", "shown", "mainloop"]

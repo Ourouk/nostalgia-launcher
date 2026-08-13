@@ -65,6 +65,7 @@ def main():
             f"Octo Updater could not start: {e}\n"
             "A graphical display (X11/Wayland) is required.\n")
         sys.exit(1)
+    app.show()
     app.mainloop()
 
 

@@ -80,6 +80,11 @@ class QtOctoUpdaterApp:
         self._window.show()
 
     def run(self):
+        """Start the event loop, showing the window if it isn't visible yet
+        (callers should call `show()` first, but this makes the loop safe
+        even if they forget)."""
+        if not self._window.isVisible():
+            self._window.show()
         return self._app.exec()
 
     def mainloop(self):

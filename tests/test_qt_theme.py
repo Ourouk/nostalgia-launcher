@@ -93,3 +93,15 @@ def test_app_shell_constructs_shows_and_closes_offscreen(qapp):
     assert shell._window.isVisible()
     shell.close()
     assert not shell._window.isVisible()
+
+
+def test_app_shell_run_shows_window_if_hidden(qapp, monkeypatch):
+    """run() must never leave the window invisible: even a caller that skips
+    show() gets a visible window once the event loop starts (regression for
+    the entry point calling mainloop() without show())."""
+    shell = QtOctoUpdaterApp()
+    assert not shell._window.isVisible()
+    monkeypatch.setattr(shell._app, "exec", lambda: 0)
+    shell.run()
+    assert shell._window.isVisible()
+    shell.close()
