@@ -22,6 +22,17 @@ import tkinter as tk
 from tkinter import filedialog
 from pathlib import Path
 
+from helpers import (
+    fmt_size,
+    fmt_speed,
+    parse_version as _parse_version,
+    same_git_repo as _same_git_repo,
+    parse_wow_colored,
+    strip_wow_colors,
+    strip_html as _strip_html,
+    format_news_date as _format_news_date,
+)
+
 # ──────────────────────────────────────────────────────────────────────────────
 #  Constants
 # ──────────────────────────────────────────────────────────────────────────────
@@ -255,19 +266,6 @@ def get_client_version(out_dir: str) -> str:
         return f"{version} ({build})"
     except Exception:
         return ""
-
-
-def fmt_size(num_bytes: float) -> str:
-    """Human-readable size: KB under a megabyte, MB otherwise."""
-    if num_bytes < 1024 * 1024:
-        return f"{num_bytes / 1024:.0f} KB"
-    return f"{num_bytes / 1024 / 1024:.1f} MB"
-
-
-def fmt_speed(bytes_per_sec: float) -> str:
-    if bytes_per_sec < 1024 * 1024:
-        return f"{bytes_per_sec / 1024:.0f} KB/s"
-    return f"{bytes_per_sec / 1024 / 1024:.1f} MB/s"
 
 
 def sha1_file(path) -> str:
@@ -1084,15 +1082,6 @@ UPDATER_REPO      = "rebasedkon/octo-updater"
 UPDATER_CHECK_TTL = 86400   # 1 day, cached in the config file
 
 
-def _parse_version(v: str) -> tuple:
-    """'v1.2.0' → (1, 2, 0); non-numeric parts become 0."""
-    parts = []
-    for p in (v or "").strip().lstrip("vV").split("."):
-        digits = "".join(ch for ch in p if ch.isdigit())
-        parts.append(int(digits) if digits else 0)
-    return tuple(parts) or (0,)
-
-
 def fetch_updater_latest_tag(force: bool = False) -> str | None:
     """Latest release tag of the updater's own repo, cached for a day. Returns
     None when there are no releases yet (GitHub 404) or on any error."""
@@ -1622,13 +1611,6 @@ BLOCKED_ADDONS = {
 }
 
 
-def _same_git_repo(a, b) -> bool:
-    """Compare git URLs ignoring a trailing '.git' / slash and case."""
-    def norm(u):
-        u = (u or "").rstrip("/")
-        return (u[:-4] if u.endswith(".git") else u).lower()
-    return norm(a) == norm(b)
-
 ADDON_GIT_HOSTS = ("github.com", "gitlab.com", "gitea.com", "codeberg.org")
 
 ADDON_ZIP_HOSTS = {"github.com", "codeload.github.com", "gitlab.com",
@@ -1702,28 +1684,6 @@ def read_toc_file(path: str) -> dict:
         if sep:
             toc[key.strip()] = value.strip()
     return toc
-
-
-def parse_wow_colored(text: str):
-    """Split a string containing WoW colour escapes (|cAARRGGBB … |r) into
-    [(segment, "#rrggbb" | None), …] for rendering."""
-    import re
-    segments = []
-    color = None
-    pos = 0
-    for m in re.finditer(r"\|c[0-9a-fA-F]{8}|\|r", text):
-        if m.start() > pos:
-            segments.append((text[pos:m.start()], color))
-        tok = m.group(0)
-        color = f"#{tok[4:]}" if tok.startswith("|c") else None
-        pos = m.end()
-    if pos < len(text):
-        segments.append((text[pos:], color))
-    return [(t, c) for t, c in segments if t]
-
-
-def strip_wow_colors(text: str) -> str:
-    return "".join(t for t, _c in parse_wow_colored(text))
 
 
 def _git_parts(git_url: str):
@@ -2196,30 +2156,6 @@ def save_tweaks_config(values: dict):
 # ──────────────────────────────────────────────────────────────────────────────
 #  News feed
 # ──────────────────────────────────────────────────────────────────────────────
-
-
-def _strip_html(raw: str) -> str:
-    """Reduce forum HTML to readable plain text for a Tk widget."""
-    import re
-    import html as html_mod
-    txt = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", "", raw)
-    txt = re.sub(r"(?i)<br\s*/?>", "\n", txt)
-    txt = re.sub(r"(?i)<li[^>]*>", "\n• ", txt)
-    txt = re.sub(r"(?i)</(p|div|li|ul|ol|h[1-6]|tr|blockquote)>", "\n", txt)
-    txt = re.sub(r"<[^>]+>", "", txt)
-    txt = html_mod.unescape(txt)
-    txt = re.sub(r"[ \t]+", " ", txt)
-    txt = re.sub(r" ?\n ?", "\n", txt)
-    txt = re.sub(r"\n{3,}", "\n\n", txt)
-    return txt.strip()
-
-
-def _format_news_date(iso: str) -> str:
-    from datetime import datetime
-    try:
-        return datetime.fromisoformat(iso).strftime("%d %b %Y")
-    except Exception:
-        return iso
 
 
 def fetch_news_items() -> list:
