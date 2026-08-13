@@ -16,6 +16,7 @@ widgets are exposed as attributes for the settings/update workflows (C20+).
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from constants import UPDATER_VERSION
 from qt_bridge import ControllerHub
+from qt_mods_panel import ModsPanel
 from qt_news_panel import NewsPanel
 from qt_theme import Palette, theme_qss
 from qt_tweaks_panel import TweaksPanel
@@ -88,6 +90,7 @@ class MainWindow(QMainWindow):
         navLayout.setContentsMargins(0, 0, 0, 0)
         navLayout.setSpacing(2)
         self._navButtons = {}
+        self._tabBadges = {}
         self._navGroup = QButtonGroup(navRow)
         self._navGroup.setExclusive(True)
         for name in self.TABS:
@@ -97,7 +100,26 @@ class MainWindow(QMainWindow):
             button.setCursor(Qt.PointingHandCursor)
             self._navButtons[name] = button
             self._navGroup.addButton(button)
-            navLayout.addWidget(button)
+            # Each tab is wrapped in a grid cell so a small count badge can
+            # overlay the button's top-right corner without shifting layout.
+            holder = QWidget(navRow)
+            grid = QGridLayout(holder)
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setSpacing(0)
+            grid.addWidget(button, 0, 0)
+            badge = QLabel("", holder)
+            badge.setObjectName(f"tabBadge_{name}")
+            badge.setAlignment(Qt.AlignCenter)
+            badge.setFixedHeight(16)
+            badge.setAttribute(Qt.WA_TransparentForMouseEvents)
+            badge.setStyleSheet(
+                f"background-color: {p.gold.name()}; color: {p.hdr.name()};"
+                f" border-radius: 8px; font-size: 8pt; font-weight: bold;"
+                f" padding: 0 4px;")
+            badge.hide()
+            grid.addWidget(badge, 0, 0, Qt.AlignTop | Qt.AlignRight)
+            self._tabBadges[name] = badge
+            navLayout.addWidget(holder)
             button.clicked.connect(
                 lambda checked=False, tab=name: self.switch_tab(tab))
         navRow.setStyleSheet(
@@ -131,6 +153,11 @@ class MainWindow(QMainWindow):
             elif name == "TWEAKS":
                 page = TweaksPanel(self._hub.tweaks, self._hub.bridge,
                                    self._palette, self._stack)
+            elif name == "MODS":
+                page = ModsPanel(
+                    self._hub.mods, self._hub.bridge,
+                    self._palette, self._stack,
+                    on_badge=lambda n: self.set_tab_badge("MODS", n))
             else:
                 page = QLabel(f"{name} panel (C{i + 16})", self._stack)
                 page.setAlignment(Qt.AlignCenter)
@@ -223,6 +250,18 @@ class MainWindow(QMainWindow):
         button = self._navButtons.get(name)
         if button is not None:
             button.setChecked(True)
+
+    def set_tab_badge(self, tab: str, count: int):
+        """Show a small gold count badge on a nav tab (hidden at 0)."""
+        badge = self._tabBadges.get(tab)
+        if badge is None:
+            return
+        count = max(0, int(count))
+        if count:
+            badge.setText(str(count))
+            badge.show()
+        else:
+            badge.hide()
 
     # ── slots ────────────────────────────────────────────────────────────────
 
