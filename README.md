@@ -71,12 +71,29 @@ logs, add the game folder to Defender exclusions, and adjust general options.
 
 ## Requirements
 
-- **Windows** (the client, Defender-exclusion and launch features are Windows-only).
 - **Python 3.10+** — only if running from source. Runs on the standard
   library, and will also use [`certifi`](https://pypi.org/project/certifi/) if
   installed, for more robust TLS verification on machines with an out-of-date
   root store (otherwise falls back to the system trust store).
 - The prebuilt `OctoUpdater.exe` needs nothing installed.
+
+### Platform support
+
+- **Windows** — full support: client updates, mods, addons, tweaks (including
+  the `WoW.exe` binary patch), game launching, and Defender exclusions.
+- **Linux / macOS** — the generic features work: client file updates, mods,
+  addons, news, configuration, and `Config.wtf` tweaks. Actions tied to the
+  Windows client (game launch, binary `WoW.exe` patching, Defender exclusions)
+  are disabled automatically. `WoW.exe` still needs a Tk build (`python3-tk`
+  on Debian/Ubuntu, `python-tk` on Homebrew).
+
+### Configuration location
+
+On Linux/macOS the config and hash-cache files live in the OS-appropriate
+per-user directories (e.g. `~/.config/octo-updater` and `~/.cache/octo-updater`
+on Linux, `~/Library/Application Support/OctoUpdater` on macOS) instead of
+next to the executable. Any previous config next to the executable is copied
+over automatically on first run.
 
 ---
 

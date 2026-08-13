@@ -91,3 +91,45 @@ def test_concurrent_update_config_no_key_loss():
     assert len(cfg) == n_threads * n_writes
     assert all(cfg[f"key_{w}_{i}"] is True
                for w in range(n_threads) for i in range(n_writes))
+
+
+def test_configure_migrates_legacy_config(tmp_path):
+    """A legacy config next to the executable is copied on first use."""
+    legacy = tmp_path / "legacy" / "octo_updater_config.json"
+    legacy.parent.mkdir()
+    legacy.write_text('{"out_dir": "/games"}')
+
+    new = tmp_path / "new" / "octo_updater_config.json"
+    cache = tmp_path / "new" / "hash_cache.json"
+
+    config_store.configure(str(new), str(cache), str(legacy), "")
+    assert config_store.load_config() == {"out_dir": "/games"}
+
+    # Idempotent: a second configure with an existing file is a no-op.
+    legacy.write_text('{"out_dir": "/changed"}')
+    config_store.configure(str(new), str(cache), str(legacy), "")
+    assert config_store.load_config() == {"out_dir": "/games"}
+    config_store.configure("", "")
+
+
+def test_configure_does_not_migrate_when_new_exists(tmp_path):
+    new = tmp_path / "new" / "config.json"
+    new.parent.mkdir()
+    new.write_text('{"keep": true}')
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text('{"keep": false}')
+
+    config_store.configure(str(new), str(tmp_path / "cache.json"),
+                           str(legacy), "")
+    assert config_store.load_config() == {"keep": True}
+    config_store.configure("", "")
+
+
+def test_save_config_creates_parent_dir(tmp_path):
+    """Atomic writes must create the per-user data dir on first write."""
+    cfg = tmp_path / "deep" / "nested" / "config.json"
+    config_store.configure(str(cfg), str(tmp_path / "c.json"))
+    config_store.save_config({"a": 1})
+    assert cfg.exists()
+    assert config_store.load_config() == {"a": 1}
+    config_store.configure("", "")

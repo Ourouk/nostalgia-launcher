@@ -31,6 +31,7 @@ from filesystem import (
     get_client_version,
 )
 from helpers import fmt_size, fmt_speed
+from platform_support import can_patch_client
 from security_http import secure_urlopen, ALLOWED_DOWNLOAD_HOSTS
 from tweaks import build_tweaks, write_config_wtf
 
@@ -386,9 +387,12 @@ class UpdateWorker:
             remove_wdb(self.out_dir)
 
             wow_exe_updated = self._nodes_contain_wow_exe(diff_nodes)
-            if wow_exe_updated:
+            if wow_exe_updated and can_patch_client():
                 self.progress(0.92, "Patching…")
                 self.patch_exe()
+            elif wow_exe_updated:
+                self.log("\nWoW.exe patching skipped (Windows-only).", "dim")
+                self.progress(0.95, "")
             else:
                 self.log("\nWoW.exe unchanged — skipping patch.", "dim")
                 self.progress(0.95, "")

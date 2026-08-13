@@ -63,9 +63,22 @@ from constants import (
     CACHE_FILE,
     DEFAULT_OUT_DIR,
     NEWS_CACHE_TTL,
+    LEGACY_CONFIG_FILE,
+    LEGACY_CACHE_FILE,
 )
 
-config_store.configure(CONFIG_FILE, CACHE_FILE)
+import platform_support
+from platform_support import (
+    is_windows,
+    can_launch_client,
+    can_patch_client,
+    can_manage_antivirus,
+    ui_font_family,
+    open_folder,
+)
+
+config_store.configure(CONFIG_FILE, CACHE_FILE,
+                       LEGACY_CONFIG_FILE, LEGACY_CACHE_FILE)
 
 WIN_W, WIN_H = 1000, 700
 FOOT_H       = 130
@@ -97,9 +110,10 @@ C_PARCH_DIM   = "#8b8064"
 C_PARCH_LINK  = "#a3561c"
 C_PARCH_EDGE  = "#b7a678"
 
-FONT_BODY   = ("Segoe UI", 9)
+_UI_FONT = ui_font_family()
+FONT_BODY   = (_UI_FONT, 9)
 FONT_MONO   = ("Consolas", 9)
-FONT_VER    = ("Segoe UI", 8)
+FONT_VER    = (_UI_FONT, 8)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -236,7 +250,7 @@ class OctoUpdaterApp(tk.Tk):
         # On first run Settings auto-opens with the folder auto-set to the
         # current dir. If the user closes it without changing the folder or
         # adding a Defender exclusion, recommend the exclusion once on close.
-        self._first_run_av_pending = self._first_run
+        self._first_run_av_pending = self._first_run and can_manage_antivirus()
         # On first run we don't verify (fetch the manifest / touch Config.wtf)
         # until the user closes Settings, so nothing is written to the default
         # folder before they've picked their real game folder. A folder change
@@ -296,6 +310,9 @@ class OctoUpdaterApp(tk.Tk):
         # the pointer is anywhere over them (not just over the scrollbar).
         self._wheel_canvases: list = []
         self.bind_all("<MouseWheel>", self._on_mousewheel)
+        # Linux/X11 reports wheel clicks as Button-4/Button-5 events.
+        self.bind_all("<Button-4>", self._on_wheel_button)
+        self.bind_all("<Button-5>", self._on_wheel_button)
 
         self.title("Octo Updater")
         self.resizable(False, False)
@@ -374,7 +391,7 @@ class OctoUpdaterApp(tk.Tk):
             tw = tk.Toplevel(self)
             tw.wm_overrideredirect(True)
             tw.wm_geometry(f"+{x}+{y}")
-            tk.Label(tw, text=text, font=("Segoe UI", 9),
+            tk.Label(tw, text=text, font=(_UI_FONT, 9),
                      fg=C_TEXT, bg="#0f0b16",
                      highlightthickness=1, highlightbackground=C_PANEL_BDR,
                      padx=6, pady=2).pack()
@@ -389,6 +406,14 @@ class OctoUpdaterApp(tk.Tk):
         widget.bind("<Leave>", hide, add="+")
 
     def _on_mousewheel(self, event):
+        # Windows/macOS report a smooth delta (multiples of 120).
+        self._scroll_wheel(-event.delta / 120, event)
+
+    def _on_wheel_button(self, event):
+        # Linux/X11: Button-4 scrolls up (+1), Button-5 scrolls down (-1).
+        self._scroll_wheel(1 if event.num == 4 else -1, event)
+
+    def _scroll_wheel(self, units: float, event):
         # Panels are stacked, so several list canvases share the same screen
         # region — only the one inside the active tab's panel should scroll.
         active = getattr(self, "_active_panel", None)
@@ -406,7 +431,7 @@ class OctoUpdaterApp(tk.Tk):
                     # happily shift it around — ignore the wheel instead.
                     first, last = cv.yview()
                     if last - first < 1.0:
-                        cv.yview_scroll(int(-event.delta / 120), "units")
+                        cv.yview_scroll(int(units), "units")
                     return
             except tk.TclError:
                 self._wheel_canvases.remove(cv)
@@ -418,7 +443,7 @@ class OctoUpdaterApp(tk.Tk):
         tag = f"nav_{tab}"
         cv.delete(tag)
         cx, cy = self._nav_pos[tab], 54
-        font = ("Segoe UI", 11, "bold")
+        font = (_UI_FONT, 11, "bold")
         if tab == self._active_tab:
             for r, col in ((2, "#42340f"), (1, "#7a5c1d")):
                 for dx, dy in ((-r, 0), (r, 0), (0, -r), (0, r),
@@ -448,7 +473,7 @@ class OctoUpdaterApp(tk.Tk):
             cv.create_oval(bx - 8, by - 8, bx + 8, by + 8,
                            fill=C_GOLD, outline="", tags=tag)
             cv.create_text(bx, by, text=str(count),
-                           font=("Segoe UI", 8, "bold"),
+                           font=(_UI_FONT, 8, "bold"),
                            fill="#1a1408", tags=tag)
 
     def _switch_tab(self, tab: str):
@@ -540,7 +565,7 @@ class OctoUpdaterApp(tk.Tk):
         self._logo_y = HDR_H // 2 - 6
         self._draw_logo()
 
-        nav_font = tkfont.Font(family="Segoe UI", size=11, weight="bold")
+        nav_font = tkfont.Font(family=_UI_FONT, size=11, weight="bold")
         tabs = ["NEWS", "TWEAKS", "ADDONS", "MODS"]
         self._active_tab  = "NEWS"
         self._nav_pos     = {}
@@ -593,7 +618,7 @@ class OctoUpdaterApp(tk.Tk):
         cv = self._hdr_canvas
         cv.delete("logo")
         cv.create_text(24, self._logo_y, text="Octo Updater",
-                       font=("Segoe UI", 24, "bold"),
+                       font=(_UI_FONT, 24, "bold"),
                        fill="#b478d9" if hover else "#9a5cbf",
                        anchor="w", tags="logo")
 
@@ -605,7 +630,7 @@ class OctoUpdaterApp(tk.Tk):
             return
         cv.create_text(self._logo_cx, self._logo_y + 26,
                        text="Update available!",
-                       font=("Segoe UI", 10, "bold"),
+                       font=(_UI_FONT, 10, "bold"),
                        fill=C_GOLD_LT if hover else C_GOLD,
                        anchor="n", tags="upd_label")
         lb = cv.bbox("upd_label")
@@ -616,7 +641,7 @@ class OctoUpdaterApp(tk.Tk):
     def _draw_gear(self, hover: bool = False):
         cv = self._hdr_canvas
         cv.delete("gear_icon")
-        cv.create_text(WIN_W - 10, 8, text="⚙", font=("Segoe UI", 13),
+        cv.create_text(WIN_W - 10, 8, text="⚙", font=(_UI_FONT, 13),
                        fill=C_GOLD if hover else C_TEXT_DIM,
                        anchor="ne", tags="gear_icon")
 
@@ -768,12 +793,12 @@ class OctoUpdaterApp(tk.Tk):
         hdr.pack(fill="x", padx=20, pady=(16, 12))
         tk.Label(hdr,
                  text=title.upper() if title else "NEWS",
-                 font=("Segoe UI", 13, "bold"),
+                 font=(_UI_FONT, 13, "bold"),
                  fg=C_PARCH_TITLE, bg=C_PARCH_BAND,
                  wraplength=self._news_left_w - 100,
                  justify="left", anchor="w").pack(side="left",
                                                   fill="x", expand=True)
-        rf = tk.Label(hdr, text="⟳", font=("Segoe UI", 14),
+        rf = tk.Label(hdr, text="⟳", font=(_UI_FONT, 14),
                       fg=C_PARCH_DIM, bg=C_PARCH_BAND, cursor="hand2")
         rf.pack(side="right")
         rf.bind("<Button-1>", lambda e: self._load_featured(force=True))
@@ -783,7 +808,7 @@ class OctoUpdaterApp(tk.Tk):
         if not post:
             msg = error or ("Loading…" if loading
                             else "No news yet — check back later.")
-            tk.Label(f, text=msg, font=("Segoe UI", 10),
+            tk.Label(f, text=msg, font=(_UI_FONT, 10),
                      fg=C_PARCH_DIM, bg=C_PARCH).pack(padx=20, pady=16,
                                                       anchor="w")
             return
@@ -795,7 +820,7 @@ class OctoUpdaterApp(tk.Tk):
         bl = tk.Frame(f, bg=C_PARCH_BAND)
         bl.pack(fill="x")
         tk.Label(bl, text=" · ".join(byline),
-                 font=("Segoe UI", 10, "italic"),
+                 font=(_UI_FONT, 10, "italic"),
                  fg=C_PARCH_DIM, bg=C_PARCH_BAND,
                  anchor="w").pack(fill="x", padx=20, pady=10)
         tk.Frame(f, bg=C_PARCH_LINE, height=1).pack(fill="x")
@@ -805,7 +830,7 @@ class OctoUpdaterApp(tk.Tk):
         # only the remaining area instead of clipping the link off the panel.
         if post.get("url"):
             link = tk.Label(f, text="⧉  Read full post on the forum",
-                            font=("Segoe UI", 11),
+                            font=(_UI_FONT, 11),
                             fg=C_PARCH_LINK, bg=C_PARCH,
                             cursor="hand2", anchor="w")
             link.pack(side="bottom", fill="x", padx=20, pady=(4, 16))
@@ -816,7 +841,7 @@ class OctoUpdaterApp(tk.Tk):
 
         body = _strip_html(post.get("html", ""))
         txt = tk.Text(f, bg=C_PARCH, fg=C_PARCH_TEXT, relief="flat",
-                      font=("Segoe UI", 11), wrap="word", height=1,
+                      font=(_UI_FONT, 11), wrap="word", height=1,
                       padx=2, pady=8, spacing2=4, spacing3=4,
                       highlightthickness=0, cursor="arrow")
         txt.insert("1.0", body)
@@ -831,9 +856,9 @@ class OctoUpdaterApp(tk.Tk):
         hdr = tk.Frame(f, bg=C_PANEL)
         hdr.pack(fill="x", padx=14, pady=(16, 10))
         tk.Label(hdr, text="ANNOUNCEMENTS",
-                 font=("Segoe UI", 12, "bold"),
+                 font=(_UI_FONT, 12, "bold"),
                  fg=C_GOLD, bg=C_PANEL).pack(side="left")
-        rf = tk.Label(hdr, text="⟳", font=("Segoe UI", 14),
+        rf = tk.Label(hdr, text="⟳", font=(_UI_FONT, 14),
                       fg=C_TEXT_DIM, bg=C_PANEL, cursor="hand2")
         rf.pack(side="right")
         rf.bind("<Button-1>", lambda e: self._load_announcements(force=True))
@@ -874,17 +899,17 @@ class OctoUpdaterApp(tk.Tk):
             top = tk.Frame(inner, bg=C_PANEL)
             top.pack(fill="x", pady=(12, 0))
             tk.Label(top, text=_format_news_date(item.get("date", "")),
-                     font=("Segoe UI", 9), fg=C_TEXT_DIM,
+                     font=(_UI_FONT, 9), fg=C_TEXT_DIM,
                      bg=C_PANEL).pack(side="right", anchor="n")
             tk.Label(top, text=item.get("title", ""),
-                     font=("Segoe UI", 11, "bold"),
+                     font=(_UI_FONT, 11, "bold"),
                      fg=C_GOLD, bg=C_PANEL,
                      wraplength=wrap_w - 85, justify="left",
                      anchor="w").pack(side="left", fill="x", expand=True)
 
             if item.get("author"):
                 tk.Label(inner, text=f"by {item['author']}",
-                         font=("Segoe UI", 10, "italic"),
+                         font=(_UI_FONT, 10, "italic"),
                          fg=C_TEXT_DIM, bg=C_PANEL,
                          anchor="w").pack(fill="x", pady=(2, 0))
 
@@ -892,14 +917,14 @@ class OctoUpdaterApp(tk.Tk):
             if len(body) > 260:
                 body = body[:260].rstrip() + "…"
             if body:
-                tk.Label(inner, text=body, font=("Segoe UI", 10),
+                tk.Label(inner, text=body, font=(_UI_FONT, 10),
                          fg=C_TEXT, bg=C_PANEL,
                          wraplength=wrap_w, justify="left",
                          anchor="w").pack(fill="x", pady=(5, 0))
 
             if item.get("url"):
                 lnk = tk.Label(inner, text="⧉ Read more",
-                               font=("Segoe UI", 10),
+                               font=(_UI_FONT, 10),
                                fg=C_GOLD, bg=C_PANEL,
                                cursor="hand2", anchor="w")
                 lnk.pack(fill="x", pady=(5, 0))
@@ -930,7 +955,7 @@ class OctoUpdaterApp(tk.Tk):
         # Packed on demand by _refresh_tweaks_buttons(): Apply appears only
         # when UI values differ from the saved config, Reset only when the
         # saved values differ from the defaults.
-        apl = tk.Label(foot, text="Apply", font=("Segoe UI", 11),
+        apl = tk.Label(foot, text="Apply", font=(_UI_FONT, 11),
                        fg=C_TEXT, bg=C_PANEL_BDR, cursor="hand2",
                        padx=16, pady=4)
         apl.bind("<Button-1>", lambda e: self._apply_tweaks())
@@ -938,7 +963,7 @@ class OctoUpdaterApp(tk.Tk):
         apl.bind("<Leave>",    lambda e: apl.configure(bg=C_PANEL_BDR, fg=C_TEXT))
         self._tweaks_apply_btn = apl
 
-        rst = tk.Label(foot, text="Reset", font=("Segoe UI", 11),
+        rst = tk.Label(foot, text="Reset", font=(_UI_FONT, 11),
                        fg=C_TEXT, bg=C_PANEL_BDR, cursor="hand2",
                        padx=16, pady=4)
         rst.bind("<Button-1>", lambda e: self._reset_tweaks())
@@ -963,7 +988,7 @@ class OctoUpdaterApp(tk.Tk):
         for (tid, label, kind, recommended, _, desc, mn, mx, step) in TWEAKS_ITEMS:
             if kind == "section":
                 tk.Label(self._tweaks_inner, text=label,
-                         font=("Segoe UI", 11, "bold"),
+                         font=(_UI_FONT, 11, "bold"),
                          fg=C_GOLD, bg=C_PANEL,
                          anchor="w").pack(fill="x", padx=PAD_X, pady=(10, 2))
                 tk.Frame(self._tweaks_inner, bg=C_DIVIDER, height=1).pack(
@@ -974,7 +999,7 @@ class OctoUpdaterApp(tk.Tk):
             row.pack(fill="x", padx=PAD_X, pady=3)
 
             tk.Label(row, text=label,
-                     font=("Segoe UI", 10, "bold"),
+                     font=(_UI_FONT, 10, "bold"),
                      fg=C_TEXT, bg=C_PANEL,
                      width=22, anchor="w").pack(side="left")
 
@@ -1019,7 +1044,7 @@ class OctoUpdaterApp(tk.Tk):
 
             if desc:
                 tk.Label(row, text=desc,
-                         font=("Segoe UI", 10), fg=C_TEXT_DIM, bg=C_PANEL,
+                         font=(_UI_FONT, 10), fg=C_TEXT_DIM, bg=C_PANEL,
                          wraplength=520, justify="left", anchor="w"
                          ).pack(side="left", fill="x", expand=True)
 
@@ -1106,7 +1131,13 @@ class OctoUpdaterApp(tk.Tk):
         save_tweaks_config(defaults)
         self._refresh_tweaks_panel()
         out = self._path_var.get().strip()
-        if out and os.path.exists(os.path.join(out, "WoW.exe")):
+        # On Windows Config.wtf tweaks apply alongside the WoW.exe patch; on
+        # other platforms only the (existing) game folder is required.
+        if can_patch_client():
+            needs_exe = os.path.exists(os.path.join(out, "WoW.exe"))
+        else:
+            needs_exe = bool(out)
+        if needs_exe:
             self._set_btn_busy("Patching…")
             self._status_var.set("Applying tweaks…")
             # Pass the same defaults that were saved
@@ -1126,7 +1157,7 @@ class OctoUpdaterApp(tk.Tk):
             return
 
         exe = os.path.join(out, "WoW.exe")
-        if not os.path.exists(exe):
+        if can_patch_client() and not os.path.exists(exe):
             self._log_line("WoW.exe not found — run Update first.\n", "err")
             return
 
@@ -1159,8 +1190,15 @@ class OctoUpdaterApp(tk.Tk):
             original_server  = fresh_cfg.get("original_server_wow_hash", "")
             local_before     = sha1_file(exe_path) if os.path.exists(exe_path) else ""
 
-            worker.patch_exe(tweaks)
-            drain()
+            if can_patch_client():
+                worker.patch_exe(tweaks)
+                drain()
+            else:
+                # Binary tweaks target Windows offsets — on other platforms
+                # only the Config.wtf settings are applied.
+                self._log_line(
+                    "Binary WoW.exe tweaks are only applied on Windows; "
+                    "writing Config.wtf only.\n", "dim")
 
             update_config_wtf(client_dir, tweaks)
 
@@ -1200,12 +1238,12 @@ class OctoUpdaterApp(tk.Tk):
         note = tk.Frame(outer, bg=C_PANEL)
         note.pack(fill="x", padx=16, pady=(14, 8), anchor="w")
         tk.Label(note, text="Mods marked with ",
-                 font=("Segoe UI", 10), fg=C_TEXT_DIM,
+                 font=(_UI_FONT, 10), fg=C_TEXT_DIM,
                  bg=C_PANEL).pack(side="left")
-        tk.Label(note, text="★", font=("Segoe UI", 10),
+        tk.Label(note, text="★", font=(_UI_FONT, 10),
                  fg=C_GOLD, bg=C_PANEL).pack(side="left")
         tk.Label(note, text=" are essential",
-                 font=("Segoe UI", 10), fg=C_TEXT_DIM,
+                 font=(_UI_FONT, 10), fg=C_TEXT_DIM,
                  bg=C_PANEL).pack(side="left")
 
         tk.Frame(outer, bg=C_DIVIDER, height=1).pack(fill="x", padx=16, pady=(0, 4))
@@ -1237,7 +1275,7 @@ class OctoUpdaterApp(tk.Tk):
         # Packed on demand by _refresh_apply_btn_visibility(): shown only
         # when there are unapplied checkbox changes or a mod is in error.
         self._apply_btn = tk.Label(foot, text="Apply",
-                                   font=("Segoe UI", 11),
+                                   font=(_UI_FONT, 11),
                                    fg=C_TEXT, bg=C_PANEL_BDR,
                                    cursor="hand2", padx=16, pady=4)
         self._apply_btn.bind("<Button-1>", lambda e: self._apply_mods())
@@ -1333,17 +1371,17 @@ class OctoUpdaterApp(tk.Tk):
             # Essential mods get a gold star badge; a fixed-width slot keeps
             # the names aligned whether or not the star is present.
             star = tk.Label(name_f, text="★" if essential else "",
-                            font=("Segoe UI", 9), fg=C_GOLD, bg=C_PANEL,
+                            font=(_UI_FONT, 9), fg=C_GOLD, bg=C_PANEL,
                             width=2, anchor="w")
             star.pack(side="left")
             if essential:
                 self._add_tooltip(star, "Essential mod")
             name_label = tk.Label(name_f, text=mod["name"],
-                                  font=("Segoe UI", 10, "bold"),
+                                  font=(_UI_FONT, 10, "bold"),
                                   fg=name_col, bg=C_PANEL, anchor="w")
             name_label.pack(side="left")
             ver_label = tk.Label(name_f, text=f"  {latest_ver}",
-                                 font=("Segoe UI", 9), fg=C_TEXT_DIM, bg=C_PANEL)
+                                 font=(_UI_FONT, 9), fg=C_TEXT_DIM, bg=C_PANEL)
             ver_label.pack(side="left")
 
             enabled_var = tk.BooleanVar(value=enabled)
@@ -1368,10 +1406,10 @@ class OctoUpdaterApp(tk.Tk):
                            command=lambda m=mid, v=ignore_var: self._set_ignore(m, v)
                            ).pack(side="left")
             tk.Label(ig_f, text="Ignore updates",
-                     font=("Segoe UI", 9), fg=C_TEXT_DIM, bg=C_PANEL).pack(side="left")
+                     font=(_UI_FONT, 9), fg=C_TEXT_DIM, bg=C_PANEL).pack(side="left")
 
             link = tk.Label(row, text="⧉",
-                            font=("Segoe UI", 12), fg=C_TEXT_DIM,
+                            font=(_UI_FONT, 12), fg=C_TEXT_DIM,
                             bg=C_PANEL, cursor="hand2")
             link.pack(side="right", padx=4)
             link.bind("<Button-1>", lambda e, u=mod["repo_url"]: self._open_url(u))
@@ -1379,7 +1417,7 @@ class OctoUpdaterApp(tk.Tk):
             link.bind("<Leave>",    lambda e, l=link: l.configure(fg=C_TEXT_DIM))
 
             update_label = tk.Label(row, text="update",
-                                    font=("Segoe UI", 10, "bold"),
+                                    font=(_UI_FONT, 10, "bold"),
                                     fg=C_GOLD, bg=C_PANEL, cursor="hand2")
             update_label.bind("<Button-1>", lambda e, m=mid: self._update_mod(m))
             update_label.bind("<Enter>", lambda e, l=update_label:
@@ -1389,7 +1427,7 @@ class OctoUpdaterApp(tk.Tk):
             self._style_mod_action_label(update_label, mod, state, live)
 
             desc_label = tk.Label(row, text=mod["description"],
-                                  font=("Segoe UI", 10),
+                                  font=(_UI_FONT, 10),
                                   fg=(C_TEXT if enabled else C_TEXT_DIM),
                                   bg=C_PANEL, wraplength=400,
                                   justify="left", anchor="w")
@@ -1397,7 +1435,7 @@ class OctoUpdaterApp(tk.Tk):
 
             existing_err = state.get("error")
             error_label = tk.Label(container, text="",
-                                   font=("Segoe UI", 9), fg=C_ERR,
+                                   font=(_UI_FONT, 9), fg=C_ERR,
                                    bg=C_PANEL, anchor="w", padx=16)
             if existing_err:
                 name_label.configure(fg=C_ERR)
@@ -1821,23 +1859,23 @@ class OctoUpdaterApp(tk.Tk):
             "write", self._on_addon_filter_changed)
         ent = tk.Entry(top, textvariable=self._addon_filter_var,
                        bg="#2b2244", fg=C_TEXT, insertbackground=C_GOLD,
-                       relief="flat", font=("Segoe UI", 10), width=24,
+                       relief="flat", font=(_UI_FONT, 10), width=24,
                        highlightthickness=1,
                        highlightbackground="#4a3c6e",
                        highlightcolor=C_GOLD)
-        tk.Label(top, text="⌕", font=("Segoe UI", 18),
+        tk.Label(top, text="⌕", font=(_UI_FONT, 18),
                  fg=C_TEXT, bg=C_PANEL).pack(side="right")
         ent.pack(side="right", ipady=4, padx=(0, 6))
 
         legend = tk.Frame(top, bg=C_PANEL)
         legend.pack(side="left")
         tk.Label(legend, text="Addons marked with ",
-                 font=("Segoe UI", 10), fg=C_TEXT_DIM,
+                 font=(_UI_FONT, 10), fg=C_TEXT_DIM,
                  bg=C_PANEL).pack(side="left")
-        tk.Label(legend, text="★", font=("Segoe UI", 10),
+        tk.Label(legend, text="★", font=(_UI_FONT, 10),
                  fg=C_GOLD, bg=C_PANEL).pack(side="left")
         tk.Label(legend, text=" are recommended",
-                 font=("Segoe UI", 10), fg=C_TEXT_DIM,
+                 font=(_UI_FONT, 10), fg=C_TEXT_DIM,
                  bg=C_PANEL).pack(side="left")
 
         list_frame = tk.Frame(outer, bg=C_PANEL)
@@ -1864,7 +1902,7 @@ class OctoUpdaterApp(tk.Tk):
         foot.columnconfigure(2, weight=1)
 
         chk = tk.Label(foot, text="⟳  Check for updates",
-                       font=("Segoe UI", 10), fg=C_TEXT_DIM, bg=C_PANEL,
+                       font=(_UI_FONT, 10), fg=C_TEXT_DIM, bg=C_PANEL,
                        cursor="hand2")
         chk.grid(row=0, column=0, sticky="w")
         chk.bind("<Button-1>", lambda e: self._addons_verify(force=True))
@@ -1872,7 +1910,7 @@ class OctoUpdaterApp(tk.Tk):
         chk.bind("<Leave>", lambda e: chk.configure(fg=C_TEXT_DIM))
 
         add = tk.Label(foot, text="+  Add custom git addon",
-                       font=("Segoe UI", 10, "bold"), fg="#d76f9e",
+                       font=(_UI_FONT, 10, "bold"), fg="#d76f9e",
                        bg=C_PANEL, cursor="hand2")
         add.grid(row=0, column=1)
         add.bind("<Button-1>", lambda e: self._open_custom_addon_dialog())
@@ -1880,7 +1918,7 @@ class OctoUpdaterApp(tk.Tk):
         add.bind("<Leave>", lambda e: add.configure(fg="#d76f9e"))
 
         self._addons_right_lbl = tk.Label(foot, text="",
-                                          font=("Segoe UI", 10, "bold"),
+                                          font=(_UI_FONT, 10, "bold"),
                                           bg=C_PANEL, cursor="hand2")
         self._addons_right_lbl.grid(row=0, column=2, sticky="e")
         self._addons_right_lbl.bind("<Button-1>",
@@ -2141,9 +2179,9 @@ class OctoUpdaterApp(tk.Tk):
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
         tk.Label(hdr, text="ADD CUSTOM GIT ADDON",
-                 font=("Segoe UI", 13, "bold"),
+                 font=(_UI_FONT, 13, "bold"),
                  fg=C_PURPLE, bg=P_HDR).pack(side="left", padx=18)
-        x_btn = tk.Label(hdr, text="✕", font=("Segoe UI", 12),
+        x_btn = tk.Label(hdr, text="✕", font=(_UI_FONT, 12),
                          fg=C_TEXT_DIM, bg=P_HDR, cursor="hand2")
         x_btn.pack(side="right", padx=16)
         x_btn.bind("<Button-1>", lambda e: self._close_settings())
@@ -2154,7 +2192,7 @@ class OctoUpdaterApp(tk.Tk):
         body = tk.Frame(panel, bg=P_BG)
         body.pack(fill="both", expand=True, padx=22, pady=(16, 12))
         tk.Label(body, text="REPOSITORY URL",
-                 font=("Segoe UI", 10, "bold"),
+                 font=(_UI_FONT, 10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(anchor="w")
         url_var = tk.StringVar()
         tk.Entry(body, textvariable=url_var, bg=P_INP, fg=C_TEXT,
@@ -2163,8 +2201,8 @@ class OctoUpdaterApp(tk.Tk):
                  highlightcolor=C_GOLD).pack(fill="x", ipady=7, pady=(6, 6))
         tk.Label(body,
                  text="Allowed hosts: " + ", ".join(ADDON_GIT_HOSTS),
-                 font=("Segoe UI", 9), fg=C_TEXT_DIM, bg=P_BG).pack(anchor="w")
-        err = tk.Label(body, text="", font=("Segoe UI", 9),
+                 font=(_UI_FONT, 9), fg=C_TEXT_DIM, bg=P_BG).pack(anchor="w")
+        err = tk.Label(body, text="", font=(_UI_FONT, 9),
                        fg=C_ERR, bg=P_BG)
         err.pack(anchor="w")
 
@@ -2186,7 +2224,7 @@ class OctoUpdaterApp(tk.Tk):
                                 "toc": {}, "description": None,
                                 "error": None}])
 
-        btn = tk.Label(body, text="Install", font=("Segoe UI", 11, "bold"),
+        btn = tk.Label(body, text="Install", font=(_UI_FONT, 11, "bold"),
                        fg=C_TEXT, bg=P_BDR, cursor="hand2", padx=16, pady=7)
         btn.pack(anchor="e", pady=(8, 0))
         btn.bind("<Button-1>", lambda e: submit())
@@ -2295,14 +2333,14 @@ class OctoUpdaterApp(tk.Tk):
         hdr = tk.Frame(f, bg=C_PANEL)
         hdr.pack(fill="x", pady=(10, 2))
         arrow = tk.Label(hdr, text="▾" if is_open else "▸",
-                         font=("Segoe UI", 14, "bold"),
+                         font=(_UI_FONT, 14, "bold"),
                          fg=C_GOLD, bg=C_PANEL, cursor="hand2", width=2)
         arrow.pack(side="left")
         lbl = tk.Label(hdr, text=title,
-                       font=("Segoe UI", 12, "bold"),
+                       font=(_UI_FONT, 12, "bold"),
                        fg=C_GOLD, bg=C_PANEL, cursor="hand2")
         lbl.pack(side="left")
-        tk.Label(hdr, text=f"  {len(rows)}", font=("Segoe UI", 10),
+        tk.Label(hdr, text=f"  {len(rows)}", font=(_UI_FONT, 10),
                  fg=C_TEXT_DIM, bg=C_PANEL).pack(side="left")
 
         def toggle(_e=None, t=title):
@@ -2315,7 +2353,7 @@ class OctoUpdaterApp(tk.Tk):
         if is_open and not rows:
             msg = ("Verifying…" if self._addons_status["state"] == "verifying"
                    else "Nothing here.")
-            tk.Label(f, text=msg, font=("Segoe UI", 10), fg=C_TEXT_DIM,
+            tk.Label(f, text=msg, font=(_UI_FONT, 10), fg=C_TEXT_DIM,
                      bg=C_PANEL).pack(anchor="w", padx=8)
 
     def _addon_row(self, rec: dict):
@@ -2383,7 +2421,7 @@ class OctoUpdaterApp(tk.Tk):
         if rec.get("git"):
             repo_url = rec["git"][:-4] if rec["git"].endswith(".git") \
                 else rec["git"]
-            lnk = tk.Label(row, text="⧉", font=("Segoe UI", 10),
+            lnk = tk.Label(row, text="⧉", font=(_UI_FONT, 10),
                            fg=C_TEXT_DIM, bg=C_PANEL, cursor="hand2")
             lnk.pack(side="right", padx=(4, 2))
             lnk.bind("<Button-1>", lambda e, u=repo_url: self._open_url(u))
@@ -2392,15 +2430,15 @@ class OctoUpdaterApp(tk.Tk):
 
         status = rec["status"]
         if status == "downloading":
-            tk.Label(row, text="downloading…", font=("Segoe UI", 10),
+            tk.Label(row, text="downloading…", font=(_UI_FONT, 10),
                      fg=C_TEXT_DIM, bg=C_PANEL).pack(side="right", padx=4)
         elif status == "invalid" or rec.get("error"):
             # Short marker on the right; the full reason gets its own line
             # under the row (long messages would squeeze the description).
-            tk.Label(row, text="⛔ Addon error", font=("Segoe UI", 10),
+            tk.Label(row, text="⛔ Addon error", font=(_UI_FONT, 10),
                      fg=C_ERR, bg=C_PANEL).pack(side="right", padx=4)
         elif status == "outOfDate" and installed:
-            upd = tk.Label(row, text="Update", font=("Segoe UI", 10, "bold"),
+            upd = tk.Label(row, text="Update", font=(_UI_FONT, 10, "bold"),
                            fg=C_GOLD, bg=C_PANEL, cursor="hand2")
             upd.pack(side="right", padx=4)
             upd.bind("<Button-1>",
@@ -2408,13 +2446,13 @@ class OctoUpdaterApp(tk.Tk):
             upd.bind("<Enter>", lambda e, w=upd: w.configure(fg=C_GOLD_LT))
             upd.bind("<Leave>", lambda e, w=upd: w.configure(fg=C_GOLD))
         elif warnings:
-            tk.Label(row, text=f"⚠ {warnings[0]}", font=("Segoe UI", 10),
+            tk.Label(row, text=f"⚠ {warnings[0]}", font=(_UI_FONT, 10),
                      fg="#d4b43c", bg=C_PANEL).pack(side="right", padx=4)
         elif status == "upToDate":
-            tk.Label(row, text="Up to date", font=("Segoe UI", 10),
+            tk.Label(row, text="Up to date", font=(_UI_FONT, 10),
                      fg=C_TEXT_DIM, bg=C_PANEL).pack(side="right", padx=4)
         elif status == "unknown":
-            tk.Label(row, text="Not versioned", font=("Segoe UI", 10),
+            tk.Label(row, text="Not versioned", font=(_UI_FONT, 10),
                      fg=C_TEXT_DIM, bg=C_PANEL).pack(side="right", padx=4)
 
         # name (WoW colour codes honoured) + repo link
@@ -2425,25 +2463,25 @@ class OctoUpdaterApp(tk.Tk):
         # titles aligned whether or not the star is present.
         is_recommended = rec["folder"] in RECOMMENDED_ADDONS
         star = tk.Label(name_f, text="★" if is_recommended else "",
-                        font=("Segoe UI", 9), fg=C_GOLD, bg=C_PANEL,
+                        font=(_UI_FONT, 9), fg=C_GOLD, bg=C_PANEL,
                         width=2, anchor="w")
         star.pack(side="left")
         if is_recommended:
             self._add_tooltip(star, "Recommended addon")
         title = toc.get("Title") or rec["folder"]
         for seg, col in parse_wow_colored(title)[:6]:
-            tk.Label(name_f, text=seg, font=("Segoe UI", 10, "bold"),
+            tk.Label(name_f, text=seg, font=(_UI_FONT, 10, "bold"),
                      fg=col or C_TEXT, bg=C_PANEL).pack(side="left")
 
         desc = strip_wow_colors(toc.get("Notes")
                                 or rec.get("description") or "")
-        tk.Label(row, text=desc, font=("Segoe UI", 10), fg=C_TEXT_DIM,
+        tk.Label(row, text=desc, font=(_UI_FONT, 10), fg=C_TEXT_DIM,
                  bg=C_PANEL, wraplength=430, justify="left",
                  anchor="w").pack(side="left", fill="x", expand=True)
 
         if rec.get("error"):
             tk.Label(f, text=f"  ⚠  {rec['error']}",
-                     font=("Segoe UI", 9), fg=C_ERR, bg=C_PANEL,
+                     font=(_UI_FONT, 9), fg=C_ERR, bg=C_PANEL,
                      wraplength=840, justify="left",
                      anchor="w").pack(fill="x", pady=(0, 3))
 
@@ -2482,7 +2520,7 @@ class OctoUpdaterApp(tk.Tk):
 
         self._status_var = tk.StringVar(value="Ready to update")
         tk.Label(left, textvariable=self._status_var,
-                 font=("Segoe UI", 10, "bold"),
+                 font=(_UI_FONT, 10, "bold"),
                  fg=C_TEXT, bg=C_BG).pack(anchor="w")
 
         # Thin halo frame around the button gives a soft glow that follows
@@ -2491,7 +2529,7 @@ class OctoUpdaterApp(tk.Tk):
         self._btn_glow = tk.Frame(left, bg="#4a3812")
         self._btn_glow.pack(anchor="w", pady=(6, 6))
         self._upd_btn = tk.Label(self._btn_glow, text="UPDATE",
-                                 font=("Segoe UI", 11, "bold"),
+                                 font=(_UI_FONT, 11, "bold"),
                                  fg="#ffffff", bg=C_GOLD,
                                  cursor="hand2",
                                  width=14, pady=7,
@@ -2519,7 +2557,7 @@ class OctoUpdaterApp(tk.Tk):
 
         self._prog_label_var = tk.StringVar(value="")
         tk.Label(pb_frame, textvariable=self._prog_label_var,
-                 font=("Segoe UI", 10), fg=C_TEXT, bg=C_BG).pack(
+                 font=(_UI_FONT, 10), fg=C_TEXT, bg=C_BG).pack(
                  side="bottom", pady=(0, 6))
 
         self._draw_progress(0.0)
@@ -2636,7 +2674,11 @@ class OctoUpdaterApp(tk.Tk):
 
     def _prompt_av_exclusion(self):
         """Ask whether to add the current game folder to Windows Defender
-        exclusions (some mods can be mistakenly flagged by antivirus)."""
+        exclusions (some mods can be mistakenly flagged by antivirus).
+        Windows-only — a no-op elsewhere."""
+        if not can_manage_antivirus():
+            self._first_run_av_pending = False
+            return
         from tkinter import messagebox
         if messagebox.askyesno(
                 "Game folder changed",
@@ -2700,9 +2742,9 @@ class OctoUpdaterApp(tk.Tk):
         hdr = tk.Frame(panel, bg=P_HDR, height=46)
         hdr.pack(fill="x")
         hdr.pack_propagate(False)
-        tk.Label(hdr, text="SETTINGS", font=("Segoe UI", 13, "bold"),
+        tk.Label(hdr, text="SETTINGS", font=(_UI_FONT, 13, "bold"),
                  fg=C_PURPLE, bg=P_HDR).pack(side="left", padx=18)
-        x_btn = tk.Label(hdr, text="✕", font=("Segoe UI", 12),
+        x_btn = tk.Label(hdr, text="✕", font=(_UI_FONT, 12),
                          fg=C_TEXT_DIM, bg=P_HDR, cursor="hand2")
         x_btn.pack(side="right", padx=16)
         x_btn.bind("<Button-1>", lambda e: self._close_settings())
@@ -2717,7 +2759,7 @@ class OctoUpdaterApp(tk.Tk):
         loc_row = tk.Frame(body, bg=P_BG)
         loc_row.pack(fill="x")
         tk.Label(loc_row, text="GAME FOLDER",
-                 font=("Segoe UI", 10, "bold"),
+                 font=(_UI_FONT, 10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(side="left")
         opn = tk.Label(loc_row, text="Open folder", font=FONT_BODY,
                        fg=C_TEXT_DIM, bg=P_BG, cursor="hand2")
@@ -2737,7 +2779,7 @@ class OctoUpdaterApp(tk.Tk):
                        highlightcolor=P_BDR)
         ent.pack(side="left", fill="x", expand=True, ipady=7)
         chg = tk.Label(path_row, text="Change",
-                       font=("Segoe UI", 10, "bold"),
+                       font=(_UI_FONT, 10, "bold"),
                        fg=C_TEXT, bg=P_BDR, cursor="hand2", padx=16, pady=7)
         chg.pack(side="left", padx=(8, 0))
         chg.bind("<Button-1>", lambda e: self._settings_change_dir())
@@ -2745,19 +2787,19 @@ class OctoUpdaterApp(tk.Tk):
         chg.bind("<Leave>",    lambda e: chg.configure(bg=P_BDR, fg=C_TEXT))
 
         tk.Label(body, text="DOWNLOAD MIRROR",
-                 font=("Segoe UI", 10, "bold"),
+                 font=(_UI_FONT, 10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(anchor="w", pady=(20, 4))
         mir = tk.Frame(body, bg=P_BG)
         mir.pack(fill="x")
-        tk.Label(mir, text="●", font=("Segoe UI", 9),
+        tk.Label(mir, text="●", font=(_UI_FONT, 9),
                  fg=C_OK, bg=P_BG).pack(side="left")
-        tk.Label(mir, text=" Iceland", font=("Segoe UI", 10, "bold"),
+        tk.Label(mir, text=" Iceland", font=(_UI_FONT, 10, "bold"),
                  fg=C_TEXT, bg=P_BG).pack(side="left")
         self._mirror_status_lbl = tk.Label(mir, text="checking…",
-                                           font=("Segoe UI", 9),
+                                           font=(_UI_FONT, 9),
                                            fg=C_TEXT_DIM, bg=P_BG)
         self._mirror_status_lbl.pack(side="left", padx=(8, 0))
-        rf = tk.Label(mir, text="⟳", font=("Segoe UI", 11),
+        rf = tk.Label(mir, text="⟳", font=(_UI_FONT, 11),
                       fg=C_TEXT_DIM, bg=P_BG, cursor="hand2")
         rf.pack(side="left", padx=(6, 0))
         rf.bind("<Button-1>", lambda e: self._check_mirror_status())
@@ -2778,7 +2820,7 @@ class OctoUpdaterApp(tk.Tk):
         rcol.grid(row=0, column=1, sticky="nw")
 
         tk.Label(lcol, text="TROUBLESHOOTING",
-                 font=("Segoe UI", 10, "bold"),
+                 font=(_UI_FONT, 10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(anchor="w")
 
         def _titem(icon, text, cmd, icon_color=C_GOLD):
@@ -2789,7 +2831,7 @@ class OctoUpdaterApp(tk.Tk):
             ic = tk.Label(r, text=icon, font=("Segoe UI Symbol", 11),
                           fg=icon_color, bg=P_BG, width=2, anchor="w")
             ic.pack(side="left")
-            tl = tk.Label(r, text=text, font=("Segoe UI", 10),
+            tl = tk.Label(r, text=text, font=(_UI_FONT, 10),
                           fg=C_TEXT, bg=P_BG)
             tl.pack(side="left")
             for w in (r, ic, tl):
@@ -2799,11 +2841,12 @@ class OctoUpdaterApp(tk.Tk):
 
         _titem("✓", "Verify game files", self._settings_verify)
         _titem("☰", "Show logs", self._show_logs)
-        _titem("⛊", "Add game folder to Defender exclusions",
-               self._allow_through_antivirus)
+        if can_manage_antivirus():
+            _titem("⛊", "Add game folder to Defender exclusions",
+                   self._allow_through_antivirus)
 
         tk.Label(lcol, text="SUPPORT THE DEVELOPER",
-                 font=("Segoe UI", 10, "bold"),
+                 font=(_UI_FONT, 10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(anchor="w", pady=(22, 0))
         _titem("♥", "Ko-fi",
                lambda: self._open_url("https://ko-fi.com/rebased"),
@@ -2813,26 +2856,27 @@ class OctoUpdaterApp(tk.Tk):
                icon_color="#b5854f")
 
         tk.Label(rcol, text="GENERAL",
-                 font=("Segoe UI", 10, "bold"),
+                 font=(_UI_FONT, 10, "bold"),
                  fg=C_GOLD, bg=P_BG).pack(anchor="w")
-        tk.Checkbutton(rcol, text=" Clear WDB on game launch",
-                       variable=self._clear_wdb_var,
-                       command=self._toggle_clear_wdb,
-                       font=("Segoe UI", 10), fg=C_TEXT, bg=P_BG,
-                       activebackground=P_BG, activeforeground=C_TEXT,
-                       selectcolor=P_INP, highlightthickness=0, bd=0,
-                       cursor="hand2").pack(anchor="w", pady=(10, 0))
-        tk.Checkbutton(rcol, text=" Close Octo Updater on game launch",
-                       variable=self._close_on_launch_var,
-                       command=self._toggle_close_on_launch,
-                       font=("Segoe UI", 10), fg=C_TEXT, bg=P_BG,
-                       activebackground=P_BG, activeforeground=C_TEXT,
-                       selectcolor=P_INP, highlightthickness=0, bd=0,
-                       cursor="hand2").pack(anchor="w", pady=(10, 0))
+        if can_launch_client():
+            tk.Checkbutton(rcol, text=" Clear WDB on game launch",
+                           variable=self._clear_wdb_var,
+                           command=self._toggle_clear_wdb,
+                           font=(_UI_FONT, 10), fg=C_TEXT, bg=P_BG,
+                           activebackground=P_BG, activeforeground=C_TEXT,
+                           selectcolor=P_INP, highlightthickness=0, bd=0,
+                           cursor="hand2").pack(anchor="w", pady=(10, 0))
+            tk.Checkbutton(rcol, text=" Close Octo Updater on game launch",
+                           variable=self._close_on_launch_var,
+                           command=self._toggle_close_on_launch,
+                           font=(_UI_FONT, 10), fg=C_TEXT, bg=P_BG,
+                           activebackground=P_BG, activeforeground=C_TEXT,
+                           selectcolor=P_INP, highlightthickness=0, bd=0,
+                           cursor="hand2").pack(anchor="w", pady=(10, 0))
         cb_auto_mods = tk.Checkbutton(
             rcol, text=" Install essential mods",
             variable=self._auto_mods_var, command=self._toggle_auto_mods,
-            font=("Segoe UI", 10), fg=C_TEXT, bg=P_BG,
+            font=(_UI_FONT, 10), fg=C_TEXT, bg=P_BG,
             activebackground=P_BG, activeforeground=C_TEXT,
             selectcolor=P_INP, highlightthickness=0, bd=0, cursor="hand2")
         cb_auto_mods.pack(anchor="w", pady=(10, 0))
@@ -2843,7 +2887,7 @@ class OctoUpdaterApp(tk.Tk):
         tk.Checkbutton(rcol, text=" Install recommended addons",
                        variable=self._auto_addons_var,
                        command=self._toggle_auto_addons,
-                       font=("Segoe UI", 10), fg=C_TEXT, bg=P_BG,
+                       font=(_UI_FONT, 10), fg=C_TEXT, bg=P_BG,
                        activebackground=P_BG, activeforeground=C_TEXT,
                        selectcolor=P_INP, highlightthickness=0, bd=0,
                        cursor="hand2").pack(anchor="w", pady=(10, 0))
@@ -2874,15 +2918,13 @@ class OctoUpdaterApp(tk.Tk):
             self._prompt_av_exclusion()
 
     def _open_client_folder(self):
-        import subprocess
         path = os.path.normpath(self._path_var.get().strip())
         if os.path.isdir(path):
-            # Explicit explorer.exe, not os.startfile: ShellExecute resolves
-            # extensionless paths against PATHEXT/.lnk, so a Desktop shortcut
-            # named like the folder (e.g. "OctoWoW.lnk") gets *executed*
-            # instead of the folder being opened.
-            subprocess.Popen(["explorer.exe", path])
-            self._log_line(f"Opened folder: {path}\n", "dim")
+            try:
+                open_folder(path)
+                self._log_line(f"Opened folder: {path}\n", "dim")
+            except OSError as e:
+                self._log_line(f"Could not open folder: {e}\n", "err")
         else:
             self._log_line(f"Folder not found: {path}\n", "err")
 
@@ -2902,7 +2944,12 @@ class OctoUpdaterApp(tk.Tk):
 
     def _allow_through_antivirus(self):
         """Add a Windows Defender exclusion for the game folder (asks for
-        admin elevation via UAC)."""
+        admin elevation via UAC). Windows-only — a no-op elsewhere."""
+        if not can_manage_antivirus():
+            self._log_line(
+                "Windows Defender exclusions are not available on this "
+                "platform.\n", "err")
+            return
         # The user handled the exclusion themselves — no need to prompt again
         # when the first-run Settings window closes.
         self._first_run_av_pending = False
@@ -3057,7 +3104,7 @@ class OctoUpdaterApp(tk.Tk):
 
         top = tk.Frame(win, bg=C_BG)
         top.pack(fill="x", padx=12, pady=(10, 4))
-        tk.Label(top, text="SESSION LOG", font=("Segoe UI", 9, "bold"),
+        tk.Label(top, text="SESSION LOG", font=(_UI_FONT, 9, "bold"),
                  fg=C_GOLD, bg=C_BG).pack(side="left")
 
         outer = tk.Frame(win, bg=C_BG)
@@ -3144,6 +3191,11 @@ class OctoUpdaterApp(tk.Tk):
         if self._mods_have_errors():
             self._set_btn_busy("PLAY")
             self._status_var.set("Mod errors — check MODS tab")
+        elif not can_launch_client():
+            # The game client is a Windows binary; on other platforms the
+            # updater manages files/addons only and can't launch the game.
+            self._set_btn_busy("READY")
+            self._status_var.set("Everything up to date!")
         else:
             self._set_btn_play()
             self._status_var.set("Everything up to date!")
@@ -3157,7 +3209,13 @@ class OctoUpdaterApp(tk.Tk):
     def _launch_game(self):
         """Launch the game detached.
         If VanillaFixes is installed use VanillaFixes.exe (it injects patches then
-        starts WoW.exe itself). Otherwise fall back to WoW.exe directly."""
+        starts WoW.exe itself). Otherwise fall back to WoW.exe directly.
+        Windows-only — the client is a Windows binary."""
+        if not can_launch_client():
+            self._log_line(
+                "Game launch is only available on Windows (the client is a "
+                "Windows binary).\n", "err")
+            return
         import subprocess
         client_dir = self._path_var.get().strip()
         cfg        = load_config()

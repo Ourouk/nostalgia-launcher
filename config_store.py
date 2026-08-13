@@ -8,6 +8,7 @@ truncated file).
 
 import json
 import os
+import shutil
 import sys
 import threading
 
@@ -18,16 +19,39 @@ config_file: str = ""
 cache_file: str = ""
 
 
-def configure(cfg_file: str, cache: str):
-    """Point the store at the on-disk config and hash-cache files."""
+def configure(cfg_file: str, cache: str,
+              legacy_config: str = "", legacy_cache: str = ""):
+    """Point the store at the on-disk config and hash-cache files.
+
+    When `legacy_*` paths are given and the new location is empty but the
+    legacy file exists, the legacy file is copied over (first-use migration
+    after the data moved to OS-appropriate directories).
+    """
     global config_file, cache_file
     config_file = cfg_file
     cache_file = cache
+    if legacy_config:
+        _migrate(legacy_config, config_file)
+    if legacy_cache:
+        _migrate(legacy_cache, cache_file)
+
+
+def _migrate(legacy: str, new: str):
+    """Copy a legacy file to the new location when the new one is missing."""
+    if os.path.exists(new) or not os.path.exists(legacy):
+        return
+    try:
+        os.makedirs(os.path.dirname(new), exist_ok=True)
+        shutil.copyfile(legacy, new)
+    except OSError as e:
+        sys.stderr.write(f"[config] migration of {legacy} failed: {e}\n")
 
 
 def _atomic_write(path: str, text: str):
     """Write via a temp file + atomic rename so a crash mid-write can never
-    leave a truncated/corrupt file at `path`."""
+    leave a truncated/corrupt file at `path`. Creates the parent directory so
+    the per-user data dirs work on first write."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         f.write(text)
