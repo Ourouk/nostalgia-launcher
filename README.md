@@ -6,11 +6,9 @@ applies client **tweaks**, and shows server **news**.
 
 ![Octo Updater](screenshot.png)
 
-The interface ships in two flavors: a modern **PySide6/Qt** implementation
-(the default) and the legacy **Tk** implementation, kept as a fallback. Both
-are feature-complete; the backend is chosen at startup via `OCTO_UI_BACKEND`
-(see [Backend selection](#backend-selection)). The plan is to eventually
-drop Tk.
+The interface is a modern **PySide6/Qt** implementation. The backend is
+selected at startup via `OCTO_UI_BACKEND` (see
+[Backend selection](#backend-selection)).
 
 ---
 
@@ -80,8 +78,6 @@ logs, add the game folder to Defender exclusions, and adjust general options.
 - **Python 3.10+** — only if running from source.
 - **PySide6** (≥ 6.6) — runtime dependency for the Qt interface, which is
   the default backend (`uv sync` installs it, see [Development](#development)).
-- **Tk** — required only by the legacy Tk backend (`python3-tk` on
-  Debian/Ubuntu, `python-tk` on Homebrew); see [Backend selection](#backend-selection).
 - **certifi** (optional) — bundles an up-to-date CA store for more robust TLS
   verification on machines with an out-of-date root store (otherwise the
   system trust store is used).
@@ -95,9 +91,7 @@ logs, add the game folder to Defender exclusions, and adjust general options.
   addons, news, configuration, and `Config.wtf` tweaks. Actions tied to the
   Windows client (game launch, binary `WoW.exe` patching, Defender exclusions)
   are disabled automatically. The Qt backend runs on either (on Linux it needs
-  the system Qt libraries — see [Building](#building)); the Tk backend
-  additionally needs a Tk build (`python3-tk` on Debian/Ubuntu, `python-tk`
-  on Homebrew).
+  the system Qt libraries — see [Building](#building)).
 
 ### Configuration location
 
@@ -119,24 +113,6 @@ ratio at compositor time, so the same window and minimum sizes hold at
 `ui_metrics.py` and is covered by unit tests plus the offscreen
 `tests/test_qt_display.py` checks; the real-display QA matrix lives in
 [docs/DISPLAY_TEST_MATRIX.md](docs/DISPLAY_TEST_MATRIX.md).
-
-The legacy **Tk** backend detects the display DPI at startup (100%–200%),
-scales fonts accordingly and is resizable. Panels, the news split, the
-settings dialog and row descriptions reflow to the current window size, with
-a compact layout on narrow windows. Scale detection supports the desktop
-environments' *fractional* scaling (e.g. 125%) where the X11/XWayland
-geometry report would otherwise be wrong:
-
-- **GNOME** (`GDK_SCALE`/`GDK_DPI_SCALE`) and **KDE Plasma**
-  (`QT_SCALE_FACTOR`/`QT_SCREEN_SCALE_FACTORS`) toolkit variables.
-- Tk's own `tk scaling` on Linux as the next fallback.
-- Physical screen DPI for Windows/macOS.
-
-If detection is ever wrong on your setup, set the scale explicitly:
-
-```bash
-OCTO_UI_SCALE=1.25 octo_updater
-```
 
 ---
 
@@ -170,22 +146,16 @@ variable (`qt` is the current default):
 
 | Value | Backend |
 |-------|---------|
-| `qt` / `pyside6` | Modern PySide6/Qt interface (`qt_app.py`) — default |
-| `tk` | Legacy Tk interface (`app.py`) — fallback |
+| `qt` / `pyside6` | PySide6/Qt interface (`qt_app.py`) — default |
 
 ```bash
 uv run python octo_updater.py                       # Qt (PySide6, default)
-OCTO_UI_BACKEND=tk uv run python octo_updater.py    # Tk (legacy fallback)
 ```
 
 - An unknown value prints `Unknown OCTO_UI_BACKEND: <value>` and exits.
-- If the selected toolkit can't be imported, the entry point prints a
-  tailored message and exits. The Tk backend prints *"Octo Updater needs Tk
-  (tkinter) to run."* with per-distro install hints (`python3-tk` on
-  Debian/Ubuntu, `python3-tkinter` on Fedora, `tk` on Arch, `python-tk` on
-  Homebrew); the Qt backend prints *"Octo Updater needs PySide6 (Qt) to run
-  (Qt is the default backend). Install it with `uv sync` or `pip install
-  PySide6`, or set `OCTO_UI_BACKEND=tk` to use the legacy Tk interface."*
+- If the Qt toolkit can't be imported, the entry point prints *"Octo Updater
+  needs PySide6 (Qt) to run. Install it with `uv sync` or `pip install
+  PySide6`."* and exits.
 - Starting on a machine without a graphical display prints
   *"A graphical display (X11/Wayland) is required."* and exits.
 
@@ -238,15 +208,12 @@ library.
 
 Architecture: the business logic lives in **toolkit-agnostic controllers**
 that publish their results as dataclass *state* (`ui_state.py`) and *events*
-on a thread-safe dispatcher (`ui_events.py`). Both frontends consume the same
-stream — the Tk adapter (`app.py`) polls the dispatcher directly, while the
-Qt side (`qt_bridge.py`) converts the events into Qt signals on the main
-thread.
+on a thread-safe dispatcher (`ui_events.py`). The Qt side (`qt_bridge.py`)
+converts the events into Qt signals on the main thread.
 
 | Module | Responsibility |
 |--------|----------------|
 | `octo_updater.py` | Entry point; backend selection via `OCTO_UI_BACKEND` (PyInstaller target) |
-| `app.py` | Legacy Tk GUI: `OctoUpdaterApp`, `SlimScrollbar` (Tk adapter) |
 | `qt_app.py` | Qt shell: `create_qt_app` (high-DPI policy), `QtOctoUpdaterApp` |
 | `qt_main_window.py` | Qt `MainWindow`: header, tabs, footer chrome |
 | `qt_bridge.py` | `ControllerHub` / `ControllerBridge`: dispatcher events → Qt signals |
@@ -273,23 +240,20 @@ thread.
 | `security_http.py` | TLS context, HTTPS-only enforcement, host allowlists |
 | `config_store.py` | Atomic JSON config/hash-cache persistence |
 | `filesystem.py` | Hashing, path/archive helpers |
-| `helpers.py` | Pure, tkinter-free helpers |
+| `helpers.py` | Pure helper functions |
 | `self_update.py` | Updater release checks |
 | `news.py` | News feed fetching |
 | `errors.py` | Human-readable install/update error messages |
 | `log_sink.py` | Thread-safe global log channel |
 | `platform_support.py` | Platform detection, capabilities, per-OS helpers |
-| `ui_metrics.py` | DPI-aware scaling and responsive layout math |
+| `ui_metrics.py` | Responsive layout math |
 | `constants.py` | Shared constants and filesystem paths |
 
 ### Migration status
 
-- **Qt (PySide6)** — feature-complete: all panels, dialogs, footer workflows
-  and the startup schedule are ported and covered by tests. It is the default
-  backend.
-- **Tk (legacy)** — still available via `OCTO_UI_BACKEND=tk` and fully
-  functional.
-- **Plan** — remove the Tk code once the Qt migration is complete.
+The **Qt (PySide6)** implementation is feature-complete: all panels, dialogs,
+footer workflows and the startup schedule are ported and covered by tests.
+It is the only backend; the legacy Tk interface has been removed.
 
 ### Testing
 
@@ -309,12 +273,6 @@ uv run pytest            # full suite; the Qt tests run headless (offscreen)
   ```bash
   QT_QPA_PLATFORM=xcb RUN_QT_DISPLAY_TESTS=1 \
       uv run pytest tests/test_qt_display.py -k display
-  ```
-
-- **Tk smoke suite** — exercises the legacy window under a virtual display:
-
-  ```bash
-  xvfb-run -a uv run pytest tests/test_tk_smoke.py
   ```
 
 The human QA matrix for Qt display scaling is in

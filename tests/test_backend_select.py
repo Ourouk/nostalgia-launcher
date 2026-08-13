@@ -1,20 +1,14 @@
 """Tests for GUI backend selection in octo_updater.py.
 
 Only the resolver and startup wiring are exercised here. The Qt backend
-runs headless (it never opens a display in these tests); the Tk path is
-not instantiated.
+runs headless (it never opens a display in these tests).
 """
 
-import octo_updater
 import pytest
 
+import octo_updater
+
 QT_UNAVAILABLE = "Octo Updater needs PySide6 (Qt) to run"
-
-
-def test_resolve_backend_tk_returns_app_class():
-    pytest.importorskip("app", exc_type=ImportError)  # legacy Tk UI (C29)
-    import app
-    assert octo_updater.resolve_backend("tk") is app.OctoUpdaterApp
 
 
 def test_resolve_backend_default_is_qt(monkeypatch):

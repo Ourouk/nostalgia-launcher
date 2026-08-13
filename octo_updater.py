@@ -1,6 +1,6 @@
 """Octo Updater — entry point.
 
-The application lives in app.py (and the extracted service modules); this
+The application lives in qt_app.py (and the extracted service modules); this
 file only wires the config store paths, selects the GUI backend at runtime
 and starts its mainloop, so the PyInstaller build command
 (`pyinstaller --onefile ... octo_updater.py`) keeps working unchanged.
@@ -20,32 +20,21 @@ from constants import (
 config_store.configure(CONFIG_FILE, CACHE_FILE,
                        LEGACY_CONFIG_FILE, LEGACY_CACHE_FILE)
 
-_TKINTER_HELP = (
-    "Octo Updater needs Tk (tkinter) to run. Install it with your\n"
-    "system package manager, e.g.:\n"
-    "  Debian/Ubuntu:  sudo apt install python3-tk\n"
-    "  Fedora:         sudo dnf install python3-tkinter\n"
-    "  Arch:           sudo pacman -S tk\n"
-    "  macOS:          brew install python-tk\n")
-
 _QT_UNAVAILABLE = (
-    "Octo Updater needs PySide6 (Qt) to run (Qt is the default backend). "
-    "Install it with `uv sync` or `pip install PySide6`, or set "
-    "OCTO_UI_BACKEND=tk to use the legacy Tk interface.\n")
+    "Octo Updater needs PySide6 (Qt) to run. "
+    "Install it with `uv sync` or `pip install PySide6`.\n")
 
 
 def resolve_backend(name=None) -> type | None:
-    """Return the app class for the selected GUI backend.
+    """Return the Qt app class for the selected GUI backend.
 
     Reads the OCTO_UI_BACKEND environment variable when ``name`` is None
-    (``qt`` is the default). Raises ImportError when the backend's module
-    cannot be imported; returns None for an unknown backend name.
+    (``qt`` is the default; ``pyside6`` is accepted as an alias). Raises
+    ImportError when the Qt module cannot be imported; returns None for an
+    unknown backend name.
     """
     if name is None:
         name = os.environ.get("OCTO_UI_BACKEND", "qt")
-    if name == "tk":
-        from app import OctoUpdaterApp
-        return OctoUpdaterApp
     if name in ("qt", "pyside6"):
         from qt_app import QtOctoUpdaterApp
         return QtOctoUpdaterApp
@@ -56,8 +45,6 @@ def backend_error_message(name, exc) -> str:
     """Map a failed backend import to a user-facing stderr message."""
     if name in ("qt", "pyside6"):
         return _QT_UNAVAILABLE
-    if "tkinter" in str(exc) or "_tkinter" in str(exc):
-        return _TKINTER_HELP
     return f"Failed to import the Octo Updater GUI: {exc}\n"
 
 

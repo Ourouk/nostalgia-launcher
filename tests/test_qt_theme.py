@@ -28,13 +28,22 @@ def qapp():
     return create_qt_app()
 
 
-def test_palette_colors_match_app_hex():
-    pytest.importorskip("app", exc_type=ImportError)  # legacy Tk UI (C29)
-    import app
-
+def test_palette_exposes_documented_key_colors():
     palette = Palette()
-    for name, value in HEX.items():
-        assert getattr(app, name) == value
+    expected = {
+        "C_BG": "#120e1a",
+        "C_PANEL": "#161120",
+        "C_HDR": "#0d0a14",
+        "C_GOLD": "#c8922a",
+        "C_GOLD_LT": "#e8b84b",
+        "C_TEXT": "#d8d4cc",
+        "C_TEXT_DIM": "#7a7670",
+        "C_OK": "#6abf69",
+        "C_ERR": "#bf6969",
+        "C_PARCH": "#e9dcb8",
+        "C_PARCH_TITLE": "#7c5a12",
+    }
+    for name, value in expected.items():
         assert palette.colors[name].name() == value
 
 

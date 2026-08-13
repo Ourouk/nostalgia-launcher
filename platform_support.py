@@ -47,16 +47,6 @@ def can_manage_antivirus() -> bool:
     return is_windows()
 
 
-def ui_font_family() -> str:
-    """A UI font family likely to exist on the current platform. Tk falls
-    back gracefully when the exact family is missing."""
-    if is_macos():
-        return "Helvetica Neue"
-    if is_linux():
-        return "DejaVu Sans"
-    return "Segoe UI"
-
-
 def config_dir() -> str:
     """OS-appropriate directory for the persistent JSON config file."""
     if is_windows():

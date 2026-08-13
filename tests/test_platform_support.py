@@ -19,7 +19,6 @@ from platform_support import (
     is_macos,
     is_windows,
     open_folder,
-    ui_font_family,
 )
 
 
@@ -67,17 +66,6 @@ def test_capabilities_non_windows(fake_platform, platform):
     assert not can_launch_client()
     assert not can_patch_client()
     assert not can_manage_antivirus()
-
-
-# ── fonts ───────────────────────────────────────────────────────────────────
-
-def test_ui_font_family(fake_platform):
-    fake_platform("win32")
-    assert ui_font_family() == "Segoe UI"
-    fake_platform("darwin")
-    assert ui_font_family() == "Helvetica Neue"
-    fake_platform("linux")
-    assert ui_font_family() == "DejaVu Sans"
 
 
 # ── config/cache dirs ───────────────────────────────────────────────────────
