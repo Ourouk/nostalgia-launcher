@@ -133,3 +133,105 @@ def test_save_config_creates_parent_dir(tmp_path):
     assert cfg.exists()
     assert config_store.load_config() == {"a": 1}
     config_store.configure("", "")
+
+
+def test_configure_migrates_legacy_cache(tmp_path):
+    """A legacy hash cache next to the executable is copied on first use."""
+    legacy = tmp_path / "legacy" / "octo_updater_hash_cache.json"
+    legacy.parent.mkdir()
+    legacy.write_text('{"/f": ["a"]}')
+
+    new = tmp_path / "new" / "hash_cache.json"
+    config_store.configure(str(tmp_path / "config.json"), str(new),
+                           "", str(legacy))
+    assert config_store.load_cache() == {"/f": ["a"]}
+    assert new.exists()
+    assert new.parent.is_dir()
+    config_store.configure("", "")
+
+
+def test_configure_does_not_migrate_cache_when_new_exists(tmp_path):
+    """An existing cache file always wins over a legacy one."""
+    new = tmp_path / "cache.json"
+    new.write_text('{"new": true}')
+    legacy = tmp_path / "legacy_cache.json"
+    legacy.write_text('{"old": true}')
+
+    config_store.configure(str(tmp_path / "config.json"), str(new),
+                           "", str(legacy))
+    assert config_store.load_cache() == {"new": True}
+    config_store.configure("", "")
+
+
+def test_configure_migrates_and_creates_destination_parent(tmp_path):
+    """Migration creates a missing destination parent directory."""
+    legacy = tmp_path / "legacy_config.json"
+    legacy.write_text('{"out_dir": "/x"}')
+
+    new = tmp_path / "a" / "b" / "c" / "config.json"
+    config_store.configure(str(new), str(tmp_path / "cache.json"),
+                           str(legacy), "")
+    assert new.parent.is_dir()
+    assert config_store.load_config() == {"out_dir": "/x"}
+    config_store.configure("", "")
+
+
+def test_configure_migrates_to_bare_filename(monkeypatch, tmp_path):
+    """Migration to a destination with no parent dir must not crash (the
+    parent of a bare filename is the current directory, not the empty
+    string)."""
+    monkeypatch.chdir(tmp_path)
+    legacy = tmp_path / "legacy_config.json"
+    legacy.write_text('{"out_dir": "/x"}')
+
+    config_store.configure("octo_config.json", str(tmp_path / "cache.json"),
+                           str(legacy), "")
+    assert config_store.load_config() == {"out_dir": "/x"}
+    config_store.configure("", "")
+
+
+def test_configure_migrate_copy_failure_warns_and_continues(tmp_path,
+                                                           monkeypatch,
+                                                           capsys):
+    """A failed copy (unreadable legacy, etc.) writes a stderr note instead
+    of crashing, and the app keeps running with no migrated file."""
+    legacy = tmp_path / "legacy_config.json"
+    legacy.write_text('{"out_dir": "/x"}')
+    new = tmp_path / "new" / "config.json"
+
+    def _broken_copy(src, dst):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(config_store.shutil, "copyfile", _broken_copy)
+    config_store.configure(str(new), str(tmp_path / "cache.json"),
+                           str(legacy), "")
+    assert "migration" in capsys.readouterr().err
+    assert not new.exists()
+    assert config_store.load_config() == {}
+    config_store.configure("", "")
+
+
+def test_configure_legacy_new_same_path_is_noop(tmp_path):
+    """When the legacy and new paths coincide (as they do on Windows when
+    only one location is used), migration must be a no-op — never a
+    copy-onto-itself failure."""
+    cfg = tmp_path / "config.json"
+    cfg.write_text('{"keep": true}')
+
+    config_store.configure(str(cfg), str(tmp_path / "cache.json"),
+                           str(cfg), "")
+    assert config_store.load_config() == {"keep": True}
+    assert cfg.read_text() == '{"keep": true}'
+    config_store.configure("", "")
+
+
+def test_configure_legacy_new_same_path_missing_is_noop(tmp_path):
+    """Coinciding paths with no file on disk yet must not attempt to copy a
+    file onto itself."""
+    cfg = tmp_path / "config.json"
+
+    config_store.configure(str(cfg), str(tmp_path / "cache.json"),
+                           str(cfg), "")
+    assert config_store.load_config() == {}
+    assert not cfg.exists()
+    config_store.configure("", "")

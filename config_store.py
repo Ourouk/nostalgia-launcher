@@ -41,7 +41,7 @@ def _migrate(legacy: str, new: str):
     if os.path.exists(new) or not os.path.exists(legacy):
         return
     try:
-        os.makedirs(os.path.dirname(new), exist_ok=True)
+        os.makedirs(os.path.dirname(new) or ".", exist_ok=True)
         shutil.copyfile(legacy, new)
     except OSError as e:
         sys.stderr.write(f"[config] migration of {legacy} failed: {e}\n")
