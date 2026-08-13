@@ -12,7 +12,7 @@ a full QtOctoUpdaterApp builds and runs. They verify:
 - `minimumSizeHint()` / `minimumWidth()` honour the logical minimum (~560
   wide) — Qt expresses these in logical pixels and applies the device-pixel
   ratio at compositor time, so the same minimum holds at 100%/125%/150%/200%;
-- create_qt_app()'s high-DPI policy attribute is set, and the screen's
+- create_qt_app()'s high-DPI rounding policy is set, and the screen's
   device-pixel ratio is readable (a positive float). Setting a real DPR with
   QTest is not possible offscreen, so that is verified on a real display in
   Part B.
@@ -42,7 +42,6 @@ The human check that Qt's DPR matches the OS scaling setting (100/125/150/
 """
 
 import os
-import warnings
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -229,13 +228,10 @@ def test_minimum_size_is_scale_independent(qapp, app_no_startup):
 
 
 def test_high_dpi_policy_attributes_and_screen_dpr(qapp, app_no_startup):
-    # create_qt_app() configures high-DPI before the instance exists.
+    # create_qt_app() configures the high-DPI rounding policy before the
+    # instance exists; scaling itself is native to Qt 6.
     assert qapp.highDpiScaleFactorRoundingPolicy() == (
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        assert qapp.testAttribute(Qt.AA_EnableHighDpiScaling)
-        assert qapp.testAttribute(Qt.AA_UseHighDpiPixmaps)
     # The screen's device-pixel ratio is always readable (positive float);
     # QTest cannot set a DPR offscreen, so its magnitude vs the OS setting is
     # asserted on a real display in Part B.

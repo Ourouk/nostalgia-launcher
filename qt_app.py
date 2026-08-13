@@ -21,9 +21,9 @@ from qt_main_window import MainWindow
 def create_qt_app():
     """Return the process-wide QApplication, creating it exactly once.
 
-    High-DPI settings are configured before the instance exists: the scale
-    factor rounding policy is PassThrough so fractional display scales are
-    preserved, and the per-monitor DPI attributes are enabled. Both are only
+    High-DPI settings are configured before the instance exists: Qt handles
+    high-DPI scaling natively, so only the scale factor rounding policy is
+    set (PassThrough, so fractional display scales are preserved). It is only
     touched when no instance exists yet — later calls reuse it unchanged.
     """
     app = QApplication.instance()
@@ -31,8 +31,6 @@ def create_qt_app():
         return app
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
     return QApplication([])
 
 
