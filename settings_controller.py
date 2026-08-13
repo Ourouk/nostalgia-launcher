@@ -203,7 +203,7 @@ class SettingsController:
         self._dispatcher.post(LogMessage(
             "\nVerify game files — cache dropped, re-checking everything.\n",
             "acct"))
-        self._updater.start_verify(overwrite_config=True)
+        self._updater.start_verify(overwrite_config=False)
 
     def set_clear_wdb(self, enabled: bool) -> dict:
         self.state.config = config_store.update_config(

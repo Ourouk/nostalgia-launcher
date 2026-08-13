@@ -317,7 +317,7 @@ def test_verify_files_delegates_and_drops_hashes(controller, cfg, fakes,
     controller.verify_files()
     assert not cache.exists()
     assert fakes.updater.invalidate_calls == 1
-    assert fakes.updater.verify_calls == [True]
+    assert fakes.updater.verify_calls == [False]
     assert "expected_patched_wow_hash" not in cfg
     assert "original_server_wow_hash" not in cfg
     events = controller._dispatcher.drain()
