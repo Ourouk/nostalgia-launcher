@@ -7,10 +7,10 @@ applies client **tweaks**, and shows server **news**.
 ![Octo Updater](screenshot.png)
 
 The interface ships in two flavors: a modern **PySide6/Qt** implementation
-(the recommended one) and the legacy **Tk** implementation, kept as a
-fallback. Both are feature-complete; the backend is chosen at startup via
-`OCTO_UI_BACKEND` (see [Backend selection](#backend-selection)). The plan is
-to flip the default to Qt and eventually drop Tk.
+(the default) and the legacy **Tk** implementation, kept as a fallback. Both
+are feature-complete; the backend is chosen at startup via `OCTO_UI_BACKEND`
+(see [Backend selection](#backend-selection)). The plan is to eventually
+drop Tk.
 
 ---
 
@@ -78,9 +78,9 @@ logs, add the game folder to Defender exclusions, and adjust general options.
 ## Requirements
 
 - **Python 3.10+** — only if running from source.
-- **PySide6** (≥ 6.6) — runtime dependency for the Qt interface (`uv sync`
-  installs it, see [Development](#development)).
-- **Tk** — still required by the legacy Tk backend (`python3-tk` on
+- **PySide6** (≥ 6.6) — runtime dependency for the Qt interface, which is
+  the default backend (`uv sync` installs it, see [Development](#development)).
+- **Tk** — required only by the legacy Tk backend (`python3-tk` on
   Debian/Ubuntu, `python-tk` on Homebrew); see [Backend selection](#backend-selection).
 - **certifi** (optional) — bundles an up-to-date CA store for more robust TLS
   verification on machines with an out-of-date root store (otherwise the
@@ -166,16 +166,16 @@ first-time setup).
 ### Backend selection
 
 The GUI backend is chosen at startup via the `OCTO_UI_BACKEND` environment
-variable (`tk` is the current default):
+variable (`qt` is the current default):
 
 | Value | Backend |
 |-------|---------|
-| `tk` | Legacy Tk interface (`app.py`) — current default |
-| `qt` / `pyside6` | Modern PySide6/Qt interface (`qt_app.py`) — recommended |
+| `qt` / `pyside6` | Modern PySide6/Qt interface (`qt_app.py`) — default |
+| `tk` | Legacy Tk interface (`app.py`) — fallback |
 
 ```bash
-uv run python octo_updater.py                       # Tk (current default)
-OCTO_UI_BACKEND=qt uv run python octo_updater.py    # Qt (PySide6)
+uv run python octo_updater.py                       # Qt (PySide6, default)
+OCTO_UI_BACKEND=tk uv run python octo_updater.py    # Tk (legacy fallback)
 ```
 
 - An unknown value prints `Unknown OCTO_UI_BACKEND: <value>` and exits.
@@ -183,9 +183,9 @@ OCTO_UI_BACKEND=qt uv run python octo_updater.py    # Qt (PySide6)
   tailored message and exits. The Tk backend prints *"Octo Updater needs Tk
   (tkinter) to run."* with per-distro install hints (`python3-tk` on
   Debian/Ubuntu, `python3-tkinter` on Fedora, `tk` on Arch, `python-tk` on
-  Homebrew); the Qt backend prints *"The PySide6 (Qt) interface is not
-  available in this build yet; use `OCTO_UI_BACKEND=tk` or remove the
-  variable."*
+  Homebrew); the Qt backend prints *"Octo Updater needs PySide6 (Qt) to run
+  (Qt is the default backend). Install it with `uv sync` or `pip install
+  PySide6`, or set `OCTO_UI_BACKEND=tk` to use the legacy Tk interface."*
 - Starting on a machine without a graphical display prints
   *"A graphical display (X11/Wayland) is required."* and exits.
 
@@ -285,10 +285,11 @@ thread.
 ### Migration status
 
 - **Qt (PySide6)** — feature-complete: all panels, dialogs, footer workflows
-  and the startup schedule are ported and covered by tests.
-- **Tk (legacy)** — still the default backend and fully functional.
-- **Plan** — flip `OCTO_UI_BACKEND`'s default to `qt`, then remove the Tk
-  code.
+  and the startup schedule are ported and covered by tests. It is the default
+  backend.
+- **Tk (legacy)** — still available via `OCTO_UI_BACKEND=tk` and fully
+  functional.
+- **Plan** — remove the Tk code once the Qt migration is complete.
 
 ### Testing
 

@@ -29,19 +29,20 @@ _TKINTER_HELP = (
     "  macOS:          brew install python-tk\n")
 
 _QT_UNAVAILABLE = (
-    "The PySide6 (Qt) interface is not available in this build yet; use "
-    "OCTO_UI_BACKEND=tk or remove the variable.\n")
+    "Octo Updater needs PySide6 (Qt) to run (Qt is the default backend). "
+    "Install it with `uv sync` or `pip install PySide6`, or set "
+    "OCTO_UI_BACKEND=tk to use the legacy Tk interface.\n")
 
 
 def resolve_backend(name=None) -> type | None:
     """Return the app class for the selected GUI backend.
 
     Reads the OCTO_UI_BACKEND environment variable when ``name`` is None
-    (``tk`` is the default). Raises ImportError when the backend's module
+    (``qt`` is the default). Raises ImportError when the backend's module
     cannot be imported; returns None for an unknown backend name.
     """
     if name is None:
-        name = os.environ.get("OCTO_UI_BACKEND", "tk")
+        name = os.environ.get("OCTO_UI_BACKEND", "qt")
     if name == "tk":
         from app import OctoUpdaterApp
         return OctoUpdaterApp
@@ -61,7 +62,7 @@ def backend_error_message(name, exc) -> str:
 
 
 def main():
-    backend = os.environ.get("OCTO_UI_BACKEND", "tk")
+    backend = os.environ.get("OCTO_UI_BACKEND", "qt")
     try:
         app_cls = resolve_backend(backend)
     except ImportError as e:

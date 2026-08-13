@@ -8,7 +8,7 @@ not instantiated.
 import octo_updater
 import pytest
 
-QT_UNAVAILABLE = "The PySide6 (Qt) interface is not available in this build yet"
+QT_UNAVAILABLE = "Octo Updater needs PySide6 (Qt) to run"
 
 
 def test_resolve_backend_tk_returns_app_class():
@@ -16,10 +16,10 @@ def test_resolve_backend_tk_returns_app_class():
     assert octo_updater.resolve_backend("tk") is app.OctoUpdaterApp
 
 
-def test_resolve_backend_default_is_tk(monkeypatch):
-    import app
+def test_resolve_backend_default_is_qt(monkeypatch):
+    import qt_app
     monkeypatch.delenv("OCTO_UI_BACKEND", raising=False)
-    assert octo_updater.resolve_backend() is app.OctoUpdaterApp
+    assert octo_updater.resolve_backend() is qt_app.QtOctoUpdaterApp
 
 
 def test_resolve_backend_qt_returns_app_class():
@@ -35,6 +35,16 @@ def test_resolve_backend_pyside6_returns_app_class():
 def test_qt_backend_error_message_is_friendly():
     msg = octo_updater.backend_error_message("qt", ImportError("broken"))
     assert QT_UNAVAILABLE in msg
+
+
+def test_main_exits_1_when_qt_import_fails(monkeypatch, capsys):
+    import sys
+    monkeypatch.setenv("OCTO_UI_BACKEND", "qt")
+    monkeypatch.setitem(sys.modules, "qt_app", None)
+    with pytest.raises(SystemExit) as excinfo:
+        octo_updater.main()
+    assert excinfo.value.code == 1
+    assert QT_UNAVAILABLE in capsys.readouterr().err
 
 
 def test_unknown_backend_returns_none():
