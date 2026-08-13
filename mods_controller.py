@@ -48,6 +48,12 @@ class ModsController:
     # ── public API ──────────────────────────────────────────────────────────
 
     @property
+    def registry(self):
+        """The full mod registry (name, id, description, repo_url, …) the
+        panel renders from — the UI keeps its mods import-free."""
+        return mods.MODS_REGISTRY
+
+    @property
     def updates_count(self) -> int:
         return self.state.updates_count
 

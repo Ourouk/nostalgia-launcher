@@ -15,7 +15,7 @@ from settings_controller import SettingsController
 from ui_events import (
     EventDispatcher,
     LogMessage,
-    StatusChanged,
+    MirrorStatusChanged,
 )
 
 # Small synthetic registries so tests don't depend on the real ones.
@@ -338,9 +338,9 @@ def test_check_mirror_posts_online(controller, monkeypatch):
                         lambda req, timeout=6: _OkCtx())
     controller.check_mirror()
     events = _drain_for(controller._dispatcher,
-                        lambda e: isinstance(e, StatusChanged))
-    assert any(isinstance(e, StatusChanged) and e.text == "mirror:online"
-               for e in events)
+                        lambda e: isinstance(e, MirrorStatusChanged))
+    assert any(isinstance(e, MirrorStatusChanged) and e.ok is True
+               and e.text == "online" for e in events)
     assert controller.mirror_status == "online"
 
 
@@ -350,9 +350,9 @@ def test_check_mirror_posts_offline(controller, monkeypatch):
     monkeypatch.setattr(sc, "secure_urlopen", boom)
     controller.check_mirror()
     events = _drain_for(controller._dispatcher,
-                        lambda e: isinstance(e, StatusChanged))
-    assert any(isinstance(e, StatusChanged) and e.text == "mirror:offline"
-               for e in events)
+                        lambda e: isinstance(e, MirrorStatusChanged))
+    assert any(isinstance(e, MirrorStatusChanged) and e.ok is False
+               and e.text == "offline" for e in events)
     assert controller.mirror_status == "offline"
 
 

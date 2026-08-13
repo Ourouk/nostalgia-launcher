@@ -5,9 +5,9 @@ OctoUpdaterApp used to drive directly — the game-folder-change reset (hash
 cache drop, folder-scoped config wipe, resets of the other controllers), the
 first-run flags, the Windows Defender exclusion flow, the download-mirror
 check, the verify-game-files shortcut, the settings toggles and the
-install-missing mods/addons shortcuts. Publishes LogMessage/StatusChanged on
-the shared EventDispatcher; the Tk/Qt settings panel renders them. No
-tkinter, no Qt.
+install-missing mods/addons shortcuts. Publishes LogMessage and
+MirrorStatusChanged on the shared EventDispatcher; the Tk/Qt settings panel
+renders them. No tkinter, no Qt.
 """
 
 import os
@@ -29,7 +29,7 @@ from constants import (
     UA,
 )
 from security_http import secure_urlopen
-from ui_events import EventDispatcher, LogMessage, StatusChanged
+from ui_events import EventDispatcher, LogMessage, MirrorStatusChanged
 from ui_state import SettingsState
 
 
@@ -74,6 +74,12 @@ class SettingsController:
         # ("checking…" / "online" / "offline"). Not part of SettingsState —
         # it's transient session state the Settings modal renders.
         self.mirror_status = ""
+
+        # Close-time auto-install flags, armed by the Settings toggles and
+        # consumed when the Settings modal closes (a no-op when the option
+        # was just toggled back off).
+        self._pending_auto_mods = False
+        self._pending_auto_addons = False
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -178,7 +184,7 @@ class SettingsController:
 
     def check_mirror(self):
         """Background HEAD check against the download mirror. The UI shows
-        "checking…" itself and re-renders on the StatusChanged event."""
+        "checking…" itself and re-renders on the MirrorStatusChanged event."""
         self.mirror_status = "checking…"
         threading.Thread(target=self._mirror_worker, daemon=True).start()
 
@@ -216,14 +222,42 @@ class SettingsController:
         return self.state.config
 
     def set_auto_mods(self, enabled: bool) -> dict:
+        self._pending_auto_mods = enabled
         self.state.config = config_store.update_config(
             lambda c: c.__setitem__("auto_install_mods", enabled))
         return self.state.config
 
     def set_auto_addons(self, enabled: bool) -> dict:
+        self._pending_auto_addons = enabled
         self.state.config = config_store.update_config(
             lambda c: c.__setitem__("auto_install_addons", enabled))
         return self.state.config
+
+    def take_pending_auto_mods(self) -> bool:
+        """Whether a close-time essential-mods install was armed (consume it)."""
+        pending = self._pending_auto_mods
+        self._pending_auto_mods = False
+        return pending
+
+    def take_pending_auto_addons(self) -> bool:
+        """Whether a close-time recommended-addons install was armed (consume)."""
+        pending = self._pending_auto_addons
+        self._pending_auto_addons = False
+        return pending
+
+    def prune_folder_records(self) -> dict:
+        """Drop stale mods/addons install records when the configured game
+        folder no longer exists (a folder that was deleted or never created)."""
+        def _wipe(c):
+            c.pop("mods", None)
+            c.pop("addons", None)
+        self.state.config = config_store.update_config(_wipe)
+        return self.state.config
+
+    def mods_initialized(self) -> bool:
+        """Whether any mod install record exists for this folder — gates the
+        post-update recommended-addons chain."""
+        return bool(config_store.load_config().get("mods"))
 
     def install_missing_essential_mods(self) -> bool:
         """Install every essential mod not already present. Used when the user
@@ -305,4 +339,4 @@ class SettingsController:
             ok = False
         self.mirror_status = "online" if ok else "offline"
         self._dispatcher.post(
-            StatusChanged(f"mirror:{self.mirror_status}"))
+            MirrorStatusChanged(ok=ok, text=self.mirror_status))

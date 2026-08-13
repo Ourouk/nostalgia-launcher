@@ -8,6 +8,7 @@ builder that turns a tweak dict into binary patch operations.
 import math
 import os
 import struct
+import threading
 
 from config_store import load_config, update_config
 from filesystem import ensure_dir
@@ -146,6 +147,13 @@ def load_tweaks_config() -> dict:
 
 def save_tweaks_config(values: dict):
     update_config(lambda c: c.__setitem__("tweaks", values))
+
+
+def run_apply_worker_in_background(worker, client_dir: str, tweaks: dict):
+    """Run a tweak-apply worker callable on a daemon thread, so the UI's
+    apply/reset actions never block the event loop."""
+    threading.Thread(target=worker, args=(client_dir, tweaks),
+                     daemon=True).start()
 
 
 def build_tweaks(buf, tweaks: dict | None = None):

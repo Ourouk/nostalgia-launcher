@@ -56,6 +56,13 @@ class AddonsLoaded(Event):
 
 
 @dataclass
+class MirrorStatusChanged(Event):
+    """Download-mirror reachability result (Settings modal label)."""
+    ok: bool
+    text: str
+
+
+@dataclass
 class OperationFinished(Event):
     """A worker operation completed successfully."""
     kind: str

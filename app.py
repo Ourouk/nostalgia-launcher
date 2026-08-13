@@ -1,12 +1,13 @@
 """
-Octo Updater GUI — the Tk application (SlimScrollbar + OctoUpdaterApp).
+Octo Updater GUI — the Tk presentation adapter (SlimScrollbar + OctoUpdaterApp).
 
 Launch via octo_updater.py (the entry point). This module wires the config
-store paths at import time and owns the whole Tk interface.
+store paths at import time and renders the state the Phase 1b controllers
+own: it builds widgets, binds events, renders controller state and forwards
+user actions back into the controllers. No business logic lives here.
 """
 
 import os
-import threading
 import queue
 import tkinter as tk
 from tkinter import filedialog
@@ -19,6 +20,8 @@ from helpers import (
 )
 
 import config_store
+# Only the tweak apply/reset workers still touch the config directly — the
+# tweaks controller is deliberately deferred to a later phase.
 from config_store import (
     load_config,
     update_config,
@@ -26,11 +29,7 @@ from config_store import (
 
 from log_sink import log, _LOG_Q
 
-from filesystem import (
-    sha1_file,
-    remove_wdb,
-    get_client_version,
-)
+from filesystem import sha1_file
 
 from tweaks import (
     TWEAKS_DEFAULTS,
@@ -38,6 +37,7 @@ from tweaks import (
     TWEAKS_LIMITS,
     fov_default_for_display,
     load_tweaks_config,
+    run_apply_worker_in_background,
     save_tweaks_config,
     update_config_wtf,
 )
@@ -48,6 +48,7 @@ from ui_events import (
     AddonsLoaded,
     EventDispatcher,
     LogMessage,
+    MirrorStatusChanged,
     ModsLoaded,
     NewsLoaded,
     OperationFailed,
@@ -55,11 +56,12 @@ from ui_events import (
     ProgressChanged,
     StatusChanged,
 )
-from update_controller import UpdateController
-from news_controller import NewsController
-from mods_controller import ModsController
-from addons_controller import AddonsController
-from settings_controller import SettingsController
+
+import addons_controller
+import mods_controller
+import news_controller
+import settings_controller
+import update_controller
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Constants  (see constants.py)
@@ -134,41 +136,6 @@ _UI_FONT = ui_font_family()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  Secure networking  (see security_http.py: secure_urlopen, allowlists)
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-# ── logging ─────────────────────────────────────────────────────────────────
-# See log_sink.py — log()/_LOG_Q are the shared, thread-safe log channel.
-
-# ── client update engine ─────────────────────────────────────────────────────
-# See client_update.py — VerifyWorker / UpdateWorker.
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-#  Mods definition & engine  (see mods.py: MODS_REGISTRY, install/uninstall)
-#  Self-update              (see self_update.py)
-# ──────────────────────────────────────────────────────────────────────────────
-
-from mods import (
-    MODS_REGISTRY,
-)
-from self_update import (
-    fetch_updater_latest_tag,
-    updater_update_available,
-)
-
-# ──────────────────────────────────────────────────────────────────────────────
-#  Addons definition & engine  (see addons.py)
-# ──────────────────────────────────────────────────────────────────────────────
-
-from addons import (
-    RECOMMENDED_ADDONS,
-    ADDON_GIT_HOSTS,
-    is_allowed_git_url,
-)
-
-# ──────────────────────────────────────────────────────────────────────────────
 #  GUI
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -237,36 +204,36 @@ class OctoUpdaterApp(tk.Tk):
         self.withdraw()
 
         # First-run flags live in the SettingsController's SettingsState;
-        # they were detected here before anything writes the config.
-        self._cfg        = load_config()
+        # they were detected there before anything writes the config.
         # Session log lives in memory; the "Show logs" window renders it.
         self._log_buffer: list = []
         self._logwin = None
         self._logwin_text = None
         self._settings_overlay = None
 
-        # Game folder path — shared by the Settings modal; changing it fires
-        # the folder-change reset via the trace.
+        # Phase 1b controllers own the update/verify/mod/news/addons/settings
+        # business logic; this class renders their events. All UI updates
+        # arrive via the dispatcher on the main thread.
+        self._events = EventDispatcher()
+        self._updater = update_controller.UpdateController(
+            self._events, get_out_dir=lambda: self._path_var.get().strip())
+        self._news = news_controller.NewsController(self._events)
+        self._mods = mods_controller.ModsController(
+            self._events, get_out_dir=lambda: self._path_var.get().strip())
+        self._addons = addons_controller.AddonsController(
+            self._events, get_out_dir=lambda: self._path_var.get().strip())
+
+        # Settings/game-folder controller — owns the loaded config and
+        # SettingsState.path, which is mirrored against _path_var below (and
+        # kept in sync by the trace).
+        self._settings = settings_controller.SettingsController(
+            self._events, self._updater, self._mods, self._addons, self._news)
+        # _cfg mirrors the settings controller's live config snapshot; every
+        # mutation goes through it so the Tk side never touches the store.
+        self._cfg = self._settings.state.config
         self._path_var = tk.StringVar(
             value=os.path.normpath(self._cfg.get("out_dir", DEFAULT_OUT_DIR)))
         self._last_path_val = os.path.normpath(self._path_var.get().strip())
-
-        # Phase 1b controllers own the update/verify/mod/news/addons service
-        # logic; this class renders their events. All UI updates arrive via
-        # the dispatcher on the main thread.
-        self._events = EventDispatcher()
-        self._updater = UpdateController(
-            self._events, get_out_dir=lambda: self._path_var.get().strip())
-        self._news = NewsController(self._events)
-        self._mods = ModsController(
-            self._events, get_out_dir=lambda: self._path_var.get().strip())
-        self._addons = AddonsController(
-            self._events, get_out_dir=lambda: self._path_var.get().strip())
-
-        # Settings/game-folder controller — owns SettingsState.path, which is
-        # mirrored against _path_var below (and kept in sync by the trace).
-        self._settings = SettingsController(
-            self._events, self._updater, self._mods, self._addons, self._news)
         self._settings.state.path = os.path.normpath(
             self._path_var.get().strip())
         self._path_var.trace_add("write", self._on_path_changed)
@@ -279,6 +246,7 @@ class OctoUpdaterApp(tk.Tk):
         self._events.subscribe(self._on_news_loaded)
         self._events.subscribe(self._on_mods_loaded)
         self._events.subscribe(self._on_addons_loaded)
+        self._events.subscribe(self._on_mirror_status_changed)
 
         # Count of mods with an update available — shown as a badge on the
         # MODS nav tab. Mirror of the ModsController's updates_count.
@@ -333,12 +301,9 @@ class OctoUpdaterApp(tk.Tk):
 
         out_dir = self._cfg.get("out_dir", DEFAULT_OUT_DIR)
         if not os.path.exists(out_dir):
-            def _wipe(c):
-                c.pop("mods", None)
-                c.pop("addons", None)
-            self._cfg = update_config(_wipe)
+            self._cfg = self._settings.prune_folder_records()
 
-        live_ver = get_client_version(out_dir)
+        live_ver = self._updater.read_client_version()
         if live_ver:
             self._client_ver_var.set(live_ver)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -360,8 +325,7 @@ class OctoUpdaterApp(tk.Tk):
         if self._cfg.get("addons") is not None:
             self.after(1500, self._addons_verify)
         # Daily self-update check (cached), last so it never delays the rest.
-        self.after(2000, lambda: threading.Thread(
-            target=self._check_updater_update, daemon=True).start())
+        self.after(2000, self._updater.check_updater_update)
         # First launch: open Settings so the user sets the game folder etc.
         if self._settings.state.first_run:
             self.after(500, self._open_settings)
@@ -677,10 +641,8 @@ class OctoUpdaterApp(tk.Tk):
             value=bool(self._cfg.get("auto_install_mods", True)))
         self._auto_addons_var = tk.BooleanVar(
             value=bool(self._cfg.get("auto_install_addons", True)))
-        # Deferred "install missing" pending from turning an auto-install
-        # option on in Settings — applied on close (see _close_settings).
-        self._auto_mods_retrigger = False
-        self._auto_addons_retrigger = False
+        # Close-time auto-install pending flags live in the SettingsController
+        # (armed by _toggle_auto_*, consumed by _close_settings).
 
     def _place_header(self):
         """Reposition width-dependent header elements (gear, hit regions)."""
@@ -756,19 +718,6 @@ class OctoUpdaterApp(tk.Tk):
             self._open_url("https://github.com/rebasedkon/octo-updater")
         elif name in self._nav_pos:
             self._switch_tab(name)
-
-    def _check_updater_update(self):
-        """Background daily check of the updater's own GitHub releases; shows
-        the 'Update available!' header label if a newer version exists."""
-        try:
-            tag = fetch_updater_latest_tag()
-        except Exception:
-            tag = None
-        if updater_update_available(tag):
-            def show():
-                self._update_available = True
-                self._draw_update_label()
-            self.after(0, show)
 
     def _build_panel(self):
         PANEL_TOP  = HDR_H + 1
@@ -1181,8 +1130,8 @@ class OctoUpdaterApp(tk.Tk):
             self._set_btn_busy("Patching…")
             self._status_var.set("Applying tweaks…")
             # Pass the same defaults that were saved
-            threading.Thread(target=self._apply_tweaks_worker,
-                             args=(out, defaults), daemon=True).start()
+            run_apply_worker_in_background(self._apply_tweaks_worker,
+                                           out, defaults)
 
     def _apply_tweaks(self):
         values = self._get_tweaks_from_ui()
@@ -1204,8 +1153,8 @@ class OctoUpdaterApp(tk.Tk):
         self._log_line("\nApplying tweaks to WoW.exe...\n", "acct")
         self._set_btn_busy("Patching…")
         self._status_var.set("Applying tweaks…")
-        threading.Thread(target=self._apply_tweaks_worker,
-                         args=(out, values), daemon=True).start()
+        run_apply_worker_in_background(self._apply_tweaks_worker,
+                                       out, values)
 
     def _apply_tweaks_worker(self, client_dir: str, tweaks: dict):
         log_q  = queue.Queue()
@@ -1329,7 +1278,8 @@ class OctoUpdaterApp(tk.Tk):
         pending = self._mods.state.pending
         latest  = self._mods.state.latest_versions
 
-        mods_sorted = sorted(MODS_REGISTRY, key=lambda m: m["name"].lower())
+        mods_sorted = sorted(self._mods.registry,
+                             key=lambda m: m["name"].lower())
 
         if self._mod_row_vars:
             for mod in mods_sorted:
@@ -1545,7 +1495,7 @@ class OctoUpdaterApp(tk.Tk):
         out = self._path_var.get().strip()
         if not out:
             return
-        mod = next(m for m in MODS_REGISTRY if m["id"] == mod_id)
+        mod = next(m for m in self._mods.registry if m["id"] == mod_id)
         self._log_line(f"\nUpdating {mod['name']}...\n", "acct")
         self._set_btn_busy("Installing…")
         self._status_var.set("Downloading mods…")
@@ -1742,7 +1692,7 @@ class OctoUpdaterApp(tk.Tk):
                  highlightthickness=1, highlightbackground=P_BDR,
                  highlightcolor=C_GOLD).pack(fill="x", ipady=7, pady=(6, 6))
         tk.Label(body,
-                 text="Allowed hosts: " + ", ".join(ADDON_GIT_HOSTS),
+                 text="Allowed hosts: " + ", ".join(self._addons.git_hosts),
                  font=self._font(9), fg=C_TEXT_DIM, bg=P_BG).pack(anchor="w")
         err = tk.Label(body, text="", font=self._font(9),
                        fg=C_ERR, bg=P_BG)
@@ -1752,7 +1702,7 @@ class OctoUpdaterApp(tk.Tk):
             url = url_var.get().strip().rstrip("/")
             if url.endswith(".git"):
                 url = url[:-4]
-            if not is_allowed_git_url(url):
+            if not self._addons.is_allowed_git_url(url):
                 err.configure(text="URL must be https from an allowed host.")
                 return
             folder = url.rsplit("/", 1)[-1]
@@ -1841,7 +1791,7 @@ class OctoUpdaterApp(tk.Tk):
         # they surface at the top of the list.
         available = keep(a for a in st["available"]
                          if a["folder"] not in st["addons"])
-        available.sort(key=lambda a: (a["folder"] not in RECOMMENDED_ADDONS,
+        available.sort(key=lambda a: (a["folder"] not in self._addons.recommended,
                                       a["folder"].lower()))
 
         work = []
@@ -2006,7 +1956,7 @@ class OctoUpdaterApp(tk.Tk):
         name_f.pack_propagate(False)
         # Gold ★ badge for recommended addons; fixed-width slot keeps the
         # titles aligned whether or not the star is present.
-        is_recommended = rec["folder"] in RECOMMENDED_ADDONS
+        is_recommended = rec["folder"] in self._addons.recommended
         star = tk.Label(name_f, text="★" if is_recommended else "",
                         font=self._font(9), fg=C_GOLD, bg=C_PANEL,
                         width=2, anchor="w")
@@ -2151,7 +2101,7 @@ class OctoUpdaterApp(tk.Tk):
         self._last_path_val = new_val
         if not changed:
             return
-        self._cfg = load_config()
+        self._cfg = self._settings.state.config
 
         # Reset every session-level TTL/state so nothing from the previous
         # folder is served from memory: addons verify + its rendered list,
@@ -2400,12 +2350,11 @@ class OctoUpdaterApp(tk.Tk):
             self._settings.state.first_run_verify_pending = False
             self.after(100, lambda: self._start_verify(overwrite_config=True))
         # Apply any auto-install option the user turned on this session
-        # (idempotent — a no-op when nothing is missing).
-        if self._auto_mods_retrigger:
-            self._auto_mods_retrigger = False
+        # (idempotent — a no-op when nothing is missing). The pending flags
+        # live in the SettingsController.
+        if self._settings.take_pending_auto_mods():
             self._install_missing_essential_mods()
-        if self._auto_addons_retrigger:
-            self._auto_addons_retrigger = False
+        if self._settings.take_pending_auto_addons():
             self._install_missing_recommended_addons()
         # First run: the user accepted the auto-selected folder (never changed
         # it) and never added a Defender exclusion — recommend it now, once.
@@ -2441,14 +2390,15 @@ class OctoUpdaterApp(tk.Tk):
         lbl.configure(text="checking…", fg=C_TEXT_DIM)
         self._settings.check_mirror()
 
-    def _update_mirror_status(self, status: str):
-        """Render a mirror-status result (from a StatusChanged event) into the
-        Settings modal's label."""
+    def _on_mirror_status_changed(self, event):
+        """Render a MirrorStatusChanged event into the Settings modal's
+        download-mirror label."""
+        if not isinstance(event, MirrorStatusChanged):
+            return
         lbl = getattr(self, "_mirror_status_lbl", None)
         if lbl is None:
             return
-        ok = status == "online"
-        lbl.configure(text=status, fg=C_OK if ok else C_ERR)
+        lbl.configure(text=event.text, fg=C_OK if event.ok else C_ERR)
 
     def _toggle_clear_wdb(self):
         val = self._clear_wdb_var.get()
@@ -2460,15 +2410,13 @@ class OctoUpdaterApp(tk.Tk):
 
     def _toggle_auto_mods(self):
         val = self._auto_mods_var.get()
+        # The close-time pending install is armed by the controller.
         self._cfg = self._settings.set_auto_mods(val)
-        # Install the missing essential mods only when Settings is closed;
-        # turning it back off cancels the pending install.
-        self._auto_mods_retrigger = val
 
     def _toggle_auto_addons(self):
         val = self._auto_addons_var.get()
+        # The close-time pending install is armed by the controller.
         self._cfg = self._settings.set_auto_addons(val)
-        self._auto_addons_retrigger = val
 
     def _install_missing_essential_mods(self):
         """Thin forwarder — the missing-essential-mods logic (and the
@@ -2591,73 +2539,34 @@ class OctoUpdaterApp(tk.Tk):
             self._start_update()
 
     def _launch_game(self):
-        """Launch the game detached.
-        If VanillaFixes is installed use VanillaFixes.exe (it injects patches then
-        starts WoW.exe itself). Otherwise fall back to WoW.exe directly.
-        Windows-only — the client is a Windows binary."""
-        if not can_launch_client():
-            self._log_line(
-                "Game launch is only available on Windows (the client is a "
-                "Windows binary).\n", "err")
+        """Launch the game detached — the launch logic (VanillaFixes/WoW.exe
+        choice, DXVK notice, clear-wdb, subprocess) lives in the
+        UpdateController; this only drives the footer chrome and dialogs."""
+        ok, dxvk_notice = self._updater.launch_game()
+        if not ok:
             return
-        import subprocess
-        client_dir = self._path_var.get().strip()
-        cfg        = load_config()
-        vf_state   = cfg.get("mods", {}).get("VanillaFixes", {})
-        vf_installed = (vf_state.get("enabled") and
-                        vf_state.get("installed_version") and
-                        os.path.exists(os.path.join(client_dir, "VanillaFixes.exe")))
-
-        if vf_installed:
-            exe     = os.path.join(client_dir, "VanillaFixes.exe")
-            exe_lbl = "VanillaFixes.exe"
-        else:
-            exe     = os.path.join(client_dir, "WoW.exe")
-            exe_lbl = "WoW.exe"
-
-        if not os.path.exists(exe):
-            self._log_line(f"{exe_lbl} not found at: {exe}\n", "err")
+        if dxvk_notice:
+            self._show_dxvk_notice()
+        # Briefly disable PLAY so a double-click can't spawn two clients.
+        self._set_btn_busy("PLAY")
+        self._status_var.set("Launching...")
+        # Optionally close the updater shortly after launch.
+        if self._cfg.get("close_on_launch", False):
+            self.after(1000, self._on_close)
             return
+        self.after(5000, self._refresh_ready_state)
 
-        # One-time DXVK first-launch notice (armed when dxvk was installed).
-        if cfg.get("dxvk_notice_pending"):
-            self._cfg = update_config(
-                lambda c: c.pop("dxvk_notice_pending", None))
-            from tkinter import messagebox
-            messagebox.showinfo(
-                "DXVK mod first launch",
-                "Initial shader compilation may cause temporary in-game "
-                "stuttering during the first launch. This is a normal process "
-                "while the game builds its shader cache.\n\n"
-                "Users with AMD GPUs experiencing stability issues can switch "
-                "to DXVK 2.5.3",
-                parent=self)
-
-        if self._cfg.get("clear_wdb_on_launch", False):
-            remove_wdb(client_dir)
-
-        try:
-            flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
-                     | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0))
-            try:
-                subprocess.Popen([exe], cwd=client_dir,
-                                 creationflags=flags, close_fds=True)
-            except OSError:
-                # The job object doesn't permit breakaway — retry without it.
-                flags &= ~getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
-                subprocess.Popen([exe], cwd=client_dir,
-                                 creationflags=flags, close_fds=True)
-            self._log_line(f"Launched {exe_lbl}!\n", "ok")
-            # Briefly disable PLAY so a double-click can't spawn two clients.
-            self._set_btn_busy("PLAY")
-            self._status_var.set("Launching...")
-            # Optionally close the updater shortly after launch.
-            if self._cfg.get("close_on_launch", False):
-                self.after(1000, self._on_close)
-                return
-            self.after(5000, self._refresh_ready_state)
-        except Exception as e:
-            self._log_line(f"Failed to launch {exe_lbl}: {e}\n", "err")
+    def _show_dxvk_notice(self):
+        """One-time DXVK first-launch notice (armed when dxvk was installed)."""
+        from tkinter import messagebox
+        messagebox.showinfo(
+            "DXVK mod first launch",
+            "Initial shader compilation may cause temporary in-game "
+            "stuttering during the first launch. This is a normal process "
+            "while the game builds its shader cache.\n\n"
+            "Users with AMD GPUs experiencing stability issues can switch "
+            "to DXVK 2.5.3",
+            parent=self)
 
     # ── verify lifecycle ──────────────────────────────────────────────────────────
 
@@ -2682,12 +2591,8 @@ class OctoUpdaterApp(tk.Tk):
     # ── event handlers (Phase 1b controllers post; this class renders) ──────────
 
     def _on_status_changed(self, event):
-        if not isinstance(event, StatusChanged):
-            return
-        if event.text.startswith("mirror:"):
-            self._update_mirror_status(event.text[len("mirror:"):])
-            return
-        self._status_var.set(event.text)
+        if isinstance(event, StatusChanged):
+            self._status_var.set(event.text)
 
     def _on_progress_changed(self, event):
         if isinstance(event, ProgressChanged):
@@ -2719,7 +2624,7 @@ class OctoUpdaterApp(tk.Tk):
             self._maybe_install_essential_mods()
             # When mods were already initialized, the addons chain from the
             # mods operation never runs — trigger it directly.
-            if load_config().get("mods"):
+            if self._settings.mods_initialized():
                 self._maybe_install_default_addons()
         else:
             self._status_var.set("Update available!")
@@ -2795,6 +2700,13 @@ class OctoUpdaterApp(tk.Tk):
 
     def _poll(self):
         self._updater.poll()
+
+        # Render the "Update available!" header label once the background
+        # self-update check (UpdateController) reports a newer release.
+        if (self._updater.updater_update_available
+                and not self._update_available):
+            self._update_available = True
+            self._draw_update_label()
 
         # Drain the global app-log queue that helper functions write to.
         try:

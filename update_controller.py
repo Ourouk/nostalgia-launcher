@@ -8,6 +8,7 @@ Qt: the controller never touches widgets, it only posts events and mutates its
 own UpdateState.
 """
 
+import os
 import queue
 import threading
 from dataclasses import dataclass
@@ -15,7 +16,9 @@ from dataclasses import dataclass
 from client_update import UpdateWorker, VerifyWorker
 from config_store import load_config, update_config
 from constants import DEFAULT_OUT_DIR
+from filesystem import get_client_version, remove_wdb
 from platform_support import can_launch_client
+from self_update import fetch_updater_latest_tag, updater_update_available
 from ui_events import (
     EventDispatcher,
     LogMessage,
@@ -56,6 +59,9 @@ class UpdateController:
         self._worker: UpdateWorker | None = None
         self._verify_worker: VerifyWorker | None = None
         self._op: str | None = None
+        # Set by check_updater_update(): a newer updater release exists and
+        # the header "Update available!" label should be shown.
+        self.updater_update_available = False
         if get_out_dir is None:
             get_out_dir = lambda: load_config().get("out_dir", DEFAULT_OUT_DIR)
         self._get_out_dir = get_out_dir
@@ -135,6 +141,86 @@ class UpdateController:
         verify-game-files recheck)."""
         self.state.client_ready = False
         self.state.diff_nodes = None
+
+    def read_client_version(self) -> str:
+        """The client version straight from disk, cached on state (footer
+        label at startup, before any worker has run)."""
+        self.state.client_version = get_client_version(
+            (self._get_out_dir() or "").strip())
+        return self.state.client_version
+
+    def check_updater_update(self):
+        """Background daily check of the updater's own GitHub releases; sets
+        `updater_update_available` when a newer version exists. The UI polls
+        that flag from its event loop and draws the header label."""
+
+        def worker():
+            try:
+                tag = fetch_updater_latest_tag()
+            except Exception:
+                tag = None
+            self.updater_update_available = bool(
+                updater_update_available(tag))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def launch_game(self) -> tuple:
+        """Launch the client detached.
+
+        Returns ``(ok, dxvk_notice)``: ``ok`` is False when the client can't
+        be launched (a LogMessage explains why) and ``dxvk_notice`` is True
+        when the one-time DXVK first-launch notice should be shown. Consumes
+        the notice flag, the clear-wdb and the launch itself; Windows-only —
+        the client is a Windows binary.
+        """
+        if not can_launch_client():
+            self._dispatcher.post(LogMessage(
+                "Game launch is only available on Windows (the client is a "
+                "Windows binary).\n", "err"))
+            return False, False
+        import subprocess
+        client_dir = (self._get_out_dir() or "").strip()
+        cfg = load_config()
+        vf_state = cfg.get("mods", {}).get("VanillaFixes", {})
+        vf_installed = (vf_state.get("enabled") and
+                        vf_state.get("installed_version") and
+                        os.path.exists(
+                            os.path.join(client_dir, "VanillaFixes.exe")))
+        if vf_installed:
+            exe = os.path.join(client_dir, "VanillaFixes.exe")
+            exe_lbl = "VanillaFixes.exe"
+        else:
+            exe = os.path.join(client_dir, "WoW.exe")
+            exe_lbl = "WoW.exe"
+        if not os.path.exists(exe):
+            self._dispatcher.post(LogMessage(
+                f"{exe_lbl} not found at: {exe}\n", "err"))
+            return False, False
+
+        dxvk_notice = False
+        if cfg.get("dxvk_notice_pending"):
+            update_config(lambda c: c.pop("dxvk_notice_pending", None))
+            dxvk_notice = True
+        if cfg.get("clear_wdb_on_launch", False):
+            remove_wdb(client_dir)
+
+        try:
+            flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
+                     | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0))
+            try:
+                subprocess.Popen([exe], cwd=client_dir,
+                                 creationflags=flags, close_fds=True)
+            except OSError:
+                # The job object doesn't permit breakaway — retry without it.
+                flags &= ~getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+                subprocess.Popen([exe], cwd=client_dir,
+                                 creationflags=flags, close_fds=True)
+            self._dispatcher.post(LogMessage(f"Launched {exe_lbl}!\n", "ok"))
+            return True, dxvk_notice
+        except Exception as e:
+            self._dispatcher.post(LogMessage(
+                f"Failed to launch {exe_lbl}: {e}\n", "err"))
+            return False, dxvk_notice
 
     def poll(self):
         """Drain the worker queues once and post the resulting events."""
