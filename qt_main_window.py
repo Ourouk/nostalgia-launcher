@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from constants import UPDATER_VERSION
 from qt_bridge import ControllerHub
+from qt_news_panel import NewsPanel
 from qt_theme import Palette, theme_qss
 from ui_metrics import BASE_H, BASE_W, clamp
 
@@ -123,8 +124,12 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget(self)
         self._pages: dict[str, int] = {}
         for i, name in enumerate(self.TABS):
-            page = QLabel(f"{name} panel (C{i + 16})", self._stack)
-            page.setAlignment(Qt.AlignCenter)
+            if name == "NEWS":
+                page = NewsPanel(self._hub.news, self._hub.bridge,
+                                 self._palette, self._stack)
+            else:
+                page = QLabel(f"{name} panel (C{i + 16})", self._stack)
+                page.setAlignment(Qt.AlignCenter)
             self._pages[name] = i
             self._stack.addWidget(page)
         return self._stack
