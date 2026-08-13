@@ -1,10 +1,9 @@
 """Octo Updater Qt (PySide6) design system — palette, stylesheet, metrics.
 
-Phase 2 of the Qt migration: the PySide6 counterpart of the color constants
-in app.py and the layout math in ui_metrics.py. It must stay Tk-free so the
-Qt backend can import it without pulling in tkinter.
+The single source of the dark purple/gold palette and the QSS stylesheet.
+Pure Qt (PySide6) — no other GUI toolkit involved.
 
-- `Palette` mirrors the app.py color constants as QColor values.
+- `Palette` exposes the palette colors as QColor values.
 - `theme_qss(palette)` renders the dark-purple/gold stylesheet.
 - `default_window_size(screen)` derives the initial window size from the
   toolkit-agnostic ui_metrics helpers. Qt works in logical pixels and applies
@@ -15,8 +14,8 @@ from PySide6.QtGui import QColor
 
 from ui_metrics import initial_window_size
 
-# Hex values copied verbatim from app.py; importing app.py itself would pull
-# in tkinter, which this module must never do.
+# Hex values of the Octo Updater palette (dark backgrounds, gold accents,
+# the parchment addon cards, and the semantic ok/err colors).
 HEX = {
     "C_BG": "#120e1a",
     "C_PANEL": "#161120",
@@ -73,18 +72,17 @@ _ATTRS = [
 
 
 class Palette:
-    """Qt color set mirroring the Tk palette in app.py.
+    """Qt color set for the dark purple/gold design.
 
     Convenience attributes (``palette.bg``, ``palette.gold``, ...) plus a
-    ``colors`` dict keyed by the app.py constant name for dynamic lookup.
+    ``colors`` dict keyed by the HEX constant name for dynamic lookup.
     """
 
     def __init__(self):
         self.colors = {name: QColor(value) for name, value in HEX.items()}
         for attr, key in _ATTRS:
             setattr(self, attr, self.colors[key])
-        # Extra Tk-only accent colors not mirrored in app.py's HEX (they would
-        # otherwise trip test_qt_theme's palette↔app mirror check), added as
+        # Extra accent colors beyond the core palette (pink/warn), added as
         # convenience attributes for the addons panel.
         self.pink = QColor("#d76f9e")
         self.pink_lt = QColor("#eb96ba")

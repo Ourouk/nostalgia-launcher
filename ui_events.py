@@ -1,10 +1,9 @@
 """Thread-safe UI event channel.
 
-Phase 1a of the PySide6 migration: a small, toolkit-agnostic event bus
-that worker threads use to talk to the interface (replacing the ad-hoc
-log_q/prog_q queue pairs in the Tk app). Standard library only — no
-tkinter or Qt. The UI thread drains events once per event-loop tick and
-forwards them to the registered handlers.
+A small, toolkit-agnostic event bus that worker threads use to talk to the
+interface. Standard library only — no GUI toolkit. The UI thread drains
+events once per event-loop tick and forwards them to the registered
+handlers; `qt_bridge.ControllerBridge` converts them into Qt signals.
 """
 
 import queue
@@ -18,7 +17,7 @@ class Event:
 
 @dataclass
 class StatusChanged(Event):
-    """The footer status line (OctoUpdaterApp._status_var)."""
+    """The footer status line shown in the main window."""
     text: str
 
 

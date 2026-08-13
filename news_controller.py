@@ -1,10 +1,9 @@
 """News feed controller.
 
-Phase 1b of the PySide6 migration: owns the news-feed fetch logic that
-OctoUpdaterApp used to drive directly — TTL caching (NEWS_CACHE_TTL), the
-background fetch threads, and the "Couldn't reach the news feed." error path.
-Publishes snapshots as NewsLoaded events on the shared EventDispatcher; the
-Tk/Qt panels render them. No tkinter, no Qt.
+Owns the news-feed fetch logic: TTL caching (NEWS_CACHE_TTL), the background
+fetch threads, and the "Couldn't reach the news feed." error path. Publishes
+snapshots as NewsLoaded events on the shared EventDispatcher; the Qt News
+panel renders them. No GUI toolkit.
 """
 
 import threading
@@ -23,7 +22,7 @@ class NewsResult:
 
     `data` is the post dict (featured) or items list (announcements) — None
     while still loading or when the fetch failed. `loading` and `error` let
-    the renderer show the same placeholder/error states as the Tk app.
+    the renderer show the same placeholder/error states as before.
     """
     data: object = None
     loading: bool = False

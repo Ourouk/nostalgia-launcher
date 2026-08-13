@@ -1,11 +1,10 @@
 """Mods panel controller.
 
-Phase 1b of the PySide6 migration: owns the MODS-panel business logic that
-OctoUpdaterApp used to drive directly — the background latest-version fetch,
-the update-available count, the pending checkbox/ignore changes, and the
+Owns the MODS-panel business logic: the background latest-version fetch, the
+update-available count, the pending checkbox/ignore changes, and the
 install/uninstall/update worker. Publishes snapshots as ModsLoaded and the
-worker outcome as OperationFinished on the shared EventDispatcher; the Tk/Qt
-panel renders them. No tkinter, no Qt.
+worker outcome as OperationFinished on the shared EventDispatcher; the Qt
+Mods panel renders them. No GUI toolkit.
 """
 
 import os
@@ -30,9 +29,9 @@ class ModsController:
     """Owns the mods lifecycle; speaks to the UI only through events.
 
     `get_out_dir` is an optional zero-arg callable returning the current game
-    folder (a Qt app would supply its path field's getter). When omitted the
-    controller reads ``out_dir`` from the on-disk config, mirroring the Tk
-    app's default.
+    folder (the Qt UI supplies its path field's getter). When omitted the
+    controller reads ``out_dir`` from the on-disk config, mirroring the
+    UI's default.
     """
 
     def __init__(self, dispatcher: EventDispatcher, get_out_dir=None):

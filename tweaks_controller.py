@@ -1,13 +1,12 @@
 """Tweaks panel controller.
 
-Phase 1b of the PySide6 migration: owns the TWEAKS-panel business logic that
-OctoUpdaterApp used to drive directly — reading the saved tweak values,
+Owns the TWEAKS-panel business logic: reading the saved tweak values,
 clamping the UI entries, deciding when Apply/Reset are offered, and the
 apply/reset workers (WoW.exe patch on Windows + Config.wtf update + the
 patched-hash bookkeeping). Speaks to the UI only through events on the shared
 EventDispatcher: LogMessage for every log line, ProgressChanged when the
 worker reports progress, and OperationFinished(kind="tweaks") at the end
-(plus OperationFailed on an exception). No tkinter, no Qt.
+(plus OperationFailed on an exception). No GUI toolkit.
 """
 
 import os
@@ -38,9 +37,9 @@ class TweaksController:
     """Owns the tweak values, their clamping and the apply/reset lifecycle.
 
     `get_out_dir` is an optional zero-arg callable returning the current game
-    folder (a Qt app would supply its path field's getter). When omitted the
-    controller reads ``out_dir`` from the on-disk config, mirroring the Tk
-    app's default.
+    folder (the Qt UI supplies its path field's getter). When omitted the
+    controller reads ``out_dir`` from the on-disk config, mirroring the
+    UI's default.
     """
 
     def __init__(self, dispatcher: EventDispatcher, get_out_dir=None):
@@ -65,10 +64,10 @@ class TweaksController:
     def validate_entries(self, ui: dict) -> tuple[bool, dict]:
         """Clamp every numeric entry to its limits and report the bad ones.
 
-        Mirrors the Tk adapter's _get_tweaks_from_ui clamping plus the
-        out-of-range detection of _refresh_tweaks_buttons: a value that fails
-        to parse (or is outside [min, max]) counts as "bad" and falls back to
-        the tweak default / the closest limit. Returns (any_bad, clamped_ui).
+        Clamps every numeric entry to its limits and flags out-of-range
+        values: a value that fails to parse (or is outside [min, max])
+        counts as "bad" and falls back to the tweak default / the closest
+        limit. Returns (any_bad, clamped_ui).
         """
         any_bad = False
         result = {}
@@ -96,10 +95,10 @@ class TweaksController:
     def dirty_and_custom(self, ui: dict) -> tuple[bool, bool]:
         """The Apply/Reset button rules for a UI value snapshot.
 
-        Mirrors the Tk _refresh_tweaks_buttons norm/dirty/custom computation:
-        dirty means the (clamped) UI differs from the saved config (or holds
-        an out-of-range entry), custom means it differs from the defaults.
-        Booleans are normalized via bool(), numbers via int()."""
+        The norm/dirty/custom computation: dirty means the (clamped) UI
+        differs from the saved config (or holds an out-of-range entry),
+        custom means it differs from the defaults. Booleans are normalized
+        via bool(), numbers via int()."""
         any_bad, clamped = self.validate_entries(ui)
         saved = tweaks.load_tweaks_config()
         defaults = dict(TWEAKS_DEFAULTS)
@@ -120,9 +119,8 @@ class TweaksController:
         """Save the (clamped) tweak values and run the apply worker.
 
         Returns True when a worker was actually spawned (so the caller knows
-        when to flip its busy chrome). Mirrors the Tk _apply_tweaks flow:
-        always persist first, then validate the game folder, log, and start
-        the daemon thread.
+        when to flip its busy chrome). Always persists first, then validates
+        the game folder, logs, and starts the daemon thread.
         """
         if self._running:
             return False
@@ -149,9 +147,8 @@ class TweaksController:
 
         When `defaults` is omitted it is built from TWEAKS_DEFAULTS with the
         display-detected FOV default. Returns True when a worker was spawned.
-        Mirrors the Tk _reset_tweaks flow (no "Applying tweaks…" line; on
-        Windows the exe patch needs WoW.exe present, elsewhere any set folder
-        suffices).
+        No "Applying tweaks…" line is logged; on Windows the exe patch needs
+        WoW.exe present, elsewhere any set folder suffices.
         """
         if self._running:
             return False
@@ -187,9 +184,9 @@ class TweaksController:
             self._running = False
 
     def _apply_worker(self, client_dir: str, tweak_values: dict):
-        """The extracted Tk _apply_tweaks_worker: patch WoW.exe (Windows),
-        write Config.wtf, update the patched-hash bookkeeping, and report the
-        outcome through events."""
+        """The tweaks worker: patch WoW.exe (Windows), write Config.wtf,
+        update the patched-hash bookkeeping, and report the outcome through
+        events."""
         log_q = queue.Queue()
         prog_q = queue.Queue()
         worker = client_update.UpdateWorker(client_dir, log_q, prog_q)

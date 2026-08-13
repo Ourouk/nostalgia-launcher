@@ -165,14 +165,23 @@ uv run python octo_updater.py                       # Qt (PySide6, default)
 
 ### PyInstaller
 
-Compile a single-file Windows executable with
-[PyInstaller](https://pyinstaller.org/). The entry point (`octo_updater.py`)
-is unchanged, but the build now bundles PySide6, so collect the Qt plugins:
+Compile a single-file, windowed `OctoUpdater` executable with
+[PyInstaller](https://pyinstaller.org/). The build is driven by
+`OctoUpdater.spec`, which collects all of PySide6 (plugins + Qt libraries),
+lists the app modules as hidden imports (the Qt backend is imported at
+runtime from `octo_updater.py`), bundles the `OctoUpdater.ico` icon and
+produces a windowed app from the unchanged `octo_updater.py` entry point:
+
+```bash
+uv sync --dev                    # installs pyinstaller into the dev environment
+uv run pyinstaller --noconfirm --clean OctoUpdater.spec
+```
+
+Or, with a plain `pip` environment:
 
 ```bash
 pip install pyinstaller certifi
-pyinstaller --onefile --windowed --name OctoUpdater --icon OctoUpdater.ico \
-    --collect-all PySide6 octo_updater.py
+pyinstaller OctoUpdater.spec
 ```
 
 ### pyside6-deploy (alternative)

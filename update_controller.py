@@ -1,11 +1,10 @@
 """Update/verify orchestration controller.
 
-Phase 1b of the PySide6 migration: owns the verify/update lifecycle that
-OctoUpdaterApp used to drive directly — starting VerifyWorker/UpdateWorker,
-polling their queues, computing the footer READY/PLAY/UPDATE button state and
-publishing everything as events on the shared EventDispatcher. No tkinter, no
-Qt: the controller never touches widgets, it only posts events and mutates its
-own UpdateState.
+Owns the verify/update lifecycle: starting VerifyWorker/UpdateWorker,
+polling their queues, computing the footer READY/PLAY/UPDATE button state
+and publishing everything as events on the shared EventDispatcher. No GUI
+toolkit: the controller never touches widgets, it only posts events and
+mutates its own UpdateState.
 """
 
 import os
@@ -46,9 +45,9 @@ class UpdateController:
     """Owns the verify/update flow; speaks to the UI only through events.
 
     `get_out_dir` is an optional zero-arg callable returning the current game
-    folder (a Qt app would supply its path field's getter). When omitted the
-    controller reads ``out_dir`` from the on-disk config, mirroring the Tk
-    app's default.
+    folder (the Qt UI supplies its path field's getter). When omitted the
+    controller reads ``out_dir`` from the on-disk config, mirroring the
+    UI's default.
     """
 
     def __init__(self, dispatcher: EventDispatcher, get_out_dir=None):
@@ -246,9 +245,9 @@ class UpdateController:
     def compute_readiness(self, addons_installing: bool = False) -> Readiness:
         """Footer button/status decision for the current state.
 
-        `addons_installing` is owned by the (not-yet-extracted) addons
-        controller; the UI passes its own flag so the button stays disabled
-        while addons download, exactly like the mods flow.
+        `addons_installing` is owned by the addons controller; the UI passes
+        its own flag so the button stays disabled while addons download,
+        exactly like the mods flow.
         """
         if addons_installing:
             return Readiness("busy", "Installing…", "Downloading addons…")

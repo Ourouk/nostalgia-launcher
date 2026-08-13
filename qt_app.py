@@ -1,14 +1,10 @@
 """Octo Updater Qt (PySide6) application context and shell.
 
-Phase 2 of the Qt migration: this module owns the process-wide QApplication
-singleton (`create_qt_app`) and a minimal `QtOctoUpdaterApp` shell, the class
-the entry point imports for `OCTO_UI_BACKEND=qt`. It is the PySide6
-counterpart of app.py and deliberately never imports the Tk UI, so the two
-backends coexist in one process tree.
-
-Phase 3 owns the QMainWindow chrome (header, tabs, footer) via
-`qt_main_window.MainWindow`; the panels are still placeholders and land in
-C16-C19.
+Owns the process-wide QApplication singleton (`create_qt_app`) and the
+`QtOctoUpdaterApp` shell that the entry point imports for
+`OCTO_UI_BACKEND=qt`. The window chrome (header, tabs, footer) lives in
+`qt_main_window.MainWindow`, the panels/dialogs in their qt_* modules, and
+the business logic in the toolkit-agnostic controllers.
 """
 
 from PySide6.QtCore import Qt
@@ -74,10 +70,10 @@ class QtOctoUpdaterApp:
         w, h = _initial_size(self._app)
         self._window.resize(w, h)
         _center(self._window, self._app)
-        # Background verify/news/mod/addon/self-update schedule (mirrors the
-        # Tk app's after() chain) — fired by the event loop, cancelled on
-        # window close. Kept out of MainWindow.__init__ so the window stays
-        # side-effect-free when constructed headlessly in tests.
+        # Background verify/news/mod/addon/self-update schedule — fired by
+        # the event loop, cancelled on window close. Kept out of
+        # MainWindow.__init__ so the window stays side-effect-free when
+        # constructed headlessly in tests.
         self._window.schedule_startup_tasks()
 
     def show(self):

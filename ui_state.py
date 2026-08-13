@@ -1,11 +1,9 @@
 """Toolkit-agnostic shared application-state models.
 
-Phase 1a of the PySide6 migration: pure dataclasses that capture the
-runtime state OctoUpdaterApp currently keeps on itself (see app.py's
-__init__ and the NEWS/MODS/ADDONS/footer panels). No tkinter, no Qt, no
-threading. Phase 1b controllers will adapt these to either backend's
-widgets, so the field names mirror the Tk app's real attribute and config
-keys to make that migration mechanical.
+Pure dataclasses that capture the runtime state of every panel — the
+controllers mutate them and the Qt layer renders them. No GUI toolkit, no
+threading. Field names match the on-disk config keys and the session records
+the controllers keep.
 """
 
 from dataclasses import dataclass, field
@@ -83,9 +81,9 @@ class ModsState:
 
 @dataclass
 class AddonState:
-    """One addon record — the exact dict shape app.py already uses
+    """One addon record — the shape stored in the config's "addons" key
     ({"folder", "status", "git", "branch", "ref", "toc", "description",
-    "error"}), so controllers can migrate without data rewrites."""
+    "error"})."""
     folder: str
     status: str = "available"
     git: str | None = None
@@ -175,8 +173,7 @@ class LogEntry:
 
 @dataclass
 class AppState:
-    """Everything the interface needs, in one object so Phase 1b controllers
-    can pass a single AppState around."""
+    """Everything the interface needs, in one object the controllers share."""
     update: UpdateState = field(default_factory=UpdateState)
     news: NewsState = field(default_factory=NewsState)
     mods: ModsState = field(default_factory=ModsState)

@@ -1,13 +1,12 @@
 """Settings / game-folder controller.
 
-Phase 1b of the PySide6 migration: owns the settings business logic that
-OctoUpdaterApp used to drive directly — the game-folder-change reset (hash
-cache drop, folder-scoped config wipe, resets of the other controllers), the
+Owns the settings business logic: the game-folder-change reset (hash cache
+drop, folder-scoped config wipe, resets of the other controllers), the
 first-run flags, the Windows Defender exclusion flow, the download-mirror
 check, the verify-game-files shortcut, the settings toggles and the
 install-missing mods/addons shortcuts. Publishes LogMessage and
-MirrorStatusChanged on the shared EventDispatcher; the Tk/Qt settings panel
-renders them. No tkinter, no Qt.
+MirrorStatusChanged on the shared EventDispatcher; the Qt Settings dialog
+renders them. No GUI toolkit.
 """
 
 import os
@@ -37,9 +36,9 @@ class SettingsController:
     """Owns the settings/game-folder lifecycle; speaks to the UI only through
     events.
 
-    The other Phase 1b controllers are injected so a folder change can reset
-    them all and the settings shortcuts can delegate to their workers. No Tk:
-    the app keeps the dialogs and widgets and mirrors its path widget against
+    The other controllers are injected so a folder change can reset them all
+    and the settings shortcuts can delegate to their workers. No widgets:
+    the Qt layer keeps the dialogs and mirrors its path field against
     ``state.path``.
     """
 

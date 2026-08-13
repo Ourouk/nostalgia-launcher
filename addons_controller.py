@@ -1,13 +1,12 @@
 """Addons panel controller.
 
-Phase 1b of the PySide6 migration: owns the ADDONS-panel business logic that
-OctoUpdaterApp used to drive directly — the catalog fetch with its offline
+Owns the ADDONS-panel business logic: the catalog fetch with its offline
 fallback, the Interface/AddOns scan with .toc parsing, the cached remote-sha
 verification (TTL-gated, cache-only on demand), the sequential
 install/update/remove worker, and the one-shot recommended-addons
 auto-install for a fresh game folder. Publishes snapshots as AddonsLoaded and
-worker outcomes as OperationFinished on the shared EventDispatcher; the
-Tk/Qt panel renders them. No tkinter, no Qt.
+worker outcomes as OperationFinished on the shared EventDispatcher; the Qt
+Addons panel renders them. No GUI toolkit.
 """
 
 import os
@@ -29,8 +28,8 @@ from ui_events import (
 )
 from ui_state import AddonError, AddonsState, AddonState
 
-# Footer-label colours — mirror app.py's C_OK / C_TEXT_DIM so the
-# toolkit-agnostic footer_state() can render without importing the Tk app.
+# Footer-label colours — mirror qt_theme's ok / text-dim so the
+# toolkit-agnostic footer_state() can render without importing Qt.
 C_OK = "#6abf69"
 C_TEXT_DIM = "#7a7670"
 
@@ -39,9 +38,9 @@ class AddonsController:
     """Owns the addons lifecycle; speaks to the UI only through events.
 
     `get_out_dir` is an optional zero-arg callable returning the current game
-    folder (a Qt app would supply its path field's getter). When omitted the
-    controller reads ``out_dir`` from the on-disk config, mirroring the Tk
-    app's default.
+    folder (the Qt UI supplies its path field's getter). When omitted the
+    controller reads ``out_dir`` from the on-disk config, mirroring the
+    UI's default.
     """
 
     def __init__(self, dispatcher: EventDispatcher, get_out_dir=None):
