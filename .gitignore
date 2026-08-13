@@ -14,6 +14,7 @@ __pycache__/
 # PyInstaller build output
 build/
 dist/
+*.AppImage
 *.spec
 !OctoUpdater.spec
 !OctoUpdater-linux.spec
