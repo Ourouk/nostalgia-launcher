@@ -34,6 +34,7 @@ from qt_addons_panel import AddonsPanel
 from qt_bridge import ControllerHub
 from qt_mods_panel import ModsPanel
 from qt_news_panel import NewsPanel
+from qt_settings_dialog import SettingsDialog
 from qt_theme import Palette, theme_qss
 from qt_tweaks_panel import TweaksPanel
 from ui_metrics import BASE_H, BASE_W, clamp
@@ -53,6 +54,7 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self._hub = hub
         self._palette = Palette()
+        self._settingsDialog = None
         self.setStyleSheet(theme_qss(self._palette))
         self.setWindowTitle("Octo Updater")
         self.setMinimumSize(clamp(BASE_W // 2, 560, 800),
@@ -141,6 +143,7 @@ class MainWindow(QMainWindow):
         self._gearButton.setStyleSheet(
             f"QToolButton {{ color: {p.text_dim.name()}; font-size: 14pt; }}"
             f"QToolButton:hover {{ color: {p.gold.name()}; }}")
+        self._gearButton.clicked.connect(self._open_settings_dialog)
         layout.addWidget(self._gearButton)
 
         return header
@@ -275,6 +278,28 @@ class MainWindow(QMainWindow):
     def _on_custom_addon_requested(self):
         """Placeholder — the custom-addon dialog wiring lands in C21."""
         log("Custom addon dialog lands in C21.\n", "acct")
+
+    # ── settings dialog ─────────────────────────────────────────────────────
+
+    def _open_settings_dialog(self):
+        """Build the settings dialog on demand and show it non-modally.
+
+        `show()` (not `exec()`) so opening never blocks the caller or an
+        offscreen test; `raise_`/`activateWindow` still bring it to the
+        foreground. A closed dialog is reused on the next gear click.
+        """
+        if self._settingsDialog is None:
+            dialog = SettingsDialog(
+                self._hub.settings, self._hub.bridge, self._palette, self)
+            dialog.showLogsRequested.connect(self._on_show_logs_requested)
+            self._settingsDialog = dialog
+        self._settingsDialog.show()
+        self._settingsDialog.raise_()
+        self._settingsDialog.activateWindow()
+
+    def _on_show_logs_requested(self):
+        """Placeholder — the session-log window lands in C21."""
+        log("Logs window lands in C21.\n", "acct")
 
     # ── slots ────────────────────────────────────────────────────────────────
 
