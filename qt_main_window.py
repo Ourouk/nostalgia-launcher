@@ -42,6 +42,7 @@ from qt_news_panel import NewsPanel
 from qt_settings_dialog import SettingsDialog
 from qt_theme import Palette, theme_qss
 from qt_tweaks_panel import TweaksPanel
+from ui_events import LogMessage
 from ui_metrics import BASE_H, BASE_W, clamp
 
 
@@ -64,6 +65,7 @@ class MainWindow(QMainWindow):
         self._logWindow = None
         self._customAddonDialog = None
         self._firstRunTimer = None
+        self._oneShotTimers: list = []
         self.setStyleSheet(theme_qss(self._palette))
         self.setWindowTitle("Octo Updater")
         self.setMinimumSize(clamp(BASE_W // 2, 560, 800),
@@ -80,6 +82,13 @@ class MainWindow(QMainWindow):
 
         self._wire_signals()
         self._navButtons["NEWS"].setChecked(True)
+
+        # Seed the client-version footer label from disk and sync the
+        # button/status with the controller's current readiness (the Tk
+        # __init__ sets _client_ver_var the same way).
+        if self._hub.updater.read_client_version():
+            self._versionLabel.setText(self._hub.updater.state.client_version)
+        self._refresh_ready_state()
 
         # Session-log drain: the global log_sink queue receives lines written
         # from worker threads (app.py's _poll drains the same queue); a
@@ -234,10 +243,17 @@ class MainWindow(QMainWindow):
                 " padding: 8px 26px; font-weight: bold; }"
                 "QPushButton:hover { background-color: %s; }"
                 % (p.green_btn.name(), p.green_hov.name(), p.green_hov.name())),
+            "busy": (
+                "QPushButton { background-color: %s; color: %s;"
+                " border: 1px solid %s; border-radius: 6px;"
+                " padding: 8px 26px; font-weight: bold; }"
+                % (p.panel.name(), p.text_dim.name(), p.panel_bdr.name())),
         }
         self._updateButton = QPushButton("UPDATE", left)
+        self._updateButton.setObjectName("updateButton")
         self._updateButton.setMinimumWidth(150)
         self._updateButton.setStyleSheet(self._buttonStyles["update"])
+        self._updateButton.clicked.connect(self._on_update_button_clicked)
         leftLayout.addWidget(self._updateButton)
 
         self._versionLabel = QLabel(f"v{UPDATER_VERSION}", left)
@@ -278,6 +294,10 @@ class MainWindow(QMainWindow):
         bridge.operationFinished.connect(self._onOperationFinished)
         bridge.operationFailed.connect(self._onOperationFailed)
         bridge.logMessage.connect(self._on_log_message)
+        # The panels re-render their own content on these; the footer just
+        # re-evaluates readiness (addons installing / mod errors gate PLAY).
+        bridge.addonsLoaded.connect(self._on_addons_or_mods_loaded)
+        bridge.modsLoaded.connect(self._on_addons_or_mods_loaded)
 
     # ── tabs ─────────────────────────────────────────────────────────────────
 
@@ -341,8 +361,12 @@ class MainWindow(QMainWindow):
         self._settingsDialog.activateWindow()
 
     def _on_settings_finished(self):
-        """First-run close: recommend the Defender exclusion once, then mark
-        the prompt done so closing Settings again never re-asks."""
+        """First-run close: run the deferred verification against the chosen
+        folder, recommend the Defender exclusion once, then mark the prompt
+        done so closing Settings again never re-asks."""
+        if self._hub.settings.state.first_run_verify_pending:
+            self._hub.settings.state.first_run_verify_pending = False
+            self._after(100, lambda: self._start_verify(overwrite_config=True))
         if not self._hub.settings.state.first_run_av_pending:
             return
         if self._hub.settings.should_prompt_av():
@@ -411,6 +435,9 @@ class MainWindow(QMainWindow):
 
     def _onStatusChanged(self, text: str):
         self._statusLabel.setText(text)
+        # Keep the button in sync (e.g. busy while a verify starts) without
+        # letting the computed readiness overwrite the posted status line.
+        self._apply_readiness(self._readiness(), update_status=False)
 
     def _onProgressChanged(self, value: float, label: str):
         value = max(0.0, min(1.0, float(value)))
@@ -424,19 +451,141 @@ class MainWindow(QMainWindow):
             self._progressBar.show()
 
     def _onOperationFinished(self, kind: str, ok: bool, message: str):
-        self._set_button_ready(bool(ok))
+        updater = self._hub.updater
+        if kind in ("update", "verify"):
+            # The update worker reports the (post-patch) client version just
+            # before finishing; surface it when a fresh one arrived. The
+            # panels re-render their own kinds themselves.
+            if ok and updater.state.client_version:
+                self._versionLabel.setText(updater.state.client_version)
+            elif not ok:
+                self._statusLabel.setText("Update available!")
+        self._refresh_ready_state()
 
     def _onOperationFailed(self, kind: str, message: str):
-        self._set_button_ready(False)
+        self._refresh_ready_state()
+
+    def _on_addons_or_mods_loaded(self, _event=None):
+        self._refresh_ready_state()
+
+    # ── footer button / update workflow ──────────────────────────────────────
+
+    def _on_update_button_clicked(self):
+        """Footer PLAY/UPDATE click — launch when ready, update otherwise
+        (the Tk _btn_click). Busy states are ignored."""
+        updater = self._hub.updater
+        if updater.running:
+            return
+        ready = updater.compute_readiness(
+            addons_installing=self._hub.addons.installing)
+        if ready.mode == "play":
+            self._launch_game()
+        elif ready.mode == "update":
+            self._start_update()
+
+    def _start_update(self):
+        updater = self._hub.updater
+        if updater.running:
+            return
+        if not (self._hub.settings.state.path or "").strip():
+            self._hub.dispatcher.post(
+                LogMessage("✗  Please set the game folder first.\n", "err"))
+            return
+        updater.start_update()
+        self._refresh_ready_state()
+
+    def _start_verify(self, overwrite_config: bool = False):
+        if not (self._hub.settings.state.path or "").strip():
+            self._set_button_ready(False)
+            return
+        self._hub.updater.start_verify(overwrite_config)
+        self._refresh_ready_state()
+
+    def _launch_game(self):
+        """Launch the game detached; the launch logic (VanillaFixes/WoW.exe
+        choice, DXVK notice, clear-wdb, subprocess) lives in the
+        UpdateController — this only drives the footer chrome and dialogs."""
+        ok, dxvk_notice = self._hub.updater.launch_game()
+        if not ok:
+            return
+        if dxvk_notice:
+            self._show_dxvk_notice()
+        # Briefly disable PLAY so a double-click can't spawn two clients.
+        self._set_button_busy("PLAY")
+        self._statusLabel.setText("Launching...")
+        if self._hub.settings.state.config.get("close_on_launch", False):
+            self._after(1000, self.close)
+            return
+        self._after(5000, self._refresh_ready_state)
+
+    def _show_dxvk_notice(self):
+        QMessageBox.information(
+            self, "DXVK mod first launch",
+            "Initial shader compilation may cause temporary in-game "
+            "stuttering during the first launch. This is a normal process "
+            "while the game builds its shader cache.\n\n"
+            "Users with AMD GPUs experiencing stability issues can switch "
+            "to DXVK 2.5.3")
+
+    def _refresh_ready_state(self):
+        """Recompute the footer status/button from the controller's
+        readiness. PLAY is only offered when the client files are up to date
+        AND no mod is in an error state — the decision itself lives in
+        UpdateController.compute_readiness."""
+        self._apply_readiness(self._readiness())
+
+    def _readiness(self):
+        return self._hub.updater.compute_readiness(
+            addons_installing=self._hub.addons.installing)
+
+    def _apply_readiness(self, r, update_status: bool = True):
+        if r.mode == "play":
+            self._set_button_ready(True)
+        elif r.mode == "update":
+            self._set_button_ready(False)
+        else:
+            self._set_button_busy(r.label)
+        if update_status:
+            self._statusLabel.setText(r.status)
 
     def _set_button_ready(self, ready: bool):
-        """Stub ready-state flip (gold UPDATE ↔ green PLAY); the full
-        workflow with UpdateController.compute_readiness lands in C22."""
+        """Gold UPDATE ↔ green PLAY flip; the button stays clickable."""
         self._updateButton.setText("PLAY" if ready else "UPDATE")
         self._updateButton.setStyleSheet(
             self._buttonStyles["play" if ready else "update"])
+        self._updateButton.setEnabled(True)
+
+    def _set_button_busy(self, label: str):
+        self._updateButton.setText(label)
+        self._updateButton.setStyleSheet(self._buttonStyles["busy"])
+        self._updateButton.setEnabled(False)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
+
+    def schedule_startup_tasks(self):
+        """Mirror the Tk startup timing (app.py __init__): background verify,
+        news load, mod/addon checks and the self-update check, all cancelled
+        on close. On first run the settings dialog defers verification to its
+        close, exactly like the Tk flow."""
+        hub = self._hub
+        if not hub.settings.state.first_run_verify_pending:
+            self._after(300, self._start_verify)
+        self._after(600, hub.news.load)
+        if hub.settings.state.config.get("mod_release_cache"):
+            self._after(900, hub.mods.load_latest_versions)
+        if hub.settings.state.config.get("addons") is not None:
+            self._after(1500, hub.addons.verify)
+        self._after(2000, hub.updater.check_updater_update)
+
+    def _after(self, ms: int, callback):
+        """A cancellable single-shot timer (stored for _stop_timers)."""
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.setInterval(ms)
+        timer.timeout.connect(callback)
+        timer.start()
+        self._oneShotTimers.append(timer)
+        return timer
 
     def close(self):
         self._stop_timers()
@@ -450,5 +599,8 @@ class MainWindow(QMainWindow):
 
     def _stop_timers(self):
         self._logTimer.stop()
+        for timer in self._oneShotTimers:
+            timer.stop()
+        self._oneShotTimers.clear()
         if self._firstRunTimer is not None:
             self._firstRunTimer.stop()

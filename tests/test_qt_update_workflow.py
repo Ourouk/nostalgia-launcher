@@ -1,0 +1,256 @@
+"""Headless Qt tests for the connected update/PLAY footer workflow.
+
+QT_QPA_PLATFORM=offscreen is set before PySide6 is imported so the module
+runs without a display. The QApplication is created once and shared through
+the create_qt_app() singleton; each test builds a fresh ControllerHub +
+MainWindow and shows it so child-widget visibility can be asserted. Real
+controller/network entry points (verify, update, launch, news/mod/addon
+fetches) are monkeypatched so nothing touches disk or the network.
+"""
+
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import pytest
+
+pytest.importorskip("PySide6")
+
+from unittest.mock import Mock
+
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QMessageBox
+
+from qt_app import create_qt_app
+from qt_bridge import ControllerHub
+from qt_main_window import MainWindow
+from qt_theme import Palette
+from ui_events import OperationFailed, OperationFinished
+from update_controller import Readiness
+
+_PLAY = Readiness("play", "PLAY", "Everything up to date!")
+_UPDATE = Readiness("update", "UPDATE", "Update available!")
+_CHECKING = Readiness("busy", "Checking…", "Verifying…")
+_INSTALLING = Readiness("busy", "Installing…", "Downloading addons…")
+
+
+@pytest.fixture(autouse=True)
+def _offscreen(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    return create_qt_app()
+
+
+@pytest.fixture()
+def window(qapp, monkeypatch):
+    hub = ControllerHub()
+    hub.settings.state.path = "/tmp/game-folder"
+    hub.settings.state.first_run = False
+    hub.settings.state.first_run_av_pending = False
+    hub.settings.state.first_run_verify_pending = False
+    monkeypatch.setattr(hub.updater, "start_verify", Mock())
+    monkeypatch.setattr(hub.updater, "start_update", Mock())
+    monkeypatch.setattr(hub.updater, "launch_game", Mock(return_value=(True, False)))
+    monkeypatch.setattr(hub.updater, "check_updater_update", Mock())
+    monkeypatch.setattr(hub.news, "load", Mock())
+    monkeypatch.setattr(hub.mods, "load_latest_versions", Mock())
+    monkeypatch.setattr(hub.addons, "verify", Mock())
+    win = MainWindow(hub)
+    win.show()
+    yield win
+    win.close()
+
+
+# ── button readiness ──────────────────────────────────────────────────────
+
+
+def test_initial_button_shows_update_until_ready(qapp, window, monkeypatch):
+    hub = window._hub
+    palette = Palette()
+    assert window._updateButton.objectName() == "updateButton"
+    assert window._updateButton.text() == "UPDATE"
+    assert window._updateButton.isEnabled()
+
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _PLAY)
+    window._refresh_ready_state()
+    assert window._updateButton.text() == "PLAY"
+    assert window._updateButton.isEnabled()
+    assert palette.green_btn.name() in window._updateButton.styleSheet()
+    assert window._statusLabel.text() == _PLAY.status
+
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _UPDATE)
+    window._refresh_ready_state()
+    assert window._updateButton.text() == "UPDATE"
+    assert palette.green_btn.name() not in window._updateButton.styleSheet()
+    assert palette.gold.name() in window._updateButton.styleSheet()
+
+
+def test_busy_readiness_disables_button(qapp, window, monkeypatch):
+    hub = window._hub
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _CHECKING)
+    window._refresh_ready_state()
+    assert window._updateButton.text() == "Checking…"
+    assert not window._updateButton.isEnabled()
+
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _INSTALLING)
+    window._refresh_ready_state()
+    assert window._updateButton.text() == "Installing…"
+    assert not window._updateButton.isEnabled()
+
+
+# ── button clicks ─────────────────────────────────────────────────────────
+
+
+def test_click_play_launches_game(qapp, window, monkeypatch):
+    hub = window._hub
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _PLAY)
+    window._refresh_ready_state()
+
+    window._updateButton.click()
+
+    hub.updater.launch_game.assert_called_once_with()
+    hub.updater.start_update.assert_not_called()
+    assert window._updateButton.text() == "PLAY"
+    assert not window._updateButton.isEnabled()
+    assert window._statusLabel.text() == "Launching..."
+
+
+def test_click_play_shows_dxvk_notice(qapp, window, monkeypatch):
+    hub = window._hub
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _PLAY)
+    hub.updater.launch_game.return_value = (True, True)
+    informed = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        staticmethod(lambda *a, **k: informed.append(True)))
+
+    window._updateButton.click()
+
+    assert informed == [True]
+    hub.updater.launch_game.assert_called_once_with()
+
+
+def test_click_update_starts_update(qapp, window, monkeypatch):
+    hub = window._hub
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _UPDATE)
+    window._refresh_ready_state()
+
+    window._updateButton.click()
+
+    hub.updater.start_update.assert_called_once_with()
+    hub.updater.launch_game.assert_not_called()
+
+
+def test_click_ignored_while_running(qapp, window, monkeypatch):
+    hub = window._hub
+    hub.updater.state.running = True
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _CHECKING)
+    window._refresh_ready_state()
+    assert not window._updateButton.isEnabled()
+
+    window._updateButton.click()
+
+    hub.updater.launch_game.assert_not_called()
+    hub.updater.start_update.assert_not_called()
+
+
+# ── progress ──────────────────────────────────────────────────────────────
+
+
+def test_progress_changed_drives_bar(qapp, window):
+    window._onProgressChanged(0.5, "Downloading…")
+    assert window._progressBar.value() == 50
+    assert window._progressBar.isVisible()
+    assert window._progressLabel.text() == "Downloading…"
+
+    window._onProgressChanged(0.0, "")
+    assert not window._progressBar.isVisible()
+    assert window._progressBar.value() == 0
+
+
+# ── operation finished / failed ───────────────────────────────────────────
+
+
+def test_update_finished_updates_version_and_readiness(qapp, window, monkeypatch):
+    hub = window._hub
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _PLAY)
+    hub.updater.state.client_version = "1.14.3"
+
+    hub.dispatcher.post(OperationFinished("update", True, ""))
+    QTest.qWait(200)
+
+    assert window._versionLabel.text() == "1.14.3"
+    assert window._updateButton.text() == "PLAY"
+    assert window._statusLabel.text() == _PLAY.status
+
+
+def test_mods_finished_rerenders_mods_panel(qapp, window, monkeypatch):
+    hub = window._hub
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _UPDATE)
+    panel = window._stack.widget(window._pages["MODS"])
+    panel._running = True
+
+    hub.dispatcher.post(OperationFinished("mods", True, ""))
+    QTest.qWait(200)
+
+    assert panel._running is False
+    assert window._versionLabel.text() == "v1.2"
+    assert window._updateButton.text() == "UPDATE"
+
+
+def test_operation_failed_refreshes_readiness(qapp, window, monkeypatch):
+    hub = window._hub
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _PLAY)
+    window._refresh_ready_state()
+    assert window._updateButton.text() == "PLAY"
+
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _UPDATE)
+    hub.dispatcher.post(OperationFailed("update", "boom"))
+    QTest.qWait(200)
+    assert window._updateButton.text() == "UPDATE"
+
+
+# ── first-run verify deferral ─────────────────────────────────────────────
+
+
+def test_first_run_defers_verify_until_settings_close(qapp, window):
+    hub = window._hub
+    hub.settings.state.first_run_verify_pending = True
+    hub.updater.start_verify.reset_mock()
+
+    window.schedule_startup_tasks()
+    hub.updater.start_verify.assert_not_called()
+    hub.news.load.assert_not_called()
+
+    window._on_settings_finished()
+    assert hub.settings.state.first_run_verify_pending is False
+    hub.updater.start_verify.assert_not_called()
+
+    QTest.qWait(250)
+    hub.updater.start_verify.assert_called_once_with(True)
+    hub.news.load.assert_not_called()
+
+
+def test_startup_auto_verifies_when_not_first_run(qapp, window):
+    hub = window._hub
+    hub.updater.start_verify.reset_mock()
+
+    window.schedule_startup_tasks()
+
+    QTest.qWait(700)
+    hub.updater.start_verify.assert_called_once_with(False)
+    hub.news.load.assert_called_once_with()

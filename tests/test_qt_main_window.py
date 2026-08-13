@@ -93,15 +93,23 @@ def test_progress_bar_hides_when_idle(qapp, window):
     assert window._progressBar.value() == 100
 
 
-def test_operation_events_flip_button_state(qapp, window):
+def test_operation_events_flip_button_state(qapp, window, monkeypatch):
     hub = window._hub
+    # The client can only be PLAY-launched where the Windows client runs.
+    import update_controller
+    monkeypatch.setattr(update_controller, "can_launch_client", lambda: True)
     assert window._updateButton.text() == "UPDATE"
 
+    # A finished update marks the client ready on the controller before the
+    # event is posted — the footer mirrors that real state.
+    hub.updater.state.client_ready = True
     hub.dispatcher.post(StatusChanged("all up to date"))
     hub.dispatcher.post(OperationFinished("update", True, "done"))
     QTest.qWait(200)
     assert window._updateButton.text() == "PLAY"
 
+    # A failed update drops readiness back down.
+    hub.updater.state.client_ready = False
     hub.dispatcher.post(OperationFailed("update", "boom"))
     QTest.qWait(200)
     assert window._updateButton.text() == "UPDATE"

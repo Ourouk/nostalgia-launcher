@@ -74,6 +74,11 @@ class QtOctoUpdaterApp:
         w, h = _initial_size(self._app)
         self._window.resize(w, h)
         _center(self._window, self._app)
+        # Background verify/news/mod/addon/self-update schedule (mirrors the
+        # Tk app's after() chain) — fired by the event loop, cancelled on
+        # window close. Kept out of MainWindow.__init__ so the window stays
+        # side-effect-free when constructed headlessly in tests.
+        self._window.schedule_startup_tasks()
 
     def show(self):
         self._window.show()
