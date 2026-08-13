@@ -77,11 +77,25 @@ from platform_support import (
     open_folder,
 )
 
+import ui_metrics
+from ui_metrics import (
+    UIScale,
+    FOOT_H,
+    HDR_H,
+    PANEL_PAD,
+    initial_window_size,
+    layout_mode,
+    news_columns,
+    panel_rect,
+    progress_width,
+    settings_rect,
+)
+
 config_store.configure(CONFIG_FILE, CACHE_FILE,
                        LEGACY_CONFIG_FILE, LEGACY_CACHE_FILE)
 
+# Logical design size; the actual window scales from here (see UIScale).
 WIN_W, WIN_H = 1000, 700
-FOOT_H       = 130
 
 C_BG         = "#120e1a"
 C_PANEL      = "#161120"
@@ -315,16 +329,31 @@ class OctoUpdaterApp(tk.Tk):
         self.bind_all("<Button-5>", self._on_wheel_button)
 
         self.title("Octo Updater")
-        self.resizable(False, False)
         self.configure(bg=C_BG)
 
-        # Center on screen up front. WIN_W/WIN_H are fixed, so we can position
-        # the window in a single geometry call (no need to map-then-measure).
+        # DPI-aware scaling: detect the display scale factor, apply it to Tk
+        # so every font/geometry scales, then size the window for it.
+        self._ui = UIScale(self)
+        try:
+            self.tk.call("tk", "scaling", self._ui.tk_scaling())
+        except tk.TclError:
+            pass
+
+        self.resizable(True, True)
+        self.minsize(ui_metrics.clamp(WIN_W // 2, 560, 800),
+                     ui_metrics.clamp(WIN_H // 2, 420, 600))
+
+        # Center on screen and size to ~90% of the available space.
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
-        x  = (sw - WIN_W) // 2
-        y  = (sh - WIN_H) // 2
-        self.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        self._w, self._h = initial_window_size(self._ui, sw, sh)
+        x = (sw - self._w) // 2
+        y = (sh - self._h) // 2
+        self.geometry(f"{self._w}x{self._h}+{x}+{y}")
+
+        # Debounced relayout on resize — recomputes panel geometry.
+        self._resize_job = None
+        self.bind("<Configure>", self._on_resize)
 
         self._build()
 
@@ -484,8 +513,7 @@ class OctoUpdaterApp(tk.Tk):
         self._draw_nav_tab(prev)
         self._draw_nav_tab(tab)
 
-        PANEL_TOP = 119
-        PANEL_H   = WIN_H - PANEL_TOP - FOOT_H - 10
+        PANEL_TOP = HDR_H + 11
 
         # Panels stay mapped and stacked; switching tabs only raises the
         # active one. place_forget()/place() would unmap and remap the whole
@@ -497,8 +525,8 @@ class OctoUpdaterApp(tk.Tk):
                   "MODS":   self._mods_panel_frame}
         target = panels.get(tab, self._news_panel)
         if not target.winfo_ismapped():
-            target.place(x=40, y=PANEL_TOP,
-                         width=WIN_W - 80, height=PANEL_H)
+            x, y, w, h = panel_rect(self._w, self._h, top=PANEL_TOP)
+            target.place(x=x, y=y, width=w, height=h)
         target.tkraise()
         self._active_panel = target
 
@@ -512,7 +540,7 @@ class OctoUpdaterApp(tk.Tk):
             self._load_news()
 
     def _build(self):
-        self._bg_canvas = tk.Canvas(self, width=WIN_W, height=WIN_H,
+        self._bg_canvas = tk.Canvas(self, width=self._w, height=self._h,
                                     bg=C_BG, highlightthickness=0)
         self._bg_canvas.place(x=0, y=0)
         self._draw_bg()
@@ -521,9 +549,73 @@ class OctoUpdaterApp(tk.Tk):
         self._build_panel()
         self._build_footer()
 
+    def _on_resize(self, event):
+        """Debounced relayout: recompute every placed container on resize."""
+        if event.widget is not self:
+            return
+        if self._resize_job is not None:
+            self.after_cancel(self._resize_job)
+        self._resize_job = self.after(60, self._relayout)
+
+    def _relayout(self):
+        """Recompute geometry for all containers using the current size."""
+        self._resize_job = None
+        try:
+            w, h = self.winfo_width(), self.winfo_height()
+        except tk.TclError:
+            return
+        if w < 50 or h < 50:   # not mapped yet — ignore initial Configure
+            return
+        self._w, self._h = w, h
+
+        self._bg_canvas.configure(width=w, height=h)
+        self._draw_bg()
+
+        # Header
+        self._hdr_canvas.configure(width=w)
+        self._place_header()
+
+        # Footer
+        self._foot_frame.place(x=0, y=h - FOOT_H, width=w, height=FOOT_H)
+        self._pb_frame.place(x=250, y=0, width=progress_width(w),
+                             height=FOOT_H)
+        self._pb_width = progress_width(w)
+        self._draw_progress(self._pb_val)
+
+        # Main panels — place all four so a resize while hidden still lands
+        # on the right geometry for the next tab switch.
+        top = HDR_H + 11
+        for panel in (self._news_panel, self._tweaks_panel_frame,
+                      self._mods_panel_frame, self._addons_panel_frame):
+            x, y, pw, ph = panel_rect(w, h, top=top)
+            panel.place(x=x, y=y, width=pw, height=ph)
+
+        # News split columns.
+        inner_w = w - PANEL_PAD * 2
+        self._news_left_w, self._news_right_w = news_columns(inner_w)
+        self._feat_frame.place(x=0, y=0, width=self._news_left_w,
+                               relheight=1.0)
+        self._ann_frame.place(x=self._news_left_w + 12, y=0,
+                              width=self._news_right_w, relheight=1.0)
+
+        # Refresh the active tab's content for the new width.
+        self.after_idle(self._refresh_active_for_width)
+
+    def _refresh_active_for_width(self):
+        tab = getattr(self, "_active_tab", None)
+        if tab == "NEWS":
+            self._render_featured(self._featured)
+            self._render_announcements(self._news_items)
+        elif tab == "TWEAKS":
+            self._refresh_tweaks_panel()
+        elif tab == "ADDONS":
+            self._render_addons()
+        elif tab == "MODS":
+            pass  # rows stretch via canvas width binding
+
     def _draw_bg(self):
         c = self._bg_canvas
-        bloom_cx, bloom_cy = WIN_W - 80, 80
+        bloom_cx, bloom_cy = self._w - 80, 80
         for i in range(40, 0, -1):
             r  = i * 9
             alpha_frac = (40 - i) / 40
@@ -535,20 +627,18 @@ class OctoUpdaterApp(tk.Tk):
                           bloom_cx + r, bloom_cy + r,
                           fill=col, outline="")
 
-        c.create_line(0, WIN_H - 1, WIN_W, WIN_H - 1, fill=C_PANEL_BDR)
+        c.create_line(0, self._h - 1, self._w, self._h - 1, fill=C_PANEL_BDR)
 
     def _build_header(self):
-        HDR_H = 108
-
-        hdr = tk.Canvas(self, width=WIN_W, height=HDR_H,
+        hdr = tk.Canvas(self, width=self._w, height=HDR_H,
                         bg=C_BG, highlightthickness=0)
-        hdr.place(x=0, y=0, width=WIN_W, height=HDR_H)
+        hdr.place(x=0, y=0, width=self._w, height=HDR_H)
         self._hdr_canvas = hdr
 
         # Same corner bloom as the main background (identical coordinates
         # and colors) so the header blends seamlessly with the body instead
         # of sitting as a darker separated band.
-        bloom_cx, bloom_cy = WIN_W - 80, 80
+        bloom_cx, bloom_cy = self._w - 80, 80
         for i in range(40, 0, -1):
             r = i * 9
             alpha_frac = (40 - i) / 40
@@ -580,8 +670,7 @@ class OctoUpdaterApp(tk.Tk):
             x += w
             self._draw_nav_tab(tab)
 
-        self._hdr_regions["gear"] = (WIN_W - 36, 2, WIN_W - 2, 34)
-        self._draw_gear()
+        self._place_header()
 
         # The wordmark is a clickable header element too (opens the repo).
         lb = hdr.bbox("logo")
@@ -614,6 +703,17 @@ class OctoUpdaterApp(tk.Tk):
         self._auto_mods_retrigger = False
         self._auto_addons_retrigger = False
 
+    def _place_header(self):
+        """Reposition width-dependent header elements (gear, hit regions)."""
+        if not getattr(self, "_hdr_canvas", None):
+            return
+        w = self._w
+        self._hdr_canvas.configure(width=w)
+        # Keep the gear clear of the nav tabs on narrow windows: clamp its
+        # anchor so it never slides under the last tab.
+        self._hdr_regions["gear"] = (w - 36, 2, w - 2, 34)
+        self._draw_gear()
+
     def _draw_logo(self, hover: bool = False):
         cv = self._hdr_canvas
         cv.delete("logo")
@@ -641,7 +741,7 @@ class OctoUpdaterApp(tk.Tk):
     def _draw_gear(self, hover: bool = False):
         cv = self._hdr_canvas
         cv.delete("gear_icon")
-        cv.create_text(WIN_W - 10, 8, text="⚙", font=(_UI_FONT, 13),
+        cv.create_text(self._w - 10, 8, text="⚙", font=(_UI_FONT, 13),
                        fill=C_GOLD if hover else C_TEXT_DIM,
                        anchor="ne", tags="gear_icon")
 
@@ -692,21 +792,18 @@ class OctoUpdaterApp(tk.Tk):
             self.after(0, show)
 
     def _build_panel(self):
-        PANEL_TOP  = 109
-        PANEL_BOT  = FOOT_H
-        PANEL_H    = WIN_H - PANEL_TOP - PANEL_BOT
-        PAD        = 40
+        PANEL_TOP  = HDR_H + 1
+        PANEL_H    = self._h - PANEL_TOP - FOOT_H
+        PAD        = PANEL_PAD
 
         panel = tk.Frame(self, bg=C_BG)
-        panel.place(x=PAD, y=PANEL_TOP + 10,
-                    width=WIN_W - PAD * 2,
-                    height=PANEL_H - 20)
+        x, y, w, h = panel_rect(self._w, self._h, top=PANEL_TOP + 10)
+        panel.place(x=x, y=y, width=w, height=h)
         self._news_panel = panel
         self._active_panel = panel   # NEWS is the initial tab
 
-        inner_w = WIN_W - PAD * 2
-        self._news_left_w  = int(inner_w * 0.60)
-        self._news_right_w = inner_w - self._news_left_w - 12
+        inner_w = w
+        self._news_left_w, self._news_right_w = news_columns(inner_w)
 
         # Featured forum post — parchment panel (left)
         feat = tk.Frame(panel, bg=C_PARCH)
@@ -1226,9 +1323,7 @@ class OctoUpdaterApp(tk.Tk):
     # ── mods panel ───────────────────────────────────────────────────────────────
 
     def _build_mods_panel(self):
-        PAD       = 18
-        PANEL_TOP = 119
-        PANEL_H   = WIN_H - PANEL_TOP - FOOT_H - 10
+        PAD = 18
 
         outer = tk.Frame(self, bg=C_PANEL,
                          highlightthickness=1,
@@ -2162,7 +2257,7 @@ class OctoUpdaterApp(tk.Tk):
         if self._settings_overlay is not None:
             return
         ov = tk.Frame(self, bg="#0a0a0e")
-        ov.place(x=0, y=0, width=WIN_W, height=WIN_H)
+        ov.place(x=0, y=0, width=self._w, height=self._h)
         ov.bind("<Button-1>", lambda e: self._close_settings())
         self._settings_overlay = ov
         self.bind("<Escape>", lambda e: self._close_settings())
@@ -2172,7 +2267,7 @@ class OctoUpdaterApp(tk.Tk):
         MW, MH = 560, 230
         panel = tk.Frame(ov, bg=P_BG, highlightthickness=1,
                          highlightbackground=P_BDR, highlightcolor=P_BDR)
-        panel.place(x=(WIN_W - MW) // 2, y=(WIN_H - MH) // 2 - 20,
+        panel.place(x=(self._w - MW) // 2, y=(self._h - MH) // 2 - 20,
                     width=MW, height=MH)
 
         hdr = tk.Frame(panel, bg=P_HDR, height=46)
@@ -2510,7 +2605,8 @@ class OctoUpdaterApp(tk.Tk):
 
     def _build_footer(self):
         foot = tk.Frame(self, bg=C_BG, height=FOOT_H)
-        foot.place(x=0, y=WIN_H - FOOT_H, width=WIN_W, height=FOOT_H)
+        foot.place(x=0, y=self._h - FOOT_H, width=self._w, height=FOOT_H)
+        self._foot_frame = foot
 
         # Bottom-left column: status message on top, PLAY/UPDATE button in
         # the middle, client version at the bottom (with a bottom margin so
@@ -2545,14 +2641,15 @@ class OctoUpdaterApp(tk.Tk):
                  anchor="w", pady=(0, 36))
 
         pb_frame = tk.Frame(foot, bg=C_BG)
-        pb_frame.place(x=250, y=0, width=WIN_W - 250 - 40, height=FOOT_H)
+        pb_frame.place(x=250, y=0, width=progress_width(self._w), height=FOOT_H)
+        self._pb_frame = pb_frame
 
         self._pb_canvas = tk.Canvas(pb_frame,
                                     height=6, bg=C_BG,
                                     highlightthickness=0)
         self._pb_canvas.pack(fill="x", side="bottom", padx=0,
                              ipady=0, pady=(0, 56))
-        self._pb_width  = WIN_W - 250 - 40
+        self._pb_width  = progress_width(self._w)
         self._pb_val    = 0.0
 
         self._prog_label_var = tk.StringVar(value="")
@@ -2726,17 +2823,17 @@ class OctoUpdaterApp(tk.Tk):
             return
 
         ov = tk.Frame(self, bg="#0a0a0e")
-        ov.place(x=0, y=0, width=WIN_W, height=WIN_H)
+        ov.place(x=0, y=0, width=self._w, height=self._h)
         ov.bind("<Button-1>", lambda e: self._close_settings())
         self._settings_overlay = ov
 
         self.bind("<Escape>", lambda e: self._close_settings())
 
         P_BG, P_HDR, P_BDR, P_INP = C_PANEL, C_HDR, C_PANEL_BDR, "#0f0b16"
-        MW, MH = 800, 500
+        MW, MH = settings_rect(self._w, self._h)
         panel = tk.Frame(ov, bg=P_BG, highlightthickness=1,
                          highlightbackground=P_BDR, highlightcolor=P_BDR)
-        panel.place(x=(WIN_W - MW) // 2, y=(WIN_H - MH) // 2 - 20,
+        panel.place(x=(self._w - MW) // 2, y=(self._h - MH) // 2 - 20,
                     width=MW, height=MH)
 
         hdr = tk.Frame(panel, bg=P_HDR, height=46)
