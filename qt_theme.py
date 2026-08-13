@@ -83,6 +83,12 @@ class Palette:
         self.colors = {name: QColor(value) for name, value in HEX.items()}
         for attr, key in _ATTRS:
             setattr(self, attr, self.colors[key])
+        # Extra Tk-only accent colors not mirrored in app.py's HEX (they would
+        # otherwise trip test_qt_theme's palette↔app mirror check), added as
+        # convenience attributes for the addons panel.
+        self.pink = QColor("#d76f9e")
+        self.pink_lt = QColor("#eb96ba")
+        self.warn = QColor("#d4b43c")
 
 
 def theme_qss(palette):

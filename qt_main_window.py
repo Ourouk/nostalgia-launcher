@@ -29,6 +29,8 @@ from PySide6.QtWidgets import (
 )
 
 from constants import UPDATER_VERSION
+from log_sink import log
+from qt_addons_panel import AddonsPanel
 from qt_bridge import ControllerHub
 from qt_mods_panel import ModsPanel
 from qt_news_panel import NewsPanel
@@ -153,6 +155,13 @@ class MainWindow(QMainWindow):
             elif name == "TWEAKS":
                 page = TweaksPanel(self._hub.tweaks, self._hub.bridge,
                                    self._palette, self._stack)
+            elif name == "ADDONS":
+                page = AddonsPanel(
+                    self._hub.addons, self._hub.bridge,
+                    self._palette, self._stack,
+                    on_badge=lambda n: self.set_tab_badge("ADDONS", n))
+                page.customAddonRequested.connect(
+                    self._on_custom_addon_requested)
             elif name == "MODS":
                 page = ModsPanel(
                     self._hub.mods, self._hub.bridge,
@@ -262,6 +271,10 @@ class MainWindow(QMainWindow):
             badge.show()
         else:
             badge.hide()
+
+    def _on_custom_addon_requested(self):
+        """Placeholder — the custom-addon dialog wiring lands in C21."""
+        log("Custom addon dialog lands in C21.\n", "acct")
 
     # ── slots ────────────────────────────────────────────────────────────────
 
