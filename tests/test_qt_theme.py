@@ -1,0 +1,85 @@
+"""Headless Qt tests — palette, stylesheet and the app shell.
+
+QT_QPA_PLATFORM=offscreen is set before PySide6 is imported so the module
+runs without a display. The QApplication is created once and shared through
+the create_qt_app() singleton — a second QApplication in one process would
+abort Qt.
+"""
+
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import pytest
+
+pytest.importorskip("PySide6")
+
+from qt_app import QtOctoUpdaterApp, create_qt_app
+from qt_theme import HEX, Palette, default_window_size, theme_qss
+
+
+@pytest.fixture(autouse=True)
+def _offscreen(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    return create_qt_app()
+
+
+def test_palette_colors_match_app_hex():
+    import app
+
+    palette = Palette()
+    for name, value in HEX.items():
+        assert getattr(app, name) == value
+        assert palette.colors[name].name() == value
+
+
+def test_palette_convenience_attributes():
+    palette = Palette()
+    assert palette.bg.name() == palette.colors["C_BG"].name()
+    assert palette.gold.name() == palette.colors["C_GOLD"].name()
+    assert palette.parch.name() == palette.colors["C_PARCH"].name()
+
+
+def test_theme_qss_is_non_empty_string_with_selectors():
+    qss = theme_qss(Palette())
+    assert isinstance(qss, str) and qss.strip()
+    for selector in ("QMainWindow", "QPushButton", "QLineEdit",
+                     "QListWidget", "QScrollBar", "QTabBar"):
+        assert selector in qss
+
+
+def test_theme_qss_uses_palette_colors():
+    qss = theme_qss(Palette())
+    assert HEX["C_BG"] in qss
+    assert HEX["C_GOLD"] in qss
+
+
+def test_default_window_size_without_screen():
+    w, h = default_window_size(None)
+    assert isinstance(w, int) and isinstance(h, int)
+    assert w > 0 and h > 0
+
+
+def test_default_window_size_from_qapp_screen(qapp):
+    screen = qapp.primaryScreen()
+    w, h = default_window_size(screen)
+    assert isinstance(w, int) and isinstance(h, int)
+    assert w > 0 and h > 0
+
+
+def test_qapp_is_singleton():
+    assert create_qt_app() is create_qt_app()
+
+
+def test_app_shell_constructs_shows_and_closes_offscreen(qapp):
+    shell = QtOctoUpdaterApp()
+    assert shell._app is qapp
+    assert shell._window.windowTitle() == "Octo Updater"
+    shell.show()
+    assert shell._window.isVisible()
+    shell.close()
+    assert not shell._window.isVisible()
