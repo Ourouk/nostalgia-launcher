@@ -96,6 +96,11 @@ class SettingsController:
         new_val = os.path.normpath((new_path or "").strip() or ".")
         if os.path.normpath(self.state.path.strip() or ".") == new_val:
             return False
+        if self._updater.running:
+            self._dispatcher.post(LogMessage(
+                "Cannot change the game folder while an update is running — "
+                "folder change ignored.\n", "err"))
+            return False
         self.state.path = new_val
         if not new_val:
             return False

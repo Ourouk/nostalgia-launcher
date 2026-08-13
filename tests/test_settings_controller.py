@@ -219,6 +219,31 @@ def test_set_path_without_wow_exe_skips_wdb(controller, cfg, fakes,
     assert wdb_calls == []
 
 
+def test_set_path_rejected_while_update_running(controller, cfg, fakes,
+                                                monkeypatch, tmp_path):
+    """A folder change during a running update is ignored wholesale."""
+    cache = tmp_path / "hash.json"
+    cache.write_text("{}")
+    monkeypatch.setattr(sc, "CACHE_FILE", str(cache))
+    game = tmp_path / "game"
+    game.mkdir()
+    cfg["mods"] = {"VanillaFixes": {"enabled": True}}
+    fakes.updater.running = True
+
+    assert controller.set_path(str(game)) is False
+
+    assert cache.exists()
+    assert "mods" in cfg
+    assert cfg["out_dir"] == "/tmp/octo-game"
+    assert controller.state.path == "/tmp/octo-game"
+    assert fakes.updater.invalidate_calls == 0
+    assert fakes.updater.verify_calls == []
+    assert fakes.mods.resets == 0
+    assert fakes.addons.resets == 0
+    events = controller._dispatcher.drain()
+    assert any("update is running" in t for t in _log_texts(events))
+
+
 # ── AV exclusion gating ────────────────────────────────────────────────────
 
 def test_should_prompt_av_reflects_platform(controller, monkeypatch):
