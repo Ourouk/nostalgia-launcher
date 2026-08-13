@@ -1,10 +1,8 @@
-"""Unit tests for the UI metrics / scaling helpers."""
+"""Unit tests for the UI metrics / responsive layout helpers."""
 
 import pytest
 
-import ui_metrics
 from ui_metrics import (
-    UIScale,
     initial_window_size,
     layout_mode,
     news_columns,
@@ -14,181 +12,20 @@ from ui_metrics import (
 )
 
 
-class _FakeTcl:
-    def __init__(self, scaling):
-        self._scaling = scaling
-
-    def call(self, *_):
-        return self._scaling
-
-
-class _FakeRoot:
-    """Minimal stand-in exposing the bits UIScale queries."""
-
-    def __init__(self, sw=1920, smm=508, scaling=1.333):
-        self._sw, self._smm = sw, smm
-        self.tk = _FakeTcl(scaling)
-
-    def winfo_screenwidth(self):
-        return self._sw
-
-    def winfo_screenmmwidth(self):
-        return self._smm
-
-
-# ── scale detection ─────────────────────────────────────────────────────────
-
-def test_scale_from_screen_96dpi():
-    s = UIScale(_FakeRoot(sw=1920, smm=508), env={}, platform="windows")
-    assert s.factor == pytest.approx(1.0, abs=0.02)
-
-
-def test_scale_from_screen_150_percent():
-    s = UIScale(_FakeRoot(sw=1920, smm=338), env={}, platform="windows")
-    assert s.factor == pytest.approx(1.5, abs=0.05)
-
-
-def test_scale_falls_back_to_tk_scaling():
-    s = UIScale(_FakeRoot(sw=0, smm=0, scaling=2.0), env={}, platform="linux")
-    assert s.factor == pytest.approx(1.5, abs=0.02)
-
-
-def test_linux_prefers_tk_over_physical():
-    # Physical DPI would say 1.5, but Tk's scaling wins on Linux where the
-    # XWayland physical report is unreliable.
-    s = UIScale(_FakeRoot(sw=1920, smm=338, scaling=1.333),
-                env={}, platform="linux")
-    assert s.factor == pytest.approx(1.0, abs=0.02)
-
-
-def test_nonlinux_prefers_physical_over_tk():
-    s = UIScale(_FakeRoot(sw=1920, smm=338, scaling=1.333),
-                env={}, platform="windows")
-    assert s.factor == pytest.approx(1.5, abs=0.05)
-
-
-def test_scale_clamped():
-    s = UIScale(_FakeRoot(), env={"OCTO_UI_SCALE": "5.0"}, platform="linux")
-    assert s.factor == 3.0
-    assert 0.75 <= s.factor <= 3.0
-
-
-def test_no_root_keeps_factor_one():
-    assert UIScale(None).factor == 1.0
-
-
-# ── desktop env scaling (GNOME / KDE) ───────────────────────────────────────
-
-def test_octo_ui_scale_override_wins():
-    root = _FakeRoot(sw=1920, smm=338)   # would be 1.5
-    s = UIScale(root, env={"OCTO_UI_SCALE": "1.25"}, platform="linux")
-    assert s.factor == pytest.approx(1.25, abs=0.01)
-
-
-def test_invalid_override_ignored():
-    s = UIScale(_FakeRoot(sw=1920, smm=508),
-                env={"OCTO_UI_SCALE": "banana"}, platform="windows")
-    assert s.factor == pytest.approx(1.0, abs=0.02)
-
-
-def test_gnome_fractional_scale():
-    env = {"XDG_CURRENT_DESKTOP": "ubuntu:GNOME",
-           "GDK_SCALE": "1", "GDK_DPI_SCALE": "1.25"}
-    s = UIScale(_FakeRoot(), env=env, platform="linux")
-    assert s.factor == pytest.approx(1.25, abs=0.01)
-
-
-def test_gnome_integer_scale():
-    env = {"XDG_CURRENT_DESKTOP": "GNOME", "GDK_SCALE": "2"}
-    s = UIScale(_FakeRoot(), env=env, platform="linux")
-    assert s.factor == pytest.approx(2.0, abs=0.01)
-
-
-def test_kde_qt_scale_factor():
-    env = {"XDG_CURRENT_DESKTOP": "KDE", "QT_SCALE_FACTOR": "1.25"}
-    s = UIScale(_FakeRoot(), env=env, platform="linux")
-    assert s.factor == pytest.approx(1.25, abs=0.01)
-
-
-def test_kde_per_screen_scale_factors():
-    env = {"KDE_FULL_SESSION": "true",
-           "QT_SCREEN_SCALE_FACTORS": "eDP-1=1;DP-1=2"}
-    s = UIScale(_FakeRoot(), env=env, platform="linux")
-    assert s.factor == pytest.approx(2.0, abs=0.01)
-
-
-def test_desktop_env_beats_tk_and_physical():
-    # GNOME env says 1.25 while Tk and physical would say 1.0 / 1.5.
-    env = {"XDG_SESSION_DESKTOP": "gnome",
-           "GDK_SCALE": "1", "GDK_DPI_SCALE": "1.25"}
-    s = UIScale(_FakeRoot(sw=1920, smm=338, scaling=1.333),
-                env=env, platform="linux")
-    assert s.factor == pytest.approx(1.25, abs=0.01)
-
-
-def test_desktop_env_ignored_when_unset():
-    # No desktop scale variables → falls through to Tk.
-    env = {"XDG_CURRENT_DESKTOP": "GNOME", "XDG_SESSION_TYPE": "wayland"}
-    s = UIScale(_FakeRoot(scaling=2.0), env=env, platform="linux")
-    assert s.factor == pytest.approx(1.5, abs=0.02)
-
-
-# ── scaled sizes / fonts ────────────────────────────────────────────────────
-
-def test_scale_s_rounds_up_minimum():
-    s = UIScale(None)
-    s.factor = 2.0
-    assert s.s(10) == 20
-    assert s.s(0) == 1
-
-
-def test_font_scales_and_keeps_weight():
-    s = UIScale(None)
-    s.factor = 1.5
-    fam, px = s.font(10)[0], s.font(10)[1]
-    assert px == -int(round(10 * 1.5 * (96 / 72)))   # pixel-sized (negative)
-    assert s.font(9, "bold")[2] == "bold"
-
-
-def test_font_uses_negative_pixel_size():
-    s = UIScale(None)
-    s.factor = 1.0
-    assert s.font(10)[1] < 0
-
-
-def test_font_accepts_family():
-    s = UIScale(None)
-    s.factor = 1.0
-    assert s.font(11, family="Segoe UI Symbol")[0] == "Segoe UI Symbol"
-
-
-def test_mono_font_family():
-    s = UIScale(None)
-    s.factor = 1.0
-    spec = s.mono(9)
-    assert spec[0] == "Consolas"
-    assert spec[1] < 0
-
-
-def test_tk_scaling_matches_factor():
-    s = UIScale(None)
-    s.factor = 1.5
-    assert s.tk_scaling() == pytest.approx(2.0, abs=0.01)
-
-
 # ── layout math ─────────────────────────────────────────────────────────────
 
+def test_initial_window_size_default_factor():
+    w, h = initial_window_size(2560, 1440)
+    assert w == 1000 and h == 700
+
+
 def test_initial_window_size_scales():
-    s = UIScale(None)
-    s.factor = 1.5
-    w, h = initial_window_size(s, 2560, 1440)
+    w, h = initial_window_size(2560, 1440, factor=1.5)
     assert w == 1500 and h == 1050
 
 
 def test_initial_window_size_caps_to_screen():
-    s = UIScale(None)
-    s.factor = 2.0
-    w, h = initial_window_size(s, 1280, 800)
+    w, h = initial_window_size(1280, 800, factor=2.0)
     assert w <= int(1280 * 0.92)
     assert h <= int(800 * 0.92)
 

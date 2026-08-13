@@ -29,6 +29,7 @@ def qapp():
 
 
 def test_palette_colors_match_app_hex():
+    pytest.importorskip("app", exc_type=ImportError)  # legacy Tk UI (C29)
     import app
 
     palette = Palette()

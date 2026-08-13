@@ -13,7 +13,7 @@ Qt backend can import it without pulling in tkinter.
 
 from PySide6.QtGui import QColor
 
-from ui_metrics import UIScale, initial_window_size
+from ui_metrics import initial_window_size
 
 # Hex values copied verbatim from app.py; importing app.py itself would pull
 # in tkinter, which this module must never do.
@@ -238,6 +238,6 @@ def default_window_size(screen):
     here — only the 90%-of-screen cap from `ui_metrics.initial_window_size`.
     """
     if screen is None:
-        return initial_window_size(UIScale(None), 1920, 1080)
+        return initial_window_size(1920, 1080)
     geo = screen.availableGeometry()
-    return initial_window_size(UIScale(None), geo.width(), geo.height())
+    return initial_window_size(geo.width(), geo.height())

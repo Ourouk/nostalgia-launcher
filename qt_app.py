@@ -16,7 +16,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 import ui_metrics
-from ui_metrics import UIScale, initial_window_size
+from ui_metrics import initial_window_size
 
 from qt_bridge import ControllerHub
 from qt_main_window import MainWindow
@@ -46,7 +46,7 @@ def _initial_size(app):
     if screen is None:
         return ui_metrics.BASE_W, ui_metrics.BASE_H
     geo = screen.availableGeometry()
-    return initial_window_size(UIScale(None), geo.width(), geo.height())
+    return initial_window_size(geo.width(), geo.height())
 
 
 def _center(window, app):

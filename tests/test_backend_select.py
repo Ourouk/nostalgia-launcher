@@ -12,6 +12,7 @@ QT_UNAVAILABLE = "Octo Updater needs PySide6 (Qt) to run"
 
 
 def test_resolve_backend_tk_returns_app_class():
+    pytest.importorskip("app", exc_type=ImportError)  # legacy Tk UI (C29)
     import app
     assert octo_updater.resolve_backend("tk") is app.OctoUpdaterApp
 
