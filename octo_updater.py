@@ -33,6 +33,15 @@ from helpers import (
     format_news_date as _format_news_date,
 )
 
+import config_store
+from config_store import (
+    load_config,
+    save_config,
+    update_config,
+    load_cache,
+    save_cache,
+)
+
 # ──────────────────────────────────────────────────────────────────────────────
 #  Constants
 # ──────────────────────────────────────────────────────────────────────────────
@@ -53,6 +62,9 @@ else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 CONFIG_FILE      = os.path.join(APP_DIR, "octo_updater_config.json")
+CACHE_FILE       = os.path.join(APP_DIR, "octo_updater_hash_cache.json")
+
+config_store.configure(CONFIG_FILE, CACHE_FILE)
 
 # First-run default game folder, anchored to the app dir (not the CWD).
 DEFAULT_OUT_DIR  = os.path.join(APP_DIR, "OctoWoW")
@@ -173,54 +185,6 @@ def secure_urlopen(req, timeout, allowed_hosts=None):
     return _SECURE_OPENER.open(req, timeout=timeout)
 
 
-# Serializes all config read-modify-write cycles across the many worker
-# threads (mods, addons, caches) and the main thread, so concurrent updates
-# can't clobber each other. Reentrant so update_config() can call save.
-_CONFIG_LOCK = threading.RLock()
-
-
-def load_config() -> dict:
-    try:
-        with open(CONFIG_FILE) as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
-    except Exception as e:
-        sys.stderr.write(f"[config] failed to read {CONFIG_FILE}: {e}\n")
-        return {}
-
-
-def _atomic_write(path: str, text: str):
-    """Write via a temp file + atomic rename so a crash mid-write can never
-    leave a truncated/corrupt file at `path`."""
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
-
-
-def save_config(data: dict):
-    with _CONFIG_LOCK:
-        try:
-            _atomic_write(CONFIG_FILE, json.dumps(data, indent=2))
-        except Exception as e:
-            sys.stderr.write(f"[config] failed to write {CONFIG_FILE}: {e}\n")
-
-
-def update_config(mutator):
-    """Load the current on-disk config under the lock, apply `mutator(cfg)`,
-    save atomically, and return the result. Every config change — main thread
-    or worker — should go through this so no stale in-memory snapshot can
-    overwrite keys another thread just persisted."""
-    with _CONFIG_LOCK:
-        cfg = load_config()
-        mutator(cfg)
-        save_config(cfg)
-        return cfg
-
-
 def ensure_dir(path):
     Path(path).mkdir(parents=True, exist_ok=True)
 
@@ -275,24 +239,6 @@ def sha1_file(path) -> str:
             h.update(chunk)
     return h.hexdigest().upper()
 
-
-CACHE_FILE = os.path.join(APP_DIR, "octo_updater_hash_cache.json")
-
-def load_cache() -> dict:
-    try:
-        with open(CACHE_FILE) as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
-    except Exception as e:
-        sys.stderr.write(f"[cache] failed to read {CACHE_FILE}: {e}\n")
-        return {}
-
-def save_cache(cache: dict):
-    try:
-        _atomic_write(CACHE_FILE, json.dumps(cache))
-    except Exception as e:
-        sys.stderr.write(f"[cache] failed to write {CACHE_FILE}: {e}\n")
 
 def cached_sha1(path_str: str, cache: dict) -> str:
     try:
