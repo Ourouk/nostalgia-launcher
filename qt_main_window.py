@@ -31,6 +31,7 @@ from constants import UPDATER_VERSION
 from qt_bridge import ControllerHub
 from qt_news_panel import NewsPanel
 from qt_theme import Palette, theme_qss
+from qt_tweaks_panel import TweaksPanel
 from ui_metrics import BASE_H, BASE_W, clamp
 
 
@@ -127,6 +128,9 @@ class MainWindow(QMainWindow):
             if name == "NEWS":
                 page = NewsPanel(self._hub.news, self._hub.bridge,
                                  self._palette, self._stack)
+            elif name == "TWEAKS":
+                page = TweaksPanel(self._hub.tweaks, self._hub.bridge,
+                                   self._palette, self._stack)
             else:
                 page = QLabel(f"{name} panel (C{i + 16})", self._stack)
                 page.setAlignment(Qt.AlignCenter)

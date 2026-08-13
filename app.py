@@ -20,16 +20,10 @@ from helpers import (
 )
 
 import config_store
-# Only the tweak apply/reset workers still touch the config directly — the
-# tweaks controller is deliberately deferred to a later phase.
-from config_store import (
-    load_config,
-    update_config,
-)
-
+# The tweak values, clamping and apply/reset workers now live in
+# TweaksController; this module only renders its events and forwards the
+# panel's user actions into it.
 from log_sink import log, _LOG_Q
-
-from filesystem import sha1_file
 
 from tweaks import (
     TWEAKS_DEFAULTS,
@@ -37,12 +31,7 @@ from tweaks import (
     TWEAKS_LIMITS,
     fov_default_for_display,
     load_tweaks_config,
-    run_apply_worker_in_background,
-    save_tweaks_config,
-    update_config_wtf,
 )
-
-from client_update import UpdateWorker
 
 from ui_events import (
     AddonsLoaded,
@@ -61,6 +50,7 @@ import addons_controller
 import mods_controller
 import news_controller
 import settings_controller
+import tweaks_controller
 import update_controller
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -80,7 +70,6 @@ import platform_support
 from platform_support import (
     is_windows,
     can_launch_client,
-    can_patch_client,
     can_manage_antivirus,
     ui_font_family,
 )
@@ -221,6 +210,8 @@ class OctoUpdaterApp(tk.Tk):
         self._mods = mods_controller.ModsController(
             self._events, get_out_dir=lambda: self._path_var.get().strip())
         self._addons = addons_controller.AddonsController(
+            self._events, get_out_dir=lambda: self._path_var.get().strip())
+        self._tweaks = tweaks_controller.TweaksController(
             self._events, get_out_dir=lambda: self._path_var.get().strip())
 
         # Settings/game-folder controller — owns the loaded config and
@@ -1042,40 +1033,16 @@ class OctoUpdaterApp(tk.Tk):
     def _refresh_tweaks_buttons(self, *args):
         """Show Apply only when the UI differs from the saved config and
         Reset only when values are custom (differ from the defaults); paint
-        out-of-range number entries red."""
+        out-of-range number entries red. The dirty/custom/validate rules live
+        in TweaksController; only the painting stays here."""
         if not getattr(self, "_tweak_vars", None):
             return
 
-        any_bad = False
         for tid, entry in self._tweak_widgets.items():
-            lo, hi = TWEAKS_LIMITS.get(tid, (None, None))
-            try:
-                v = int(float(self._tweak_vars[tid].get()))
-                bad = ((lo is not None and v < lo) or
-                       (hi is not None and v > hi))
-            except ValueError:
-                bad = True
-            any_bad = any_bad or bad
-            entry.configure(fg=C_ERR if bad else C_TEXT)
+            entry.configure(fg=C_ERR if self._entry_is_bad(tid) else C_TEXT)
 
-        ui       = self._get_tweaks_from_ui()
-        saved    = load_tweaks_config()
-        defaults = dict(TWEAKS_DEFAULTS)
-        defaults["fieldOfView"] = fov_default_for_display()
-
-        def norm(d):
-            return {k: (bool(d.get(k))
-                        if isinstance(TWEAKS_DEFAULTS.get(k), bool)
-                        else int(d.get(k, 0)))
-                    for k in ui}
-
-        # An out-of-range entry always counts as a change: _get_tweaks_from_ui
-        # clamps it, and the clamped value can coincide with the saved one
-        # (e.g. saved 180, typed 192 → clamps to 180), which would otherwise
-        # hide the buttons while the entry still shows an invalid number.
-        ui_n   = norm(ui)
-        dirty  = any_bad or ui_n != norm(saved)
-        custom = any_bad or ui_n != norm(defaults)
+        dirty, custom = self._tweaks.dirty_and_custom(
+            self._get_tweaks_from_ui())
 
         self._tweaks_apply_btn.pack_forget()
         self._tweaks_reset_btn.pack_forget()
@@ -1085,8 +1052,20 @@ class OctoUpdaterApp(tk.Tk):
             self._tweaks_reset_btn.pack(side="left",
                                         padx=(8, 0) if dirty else (0, 0))
 
+    def _entry_is_bad(self, tid) -> bool:
+        """True when a number entry currently holds an unparseable or
+        out-of-range value (the per-entry red paint from the old
+        _refresh_tweaks_buttons)."""
+        lo, hi = TWEAKS_LIMITS.get(tid, (None, None))
+        try:
+            v = int(float(self._tweak_vars[tid].get()))
+            return ((lo is not None and v < lo) or
+                    (hi is not None and v > hi))
+        except ValueError:
+            return True
+
     def _refresh_tweaks_panel(self):
-        values = load_tweaks_config()
+        values = self._tweaks.values()
         for tid, var in self._tweak_vars.items():
             v = values.get(tid, TWEAKS_DEFAULTS.get(tid))
             if isinstance(var, tk.BooleanVar):
@@ -1117,100 +1096,21 @@ class OctoUpdaterApp(tk.Tk):
     def _reset_tweaks(self):
         defaults = dict(TWEAKS_DEFAULTS)
         defaults["fieldOfView"] = fov_default_for_display()
-        save_tweaks_config(defaults)
+        spawned = self._tweaks.reset(defaults)
         self._refresh_tweaks_panel()
-        out = self._path_var.get().strip()
-        # On Windows Config.wtf tweaks apply alongside the WoW.exe patch; on
-        # other platforms only the (existing) game folder is required.
-        if can_patch_client():
-            needs_exe = os.path.exists(os.path.join(out, "WoW.exe"))
-        else:
-            needs_exe = bool(out)
-        if needs_exe:
+        if spawned:
             self._set_btn_busy("Patching…")
             self._status_var.set("Applying tweaks…")
-            # Pass the same defaults that were saved
-            run_apply_worker_in_background(self._apply_tweaks_worker,
-                                           out, defaults)
 
     def _apply_tweaks(self):
         values = self._get_tweaks_from_ui()
-        save_tweaks_config(values)
+        spawned = self._tweaks.apply(values)
         # Write the (possibly clamped) saved values back into the entries so
         # the UI never keeps showing an out-of-range number after Apply.
         self._refresh_tweaks_panel()
-
-        out = self._path_var.get().strip()
-        if not out:
-            self._log_line("Game folder not set.\n", "err")
-            return
-
-        exe = os.path.join(out, "WoW.exe")
-        if can_patch_client() and not os.path.exists(exe):
-            self._log_line("WoW.exe not found — run Update first.\n", "err")
-            return
-
-        self._log_line("\nApplying tweaks to WoW.exe...\n", "acct")
-        self._set_btn_busy("Patching…")
-        self._status_var.set("Applying tweaks…")
-        run_apply_worker_in_background(self._apply_tweaks_worker,
-                                       out, values)
-
-    def _apply_tweaks_worker(self, client_dir: str, tweaks: dict):
-        log_q  = queue.Queue()
-        prog_q = queue.Queue()
-        worker = UpdateWorker(client_dir, log_q, prog_q)
-
-        def drain():
-            try:
-                while True:
-                    msg, tag = log_q.get_nowait()
-                    if msg not in ("__DONE__", "__ERROR__") and not msg.startswith("__"):
-                        self.after(0, lambda m=msg, t=tag: self._log_line(
-                            (m if m.endswith("\n") else m + "\n"), t))
-            except queue.Empty:
-                pass
-
-        try:
-            exe_path = os.path.join(client_dir, "WoW.exe")
-
-            fresh_cfg        = load_config()
-            expected_patched = fresh_cfg.get("expected_patched_wow_hash", "")
-            original_server  = fresh_cfg.get("original_server_wow_hash", "")
-            local_before     = sha1_file(exe_path) if os.path.exists(exe_path) else ""
-
-            if can_patch_client():
-                worker.patch_exe(tweaks)
-                drain()
-            else:
-                # Binary tweaks target Windows offsets — on other platforms
-                # only the Config.wtf settings are applied.
-                self._log_line(
-                    "Binary WoW.exe tweaks are only applied on Windows; "
-                    "writing Config.wtf only.\n", "dim")
-
-            update_config_wtf(client_dir, tweaks)
-
-            local_after = sha1_file(exe_path) if os.path.exists(exe_path) else ""
-
-            def _set_hashes(c):
-                c["expected_patched_wow_hash"] = local_after
-                if local_before == expected_patched and original_server:
-                    c["original_server_wow_hash"] = original_server
-                else:
-                    c.pop("original_server_wow_hash", None)
-            self._cfg = update_config(_set_hashes)
-
-            self._log_line("\nTweaks applied.\n", "ok")
-            self.after(0, self._refresh_ready_state)
-        except Exception as e:
-            drain()
-            self._log_line(f"\n✗ Tweak patch failed: {e}\n", "err")
-
-            def _fail_state():
-                self._status_var.set("Tweaks failed — check the log")
-                self._set_btn_update()
-            self.after(0, _fail_state)
+        if spawned:
+            self._set_btn_busy("Patching…")
+            self._status_var.set("Applying tweaks…")
 
     # ── mods panel ───────────────────────────────────────────────────────────────
 
@@ -2612,6 +2512,9 @@ class OctoUpdaterApp(tk.Tk):
         if event.kind == "addons":
             self._on_addons_finished(event)
             return
+        if event.kind == "tweaks":
+            self._on_tweaks_finished(event)
+            return
         if event.ok:
             # The update worker reports the (post-patch) client version just
             # before finishing; surface it when a fresh one arrived.
@@ -2679,9 +2582,23 @@ class OctoUpdaterApp(tk.Tk):
         the controller's installing flag)."""
         self._refresh_ready_state()
 
+    def _on_tweaks_finished(self, event):
+        """Completion of a tweaks apply/reset worker — restore the footer
+        (same strings as the old _apply_tweaks_worker paths) and re-evaluate
+        the Apply/Reset button visibility."""
+        if event.ok:
+            self._refresh_ready_state()
+        else:
+            self._status_var.set("Tweaks failed — check the log")
+            self._set_btn_update()
+        self._refresh_tweaks_buttons()
+
     def _on_operation_failed(self, event):
         if isinstance(event, OperationFailed):
-            self._status_var.set("Update failed — check the log")
+            if event.kind == "tweaks":
+                self._status_var.set("Tweaks failed — check the log")
+            else:
+                self._status_var.set("Update failed — check the log")
             self._draw_progress(0.0)
             self._set_btn_update()
 

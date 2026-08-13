@@ -22,7 +22,7 @@ Event → signal mapping:
 
 The object-typed signals carry the full event dataclass (kind + payload); the
 scalar signals carry the event's fields in argument order. `ControllerHub` is a
-thin convenience that assembles the five Phase 1b controllers on one shared
+thin convenience that assembles the six Phase 1b controllers on one shared
 dispatcher together with the bridge — the main window (C15) may equally do the
 assembly by hand.
 """
@@ -33,6 +33,7 @@ from addons_controller import AddonsController
 from mods_controller import ModsController
 from news_controller import NewsController
 from settings_controller import SettingsController
+from tweaks_controller import TweaksController
 from ui_events import (
     AddonsLoaded,
     EventDispatcher,
@@ -116,7 +117,7 @@ class ControllerBridge(QObject):
 
 
 class ControllerHub:
-    """Assembles the five controllers on one shared dispatcher plus the bridge.
+    """Assembles the six controllers on one shared dispatcher plus the bridge.
 
     Plain Python object (no QObject); it exists so the Qt main window gets a
     ready-made wiring in one line. The bridge shares the hub's dispatcher.
@@ -128,6 +129,7 @@ class ControllerHub:
         self.news = NewsController(self.dispatcher)
         self.mods = ModsController(self.dispatcher, get_out_dir)
         self.addons = AddonsController(self.dispatcher, get_out_dir)
+        self.tweaks = TweaksController(self.dispatcher, get_out_dir)
         self.settings = SettingsController(
             self.dispatcher, self.updater, self.mods, self.addons, self.news)
         self.bridge = ControllerBridge(self.dispatcher)
