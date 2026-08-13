@@ -15,6 +15,9 @@ UA               = f"OctoUpdater/{UPDATER_VERSION}"
 DOWNLOAD_RETRY   = 5
 DOWNLOAD_TIMEOUT = 10    # seconds without any data before a transfer aborts
 
+GITHUB_API = "https://api.github.com"
+MOD_UA     = f"OctoUpdater/{UPDATER_VERSION}"
+
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
 else:
