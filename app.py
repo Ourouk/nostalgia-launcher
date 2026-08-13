@@ -48,7 +48,17 @@ from tweaks import (
     update_config_wtf,
 )
 
-from client_update import VerifyWorker, UpdateWorker
+from client_update import UpdateWorker
+
+from ui_events import (
+    EventDispatcher,
+    LogMessage,
+    OperationFailed,
+    OperationFinished,
+    ProgressChanged,
+    StatusChanged,
+)
+from update_controller import UpdateController
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Constants  (see constants.py)
@@ -268,14 +278,6 @@ class OctoUpdaterApp(tk.Tk):
         # supersedes this (it verifies the new folder right away).
         self._first_run_verify_pending = self._first_run
         self._cfg        = load_config()
-        self._running    = False
-        # True only after a verify/update confirmed the client files are up
-        # to date. PLAY is gated on this AND on no mod being in an error state.
-        self._client_ready = False
-        self._worker: UpdateWorker | None = None
-        self._log_q:  queue.Queue = queue.Queue()
-        self._prog_q: queue.Queue = queue.Queue()
-        self._diff_nodes = None
         # Session log lives in memory; the "Show logs" window renders it.
         self._log_buffer: list = []
         self._logwin = None
@@ -293,6 +295,18 @@ class OctoUpdaterApp(tk.Tk):
             value=os.path.normpath(self._cfg.get("out_dir", DEFAULT_OUT_DIR)))
         self._last_path_val = os.path.normpath(self._path_var.get().strip())
         self._path_var.trace_add("write", self._on_path_changed)
+
+        # Phase 1b controller owns the update/verify service logic; this
+        # class renders its events. All UI updates arrive via the dispatcher
+        # on the main thread.
+        self._events = EventDispatcher()
+        self._updater = UpdateController(
+            self._events, get_out_dir=lambda: self._path_var.get().strip())
+        self._events.subscribe(self._on_status_changed)
+        self._events.subscribe(self._on_progress_changed)
+        self._events.subscribe(self._on_log_message)
+        self._events.subscribe(self._on_operation_finished)
+        self._events.subscribe(self._on_operation_failed)
 
         # Count of mods with an update available — shown as a badge on the
         # MODS nav tab.
@@ -2743,7 +2757,7 @@ class OctoUpdaterApp(tk.Tk):
         self._mod_pending_state = {}
         self._default_mods_install_started = False
         self._default_addons_install_started = False
-        self._client_ready = False
+        self._updater.invalidate()
 
         # Reset every session-level TTL/state so nothing from the previous
         # folder is served from memory: addons verify + its rendered list,
@@ -2758,8 +2772,6 @@ class OctoUpdaterApp(tk.Tk):
         self._draw_nav_tab("MODS")
         self._draw_nav_tab("ADDONS")
         self._render_addons()
-
-        self._diff_nodes = None
 
         self._log_line(
             "\nGame folder changed — cache reset, everything will be re-verified.\n",
@@ -3122,7 +3134,7 @@ class OctoUpdaterApp(tk.Tk):
     def _install_missing_essential_mods(self):
         """Install every essential mod not already present. Used when the user
         turns 'Install essential mods' on after the fact."""
-        if self._running:
+        if self._updater.running:
             return
         out = self._path_var.get().strip()
         if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
@@ -3170,7 +3182,7 @@ class OctoUpdaterApp(tk.Tk):
         bookkeeping so every file is re-hashed against the manifest and
         WoW.exe gets re-downloaded and re-patched (tweaks reapplied). Unlike
         a game-folder change, installed mods are left alone."""
-        if self._running:
+        if self._updater.running:
             return
         try:
             if os.path.exists(CACHE_FILE):
@@ -3181,8 +3193,7 @@ class OctoUpdaterApp(tk.Tk):
             c.pop("expected_patched_wow_hash", None)
             c.pop("original_server_wow_hash", None)
         self._cfg = update_config(_drop_hashes)
-        self._diff_nodes = None
-        self._client_ready = False
+        self._updater.invalidate()
         self._log_line(
             "\nVerify game files — cache dropped, re-checking everything.\n",
             "acct")
@@ -3273,36 +3284,20 @@ class OctoUpdaterApp(tk.Tk):
         self._upd_btn.configure(bg=col)
         self._btn_glow.configure(bg=glow)
 
-    def _mods_have_errors(self) -> bool:
-        return any(bool(s.get("error"))
-                   for s in load_config().get("mods", {}).values())
-
     def _refresh_ready_state(self):
         """Recompute the footer status/button after an operation finishes.
         PLAY is only offered when the client files are up to date AND no mod
-        is in an error state — otherwise the button stays grey and inactive."""
-        # Never re-enable PLAY while addons are actively installing — this
-        # guards against a stray call during the mods→addons setup chain or a
-        # post-install verify flipping the button back on mid-download.
-        if self._addons_installing:
-            self._set_btn_busy("Installing…")
-            self._status_var.set("Downloading addons…")
-            return
-        if not self._client_ready:
-            self._status_var.set("Update available!")
-            self._set_btn_update()
-            return
-        if self._mods_have_errors():
-            self._set_btn_busy("PLAY")
-            self._status_var.set("Mod errors — check MODS tab")
-        elif not can_launch_client():
-            # The game client is a Windows binary; on other platforms the
-            # updater manages files/addons only and can't launch the game.
-            self._set_btn_busy("READY")
-            self._status_var.set("Everything up to date!")
-        else:
+        is in an error state — otherwise the button stays grey and inactive.
+        The decision itself lives in UpdateController.compute_readiness."""
+        r = self._updater.compute_readiness(
+            addons_installing=self._addons_installing)
+        if r.mode == "play":
             self._set_btn_play()
-            self._status_var.set("Everything up to date!")
+        elif r.mode == "update":
+            self._set_btn_update()
+        else:
+            self._set_btn_busy(r.label)
+        self._status_var.set(r.status)
 
     def _btn_click(self):
         if self._btn_mode == "play":
@@ -3382,66 +3377,46 @@ class OctoUpdaterApp(tk.Tk):
     # ── verify lifecycle ──────────────────────────────────────────────────────────
 
     def _start_verify(self, overwrite_config: bool = False):
-        out = self._path_var.get().strip()
-        if not out:
+        if not self._path_var.get().strip():
             self._set_btn_update()
             return
-        # Cancel any verify already in flight before swapping the queues, so
-        # a stale worker can't keep writing to a queue we no longer poll.
-        prev = getattr(self, "_verify_worker", None)
-        if prev is not None:
-            prev.cancel()
-        self._running = True
-        self._set_btn_busy("Checking…")
-        self._status_var.set("Verifying…")
-        self._draw_progress(0.0)
-        self._prog_label_var.set("")
-        self._log_q  = queue.Queue()
-        self._prog_q = queue.Queue()
-        patched_hash  = self._cfg.get("expected_patched_wow_hash", "")
-        original_hash = self._cfg.get("original_server_wow_hash", "")
-        worker = VerifyWorker(out, self._log_q, self._prog_q, patched_hash,
-                              original_hash, overwrite_config=overwrite_config)
-        self._verify_worker = worker
-        threading.Thread(target=worker.run, daemon=True).start()
+        self._updater.start_verify(overwrite_config)
+        self._refresh_ready_state()
 
     # ── update lifecycle ──────────────────────────────────────────────────────────
 
     def _start_update(self):
-        if self._running:
+        if self._updater.running:
             return
-        out = self._path_var.get().strip()
-        if not out:
+        if not self._path_var.get().strip():
             self._log_line("✗  Please set the game folder first.\n", "err")
             return
+        self._updater.start_update()
+        self._refresh_ready_state()
 
-        self._cfg = update_config(lambda c: c.__setitem__("out_dir", out))
+    # ── event handlers (Phase 1b controllers post; this class renders) ──────────
 
-        self._log_line(f"\nGame folder: {out}\n", "dim")
+    def _on_status_changed(self, event):
+        if isinstance(event, StatusChanged):
+            self._status_var.set(event.text)
 
-        self._running = True
-        self._set_btn_busy("Updating…")
-        self._status_var.set("Updating…")
-        self._draw_progress(0.0)
-        self._prog_label_var.set("")
+    def _on_progress_changed(self, event):
+        if isinstance(event, ProgressChanged):
+            self._draw_progress(event.value)
+            self._prog_label_var.set(event.label)
 
-        self._log_q  = queue.Queue()
-        self._prog_q = queue.Queue()
-        patched_hash   = self._cfg.get("expected_patched_wow_hash", "")
-        original_hash  = self._cfg.get("original_server_wow_hash", "")
+    def _on_log_message(self, event):
+        if isinstance(event, LogMessage):
+            self._render_log(event.text, event.tag)
 
-        self._worker   = UpdateWorker(out, self._log_q, self._prog_q, patched_hash)
-        self._worker.original_server_wow_hash = original_hash
-
-        diff = self._diff_nodes
-        self._diff_nodes = None
-        t = threading.Thread(target=self._worker.run, args=(diff,), daemon=True)
-        t.start()
-
-    def _finish(self, success: bool):
-        self._running = False
-        if success:
-            self._client_ready = True
+    def _on_operation_finished(self, event):
+        if not isinstance(event, OperationFinished):
+            return
+        if event.ok:
+            # The update worker reports the (post-patch) client version just
+            # before finishing; surface it when a fresh one arrived.
+            if self._updater.state.client_version:
+                self._client_ver_var.set(self._updater.state.client_version)
             self._draw_progress(1.0)
             self._refresh_ready_state()
             # Game files are confirmed present now — install essential mods
@@ -3452,7 +3427,12 @@ class OctoUpdaterApp(tk.Tk):
             if load_config().get("mods"):
                 self._maybe_install_default_addons()
         else:
-            self._client_ready = False
+            self._status_var.set("Update available!")
+            self._draw_progress(0.0)
+            self._set_btn_update()
+
+    def _on_operation_failed(self, event):
+        if isinstance(event, OperationFailed):
             self._status_var.set("Update failed — check the log")
             self._draw_progress(0.0)
             self._set_btn_update()
@@ -3460,49 +3440,7 @@ class OctoUpdaterApp(tk.Tk):
     # ── queue polling ─────────────────────────────────────────────────────────
 
     def _poll(self):
-        try:
-            while True:
-                msg, tag = self._log_q.get_nowait()
-                if msg == "__DONE__":
-                    self._finish(True)
-                elif msg == "__ERROR__":
-                    self._finish(False)
-                elif msg == "__UP_TO_DATE__":
-                    self._running = False
-                    self._client_ready = True
-                    self._draw_progress(1.0)
-                    self._refresh_ready_state()
-                    # Files were already fine (no download needed) — still need
-                    # to check whether essential mods should be auto-installed,
-                    # e.g. right after switching to a folder that already has
-                    # the client but has never had mods installed via this
-                    # updater.
-                    self._maybe_install_essential_mods()
-                    if load_config().get("mods"):
-                        self._maybe_install_default_addons()
-                elif msg == "__UPDATE_NEEDED__":
-                    self._running = False
-                    self._client_ready = False
-                    self._status_var.set("Update available!")
-                    self._draw_progress(0.0)
-                    self._set_btn_update()
-                elif msg == "__DIFF_TREE__":
-                    self._diff_nodes = tag
-                elif msg.startswith("__ORIGINAL_HASH__"):
-                    h = msg[len("__ORIGINAL_HASH__"):]
-                    self._cfg = update_config(
-                        lambda c: c.__setitem__("original_server_wow_hash", h))
-                elif msg.startswith("__PATCHED_HASH__"):
-                    h = msg[len("__PATCHED_HASH__"):]
-                    self._cfg = update_config(
-                        lambda c: c.__setitem__("expected_patched_wow_hash", h))
-                elif msg.startswith("__VERSION__"):
-                    ver = msg[len("__VERSION__"):]
-                    self._client_ver_var.set(ver)
-                else:
-                    self._render_log(msg, tag)
-        except queue.Empty:
-            pass
+        self._updater.poll()
 
         # Drain the global app-log queue that helper functions write to.
         try:
@@ -3512,17 +3450,7 @@ class OctoUpdaterApp(tk.Tk):
         except queue.Empty:
             pass
 
-        latest = None
-        try:
-            while True:
-                latest = self._prog_q.get_nowait()
-        except queue.Empty:
-            pass
-        if latest is not None:
-            val, lbl = latest
-            self._draw_progress(val)
-            self._prog_label_var.set(lbl)
-
+        self._events.dispatch_all()
         self.after(80, self._poll)
 
 
