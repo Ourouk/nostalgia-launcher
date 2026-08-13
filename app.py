@@ -53,12 +53,14 @@ from client_update import UpdateWorker
 from ui_events import (
     EventDispatcher,
     LogMessage,
+    NewsLoaded,
     OperationFailed,
     OperationFinished,
     ProgressChanged,
     StatusChanged,
 )
 from update_controller import UpdateController
+from news_controller import NewsController
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Constants  (see constants.py)
@@ -72,7 +74,6 @@ from constants import (
     CONFIG_FILE,
     CACHE_FILE,
     DEFAULT_OUT_DIR,
-    NEWS_CACHE_TTL,
     LEGACY_CONFIG_FILE,
     LEGACY_CACHE_FILE,
 )
@@ -193,12 +194,6 @@ from addons import (
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  News feed  (see news.py)
-# ──────────────────────────────────────────────────────────────────────────────
-
-from news import fetch_news_items, fetch_featured_post
-
-# ──────────────────────────────────────────────────────────────────────────────
 #  GUI
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -302,11 +297,13 @@ class OctoUpdaterApp(tk.Tk):
         self._events = EventDispatcher()
         self._updater = UpdateController(
             self._events, get_out_dir=lambda: self._path_var.get().strip())
+        self._news = NewsController(self._events)
         self._events.subscribe(self._on_status_changed)
         self._events.subscribe(self._on_progress_changed)
         self._events.subscribe(self._on_log_message)
         self._events.subscribe(self._on_operation_finished)
         self._events.subscribe(self._on_operation_failed)
+        self._events.subscribe(self._on_news_loaded)
 
         # Count of mods with an update available — shown as a badge on the
         # MODS nav tab.
@@ -324,12 +321,6 @@ class OctoUpdaterApp(tk.Tk):
         # survives the post-operation rescan so rows can show what went wrong.
         self._addon_errors = {}
         self._addon_sections_open = {"INSTALLED": True, "AVAILABLE": True}
-
-        # News feed cache (featured post and announcements cached separately)
-        self._feat_ts    = 0.0
-        self._news_ts    = 0.0
-        self._news_items = None
-        self._featured   = None
 
         # Scrollable list canvases that respond to the mouse wheel whenever
         # the pointer is anywhere over them (not just over the scrollbar).
@@ -618,8 +609,8 @@ class OctoUpdaterApp(tk.Tk):
     def _refresh_active_for_width(self):
         tab = getattr(self, "_active_tab", None)
         if tab == "NEWS":
-            self._render_featured(self._featured)
-            self._render_announcements(self._news_items)
+            self._render_featured(self._news.state.featured)
+            self._render_announcements(self._news.state.items)
         elif tab == "TWEAKS":
             self._refresh_tweaks_panel()
         elif tab == "ADDONS":
@@ -850,50 +841,13 @@ class OctoUpdaterApp(tk.Tk):
     # ── news panel ───────────────────────────────────────────────────────────
 
     def _load_news(self, force=False):
-        self._load_featured(force)
-        self._load_announcements(force)
+        self._news.load(force)
 
     def _load_featured(self, force=False):
-        now = time.time()
-        if (not force and self._featured is not None
-                and (now - self._feat_ts) < NEWS_CACHE_TTL):
-            return
-        self._render_featured(None, loading=True)
-
-        def worker():
-            feat, err = None, ""
-            try:
-                feat = fetch_featured_post()
-            except Exception:
-                err = "Couldn't reach the news feed."
-
-            def apply():
-                self._feat_ts  = time.time()
-                self._featured = feat
-                self._render_featured(feat, error=err)
-            self.after(0, apply)
-        threading.Thread(target=worker, daemon=True).start()
+        self._news.refresh_featured(force)
 
     def _load_announcements(self, force=False):
-        now = time.time()
-        if (not force and self._news_items is not None
-                and (now - self._news_ts) < NEWS_CACHE_TTL):
-            return
-        self._render_announcements(None, loading=True)
-
-        def worker():
-            items, err = None, ""
-            try:
-                items = fetch_news_items()
-            except Exception:
-                err = "Couldn't reach the news feed."
-
-            def apply():
-                self._news_ts    = time.time()
-                self._news_items = items
-                self._render_announcements(items, error=err)
-            self.after(0, apply)
-        threading.Thread(target=worker, daemon=True).start()
+        self._news.refresh_announcements(force)
 
     def _render_featured(self, post, loading=False, error=""):
         f = self._feat_frame
@@ -2765,8 +2719,7 @@ class OctoUpdaterApp(tk.Tk):
         self._addons_verified_ts = 0.0
         self._addons_status = {"state": "idle", "addons": {}, "available": []}
         self._addon_errors = {}
-        self._feat_ts = 0.0
-        self._news_ts = 0.0
+        self._news.invalidate()
         self._mod_updates_count = 0
         self._addon_updates_count = 0
         self._draw_nav_tab("MODS")
@@ -3436,6 +3389,17 @@ class OctoUpdaterApp(tk.Tk):
             self._status_var.set("Update failed — check the log")
             self._draw_progress(0.0)
             self._set_btn_update()
+
+    def _on_news_loaded(self, event):
+        if not isinstance(event, NewsLoaded):
+            return
+        if event.kind == "featured":
+            self._render_featured(event.data.data, loading=event.data.loading,
+                                  error=event.data.error)
+        else:
+            self._render_announcements(event.data.data,
+                                       loading=event.data.loading,
+                                       error=event.data.error)
 
     # ── queue polling ─────────────────────────────────────────────────────────
 
