@@ -11,7 +11,6 @@ import sys
 import urllib.request
 from urllib.parse import urlsplit
 import shutil
-import stat
 import struct
 import time
 import math
@@ -19,7 +18,6 @@ import threading
 import queue
 import tkinter as tk
 from tkinter import filedialog
-from pathlib import Path
 
 from helpers import (
     fmt_size,
@@ -46,6 +44,17 @@ from security_http import secure_urlopen, ALLOWED_DOWNLOAD_HOSTS
 
 import log_sink
 from log_sink import log, _LOG_Q
+
+import filesystem
+from filesystem import (
+    ensure_dir,
+    sha1_file,
+    cached_sha1,
+    already_updated,
+    remove_wdb,
+    get_client_version,
+    rmtree_force,
+)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Constants
@@ -120,71 +129,8 @@ FONT_VER    = ("Segoe UI", 8)
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def ensure_dir(path):
-    Path(path).mkdir(parents=True, exist_ok=True)
-
-
 # ── logging ─────────────────────────────────────────────────────────────────
 # See log_sink.py — log()/_LOG_Q are the shared, thread-safe log channel.
-
-
-def remove_wdb(client_dir: str):
-    """Delete the client's WDB folder (server-data cache, safe to drop)."""
-    wdb = os.path.join(client_dir, "WDB")
-    if not os.path.isdir(wdb):
-        return
-    try:
-        shutil.rmtree(wdb)
-        log("WDB cache cleared.", "dim")
-    except Exception as e:
-        log(f"Could not clear WDB: {e}", "err")
-
-
-def get_client_version(out_dir: str) -> str:
-    """Read version + build from fixed offsets in the client's WoW.exe."""
-    exe_path = os.path.join(out_dir, "WoW.exe")
-    if not os.path.exists(exe_path):
-        return ""
-    try:
-        # Read only the two small fields, not the whole ~5 MB binary.
-        with open(exe_path, "rb") as f:
-            f.seek(0x00437bfc)
-            build   = f.read(4).decode("utf-8", errors="replace").rstrip("\x00")
-            f.seek(0x00437c04)
-            version = f.read(6).decode("utf-8", errors="replace").rstrip("\x00")
-        return f"{version} ({build})"
-    except Exception:
-        return ""
-
-
-def sha1_file(path) -> str:
-    h = hashlib.sha1()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest().upper()
-
-
-def cached_sha1(path_str: str, cache: dict) -> str:
-    try:
-        mtime = os.path.getmtime(path_str)
-        entry = cache.get(path_str)
-        if entry and entry[1] == mtime:
-            return entry[0]
-        h = sha1_file(path_str)
-        cache[path_str] = [h, mtime]
-        return h
-    except Exception:
-        return ""
-
-
-def already_updated(dest, expected_hash) -> bool:
-    if not os.path.exists(dest):
-        return False
-    try:
-        return sha1_file(dest) == expected_hash
-    except Exception:
-        return False
 
 
 class VerifyWorker:
@@ -1682,20 +1628,6 @@ def addon_zip_url(git_url: str, sha: str) -> str:
     return f"{repo_url}/archive/{sha}.zip"
 
 
-def _rmtree_force(path):
-    """Like shutil.rmtree, but also removes read-only files. Plain rmtree
-    raises PermissionError on Windows when it meets a read-only file (e.g. a
-    .git object store from a manual clone, or a read-only addon shipped in an
-    old zip); this clears the read-only bit and retries."""
-    def handler(func, p, _exc):
-        os.chmod(p, stat.S_IWRITE)
-        func(p)
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(path, onexc=handler)      # onerror deprecated in 3.12
-    else:
-        shutil.rmtree(path, onerror=handler)
-
-
 def install_addon_files(client_dir: str, folder: str, git_url: str, sha: str):
     """Download the repo archive at `sha` and unpack it into
     Interface/AddOns/<folder>, atomically replacing any existing copy."""
@@ -1712,7 +1644,7 @@ def install_addon_files(client_dir: str, folder: str, git_url: str, sha: str):
     tmp_root  = dest_root + ".tmp_install"
     tmp_abs   = os.path.abspath(tmp_root)
     if os.path.isdir(tmp_root):
-        _rmtree_force(tmp_root)
+        rmtree_force(tmp_root)
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             for info in zf.infolist():
@@ -1733,13 +1665,13 @@ def install_addon_files(client_dir: str, folder: str, git_url: str, sha: str):
                 with zf.open(info) as src, open(target, "wb") as dst:
                     shutil.copyfileobj(src, dst)
         if os.path.isdir(dest_root):
-            _rmtree_force(dest_root)
+            rmtree_force(dest_root)
         os.replace(tmp_root, dest_root)
     except BaseException:
         # Never leave a half-written ".tmp_install" behind on failure
         if os.path.isdir(tmp_root):
             try:
-                _rmtree_force(tmp_root)
+                rmtree_force(tmp_root)
             except Exception:
                 pass
         raise
