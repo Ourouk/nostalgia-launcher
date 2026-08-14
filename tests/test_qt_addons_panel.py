@@ -20,12 +20,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QLineEdit, QMessageBox, QWidget
 
-from octo_updater.ui.qt.addons_panel import AddonsPanel
-from octo_updater.ui.qt.app import create_qt_app
-from octo_updater.ui.qt.bridge import ControllerHub
-from octo_updater.ui.qt.main_window import MainWindow
-from octo_updater.state.events import AddonsLoaded
-from octo_updater.state.models import AddonsState, AddonState
+from vanilla_wow_launcher.ui.qt.addons_panel import AddonsPanel
+from vanilla_wow_launcher.ui.qt.app import create_qt_app
+from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
+from vanilla_wow_launcher.ui.qt.main_window import MainWindow
+from vanilla_wow_launcher.state.events import AddonsLoaded
+from vanilla_wow_launcher.state.models import AddonsState, AddonState
 
 MIX_ADDONS = {
     "SellValue": dict(
@@ -112,6 +112,9 @@ def test_panel_replaces_the_addons_placeholder(qapp, window):
 
 def test_mixed_rows_render(qapp, window, hub):
     window.switch_tab("ADDONS")
+    # pfUI is flagged recommended in this catalog (the curated list is empty
+    # now — flags come from the catalog/custom file via a verify).
+    hub.addons._recommended = {"pfUI"}
     _post(hub, _make_state(addons=MIX_ADDONS, available=MIX_AVAILABLE))
     panel = _panel(window)
 
@@ -279,7 +282,7 @@ def test_remove_action_confirms_then_removes(qapp, window, hub, monkeypatch):
     remove_mock = Mock()
     monkeypatch.setattr(hub.addons, "remove", remove_mock)
     monkeypatch.setattr(
-        "octo_updater.ui.qt.addons_panel.QMessageBox.question",
+        "vanilla_wow_launcher.ui.qt.addons_panel.QMessageBox.question",
         lambda *a, **k: QMessageBox.Yes)
 
     panel.findChild(QWidget, "addonsAction_ManualInstall").click()
@@ -292,7 +295,7 @@ def test_remove_action_skips_when_declined(qapp, window, hub, monkeypatch):
     remove_mock = Mock()
     monkeypatch.setattr(hub.addons, "remove", remove_mock)
     monkeypatch.setattr(
-        "octo_updater.ui.qt.addons_panel.QMessageBox.question",
+        "vanilla_wow_launcher.ui.qt.addons_panel.QMessageBox.question",
         lambda *a, **k: QMessageBox.No)
 
     panel.findChild(QWidget, "addonsAction_ManualInstall").click()

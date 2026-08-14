@@ -23,7 +23,7 @@ and verifies the window shows, resizes, tabs switch and the settings dialog
 opens. Then launch the app itself at each display scale you test:
 
 ```sh
-uv run python octo_updater.py
+uv run python -m vanilla_wow_launcher
 ```
 
 and tick the rows below. Fill the scale column with the actual OS setting;

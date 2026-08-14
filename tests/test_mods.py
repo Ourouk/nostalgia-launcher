@@ -5,24 +5,81 @@ import os
 
 import pytest
 
-import octo_updater.services.mods as mods
-import octo_updater.services.self_update as self_update
-import octo_updater.core.config_store as config_store
+import vanilla_wow_launcher.services.mods as mods
+import vanilla_wow_launcher.services.self_update as self_update
+import vanilla_wow_launcher.core.config_store as config_store
 
 
-# ── registry ────────────────────────────────────────────────────────────────
+# ── catalog / registry loading ───────────────────────────────────────────────
 
-def test_registry_order_vanillafixes_first():
-    assert mods.MODS_REGISTRY[0]["id"] == "VanillaFixes"
+def test_mods_registry_empty_when_nothing_configured(tmp_path, monkeypatch):
+    config_store.configure(str(tmp_path / "config.json"), str(tmp_path / "cache.json"))
+    config_store.save_config({})
+
+    def fail(*a, **k):
+        raise AssertionError("no cache must not hit the network")
+    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    assert mods.mods_registry() == []
 
 
-def test_registry_entries_have_required_fields():
-    for mod in mods.MODS_REGISTRY:
-        assert mod["id"]
-        assert mod["name"]
-        assert mod["source"]["kind"] in (
-            "github_release", "codeberg_release", "direct_file", "direct_tar")
-        assert "installed_files" in mod
+def test_fetch_mods_catalog_cached_never_network(tmp_path, monkeypatch):
+    config_store.configure(str(tmp_path / "config.json"), str(tmp_path / "cache.json"))
+    cached = [{"id": "RemoteMod", "name": "RemoteMod", "source": {"kind": "direct_file"}}]
+    config_store.save_config({"mods_catalog_cache": {
+        "timestamp": 9999999999, "catalog": cached}})
+
+    def fail(*a, **k):
+        raise AssertionError("cached catalog must not hit the network")
+    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    assert mods.fetch_mods_catalog() == cached
+    assert any(m["id"] == "RemoteMod" for m in mods.mods_registry())
+
+
+def test_fetch_mods_catalog_force_fetches_and_validates(tmp_path, monkeypatch):
+    config_store.configure(str(tmp_path / "config.json"), str(tmp_path / "cache.json"))
+    config_store.save_config({})
+    raw = [{"id": "X", "name": "X",
+            "source": {"kind": "direct_file",
+                       "url": "https://example.com/x.dll", "dest": "x.dll"}},
+           {"id": "Evil", "source": {"kind": "exec_arbitrary"}}]
+    payload = json.dumps(raw).encode()
+    monkeypatch.setattr(
+        mods, "secure_urlopen",
+        lambda *a, **k: type("R", (), {"__enter__": lambda s: s,
+                                       "__exit__": lambda *x: False,
+                                       "read": lambda s=0: payload})())
+
+    out = mods.fetch_mods_catalog(force=True)
+    assert [m["id"] for m in out] == ["X"]
+
+
+def test_fetch_mods_catalog_force_raises_offline_no_cache(tmp_path,
+                                                          monkeypatch):
+    config_store.configure(str(tmp_path / "config.json"), str(tmp_path / "cache.json"))
+    config_store.save_config({})
+
+    def fail(*a, **k):
+        raise ConnectionError("offline")
+    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    with pytest.raises(ConnectionError):
+        mods.fetch_mods_catalog(force=True)
+
+
+def test_mods_registry_merges_custom(tmp_path, monkeypatch):
+    config_store.configure(str(tmp_path / "config.json"), str(tmp_path / "cache.json"))
+    config_store.save_config({})
+    monkeypatch.setattr(mods.catalog, "custom_file",
+                        lambda kind: str(tmp_path / "custom.json"))
+    (tmp_path / "custom.json").write_text(
+        '[{"id": "MyMod", "name": "My Mod", "essential": true,'
+        ' "source": {"kind": "github_release", "owner": "a", "repo": "b",'
+        ' "asset_pattern": "*.zip"}}]', encoding="utf-8")
+
+    reg = mods.mods_registry()
+    by_id = {m["id"]: m for m in reg}
+    assert by_id["MyMod"]["essential"] is True
+    # Without a bundled registry, only the custom entry is present.
+    assert list(by_id) == ["MyMod"]
 
 
 # ── asset selection / versions ───────────────────────────────────────────────

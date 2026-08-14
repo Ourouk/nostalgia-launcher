@@ -12,16 +12,16 @@ import time
 
 import pytest
 
-import octo_updater.controllers.addons as ac
-from octo_updater.controllers.addons import C_OK, C_TEXT_DIM, AddonsController
-from octo_updater.state.events import (
+import vanilla_wow_launcher.controllers.addons as ac
+from vanilla_wow_launcher.controllers.addons import C_OK, C_TEXT_DIM, AddonsController
+from vanilla_wow_launcher.state.events import (
     AddonsLoaded,
     EventDispatcher,
     LogMessage,
     OperationFinished,
     StatusChanged,
 )
-from octo_updater.state.models import AddonError, AddonState
+from vanilla_wow_launcher.state.models import AddonError, AddonState
 
 
 @pytest.fixture
@@ -160,6 +160,26 @@ def test_verify_remote_checks_false_never_calls_remote_sha(controller, cfg,
     assert calls == []
     # The cached sha matches the saved one — current without any API call.
     assert controller.state.addons["Foo"].status == "upToDate"
+
+
+def test_verify_honors_catalog_recommended_and_blocked(controller, cfg,
+                                                       monkeypatch):
+    monkeypatch.setattr(ac.addons, "addons_catalog", lambda force=False: [
+        {"name": "Star", "git": "https://github.com/x/Star",
+         "recommended": True, "blocked": False},
+        {"name": "Hidden", "git": "https://github.com/x/Hidden",
+         "recommended": False, "blocked": True},
+    ])
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+
+    folders = {a.folder for a in controller.state.available}
+    assert "Star" in folders
+    assert "Hidden" not in folders
+    # Flagged recommendations join the curated ones for the star/sort order.
+    assert "Star" in controller.recommended
+    assert set(ac.addons.RECOMMENDED_ADDONS) <= controller.recommended
 
 
 # ── apply ───────────────────────────────────────────────────────────────
@@ -335,6 +355,8 @@ def test_maybe_install_default_addons_one_shot(controller, cfg, tmp_path,
                                                monkeypatch):
     (tmp_path / "WoW.exe").write_bytes(b"MZ")
     cfg.pop("addons", None)
+    monkeypatch.setattr(ac.addons, "RECOMMENDED_ADDONS",
+                        {"pfUI": "https://github.com/x/pfUI"})
     started = []
     monkeypatch.setattr(controller, "apply",
                         lambda recs: started.append(recs) or True)

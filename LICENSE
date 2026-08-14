@@ -1,7 +1,14 @@
-Octo Updater License
+Vanilla WoW Launcher License
 
 Copyright (c) 2026 rebasedkon
 Original project: https://github.com/rebasedkon/octo-updater
+
+Additional development copyright (c) 2026 Andrea Spelgatti
+  - Email: spelgattiandrea@ourouk.be
+
+This additional development attribution applies to the derivative work built
+on top of the original project and does not replace or remove the original
+author's credit.
 
 Support the author:
   - Ko-fi:           https://ko-fi.com/rebased
@@ -10,6 +17,17 @@ Support the author:
 Contact:
   - Email:   inskon@proton.me
   - Discord: https://discord.com/users/287467238573867018 (rebazed)
+
+Trademarks and third-party content: World of Warcraft is a trademark of
+Blizzard Entertainment, Inc. This project is not affiliated with, endorsed
+by, or sponsored by Blizzard Entertainment. The game client, mods, addons,
+patches and any other files handled by this software are created, hosted and
+distributed by third parties; this software does not create, host, own or
+redistribute them. It is merely an HTTP client and local management tool
+that retrieves content from the URLs and registries the user configures.
+Users are responsible for ensuring their use of the software and of any
+downloaded content complies with applicable laws, licenses and third-party
+terms.
 
 Permission is granted to use, copy, modify, merge, publish and distribute
 this software, including creating derivative works, provided that:

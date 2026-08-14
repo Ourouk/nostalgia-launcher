@@ -7,8 +7,8 @@ import zipfile
 
 import pytest
 
-import octo_updater.services.addons as addons
-import octo_updater.core.config_store as config_store
+import vanilla_wow_launcher.services.addons as addons
+import vanilla_wow_launcher.core.config_store as config_store
 
 
 def test_is_allowed_git_url():
@@ -97,6 +97,55 @@ def test_fetch_addons_catalog_slims_and_stores(tmp_path, monkeypatch):
     out = addons.fetch_addons_catalog()
     assert out[0]["toc"] == {"Title": "pfUI", "Notes": "n"}
     assert "Extra" not in out[0]["toc"]
+
+
+def test_fetch_addons_catalog_keeps_flags(tmp_path, monkeypatch):
+    config_store.configure(str(tmp_path / "config.json"), str(tmp_path / "cache.json"))
+    config_store.save_config({})
+    raw = [{"name": "A", "git": "https://github.com/x/A",
+            "recommended": True, "blocked": False}]
+    payload = json.dumps(raw).encode()
+    monkeypatch.setattr(
+        addons, "secure_urlopen",
+        lambda *a, **k: type("R", (), {"__enter__": lambda s: s,
+                                       "__exit__": lambda *x: False,
+                                       "read": lambda s=0: payload})())
+
+    out = addons.fetch_addons_catalog()
+    assert out[0]["recommended"] is True
+    assert out[0]["blocked"] is False
+
+
+def test_fetch_addons_catalog_drops_disallowed_git(tmp_path, monkeypatch):
+    config_store.configure(str(tmp_path / "config.json"), str(tmp_path / "cache.json"))
+    config_store.save_config({})
+    raw = [{"name": "A", "git": "https://evil.com/x"}]
+    payload = json.dumps(raw).encode()
+    monkeypatch.setattr(
+        addons, "secure_urlopen",
+        lambda *a, **k: type("R", (), {"__enter__": lambda s: s,
+                                       "__exit__": lambda *x: False,
+                                       "read": lambda s=0: payload})())
+
+    assert addons.fetch_addons_catalog() == []
+
+
+def test_addons_catalog_merges_custom(tmp_path, monkeypatch):
+    config_store.configure(str(tmp_path / "config.json"), str(tmp_path / "cache.json"))
+    config_store.save_config({})
+    monkeypatch.setattr(addons, "fetch_addons_catalog", lambda force=False: [
+        {"name": "A", "git": "https://github.com/x/A", "branch": None,
+         "ref": None, "description": None, "toc": {}, "recommended": False,
+         "blocked": False}])
+    monkeypatch.setattr(addons.catalog, "custom_file",
+                        lambda kind: str(tmp_path / "custom.json"))
+    (tmp_path / "custom.json").write_text(
+        '[{"folder": "A", "git": "https://github.com/fork/A", '
+        '"recommended": true}]', encoding="utf-8")
+
+    merged = {a["name"]: a for a in addons.addons_catalog()}
+    assert merged["A"]["git"] == "https://github.com/fork/A"
+    assert merged["A"]["recommended"] is True
 
 
 def test_addon_remote_sha_cached(tmp_path, monkeypatch):

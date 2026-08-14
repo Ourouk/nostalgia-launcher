@@ -10,9 +10,9 @@ import time
 
 import pytest
 
-import octo_updater.controllers.news as nc
-from octo_updater.controllers.news import NewsController
-from octo_updater.state.events import EventDispatcher, LogMessage, NewsLoaded
+import vanilla_wow_launcher.controllers.news as nc
+from vanilla_wow_launcher.controllers.news import NewsController
+from vanilla_wow_launcher.state.events import EventDispatcher, LogMessage, NewsLoaded
 
 
 class FakeFeed:

@@ -20,13 +20,13 @@ from unittest.mock import Mock
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QWidget
 
-import octo_updater.services.mods as mods_module
-from octo_updater.ui.qt.app import create_qt_app
-from octo_updater.ui.qt.bridge import ControllerHub
-from octo_updater.ui.qt.main_window import MainWindow
-from octo_updater.ui.qt.mods_panel import ModsPanel
-from octo_updater.state.events import ModsLoaded
-from octo_updater.state.models import ModsState, ModState
+import vanilla_wow_launcher.services.mods as mods_module
+from vanilla_wow_launcher.ui.qt.app import create_qt_app
+from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
+from vanilla_wow_launcher.ui.qt.main_window import MainWindow
+from vanilla_wow_launcher.ui.qt.mods_panel import ModsPanel
+from vanilla_wow_launcher.state.events import ModsLoaded
+from vanilla_wow_launcher.state.models import ModsState, ModState
 
 FAKE_REGISTRY = [
     {
@@ -68,7 +68,8 @@ def qapp():
 
 @pytest.fixture()
 def registry(monkeypatch):
-    monkeypatch.setattr(mods_module, "MODS_REGISTRY", FAKE_REGISTRY)
+    monkeypatch.setattr(mods_module, "mods_registry",
+                        lambda *a, **k: FAKE_REGISTRY)
     monkeypatch.setattr(mods_module, "fetch_mod_latest_version_cached",
                         lambda mod, force=False: None)
     return FAKE_REGISTRY

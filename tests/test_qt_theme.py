@@ -14,8 +14,8 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from octo_updater.ui.qt.app import QtOctoUpdaterApp, create_qt_app
-from octo_updater.ui.qt.theme import HEX, Palette, theme_qss
+from vanilla_wow_launcher.ui.qt.app import QtVanillaWoWLauncherApp, create_qt_app
+from vanilla_wow_launcher.ui.qt.theme import HEX, Palette, theme_qss
 
 
 @pytest.fixture(autouse=True)
@@ -73,9 +73,9 @@ def test_qapp_is_singleton():
 
 
 def test_app_shell_constructs_shows_and_closes_offscreen(qapp):
-    shell = QtOctoUpdaterApp()
+    shell = QtVanillaWoWLauncherApp()
     assert shell._app is qapp
-    assert shell._window.windowTitle() == "Octo Updater"
+    assert shell._window.windowTitle() == "Vanilla WoW Launcher"
     shell.show()
     assert shell._window.isVisible()
     shell.close()
@@ -86,7 +86,7 @@ def test_app_shell_run_shows_window_if_hidden(qapp, monkeypatch):
     """run() must never leave the window invisible: even a caller that skips
     show() gets a visible window once the event loop starts (regression for
     the entry point calling mainloop() without show())."""
-    shell = QtOctoUpdaterApp()
+    shell = QtVanillaWoWLauncherApp()
     assert not shell._window.isVisible()
     monkeypatch.setattr(shell._app, "exec", lambda: 0)
     shell.run()

@@ -2,7 +2,7 @@
 
 import json
 
-import octo_updater.services.news as news
+import vanilla_wow_launcher.services.news as news
 
 
 def _fake_resp(payload):

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Vanilla WoW Launcher
+GenericName=Vanilla WoW updater
+Comment=Updater and mod manager for the Vanilla WoW client
+Exec=VanillaWoWLauncher
+Icon=VanillaWoWLauncher
+Terminal=false
+Categories=Game;Utility;
+StartupNotify=false
+StartupWMClass=VanillaWoWLauncher

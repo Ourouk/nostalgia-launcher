@@ -4,7 +4,7 @@ Part A — scale/resize checks that run OFFSCREEN (safe on any host, no real
 display). They reuse the headless pattern of test_qt_smoke.py: the platform
 defaults to offscreen before PySide6 is imported, the QApplication singleton
 comes from create_qt_app(), and every network/disk backend is monkeypatched so
-a full QtOctoUpdaterApp builds and runs. They verify:
+a full QtVanillaWoWLauncherApp builds and runs. They verify:
 
 - the window resizes across the intended range (800x600 and 1400x900) without
   exceptions, the four stacked pages survive the reflow, and only the current
@@ -54,18 +54,18 @@ from unittest.mock import Mock
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
-import octo_updater.services.addons as addons_module
-import octo_updater.core.config_store as config_store
-import octo_updater.core.constants as constants
-import octo_updater.services.mods as mods_module
-import octo_updater.services.news as news_module
-import octo_updater.controllers.news as news_controller
-import octo_updater.core.platform_support as platform_support
-import octo_updater.controllers.settings as settings_controller
-import octo_updater.controllers.update as update_controller
-from octo_updater.ui.qt.app import QtOctoUpdaterApp, create_qt_app
-from octo_updater.ui.qt.settings_dialog import SettingsDialog
-from octo_updater.ui.qt.metrics import BASE_H, BASE_W, clamp
+import vanilla_wow_launcher.services.addons as addons_module
+import vanilla_wow_launcher.core.config_store as config_store
+import vanilla_wow_launcher.core.constants as constants
+import vanilla_wow_launcher.services.mods as mods_module
+import vanilla_wow_launcher.services.news as news_module
+import vanilla_wow_launcher.controllers.news as news_controller
+import vanilla_wow_launcher.core.platform_support as platform_support
+import vanilla_wow_launcher.controllers.settings as settings_controller
+import vanilla_wow_launcher.controllers.update as update_controller
+from vanilla_wow_launcher.ui.qt.app import QtVanillaWoWLauncherApp, create_qt_app
+from vanilla_wow_launcher.ui.qt.settings_dialog import SettingsDialog
+from vanilla_wow_launcher.ui.qt.metrics import BASE_H, BASE_W, clamp
 
 DISPLAY_REQUESTED = (
     os.environ.get("QT_QPA_PLATFORM") != "offscreen"
@@ -140,7 +140,7 @@ def qt_env(monkeypatch, tmp_path):
 
 @pytest.fixture()
 def build_app(qapp, monkeypatch, qt_env):
-    """Factory for full QtOctoUpdaterApp instances with safe backends (same
+    """Factory for full QtVanillaWoWLauncherApp instances with safe backends (same
     shape as test_qt_smoke.py's)."""
     def _build(*, startup=True, first_run=False):
         cfg = qt_env
@@ -151,7 +151,7 @@ def build_app(qapp, monkeypatch, qt_env):
                                       {"timestamp": 0, "release": {}}},
                 "addons": {},
             })
-        app = QtOctoUpdaterApp()
+        app = QtVanillaWoWLauncherApp()
         app._window.show()
         hub = app._hub
         monkeypatch.setattr(hub.updater, "start_verify", Mock())

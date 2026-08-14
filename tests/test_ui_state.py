@@ -1,6 +1,6 @@
 """Unit tests for the shared application-state models (ui_state)."""
 
-from octo_updater.state.models import (
+from vanilla_wow_launcher.state.models import (
     AddonError,
     AddonsState,
     AddonState,

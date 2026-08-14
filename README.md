@@ -1,14 +1,47 @@
-# Octo Updater
+# Vanilla WoW Launcher
 
-A standalone desktop updater and mod manager for the **OctoWoW** client.
+A standalone desktop updater and mod manager for the **Vanilla WoW** client.
 It updates and patches the game client, manages community **mods** and **addons**,
 applies client **tweaks**, and shows server **news**.
 
-![Octo Updater](screenshot.png)
+![Vanilla WoW Launcher](screenshot.png)
 
 The interface is a modern **PySide6/Qt** implementation. The backend is
-selected at startup via `OCTO_UI_BACKEND` (see
+selected at startup via `VANILLA_WOW_UI_BACKEND` (see
 [Backend selection](#backend-selection)).
+
+> ⚠️ **Third-party content disclaimer**
+> World of Warcraft is a trademark of Blizzard Entertainment, Inc. This
+> project is **not affiliated with, endorsed by, or sponsored by**
+> Blizzard Entertainment. The game client, mods, addons, patches and any
+> other files handled by this tool are created, hosted and distributed by
+> **third parties**; Vanilla WoW Launcher does not create, host, own or
+> redistribute them. Vanilla WoW Launcher is **merely an HTTP client and
+> local management tool** that retrieves, from the URLs and registries you
+> configure, content owned and maintained by others. You are responsible for
+> ensuring that your use of the tool and of any downloaded content complies
+> with applicable laws, licenses and the terms of the third parties involved.
+
+---
+
+## Attribution
+
+Original project and author:
+
+- **rebasedkon** — original author
+  ([`https://github.com/rebasedkon/octo-updater`](https://github.com/rebasedkon/octo-updater))
+  — see the [LICENSE](LICENSE).
+
+This project is a derivative of that work, now maintained and renamed as
+**Vanilla WoW Launcher**:
+
+- **Andrea Spelgatti** — `<spelgattiandrea@ourouk.be>`
+
+The additional work includes the `src/` package layout, the PySide6 (Qt)
+interface and its architecture, the build/packaging pipeline (PyInstaller +
+AppImage), the JSON mod/addon catalogs and the per-user custom registry
+files, the catalog configuration in Settings, input validation and hardened
+HTTP handling, the automated test suite, and this documentation.
 
 ---
 
@@ -22,20 +55,11 @@ selected at startup via `OCTO_UI_BACKEND` (see
 - Reads and displays the installed client version straight from `WoW.exe`.
 
 ### 🧩 Mods
-Curated set of client modifications, installed from their official GitHub /
-Codeberg releases and registered in `dlls.txt`:
-
-| Mod | Purpose |
-|-----|---------|
-| VanillaFixes | Eliminates stutter and animation lag (also the DLL loader; required by other mods) |
-| ClassicAPI | Adds later-version Lua API calls to the client; required by some addons |
-| DXVK | Vulkan-based rendering for better performance |
-| nampower | Reduces input lag on higher latency |
-| SuperWoW | Backported client API features; required by some addons |
-| transmogfix | Fixes transmog-related frame drops |
-| UnitXP_SP3 | Adds modern quality-of-life features and improvements |
-| VanillaHelpers | Raises the max supported texture resolution and improves memory allocation |
-| VanillaMultiMonitorFix | Fixes multi-monitor resolution issues (optional) |
+Client modifications installed from their release archives and registered in
+`dlls.txt`. There is **no built-in mod list** — the MODS tab shows whatever
+the configured [mod catalog](#launcher-configuration) ships (essential mods
+★ are auto-installed on a fresh game folder), and the catalog decides the
+install order:
 
 - Essential mods (★) auto-install on a fresh game folder.
 - Per-mod **update** / **retry** actions and an update-count badge on the tab.
@@ -49,7 +73,8 @@ are clamped; Apply/Reset appear only when something changed.
 ### 📦 Addons
 - Installs addons directly from Git hosts (**GitHub, GitLab, Gitea, Codeberg**)
   by downloading the repo archive pinned to a commit SHA — no Git client needed.
-- Curated **recommended** list (★) plus everything from the server catalog.
+- The ADDONS tab shows everything from the configured addon catalog;
+  addons flagged `recommended` get a star (★).
 - **Add custom git addon** dialog for any allowed host.
 - Update detection by comparing the installed commit against the latest,
   one-click **Update** / **Update all**, and an update-count badge.
@@ -81,7 +106,7 @@ logs, add the game folder to Defender exclusions, and adjust general options.
 - **certifi** (optional) — bundles an up-to-date CA store for more robust TLS
   verification on machines with an out-of-date root store (otherwise the
   system trust store is used).
-- The prebuilt `OctoUpdater.exe` needs nothing installed.
+- The prebuilt `VanillaWoWLauncher.exe` needs nothing installed.
 
 ### Platform support
 
@@ -101,8 +126,8 @@ Where the config and hash-cache files live depends on the platform (see
 | Platform | Config & cache location |
 |----------|-------------------------|
 | Windows | Next to the executable |
-| Linux | `$XDG_CONFIG_HOME/octo-updater` and `$XDG_CACHE_HOME/octo-updater` (defaults: `~/.config/octo-updater` and `~/.cache/octo-updater`) |
-| macOS | `~/Library/Application Support/OctoUpdater` and `~/Library/Caches/OctoUpdater` |
+| Linux | `$XDG_CONFIG_HOME/vanilla-wow-launcher` and `$XDG_CACHE_HOME/vanilla-wow-launcher` (defaults: `~/.config/vanilla-wow-launcher` and `~/.cache/vanilla-wow-launcher`) |
+| macOS | `~/Library/Application Support/VanillaWoWLauncher` and `~/Library/Caches/VanillaWoWLauncher` |
 
 All are safe to delete — they're recreated on next run (deleting the config
 re-runs first-time setup).
@@ -125,15 +150,21 @@ ratio at compositor time, so the same window and minimum sizes hold at
 ## Usage
 
 ### Prebuilt executable
-Download `OctoUpdater.exe` from the [latest release](../../releases/latest) and
-run it. Point the **Game folder** (Settings ⚙) at your OctoWoW client folder —
-or let the default create one next to the executable — then click **UPDATE**,
-and **PLAY** when it finishes.
+Download `VanillaWoWLauncher.exe` from the [latest release](../../releases/latest)
+and run it. Point the **Game folder** (Settings ⚙) at your Vanilla WoW client
+folder — or let the default create one next to the executable — then click
+**UPDATE**, and **PLAY** when it finishes.
 
 ### From source
 ```bash
-python octo_updater.py
+uv sync
+uv run vanilla-wow-launcher           # or: uv run python -m vanilla_wow_launcher
 ```
+
+Vanilla WoW Launcher needs a
+[`vanilla_wow_launcher.json`](#launcher-configuration) in the repo root (or
+`--launcher-config PATH`) before it will start — there is no built-in server
+or mod/addon list.
 
 The updater writes two JSON files — see
 [Configuration location](#configuration-location) for where each platform
@@ -141,29 +172,127 @@ keeps them:
 
 | File | Purpose |
 |------|---------|
-| `octo_updater_config.json` | Settings, mod/addon install records, caches |
-| `octo_updater_hash_cache.json` | Per-file SHA-1 cache to speed up verifies |
+| `vanilla_wow_launcher_config.json` | Settings, mod/addon install records, caches |
+| `vanilla_wow_launcher_hash_cache.json` | Per-file SHA-1 cache to speed up verifies |
 
 Both are safe to delete — they'll be recreated (deleting the config re-runs
 first-time setup).
 
+### Launcher configuration
+
+The app ships with **no hardcoded server, mirror or mod/addon list**. All of
+it comes from a single JSON file, `vanilla_wow_launcher.json`, that a
+distribution provides:
+
+- next to the executable (a packaged build), or in the repo root (running
+  from source), or passed explicitly with `--launcher-config PATH`.
+
+The app exits at startup with a clear message if it can't find one. Only
+`server.base_url` is required — every other endpoint is derived from it
+unless overridden, and mirrors are optional.
+
+A real, working example is bundled at
+[`examples/vanilla_wow_launcher.json`](examples/vanilla_wow_launcher.json) —
+copy it to the repo root (or pass it via `--launcher-config`) and edit the
+URLs to match your server:
+
+```json
+{
+  "server": {
+    "name": "My Vanilla WoW Server",
+    "base_url": "https://server.example",
+    "realm": "server.example",
+    "news_url": "https://server.example/news",
+    "featured_news_url": "https://server.example/news/featured",
+    "mods_registry_url": "https://server.example/api/mods.json",
+    "addons_registry_url": "https://server.example/api/addons.json"
+  },
+  "mirrors": [
+    { "name": "Backup", "base_url": "https://mirror.example" }
+  ]
+}
+```
+
+This configures:
+
+- the **client update** manifest and file downloads (with automatic mirror
+  failover — the first reachable mirror serves the files, otherwise the
+  server),
+- the **news** feed endpoints,
+- the **realm** written to `Config.wtf`,
+- the **mod** and **addon** catalogs,
+- the HTTPS download allowlist (built from the configured server + mirror
+  hosts; git hosts are always allowed for addon/mod downloads).
+
+The per-user config (`vanilla_wow_launcher_config.json`) only holds
+preferences and install records — it never overwrites the launcher file.
+
+### Catalog registries (advanced)
+
+The **MODS** and **ADDONS** lists come from two JSON catalogs served over
+HTTPS and cached in the config file for offline use. Their URLs come from the
+[launcher configuration](#launcher-configuration); a savvy user may point
+them elsewhere (or override just one) via **Settings → Catalog registries**:
+
+- `Apply` / `Reset` the per-user catalog URL (an empty field uses the
+  launcher URL again),
+- `Reload` the catalog immediately and refresh the tab,
+- open the per-user **custom JSON file** (created empty on first use) and
+  clear its entries.
+
+Custom files live in the config directory (see
+[Configuration location](#configuration-location)):
+
+| File | Purpose |
+|------|---------|
+| `vanilla_wow_launcher_mods_custom.json` | Per-user mod entries |
+| `vanilla_wow_launcher_addons_custom.json` | Per-user addon entries |
+
+Custom entries are merged with the remote catalog — same id/folder wins, new
+ones are appended. An addon entry may set `recommended` / `blocked` to add a
+star or hide an entry:
+
+```json
+[
+  {
+    "folder": "MyCustomAddon",
+    "git": "https://github.com/yourname/MyCustomAddon",
+    "branch": null,
+    "ref": null,
+    "description": "Optional description shown in the ADDONS tab.",
+    "recommended": false,
+    "blocked": false
+  }
+]
+```
+
+Mod entries use the same shape the mod catalog uses (`id`, `name`,
+`essential`, `source.kind`, `source.owner`/`repo` + `asset_pattern` or a
+`direct_file`/`direct_tar` URL, `extract_map`, `register_dll`,
+`installed_files`). Only the allowlisted source kinds (`github_release`,
+`codeberg_release`, `direct_file`, `direct_tar`) and the single post-install
+hook (`write_dxvk_conf`) are accepted — catalog data is never executed, and
+downloads are still restricted to the HTTPS host allowlist regardless of what
+a registry or custom file contains. Invalid entries are skipped and logged,
+never fatal.
+
 ### Backend selection
 
-The GUI backend is chosen at startup via the `OCTO_UI_BACKEND` environment
-variable (`qt` is the current default):
+The UI is selected at startup via the `VANILLA_WOW_UI_BACKEND` environment
+variable (`qt` is the only/default value):
 
 | Value | Backend |
 |-------|---------|
-| `qt` / `pyside6` | PySide6/Qt interface (`qt_app.py`) — default |
+| `qt` / `pyside6` | PySide6/Qt interface (`vanilla_wow_launcher.ui.qt`) — default |
 
 ```bash
-uv run python octo_updater.py                       # Qt (PySide6, default)
+uv run vanilla-wow-launcher           # Qt (PySide6, default)
 ```
 
-- An unknown value prints `Unknown OCTO_UI_BACKEND: <value>` and exits.
-- If the Qt toolkit can't be imported, the entry point prints *"Octo Updater
-  needs PySide6 (Qt) to run. Install it with `uv sync` or `pip install
-  PySide6`."* and exits.
+- An unknown value prints `Unknown VANILLA_WOW_UI_BACKEND: <value>` and exits.
+- If the Qt toolkit can't be imported, the entry point prints *"Vanilla WoW
+  Launcher needs PySide6 (Qt) to run. Install it with `uv sync` or `pip
+  install PySide6`."* and exits.
 - Starting on a machine without a graphical display prints
   *"A graphical display (X11/Wayland) is required."* and exits.
 
@@ -173,23 +302,23 @@ uv run python octo_updater.py                       # Qt (PySide6, default)
 
 ### PyInstaller
 
-Compile a single-file, windowed `OctoUpdater` executable with
+Compile a single-file, windowed `VanillaWoWLauncher` executable with
 [PyInstaller](https://pyinstaller.org/). The build is driven by
-`OctoUpdater.spec`, which collects all of PySide6 (plugins + Qt libraries),
-lists the app modules as hidden imports (the Qt backend is imported at
-runtime from `octo_updater.py`), bundles the `OctoUpdater.ico` icon and
-produces a windowed app from the unchanged `octo_updater.py` entry point:
+`VanillaWoWLauncher.spec`, which collects all of PySide6 (plugins + Qt
+libraries), lists the app modules as hidden imports, bundles the
+`VanillaWoWLauncher.ico` icon and produces a windowed app from the
+`packaging/pyinstaller_entry.py` shim:
 
 ```bash
 uv sync --dev                    # installs pyinstaller into the dev environment
-uv run pyinstaller --noconfirm --clean OctoUpdater.spec
+uv run pyinstaller --noconfirm --clean VanillaWoWLauncher.spec
 ```
 
 Or, with a plain `pip` environment:
 
 ```bash
 pip install pyinstaller certifi
-pyinstaller OctoUpdater.spec
+pyinstaller VanillaWoWLauncher.spec
 ```
 
 ### pyside6-deploy (alternative)
@@ -200,7 +329,7 @@ PySide6 ships its own
 config collection automatically:
 
 ```bash
-uv run pyside6-deploy octo_updater.py
+uv run pyside6-deploy packaging/pyinstaller_entry.py
 ```
 
 ### AppImage (Linux)
@@ -211,10 +340,10 @@ Everything lives in `packaging/linux/`:
 
 | File | Purpose |
 |------|---------|
-| `OctoUpdater-linux.spec` | PyInstaller onedir spec (no outer onefile — AppImage provides that) |
+| `VanillaWoWLauncher-linux.spec` | PyInstaller onedir spec (no outer onefile — AppImage provides that) |
 | `build-appimage.sh` | Full build: PyInstaller → AppDir assembly → `linuxdeploy` |
 | `AppRun` | Launcher script resolved relative to the AppImage mount point |
-| `OctoUpdater.desktop` | Desktop entry used by linuxdeploy + for app-menu integration |
+| `VanillaWoWLauncher.desktop` | Desktop entry used by linuxdeploy + for app-menu integration |
 
 Prerequisites: `uv`, ImageMagick (`magick`), and a
 [`linuxdeploy`](https://github.com/linuxdeploy/linuxdeploy) AppImage matching
@@ -223,7 +352,7 @@ it isn't on `PATH`).
 
 ```bash
 uv sync --dev
-./packaging/linux/build-appimage.sh        # → dist/OctoUpdater-$(uname -m).AppImage
+./packaging/linux/build-appimage.sh        # → dist/VanillaWoWLauncher-$(uname -m).AppImage
 ```
 
 Build on (or inside a container of) the oldest distribution you want to
@@ -231,8 +360,8 @@ support — AppImages do not solve glibc compatibility. Test both session
 types:
 
 ```bash
-QT_QPA_PLATFORM=xcb     ./dist/OctoUpdater-x86_64.AppImage
-QT_QPA_PLATFORM=wayland ./dist/OctoUpdater-x86_64.AppImage
+QT_QPA_PLATFORM=xcb     ./dist/VanillaWoWLauncher-x86_64.AppImage
+QT_QPA_PLATFORM=wayland ./dist/VanillaWoWLauncher-x86_64.AppImage
 ```
 
 ### Notes
@@ -251,58 +380,33 @@ QT_QPA_PLATFORM=wayland ./dist/OctoUpdater-x86_64.AppImage
 
 ## Development
 
-The codebase is split into focused modules. The only third-party runtime
-dependency is `PySide6` for the Qt backend; everything else is the standard
-library.
+The code lives in a classical `src/` package (`src/vanilla_wow_launcher/`)
+split by layer. The only third-party runtime dependency is `PySide6`;
+everything else is the standard library.
 
 Architecture: the business logic lives in **toolkit-agnostic controllers**
-that publish their results as dataclass *state* (`ui_state.py`) and *events*
-on a thread-safe dispatcher (`ui_events.py`). The Qt side (`qt_bridge.py`)
-converts the events into Qt signals on the main thread.
+that publish their results as dataclass *state* (`state/models.py`) and
+*events* on a thread-safe dispatcher (`state/events.py`). The Qt side
+(`ui/qt/bridge.py`) converts the events into Qt signals on the main thread.
 
-| Module | Responsibility |
-|--------|----------------|
-| `octo_updater.py` | Entry point; backend selection via `OCTO_UI_BACKEND` (PyInstaller target) |
-| `qt_app.py` | Qt shell: `create_qt_app` (high-DPI policy), `QtOctoUpdaterApp` |
-| `qt_main_window.py` | Qt `MainWindow`: header, tabs, footer chrome |
-| `qt_bridge.py` | `ControllerHub` / `ControllerBridge`: dispatcher events → Qt signals |
-| `qt_theme.py` | Qt palette + QSS stylesheet |
-| `qt_news_panel.py` | Qt News panel (featured post + announcements) |
-| `qt_tweaks_panel.py` | Qt Tweaks panel |
-| `qt_mods_panel.py` | Qt Mods panel |
-| `qt_addons_panel.py` | Qt Addons panel |
-| `qt_settings_dialog.py` | Qt Settings dialog |
-| `qt_log_window.py` | Qt session-log window |
-| `qt_custom_addon_dialog.py` | Qt custom git addon dialog |
-| `update_controller.py` | Update/verify orchestration + footer readiness (toolkit-agnostic) |
-| `news_controller.py` | News-feed fetch + TTL caching (toolkit-agnostic) |
-| `mods_controller.py` | Mods panel: latest-version fetch, apply worker, auto-install (toolkit-agnostic) |
-| `addons_controller.py` | Addons panel: catalog scan, git install worker, auto-install (toolkit-agnostic) |
-| `settings_controller.py` | Settings/game-folder: folder-change reset, AV exclusion, mirror check, toggles (toolkit-agnostic) |
-| `tweaks_controller.py` | Tweaks panel logic (toolkit-agnostic) |
-| `ui_state.py` | Toolkit-agnostic state dataclasses (Update, News, Mods, Addons, Settings, Tweaks) |
-| `ui_events.py` | Thread-safe event dispatcher shared by both backends |
-| `client_update.py` | Manifest verification, resumable downloads, patching |
-| `mods.py` | Mod registry, release lookup, install/uninstall |
-| `addons.py` | Addon catalog, git commit resolution, archive install, pfUI patch |
-| `tweaks.py` | Tweak definitions, Config.wtf, WoW.exe patch builder |
-| `security_http.py` | TLS context, HTTPS-only enforcement, host allowlists |
-| `config_store.py` | Atomic JSON config/hash-cache persistence |
-| `filesystem.py` | Hashing, path/archive helpers |
-| `helpers.py` | Pure helper functions |
-| `self_update.py` | Updater release checks |
-| `news.py` | News feed fetching |
-| `errors.py` | Human-readable install/update error messages |
-| `log_sink.py` | Thread-safe global log channel |
-| `platform_support.py` | Platform detection, capabilities, per-OS helpers |
-| `ui_metrics.py` | Responsive layout math |
-| `constants.py` | Shared constants and filesystem paths |
+| Package | Responsibility |
+|---------|----------------|
+| `vanilla_wow_launcher.cli` | Entry point; `config_store` wiring, backend selection, window loop |
+| `vanilla_wow_launcher.core` | Constants, config store, TLS/HTTP, filesystem, helpers, logging, platform support, errors |
+| `vanilla_wow_launcher.services` | Mods/addons/news/tweaks/client-update/self-update engines |
+| `vanilla_wow_launcher.controllers` | Toolkit-agnostic orchestration: update, news, mods, addons, settings, tweaks |
+| `vanilla_wow_launcher.state` | `models.py` (state dataclasses) + `events.py` (thread-safe dispatcher) |
+| `vanilla_wow_launcher.ui.qt` | Qt UI: app shell, main window, bridge, theme, panels, dialogs |
 
-### Backend status
+The UI is Qt (PySide6) only — panels, dialogs, footer workflows and the
+startup schedule are covered by tests.
 
-The **Qt (PySide6)** interface is feature-complete: all panels, dialogs,
-footer workflows and the startup schedule are covered by tests. It is the
-only backend.
+### Running
+
+```bash
+uv run vanilla-wow-launcher             # console script
+uv run python -m vanilla_wow_launcher   # equivalent module invocation
+```
 
 ### Testing
 
@@ -331,7 +435,8 @@ The human QA matrix for Qt display scaling is in
 
 ## Support the Developer
 
-If Octo Updater is useful to you, consider supporting its development:
+If Vanilla WoW Launcher is useful to you, consider supporting its
+development:
 
 - 💜 [Ko-fi](https://ko-fi.com/rebased)
 - ☕ [Buy Me a Coffee](https://buymeacoffee.com/rebased)

@@ -18,10 +18,10 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtTest import QTest
 
-from octo_updater.ui.qt.app import create_qt_app
-from octo_updater.ui.qt.bridge import ControllerHub
-from octo_updater.ui.qt.main_window import MainWindow
-from octo_updater.state.events import OperationFailed, OperationFinished, ProgressChanged, StatusChanged
+from vanilla_wow_launcher.ui.qt.app import create_qt_app
+from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
+from vanilla_wow_launcher.ui.qt.main_window import MainWindow
+from vanilla_wow_launcher.state.events import OperationFailed, OperationFinished, ProgressChanged, StatusChanged
 
 
 @pytest.fixture(autouse=True)
@@ -44,7 +44,7 @@ def window(qapp):
 
 
 def test_construction_sets_title_and_default_tab(qapp, window):
-    assert window.windowTitle() == "Octo Updater"
+    assert window.windowTitle() == "Vanilla WoW Launcher"
     assert window._stack.count() == 4
     assert window._pages == {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
     assert window._stack.currentIndex() == 0
@@ -96,7 +96,7 @@ def test_progress_bar_hides_when_idle(qapp, window):
 def test_operation_events_flip_button_state(qapp, window, monkeypatch):
     hub = window._hub
     # The client can only be PLAY-launched where the Windows client runs.
-    import octo_updater.controllers.update as update_controller
+    import vanilla_wow_launcher.controllers.update as update_controller
     monkeypatch.setattr(update_controller, "can_launch_client", lambda: True)
     assert window._updateButton.text() == "UPDATE"
 

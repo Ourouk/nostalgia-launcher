@@ -11,17 +11,17 @@ import time
 
 import pytest
 
-import octo_updater.services.client_update as client_update
-import octo_updater.controllers.mods as mc
-from octo_updater.controllers.mods import ModsController
-from octo_updater.state.events import (
+import vanilla_wow_launcher.services.client_update as client_update
+import vanilla_wow_launcher.controllers.mods as mc
+from vanilla_wow_launcher.controllers.mods import ModsController
+from vanilla_wow_launcher.state.events import (
     EventDispatcher,
     LogMessage,
     ModsLoaded,
     OperationFinished,
     StatusChanged,
 )
-from octo_updater.state.models import ModPending
+from vanilla_wow_launcher.state.models import ModPending
 
 # Small synthetic registry so tests don't depend on the real one.
 MOD_A = {
@@ -58,7 +58,8 @@ class FakeUpdateWorker:
 
 @pytest.fixture
 def registry(monkeypatch):
-    monkeypatch.setattr(mc.mods, "MODS_REGISTRY", [MOD_A, MOD_B])
+    monkeypatch.setattr(mc.mods, "mods_registry",
+                        lambda *a, **k: [MOD_A, MOD_B])
     monkeypatch.setattr(client_update, "UpdateWorker", FakeUpdateWorker)
 
 

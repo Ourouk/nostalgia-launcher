@@ -10,9 +10,9 @@ import time
 
 import pytest
 
-import octo_updater.controllers.settings as sc
-from octo_updater.controllers.settings import SettingsController
-from octo_updater.state.events import (
+import vanilla_wow_launcher.controllers.settings as sc
+from vanilla_wow_launcher.controllers.settings import SettingsController
+from vanilla_wow_launcher.state.events import (
     EventDispatcher,
     LogMessage,
     MirrorStatusChanged,
@@ -37,6 +37,8 @@ class _FakeMods:
         self.resets = 0
         self.toggled = []
         self.applied = 0
+        self.invalidated = 0
+        self.reloaded = 0
         self.state = _FakeModsState()
 
     def reset(self):
@@ -48,12 +50,20 @@ class _FakeMods:
     def apply(self, only_mod_id=None):
         self.applied += 1
 
+    def invalidate(self):
+        self.invalidated += 1
+
+    def load_latest_versions(self):
+        self.reloaded += 1
+
 
 class _FakeAddons:
     def __init__(self):
         self.resets = 0
         self.applied = 0
         self.applied_recs = []
+        self.invalidated = 0
+        self.verify_calls = 0
         self.state = _FakeAddonsState()
 
     def reset(self):
@@ -62,6 +72,13 @@ class _FakeAddons:
     def apply(self, recs):
         self.applied += 1
         self.applied_recs.append(recs)
+
+    def invalidate(self):
+        self.invalidated += 1
+
+    def verify(self, **kwargs):
+        self.verify_calls += 1
+        return True
 
 
 class _FakeNews:
@@ -288,7 +305,7 @@ def test_allow_through_antivirus_on_windows(controller, monkeypatch):
                         lambda: True)
     monkeypatch.setattr(ctypes, "windll", SimpleNamespace(shell32=shell),
                         raising=False)
-    controller.state.path = "C:/Games/OctoWoW"
+    controller.state.path = "C:/Games/VanillaWoW"
     controller.state.first_run_av_pending = True
     controller.allow_through_antivirus()
     assert controller.state.first_run_av_pending is False
@@ -310,7 +327,7 @@ def test_allow_through_antivirus_cancelled(controller, monkeypatch):
                         lambda: True)
     monkeypatch.setattr(ctypes, "windll",
                         SimpleNamespace(shell32=_Shell()), raising=False)
-    controller.state.path = "C:/Games/OctoWoW"
+    controller.state.path = "C:/Games/VanillaWoW"
     controller.allow_through_antivirus()
     events = controller._dispatcher.drain()
     assert any("Antivirus exclusion cancelled" in t
@@ -366,7 +383,8 @@ def test_check_mirror_posts_online(controller, monkeypatch):
                         lambda e: isinstance(e, MirrorStatusChanged))
     assert any(isinstance(e, MirrorStatusChanged) and e.ok is True
                and e.text == "online" for e in events)
-    assert controller.mirror_status == "online"
+    assert controller.mirror_statuses == {
+        "Test Server": "online", "Backup": "online"}
 
 
 def test_check_mirror_posts_offline(controller, monkeypatch):
@@ -378,7 +396,12 @@ def test_check_mirror_posts_offline(controller, monkeypatch):
                         lambda e: isinstance(e, MirrorStatusChanged))
     assert any(isinstance(e, MirrorStatusChanged) and e.ok is False
                and e.text == "offline" for e in events)
-    assert controller.mirror_status == "offline"
+    assert controller.mirror_statuses == {
+        "Test Server": "offline", "Backup": "offline"}
+
+
+def test_mirror_names_follow_launcher(controller):
+    assert controller.mirror_names() == ["Test Server", "Backup"]
 
 
 # ── install-missing shortcuts ──────────────────────────────────────────────
@@ -392,8 +415,8 @@ def test_install_missing_essential_mods_delegates(controller, cfg, fakes,
     mods_cfg = {"EssentialA": {"installed_version": "1.0"}}
     monkeypatch.setattr(sc.config_store, "load_config",
                         lambda: {"mods": mods_cfg})
-    monkeypatch.setattr(sc.mods, "MODS_REGISTRY",
-                        [MOD_ESS_A, MOD_ESS_B, MOD_OPT])
+    monkeypatch.setattr(sc.mods, "mods_registry",
+                        lambda *a, **k: [MOD_ESS_A, MOD_ESS_B, MOD_OPT])
     monkeypatch.setattr(sc.mods, "mod_installed_files_present",
                         lambda mod, cd: mod["id"] == "EssentialA")
 
@@ -413,7 +436,8 @@ def test_install_missing_essential_mods_noop_when_nothing_missing(
     monkeypatch.setattr(sc.config_store, "load_config",
                         lambda: {"mods": {"EssentialA": {
                             "installed_version": "1.0"}}})
-    monkeypatch.setattr(sc.mods, "MODS_REGISTRY", [MOD_ESS_A])
+    monkeypatch.setattr(sc.mods, "mods_registry",
+                        lambda *a, **k: [MOD_ESS_A])
     monkeypatch.setattr(sc.mods, "mod_installed_files_present",
                         lambda mod, cd: True)
     assert controller.install_missing_essential_mods() is False
@@ -509,3 +533,120 @@ def test_open_url_launches_browser(controller, monkeypatch):
                         lambda url: calls.append(url))
     controller.open_url("https://example.com")
     assert calls == ["https://example.com"]
+
+
+# ── catalog registries ───────────────────────────────────────────────────────
+
+def test_registry_urls_use_launcher_defaults(controller, cfg):
+    assert controller.addons_registry_url() \
+        == "https://launcher.test/api/addons.json"
+    assert controller.mods_registry_url() \
+        == "https://launcher.test/api/mods.json"
+
+
+def test_set_registry_url_persists(controller, cfg):
+    assert controller.set_addons_registry_url(
+        "https://example.com/addons.json") is None
+    assert cfg["addons_registry_url"] == "https://example.com/addons.json"
+    assert controller.set_mods_registry_url(
+        "https://example.com/mods.json") is None
+    assert cfg["mods_registry_url"] == "https://example.com/mods.json"
+
+
+def test_set_registry_url_rejects_insecure(controller, cfg):
+    err = controller.set_addons_registry_url("http://example.com/x")
+    assert err is not None
+    assert "addons_registry_url" not in cfg
+
+
+def test_reset_registry_url(controller, cfg):
+    cfg["addons_registry_url"] = "https://example.com/a.json"
+    cfg["mods_registry_url"] = "https://example.com/m.json"
+    controller.reset_addons_registry_url()
+    controller.reset_mods_registry_url()
+    assert "addons_registry_url" not in cfg
+    assert "mods_registry_url" not in cfg
+    events = controller._dispatcher.drain()
+    assert any("reset to default" in t for t in _log_texts(events))
+
+
+def test_reload_addons_registry_fetches_and_rescans(controller, cfg, fakes,
+                                                    monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        sc.addons, "fetch_addons_catalog",
+        lambda force=False: calls.append(force) or
+        [{"name": "Foo", "git": "https://github.com/x/y"}])
+    controller.reload_addons_registry()
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, LogMessage)
+               and "✓ Addon catalog reloaded" in e.text)
+    assert calls == [True]
+    assert fakes.addons.invalidated == 1
+    assert fakes.addons.verify_calls == 1
+
+
+def test_reload_addons_registry_failure_logs(controller, cfg, fakes,
+                                             monkeypatch):
+    def boom(force=False):
+        raise ConnectionError("offline")
+    monkeypatch.setattr(sc.addons, "fetch_addons_catalog", boom)
+    controller.reload_addons_registry()
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, LogMessage)
+               and "reload failed" in e.text)
+    assert fakes.addons.verify_calls == 0
+
+
+def test_reload_addons_registry_skips_when_busy(controller, cfg, fakes):
+    fakes.addons.state.busy = True
+    controller.reload_addons_registry()
+    events = controller._dispatcher.drain()
+    assert any("finish first" in t for t in _log_texts(events))
+    assert fakes.addons.verify_calls == 0
+
+
+def test_reload_mods_registry_fetches_and_rerenders(controller, cfg, fakes,
+                                                    monkeypatch):
+    calls = []
+    monkeypatch.setattr(sc.mods, "fetch_mods_catalog",
+                        lambda force=False: calls.append(force) or [])
+    controller.reload_mods_registry()
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, LogMessage)
+               and "✓ Mod catalog reloaded" in e.text)
+    assert calls == [True]
+    assert fakes.mods.invalidated == 1
+    assert fakes.mods.reloaded == 1
+
+
+def test_reload_mods_registry_failure_logs(controller, cfg, fakes,
+                                           monkeypatch):
+    def boom(force=False):
+        raise ConnectionError("offline")
+    monkeypatch.setattr(sc.mods, "fetch_mods_catalog", boom)
+    controller.reload_mods_registry()
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, LogMessage)
+               and "reload failed" in e.text)
+    assert fakes.mods.reloaded == 0
+
+
+def test_open_custom_file_creates_and_opens(controller, fakes, monkeypatch):
+    created = []
+    opened = []
+    monkeypatch.setattr(sc.addons, "open_custom_file",
+                        lambda: created.append(1) or True)
+    monkeypatch.setattr(sc.platform_support, "open_folder",
+                        lambda p: opened.append(p))
+    controller.open_addons_custom_file()
+    assert created == [1]
+    assert opened
+    events = controller._dispatcher.drain()
+    assert any("Created the custom addon file" in t for t in _log_texts(events))
+
+
+def test_clear_custom_addons_logs(controller, monkeypatch):
+    cleared = []
+    monkeypatch.setattr(sc.addons, "clear_custom_file",
+                        lambda: cleared.append(1) or True)
+    controller.clear_addons_custom()
+    assert cleared == [1]
+    events = controller._dispatcher.drain()
+    assert any("Custom addon entries cleared" in t for t in _log_texts(events))

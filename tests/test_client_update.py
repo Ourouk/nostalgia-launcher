@@ -7,8 +7,8 @@ import urllib.request
 
 import pytest
 
-import octo_updater.services.client_update as client_update
-from octo_updater.services.client_update import UpdateWorker, VerifyWorker
+import vanilla_wow_launcher.services.client_update as client_update
+from vanilla_wow_launcher.services.client_update import UpdateWorker, VerifyWorker
 
 
 def _mk_client(tmp_path):
@@ -125,7 +125,7 @@ def test_update_worker_downloads_and_verifies(tmp_path, monkeypatch):
     log_q, prog_q = queue.Queue(), queue.Queue()
     worker = UpdateWorker(str(client), log_q, prog_q)
     import hashlib
-    digest = worker.download("https://octowow.st/client/latest/data.bin",
+    digest = worker.download("https://launcher.test/client/latest/data.bin",
                              str(client / "data.bin"), len(payload))
     assert digest == hashlib.sha1(payload).hexdigest().upper()
     assert (client / "data.bin").read_bytes() == payload
@@ -146,3 +146,54 @@ def test_update_worker_traverse_skips_up_to_date(tmp_path, monkeypatch):
     worker = UpdateWorker(str(client), log_q, prog_q)
     worker.traverse(node, [])
     assert (client / "data.bin").read_bytes() == b"x"
+
+
+# ── mirror failover ──────────────────────────────────────────────────────────
+
+def _resp():
+    return type("R", (), {"__enter__": lambda s: s,
+                          "__exit__": lambda *x: False,
+                          "read": lambda s, n=1: b"{}"[:n]})()
+
+
+def test_download_base_fails_over_to_first_reachable_mirror(monkeypatch):
+    from vanilla_wow_launcher.core import launcher
+    launcher.configure_from_dict({
+        "server": {"base_url": "https://srv.example"},
+        "mirrors": [
+            {"name": "A", "base_url": "https://a.example"},
+            {"name": "B", "base_url": "https://b.example"},
+        ],
+    })
+    calls = []
+
+    def fake_urlopen(req, timeout, allowed_hosts=None):
+        calls.append(req.full_url)
+        if req.full_url.startswith("https://a.example"):
+            raise ConnectionError("down")
+        return _resp()
+
+    monkeypatch.setattr(client_update, "secure_urlopen", fake_urlopen)
+    assert client_update._download_base() == "https://b.example"
+    assert calls[0].startswith("https://a.example")
+    assert calls[1].startswith("https://b.example")
+
+
+def test_download_base_falls_back_to_server_when_all_down(monkeypatch):
+    from vanilla_wow_launcher.core import launcher
+    launcher.configure_from_dict({
+        "server": {"base_url": "https://srv.example"},
+        "mirrors": [{"name": "A", "base_url": "https://a.example"}],
+    })
+
+    def boom(req, timeout, allowed_hosts=None):
+        raise ConnectionError("down")
+
+    monkeypatch.setattr(client_update, "secure_urlopen", boom)
+    assert client_update._download_base() == "https://srv.example"
+
+
+def test_download_base_empty_without_launcher(monkeypatch):
+    from vanilla_wow_launcher.core import launcher
+    launcher.reset()
+    assert client_update._download_base() == ""

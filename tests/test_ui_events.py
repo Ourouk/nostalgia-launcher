@@ -2,7 +2,7 @@
 
 import threading
 
-from octo_updater.state.events import (
+from vanilla_wow_launcher.state.events import (
     AddonsLoaded,
     Event,
     EventDispatcher,

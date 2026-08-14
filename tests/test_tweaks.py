@@ -2,8 +2,8 @@
 
 import struct
 
-import octo_updater.services.tweaks as tweaks
-import octo_updater.core.config_store as config_store
+import vanilla_wow_launcher.services.tweaks as tweaks
+import vanilla_wow_launcher.core.config_store as config_store
 
 
 def test_tweak_limits_cover_all_numeric_items():
@@ -82,7 +82,7 @@ def test_write_config_wtf_writes_file(tmp_path):
     cfg = client / "WTF" / "Config.wtf"
     assert cfg.exists()
     content = cfg.read_text(encoding="utf-8")
-    assert 'SET realmList "octowow.st"' in content
+    assert 'SET realmList "launcher.test"' in content
     assert 'SET farClip "777"' in content
 
 

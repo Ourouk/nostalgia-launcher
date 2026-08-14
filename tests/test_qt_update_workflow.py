@@ -21,12 +21,12 @@ from unittest.mock import Mock
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMessageBox
 
-from octo_updater.ui.qt.app import create_qt_app
-from octo_updater.ui.qt.bridge import ControllerHub
-from octo_updater.ui.qt.main_window import MainWindow
-from octo_updater.ui.qt.theme import Palette
-from octo_updater.state.events import OperationFailed, OperationFinished
-from octo_updater.controllers.update import Readiness
+from vanilla_wow_launcher.ui.qt.app import create_qt_app
+from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
+from vanilla_wow_launcher.ui.qt.main_window import MainWindow
+from vanilla_wow_launcher.ui.qt.theme import Palette
+from vanilla_wow_launcher.state.events import OperationFailed, OperationFinished
+from vanilla_wow_launcher.controllers.update import Readiness
 
 _PLAY = Readiness("play", "PLAY", "Everything up to date!")
 _UPDATE = Readiness("update", "UPDATE", "Update available!")

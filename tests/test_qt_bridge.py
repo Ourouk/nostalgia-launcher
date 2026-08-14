@@ -16,9 +16,9 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtTest import QTest
 
-from octo_updater.ui.qt.app import create_qt_app
-from octo_updater.ui.qt.bridge import ControllerBridge, ControllerHub
-from octo_updater.state.events import (
+from vanilla_wow_launcher.ui.qt.app import create_qt_app
+from vanilla_wow_launcher.ui.qt.bridge import ControllerBridge, ControllerHub
+from vanilla_wow_launcher.state.events import (
     AddonsLoaded,
     EventDispatcher,
     LogMessage,
@@ -30,7 +30,7 @@ from octo_updater.state.events import (
     ProgressChanged,
     StatusChanged,
 )
-from octo_updater.state.models import AddonsState, ModsState
+from vanilla_wow_launcher.state.models import AddonsState, ModsState
 
 
 @pytest.fixture(autouse=True)

@@ -2,7 +2,7 @@
 
 import pytest
 
-from octo_updater.core.helpers import (
+from vanilla_wow_launcher.core.helpers import (
     fmt_size,
     fmt_speed,
     format_news_date,

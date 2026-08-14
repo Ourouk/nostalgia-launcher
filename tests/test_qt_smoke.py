@@ -1,8 +1,8 @@
-"""End-to-end headless Qt smoke suite — the full QtOctoUpdaterApp.
+"""End-to-end headless Qt smoke suite — the full QtVanillaWoWLauncherApp.
 
 QT_QPA_PLATFORM=offscreen is set before PySide6 is imported so the module
 runs without a display. The QApplication is created once and shared through
-the create_qt_app() singleton. Each test builds a real QtOctoUpdaterApp
+the create_qt_app() singleton. Each test builds a real QtVanillaWoWLauncherApp
 (window + ControllerHub + all four panels) with every network/disk backend
 monkeypatched and the config redirected into tmp_path, then drives it through
 the real event loop with QTest.qWait — no display, no network, no filesystem
@@ -25,25 +25,25 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QWidget
 
-import octo_updater.services.addons as addons_module
-import octo_updater.core.config_store as config_store
-import octo_updater.core.constants as constants
-import octo_updater.services.mods as mods_module
-import octo_updater.services.news as news_module
-import octo_updater.controllers.news as news_controller
-import octo_updater.core.platform_support as platform_support
-import octo_updater.controllers.settings as settings_controller
-import octo_updater.controllers.update as update_controller
-from octo_updater.ui.qt.app import QtOctoUpdaterApp, create_qt_app
-from octo_updater.ui.qt.settings_dialog import SettingsDialog
-from octo_updater.state.events import (
+import vanilla_wow_launcher.services.addons as addons_module
+import vanilla_wow_launcher.core.config_store as config_store
+import vanilla_wow_launcher.core.constants as constants
+import vanilla_wow_launcher.services.mods as mods_module
+import vanilla_wow_launcher.services.news as news_module
+import vanilla_wow_launcher.controllers.news as news_controller
+import vanilla_wow_launcher.core.platform_support as platform_support
+import vanilla_wow_launcher.controllers.settings as settings_controller
+import vanilla_wow_launcher.controllers.update as update_controller
+from vanilla_wow_launcher.ui.qt.app import QtVanillaWoWLauncherApp, create_qt_app
+from vanilla_wow_launcher.ui.qt.settings_dialog import SettingsDialog
+from vanilla_wow_launcher.state.events import (
     AddonsLoaded,
     ModsLoaded,
     OperationFinished,
     ProgressChanged,
     StatusChanged,
 )
-from octo_updater.state.models import AddonsState, AddonState, ModsState
+from vanilla_wow_launcher.state.models import AddonsState, AddonState, ModsState
 
 
 @pytest.fixture(autouse=True)
@@ -90,6 +90,12 @@ def qt_env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(mods_module, "fetch_mod_latest_version_cached",
                         lambda mod, force=False: "1.2.3")
+    monkeypatch.setattr(mods_module, "mods_registry", lambda *a, **k: [
+        {"id": "VanillaFixes", "name": "VanillaFixes", "essential": True,
+         "description": "Fixes stutter", "repo_url": "https://example.invalid/vf",
+         "source": {"kind": "github_release", "owner": "o", "repo": "r",
+                    "asset_pattern": "*.zip", "prefer_no": None,
+                    "extract_map": None}}])
 
     catalog = [{"name": "pfUI", "git": "https://github.com/brues-code/pfUI",
                 "branch": "master", "ref": "HEAD", "toc": {},
@@ -117,7 +123,7 @@ def qt_env(monkeypatch, tmp_path):
 
 @pytest.fixture()
 def build_app(qapp, monkeypatch, qt_env):
-    """A factory for full QtOctoUpdaterApp instances with safe backends.
+    """A factory for full QtVanillaWoWLauncherApp instances with safe backends.
 
     A non-first-run config is pre-seeded with the game folder and the flags
     that arm the background mod/addon checks, so the whole startup schedule
@@ -133,7 +139,7 @@ def build_app(qapp, monkeypatch, qt_env):
                                       {"timestamp": 0, "release": {}}},
                 "addons": {},
             })
-        app = QtOctoUpdaterApp()
+        app = QtVanillaWoWLauncherApp()
         app._window.show()
         hub = app._hub
         monkeypatch.setattr(hub.updater, "start_verify", Mock())
@@ -178,7 +184,7 @@ def _wait_until(predicate, timeout_ms=4000):
 
 def test_construction_builds_full_app(qapp, app):
     win = app._window
-    assert win.windowTitle() == "Octo Updater"
+    assert win.windowTitle() == "Vanilla WoW Launcher"
     assert win._stack.count() == 4
     assert win._pages == {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
     assert win._stack.currentIndex() == 0

@@ -1,13 +1,14 @@
 # Per-user runtime state
-octo_updater_config.json
-octo_updater_hash_cache.json
+vanilla_wow_launcher_config.json
+vanilla_wow_launcher_hash_cache.json
 *.tmp
 # Default game folder (created next to the app on first use)
-OctoWoW/
+VanillaWoW/
 
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
 .pytest_cache/
 
@@ -16,8 +17,8 @@ build/
 dist/
 *.AppImage
 *.spec
-!OctoUpdater.spec
-!OctoUpdater-linux.spec
+!VanillaWoWLauncher.spec
+!VanillaWoWLauncher-linux.spec
 
 # Local editor / OS files
 .vscode/

@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-import octo_updater.core.config_store as config_store
+import vanilla_wow_launcher.core.config_store as config_store
 
 
 @pytest.fixture(autouse=True)
@@ -95,11 +95,11 @@ def test_concurrent_update_config_no_key_loss():
 
 def test_configure_migrates_legacy_config(tmp_path):
     """A legacy config next to the executable is copied on first use."""
-    legacy = tmp_path / "legacy" / "octo_updater_config.json"
+    legacy = tmp_path / "legacy" / "vanilla_wow_launcher_config.json"
     legacy.parent.mkdir()
     legacy.write_text('{"out_dir": "/games"}')
 
-    new = tmp_path / "new" / "octo_updater_config.json"
+    new = tmp_path / "new" / "vanilla_wow_launcher_config.json"
     cache = tmp_path / "new" / "hash_cache.json"
 
     config_store.configure(str(new), str(cache), str(legacy), "")
@@ -137,7 +137,7 @@ def test_save_config_creates_parent_dir(tmp_path):
 
 def test_configure_migrates_legacy_cache(tmp_path):
     """A legacy hash cache next to the executable is copied on first use."""
-    legacy = tmp_path / "legacy" / "octo_updater_hash_cache.json"
+    legacy = tmp_path / "legacy" / "vanilla_wow_launcher_hash_cache.json"
     legacy.parent.mkdir()
     legacy.write_text('{"/f": ["a"]}')
 

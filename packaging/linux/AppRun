@@ -3,4 +3,4 @@
 # be mounted read-only and from anywhere, so always resolve relative to the
 # launcher's own real path (readlink -f) rather than $PWD.
 HERE="$(dirname "$(readlink -f "$0")")"
-exec "$HERE/usr/bin/OctoUpdater" "$@"
+exec "$HERE/usr/bin/VanillaWoWLauncher" "$@"

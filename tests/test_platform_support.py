@@ -7,8 +7,8 @@ import unittest.mock as mock
 
 import pytest
 
-import octo_updater.core.platform_support as platform_support
-from octo_updater.core.platform_support import (
+import vanilla_wow_launcher.core.platform_support as platform_support
+from vanilla_wow_launcher.core.platform_support import (
     can_launch_client,
     can_manage_antivirus,
     can_patch_client,
@@ -79,33 +79,33 @@ def test_config_dir_windows_uses_app_dir(fake_platform, monkeypatch, tmp_path):
 def test_config_dir_linux_uses_xdg(fake_platform, monkeypatch, tmp_path):
     fake_platform("linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    assert config_dir() == str(tmp_path / "xdg" / "octo-updater")
+    assert config_dir() == str(tmp_path / "xdg" / "vanilla-wow-launcher")
 
 
 def test_config_dir_linux_falls_back_to_home(fake_platform, monkeypatch):
     fake_platform("linux")
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setenv("HOME", "/home/user")
-    assert config_dir() == "/home/user/.config/octo-updater"
+    assert config_dir() == "/home/user/.config/vanilla-wow-launcher"
 
 
 def test_config_dir_macos_application_support(fake_platform, monkeypatch):
     fake_platform("darwin")
     monkeypatch.setenv("HOME", "/Users/user")
     assert config_dir() == \
-        "/Users/user/Library/Application Support/OctoUpdater"
+        "/Users/user/Library/Application Support/VanillaWoWLauncher"
 
 
 def test_cache_dir_macos(fake_platform, monkeypatch):
     fake_platform("darwin")
     monkeypatch.setenv("HOME", "/Users/user")
-    assert cache_dir() == "/Users/user/Library/Caches/OctoUpdater"
+    assert cache_dir() == "/Users/user/Library/Caches/VanillaWoWLauncher"
 
 
 def test_default_out_dir_non_windows_writable(fake_platform, monkeypatch):
     fake_platform("linux")
     monkeypatch.setenv("HOME", "/home/user")
-    assert default_out_dir() == "/home/user/OctoWoW"
+    assert default_out_dir() == "/home/user/VanillaWoW"
 
 
 # ── open_folder ─────────────────────────────────────────────────────────────

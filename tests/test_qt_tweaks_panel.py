@@ -19,13 +19,13 @@ from unittest.mock import Mock
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QLineEdit
 
-import octo_updater.services.tweaks as tweaks
-import octo_updater.controllers.tweaks as tc
-from octo_updater.ui.qt.app import create_qt_app
-from octo_updater.ui.qt.bridge import ControllerHub
-from octo_updater.ui.qt.main_window import MainWindow
-from octo_updater.ui.qt.tweaks_panel import TweaksPanel
-from octo_updater.services.tweaks import TWEAKS_DEFAULTS
+import vanilla_wow_launcher.services.tweaks as tweaks
+import vanilla_wow_launcher.controllers.tweaks as tc
+from vanilla_wow_launcher.ui.qt.app import create_qt_app
+from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
+from vanilla_wow_launcher.ui.qt.main_window import MainWindow
+from vanilla_wow_launcher.ui.qt.tweaks_panel import TweaksPanel
+from vanilla_wow_launcher.services.tweaks import TWEAKS_DEFAULTS
 
 
 @pytest.fixture(autouse=True)

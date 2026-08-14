@@ -3,7 +3,7 @@
 import pathlib
 import tomllib
 
-from octo_updater.core.constants import UPDATER_VERSION
+from vanilla_wow_launcher.core.constants import UPDATER_VERSION
 
 
 def test_updater_version_matches_pyproject():

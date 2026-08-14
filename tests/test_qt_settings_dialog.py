@@ -30,13 +30,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import octo_updater.core.platform_support as platform_support
-from octo_updater.ui.qt.app import create_qt_app
-from octo_updater.ui.qt.bridge import ControllerHub
-from octo_updater.ui.qt.main_window import MainWindow
-from octo_updater.ui.qt.theme import Palette
-from octo_updater.ui.qt.settings_dialog import SettingsDialog
-from octo_updater.state.events import MirrorStatusChanged
+import vanilla_wow_launcher.core.platform_support as platform_support
+from vanilla_wow_launcher.ui.qt.app import create_qt_app
+from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
+from vanilla_wow_launcher.ui.qt.main_window import MainWindow
+from vanilla_wow_launcher.ui.qt.theme import Palette
+from vanilla_wow_launcher.ui.qt.settings_dialog import SettingsDialog
+from vanilla_wow_launcher.state.events import MirrorStatusChanged
 
 
 @pytest.fixture(autouse=True)
@@ -81,7 +81,7 @@ def test_gear_opens_settings_dialog(qapp, window):
     assert dialog.isVisible()
     assert dialog.windowTitle() == "Settings"
     for name in ("settingsPath", "settingsChange", "settingsOpenFolder",
-                 "settingsMirrorStatus", "settingsMirrorRefresh",
+                 "settingsMirrorRefresh",
                  "settingsVerify", "settingsLogs", "settingsKoFi",
                  "settingsBmc", "settingsClose", "settingsAutoMods",
                  "settingsAutoAddons"):
@@ -140,29 +140,43 @@ def test_change_cancelled_leaves_path(qapp, window, monkeypatch):
     assert (dialog.findChild(QLineEdit, "settingsPath").text() == before)
 
 
-# ── download mirror ─────────────────────────────────────────────────────
+# ── download mirrors ─────────────────────────────────────────────────────
+
+def test_mirror_rows_render_configured_sources(qapp, window):
+    hub = window._hub
+    dialog = _open(window)
+    assert dialog.findChild(QLabel, "settingsMirrorStatus_Test Server") \
+        is not None
+    assert dialog.findChild(QLabel, "settingsMirrorStatus_Backup") \
+        is not None
+    assert hub.settings.mirror_names() == ["Test Server", "Backup"]
+
 
 def test_mirror_status_renders_initial_state(qapp, window):
     hub = window._hub
-    hub.settings.mirror_status = "online"
+    hub.settings.mirror_statuses = {"Test Server": "online"}
     dialog = _open(window)
-    status = dialog.findChild(QLabel, "settingsMirrorStatus")
+    status = dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
     assert status.text() == "online"
     p = Palette()
     assert p.ok.name() in status.styleSheet()
 
 
 def test_mirror_status_updates_on_event(qapp, window):
-    dialog = _open(window)
-    status = dialog.findChild(QLabel, "settingsMirrorStatus")
     hub = window._hub
+    dialog = _open(window)
+    status = dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
     p = Palette()
 
+    hub.settings.mirror_statuses = {"Test Server": "online",
+                                    "Backup": "offline"}
     hub.dispatcher.post(MirrorStatusChanged(True, "online"))
     QTest.qWait(200)
     assert status.text() == "online"
     assert p.ok.name() in status.styleSheet()
 
+    hub.settings.mirror_statuses = {"Test Server": "offline",
+                                    "Backup": "offline"}
     hub.dispatcher.post(MirrorStatusChanged(False, "offline"))
     QTest.qWait(200)
     assert status.text() == "offline"
@@ -176,7 +190,7 @@ def test_mirror_refresh_calls_check_mirror(qapp, window, monkeypatch):
     dialog = _open(window)
     dialog.findChild(QToolButton, "settingsMirrorRefresh").click()
     check.assert_called_once()
-    assert (dialog.findChild(QLabel, "settingsMirrorStatus").text()
+    assert (dialog.findChild(QLabel, "settingsMirrorStatus_Test Server").text()
             == "checking…")
 
 
@@ -332,3 +346,104 @@ def test_close_triggers_pending_auto_install(qapp, window, monkeypatch):
     mods_install.assert_called_once()
     addons_install.assert_called_once()
     assert not dialog.isVisible()
+
+
+# ── catalog registries ───────────────────────────────────────────────────────
+
+def test_registry_section_widgets_present(qapp, window):
+    dialog = _open(window)
+    for name in ("settingsAddonRegistryUrl", "settingsAddonRegistryApply",
+                 "settingsAddonRegistryReload", "settingsAddonRegistryReset",
+                 "settingsAddonRegistryOpenCustom",
+                 "settingsAddonRegistryClearCustom",
+                 "settingsModRegistryUrl", "settingsModRegistryApply",
+                 "settingsModRegistryReload", "settingsModRegistryReset",
+                 "settingsModRegistryOpenCustom",
+                 "settingsModRegistryClearCustom",
+                 "settingsRegistryStatus"):
+        assert dialog.findChild(QWidget, name) is not None, name
+
+
+def test_registry_url_fields_prefilled(qapp, window):
+    hub = window._hub
+    dialog = _open(window)
+    addon_edit = dialog.findChild(QLineEdit, "settingsAddonRegistryUrl")
+    mod_edit = dialog.findChild(QLineEdit, "settingsModRegistryUrl")
+    assert addon_edit.text() == hub.settings.addons_registry_url()
+    assert mod_edit.text() == hub.settings.mods_registry_url()
+
+
+def test_registry_apply_calls_set_and_clears_status(qapp, window,
+                                                    monkeypatch):
+    hub = window._hub
+    set_url = Mock(return_value=None)
+    monkeypatch.setattr(hub.settings, "set_addons_registry_url", set_url)
+    dialog = _open(window)
+    edit = dialog.findChild(QLineEdit, "settingsAddonRegistryUrl")
+    edit.setText("https://example.com/addons.json")
+    QTest.mouseClick(
+        dialog.findChild(QPushButton, "settingsAddonRegistryApply"),
+        Qt.LeftButton)
+    set_url.assert_called_once_with("https://example.com/addons.json")
+    assert (dialog.findChild(QLabel, "settingsRegistryStatus").text() == "")
+
+
+def test_registry_apply_shows_error(qapp, window, monkeypatch):
+    hub = window._hub
+    set_url = Mock(return_value="Catalog URL must use https.")
+    monkeypatch.setattr(hub.settings, "set_addons_registry_url", set_url)
+    dialog = _open(window)
+    QTest.mouseClick(
+        dialog.findChild(QPushButton, "settingsAddonRegistryApply"),
+        Qt.LeftButton)
+    assert "https" in dialog.findChild(
+        QLabel, "settingsRegistryStatus").text()
+
+
+def test_registry_reset_calls_reset_and_refills(qapp, window, monkeypatch):
+    hub = window._hub
+    reset = Mock()
+    monkeypatch.setattr(hub.settings, "reset_addons_registry_url", reset)
+    monkeypatch.setattr(
+        hub.settings, "addons_registry_url",
+        lambda: "https://launcher.test/api/addons.json")
+    dialog = _open(window)
+    QTest.mouseClick(
+        dialog.findChild(QToolButton, "settingsAddonRegistryReset"),
+        Qt.LeftButton)
+    reset.assert_called_once()
+    assert (dialog.findChild(QLineEdit, "settingsAddonRegistryUrl").text()
+            == "https://launcher.test/api/addons.json")
+
+
+def test_registry_reload_calls_reload(qapp, window, monkeypatch):
+    hub = window._hub
+    reload = Mock()
+    monkeypatch.setattr(hub.settings, "reload_mods_registry", reload)
+    dialog = _open(window)
+    QTest.mouseClick(
+        dialog.findChild(QToolButton, "settingsModRegistryReload"),
+        Qt.LeftButton)
+    reload.assert_called_once()
+
+
+def test_registry_open_custom_calls_open(qapp, window, monkeypatch):
+    hub = window._hub
+    open_custom = Mock()
+    monkeypatch.setattr(hub.settings, "open_addons_custom_file", open_custom)
+    dialog = _open(window)
+    QTest.mouseClick(
+        dialog.findChild(QWidget, "settingsAddonRegistryOpenCustom"),
+        Qt.LeftButton)
+    open_custom.assert_called_once()
+
+
+def test_registry_clear_custom_calls_clear(qapp, window, monkeypatch):
+    hub = window._hub
+    clear_custom = Mock()
+    monkeypatch.setattr(hub.settings, "clear_mods_custom", clear_custom)
+    dialog = _open(window)
+    QTest.mouseClick(
+        dialog.findChild(QWidget, "settingsModRegistryClearCustom"),
+        Qt.LeftButton)
+    clear_custom.assert_called_once()

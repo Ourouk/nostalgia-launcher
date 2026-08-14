@@ -10,10 +10,10 @@ import time
 
 import pytest
 
-import octo_updater.controllers.tweaks as tc
-from octo_updater.services.tweaks import TWEAKS_DEFAULTS, fov_default_for_display
-from octo_updater.controllers.tweaks import TweaksController
-from octo_updater.state.events import (
+import vanilla_wow_launcher.controllers.tweaks as tc
+from vanilla_wow_launcher.services.tweaks import TWEAKS_DEFAULTS, fov_default_for_display
+from vanilla_wow_launcher.controllers.tweaks import TweaksController
+from vanilla_wow_launcher.state.events import (
     EventDispatcher,
     LogMessage,
     OperationFinished,

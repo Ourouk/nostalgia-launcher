@@ -11,9 +11,9 @@ import time
 
 import pytest
 
-import octo_updater.controllers.update as uc
-from octo_updater.controllers.update import UpdateController
-from octo_updater.state.events import (
+import vanilla_wow_launcher.controllers.update as uc
+from vanilla_wow_launcher.controllers.update import UpdateController
+from vanilla_wow_launcher.state.events import (
     EventDispatcher,
     LogMessage,
     OperationFailed,
