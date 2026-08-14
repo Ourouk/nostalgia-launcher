@@ -7,8 +7,10 @@ own server.
 
 The file is `vanilla_wow_launcher.json`, discovered next to the executable
 (frozen) or in the repo root (running from source), or passed explicitly via
-``--launcher-config``. Only ``server.base_url`` is required; every other URL
-is derived from it unless overridden:
+``--launcher-config``. A configuration chosen through the first-launch wizard
+is persisted into the per-user config directory and takes precedence over
+auto-discovery on later runs. Only ``server.base_url`` is required; every
+other URL is derived from it unless overridden:
 
     {
       "server": {
@@ -44,11 +46,13 @@ its download allowlist from the configured hosts.
 import json
 import os
 import sys
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from .log_sink import log
+from .platform_support import config_dir
 
 LAUNCHER_FILE = "vanilla_wow_launcher.json"
 
@@ -192,6 +196,48 @@ def discover_path() -> str:
     return ""
 
 
+def user_config_path() -> str:
+    """The per-user launcher-config file, where a first-launch selection is
+    persisted so future launches reuse it (lives in the OS config dir)."""
+    return os.path.join(config_dir(), LAUNCHER_FILE)
+
+
+def _auto_path() -> str:
+    """The configuration to use when no explicit path was given: the
+    previously imported per-user file, else the auto-discovered one."""
+    user = user_config_path()
+    if os.path.exists(user):
+        return user
+    return discover_path()
+
+
+def persist(path: str) -> tuple[str, str]:
+    """Copy a validated launcher config into the per-user directory, writing
+    atomically (temp file + rename). Returns (destination, error); exactly
+    one is set."""
+    dest = user_config_path()
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = f.read()
+        json.loads(raw)  # don't trust a truncated/unparseable file
+        directory = os.path.dirname(dest) or "."
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
+        try:
+            os.close(fd)
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(raw)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, dest)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+    except Exception as e:
+        return "", f"Could not save the launcher configuration: {e}"
+    return dest, ""
+
+
 def validate_path(path: str) -> tuple["LauncherConfig | None", str]:
     """Validate a launcher config file WITHOUT storing it as the active config.
     Returns (config, error); exactly one is set. Never touches module globals."""
@@ -208,7 +254,7 @@ def configure(path: str | None = None) -> tuple["LauncherConfig | None", str]:
     auto-discovered file). Returns (config, error); exactly one is set."""
     global _config, _path, _error
     with _LOCK:
-        path = path or discover_path()
+        path = path or _auto_path()
         if not path:
             _config, _path, _error = None, "", (
                 f"No {LAUNCHER_FILE} found. A launcher configuration is "

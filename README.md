@@ -178,9 +178,10 @@ keeps them:
 |------|---------|
 | `vanilla_wow_launcher_config.json` | Settings, mod/addon install records, caches |
 | `vanilla_wow_launcher_hash_cache.json` | Per-file SHA-1 cache to speed up verifies |
+| `vanilla_wow_launcher.json` | The server config chosen via the first-launch wizard, persisted here and reused on later runs |
 
-Both are safe to delete — they'll be recreated (deleting the config re-runs
-first-time setup).
+The first two are safe to delete — they'll be recreated (deleting the config
+re-runs first-time setup).
 
 ### Launcher configuration
 
@@ -188,15 +189,18 @@ The app ships with **no hardcoded server, mirror or mod/addon list**. All of
 it comes from a single JSON file, `vanilla_wow_launcher.json`, that a
 distribution provides:
 
-- next to the executable (a packaged build), or in the repo root (running
-  from source), or passed explicitly with `--launcher-config PATH`.
+- next to the executable (a packaged build), in the repo root (running from
+  source), or passed explicitly with `--launcher-config PATH`.
+- On first launch, if none is found, a wizard asks you to pick one; the
+  chosen file is copied into the per-user config directory and reused on
+  every later launch (until you pass `--launcher-config` again).
 
 The app exits at startup with a clear message if it can't find one. Only
 `server.base_url` is required — every other endpoint is derived from it
 unless overridden, and mirrors are optional.
 
 A real, working example is bundled at
-[`examples/vanilla_wow_launcher.json`](examples/vanilla_wow_launcher.json) —
+[`examples/octowow.json`](examples/octowow.json) —
 copy it to the repo root (or pass it via `--launcher-config`) and edit the
 URLs to match your server:
 

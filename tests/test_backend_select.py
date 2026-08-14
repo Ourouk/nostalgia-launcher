@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+import vanilla_wow_launcher.core.launcher as launcher
 from vanilla_wow_launcher import cli
 
 QT_UNAVAILABLE = "Vanilla WoW Launcher needs PySide6 (Qt) to run"
@@ -21,6 +22,13 @@ def launcher_file(tmp_path):
     path.write_text(json.dumps(
         {"server": {"base_url": "https://launcher.test"}}), encoding="utf-8")
     return str(path)
+
+
+@pytest.fixture
+def no_persisted_config(monkeypatch, tmp_path):
+    """Keep auto-discovery from picking up a real per-user config."""
+    monkeypatch.setattr(launcher, "user_config_path",
+                        lambda: str(tmp_path / "none.json"))
 
 
 def test_resolve_backend_default_is_qt(monkeypatch):
@@ -65,7 +73,7 @@ def test_main_returns_1_for_unknown_backend(monkeypatch, capsys,
 
 
 def test_main_returns_1_without_launcher_config(monkeypatch, capsys,
-                                                tmp_path):
+                                                tmp_path, no_persisted_config):
     monkeypatch.setenv("VANILLA_WOW_UI_BACKEND", "qt")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "_pick_launcher_config", lambda: None)
@@ -75,7 +83,8 @@ def test_main_returns_1_without_launcher_config(monkeypatch, capsys,
 
 
 def test_main_wizard_selection_runs_backend(monkeypatch, capsys,
-                                            launcher_file, tmp_path):
+                                            launcher_file, tmp_path,
+                                            no_persisted_config):
     calls = []
 
     class FakeQtApp:
@@ -90,12 +99,45 @@ def test_main_wizard_selection_runs_backend(monkeypatch, capsys,
             return 0
 
     monkeypatch.setenv("VANILLA_WOW_UI_BACKEND", "qt")
-    monkeypatch.chdir(tmp_path)
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
     monkeypatch.setattr(cli, "_pick_launcher_config",
                         lambda: launcher_file)
     monkeypatch.setattr(cli, "resolve_backend", lambda name: FakeQtApp)
     assert cli.main([]) == 0
     assert calls == ["constructed", "shown", "run"]
+
+
+def test_main_wizard_selection_persists_config(monkeypatch, launcher_file,
+                                               tmp_path):
+    calls = []
+
+    class FakeQtApp:
+        def __init__(self):
+            calls.append("constructed")
+
+        def show(self):
+            calls.append("shown")
+
+        def run(self):
+            calls.append("run")
+            return 0
+
+    dest = tmp_path / "persisted" / "vanilla_wow_launcher.json"
+    monkeypatch.setattr(launcher, "user_config_path", lambda: str(dest))
+    monkeypatch.setenv("VANILLA_WOW_UI_BACKEND", "qt")
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(cli, "_pick_launcher_config",
+                        lambda: launcher_file)
+    monkeypatch.setattr(cli, "resolve_backend", lambda name: FakeQtApp)
+    assert cli.main([]) == 0
+    assert dest.exists()
+    assert json.loads(dest.read_text()) == \
+        {"server": {"base_url": "https://launcher.test"}}
+    assert launcher.config().server_url == "https://launcher.test"
 
 
 def test_main_explicit_bad_config_never_opens_wizard(monkeypatch, capsys,
@@ -109,7 +151,8 @@ def test_main_explicit_bad_config_never_opens_wizard(monkeypatch, capsys,
     assert recorder == []
 
 
-def test_main_wizard_qt_import_failure(monkeypatch, capsys, tmp_path):
+def test_main_wizard_qt_import_failure(monkeypatch, capsys, tmp_path,
+                                       no_persisted_config):
     monkeypatch.setenv("VANILLA_WOW_UI_BACKEND", "qt")
     monkeypatch.chdir(tmp_path)
 

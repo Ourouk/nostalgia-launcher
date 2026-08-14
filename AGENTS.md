@@ -55,9 +55,12 @@ src/vanilla_wow_launcher/
   opens a **modal first-launch wizard** (`ui/qt/launcher_config_dialog.py`,
   driven by `cli._pick_launcher_config()`); an explicit `--launcher-config`
   that is missing/invalid is a hard `cli.main()` error (no wizard). The wizard
-  validates via `launcher.validate_path()` (no global-state side effect). The
-  download host allowlist (`security_http.allowed_download_hosts()`) is built
-  from the launcher's server+mirror hosts plus the git hosts.
+  validates via `launcher.validate_path()` (no global-state side effect) and
+  the selection is persisted to `launcher.user_config_path()` (the per-user
+  config dir) via `launcher.persist()`, taking precedence over auto-discovery
+  on later runs. The download host allowlist
+  (`security_http.allowed_download_hosts()`) is built from the launcher's
+  server+mirror hosts plus the git hosts.
 - The mods/addons lists come from remote JSON catalogs (`services/catalog.py`
   holds the shared validation/merge logic; the fetch entry points live in
   `services/mods.py` / `services/addons.py`). `mods.mods_registry()` is

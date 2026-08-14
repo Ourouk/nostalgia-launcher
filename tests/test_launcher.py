@@ -118,10 +118,98 @@ def test_configure_invalid_file(tmp_path):
     assert "Invalid launcher configuration" in err
 
 
-def test_configure_missing_returns_error():
+def test_configure_missing_returns_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(launcher, "user_config_path",
+                        lambda: str(tmp_path / "none.json"))
     cfg, err = launcher.configure("")
     assert cfg is None
     assert "required" in err
+
+
+def test_user_config_path_lives_in_config_dir(monkeypatch):
+    monkeypatch.setattr(launcher, "config_dir", lambda: "/cfg")
+    assert launcher.user_config_path() == "/cfg/vanilla_wow_launcher.json"
+
+
+def test_auto_path_prefers_persisted_user_config(monkeypatch, tmp_path):
+    user = tmp_path / "vanilla_wow_launcher.json"
+    user.write_text(json.dumps(
+        {"server": {"base_url": "https://user.example"}}), encoding="utf-8")
+    monkeypatch.setattr(launcher, "user_config_path", lambda: str(user))
+    monkeypatch.setattr(launcher, "discover_path",
+                        lambda: "/elsewhere/config.json")
+    assert launcher._auto_path() == str(user)
+
+
+def test_auto_path_falls_back_to_discovery(monkeypatch, tmp_path):
+    monkeypatch.setattr(launcher, "user_config_path",
+                        lambda: str(tmp_path / "none.json"))
+    monkeypatch.setattr(launcher, "discover_path",
+                        lambda: "/elsewhere/config.json")
+    assert launcher._auto_path() == "/elsewhere/config.json"
+
+
+def test_configure_uses_persisted_user_config(monkeypatch, tmp_path):
+    user = tmp_path / "vanilla_wow_launcher.json"
+    user.write_text(json.dumps(
+        {"server": {"base_url": "https://user.example"}}), encoding="utf-8")
+    monkeypatch.setattr(launcher, "user_config_path", lambda: str(user))
+    monkeypatch.setattr(launcher, "discover_path", lambda: "")
+    cfg, err = launcher.configure("")
+    assert err == ""
+    assert cfg.server_url == "https://user.example"
+
+
+def test_configure_explicit_overrides_persisted(monkeypatch, tmp_path):
+    user = tmp_path / "user.json"
+    user.write_text(json.dumps(
+        {"server": {"base_url": "https://user.example"}}), encoding="utf-8")
+    monkeypatch.setattr(launcher, "user_config_path", lambda: str(user))
+    explicit = tmp_path / "explicit.json"
+    explicit.write_text(json.dumps(
+        {"server": {"base_url": "https://explicit.example"}}), encoding="utf-8")
+    cfg, err = launcher.configure(str(explicit))
+    assert err == ""
+    assert cfg.server_url == "https://explicit.example"
+
+
+def test_persist_copies_config_to_user_path(monkeypatch, tmp_path):
+    src = tmp_path / "src.json"
+    src.write_text(json.dumps(
+        {"server": {"base_url": "https://srv.example"}}), encoding="utf-8")
+    dest = tmp_path / "user" / "vanilla_wow_launcher.json"
+    monkeypatch.setattr(launcher, "user_config_path", lambda: str(dest))
+    got, err = launcher.persist(str(src))
+    assert err == ""
+    assert got == str(dest)
+    assert dest.exists()
+    assert json.loads(dest.read_text()) == \
+        {"server": {"base_url": "https://srv.example"}}
+
+
+def test_persist_rejects_invalid_json(monkeypatch, tmp_path):
+    src = tmp_path / "bad.json"
+    src.write_text("{not json", encoding="utf-8")
+    dest = tmp_path / "dest.json"
+    monkeypatch.setattr(launcher, "user_config_path", lambda: str(dest))
+    got, err = launcher.persist(str(src))
+    assert err
+    assert got == ""
+    assert not dest.exists()
+
+
+def test_persist_reports_write_failure(monkeypatch, tmp_path):
+    src = tmp_path / "src.json"
+    src.write_text(json.dumps(
+        {"server": {"base_url": "https://srv.example"}}), encoding="utf-8")
+
+    def _boom(*a, **k):
+        raise OSError("read-only fs")
+
+    monkeypatch.setattr(launcher.os, "makedirs", _boom)
+    got, err = launcher.persist(str(src))
+    assert err
+    assert got == ""
 
 
 def test_validate_path_valid(tmp_path):

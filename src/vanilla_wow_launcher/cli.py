@@ -76,7 +76,8 @@ def main(argv=None) -> int:
 
 
 def _first_launch() -> int:
-    """No launcher config and no --launcher-config: ask the user to pick one."""
+    """No launcher config and no --launcher-config: ask the user to pick one,
+    then persist it so future launches reuse it."""
     try:
         chosen = _pick_launcher_config()
     except ImportError as e:
@@ -91,6 +92,15 @@ def _first_launch() -> int:
     if err:
         sys.stderr.write(f"{err}\n")
         return 1
+    dest, err = launcher.persist(chosen)
+    if err:
+        sys.stderr.write(f"{err}\n")
+        return 1
+    if os.path.normpath(dest) != os.path.normpath(chosen):
+        _cfg, err = launcher.configure(dest)
+        if err:
+            sys.stderr.write(f"{err}\n")
+            return 1
     return _run_backend()
 
 
