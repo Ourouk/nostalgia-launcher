@@ -25,3 +25,7 @@ dist/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Vendored reference source (third-party, not part of the package)
+context/OctoLauncher/
+
