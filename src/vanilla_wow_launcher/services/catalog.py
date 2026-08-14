@@ -344,6 +344,8 @@ def validate_mod(entry: dict) -> dict | None:
             return None
         mod["source"].update({"kind": "direct_tar", "url": url,
                               "extract_map": emap})
+        if source.get("pinned_version") is not None:
+            mod["source"]["pinned_version"] = str(source["pinned_version"])
 
     register = entry.get("register_dll")
     if register is not None:

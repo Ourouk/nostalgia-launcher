@@ -103,6 +103,16 @@ def test_validate_mod_allowlists_dxvk_hook():
     assert cleaned["source"]["post_install"] == ["write_dxvk_conf"]
 
 
+def test_validate_mod_direct_tar_keeps_pinned_version():
+    cleaned = catalog.validate_mod({
+        "id": "dxvk", "source": {"kind": "direct_tar",
+                                 "url": "https://example.com/dxvk.tar.gz",
+                                 "pinned_version": "v2.7.1-1",
+                                 "extract_map": {"d3d9.dll": "d3d9.dll"}}})
+    assert cleaned is not None
+    assert cleaned["source"]["pinned_version"] == "v2.7.1-1"
+
+
 def test_validate_mod_rejects_path_traversal_dest():
     assert catalog.validate_mod({
         "id": "X", "source": {"kind": "direct_file",

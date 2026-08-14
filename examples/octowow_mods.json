@@ -40,16 +40,14 @@
     "id": "dxvk",
     "essential": true,
     "name": "dxvk",
-    "description": "Enables Vulkan-based rendering for improved performance.",
-    "repo_url": "https://github.com/doitsujin/dxvk",
+    "description": "Enables Vulkan-based rendering mode for better performance.",
+    "repo_url": "https://gitlab.com/Ph42oN/dxvk-gplasync",
     "source": {
-      "kind": "github_release",
-      "owner": "doitsujin",
-      "repo": "dxvk",
-      "asset_pattern": "dxvk-[0-9]*.tar.gz",
-      "prefer_no": "-native",
+      "kind": "direct_tar",
+      "url": "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-v2.7.1-1.tar.gz?ref_type=heads",
+      "pinned_version": "v2.7.1-1",
       "extract_map": {
-        "dxvk-*/x32/d3d9.dll": "d3d9.dll"
+        "dxvk-gplasync-v2.7.1-1/x32/d3d9.dll": "d3d9.dll"
       },
       "post_install": ["write_dxvk_conf"]
     },

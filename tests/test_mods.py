@@ -253,3 +253,8 @@ def test_example_octowow_mods_catalog_validates():
         "transmogfix", "UnitXP_SP3", "VanillaHelpers",
         "VanillaMultiMonitorFix",
     ]
+    dxvk = next(c for c in (catalog.validate_mod(e) for e in raw)
+                if c["id"] == "dxvk")
+    assert dxvk["source"]["kind"] == "direct_tar"
+    assert dxvk["source"]["pinned_version"] == "v2.7.1-1"
+    assert "gitlab.com/Ph42oN/dxvk-gplasync" in dxvk["source"]["url"]
