@@ -83,31 +83,31 @@ class LauncherConfig:
     mods_registry_url: str
     addons_registry_url: str
     realm: str
-    mirrors: list = field(default_factory=list)
+    mirrors: list["Mirror"] = field(default_factory=list)
 
     @property
     def configured(self) -> bool:
         return bool(self.server_url)
 
-    def download_hosts(self) -> set:
+    def download_hosts(self) -> set[str]:
         """Every host the configured server and mirrors may serve from —
         the base URLs plus any custom manifest/client endpoints (e.g. a
         separate CDN host)."""
-        hosts = set()
+        hosts: set[str] = set()
         for url in self._all_urls():
             host = urlsplit(url).hostname
             if host:
                 hosts.add(host)
         return hosts
 
-    def all_bases(self) -> list:
+    def all_bases(self) -> list[str]:
         """The server followed by every mirror's base URL."""
         return [self.server_url] + [m.base_url for m in self.mirrors]
 
-    def _all_urls(self) -> list:
+    def _all_urls(self) -> list[str]:
         """Every endpoint URL the app may contact: base URLs plus the
         resolved manifest/client endpoints of the server and mirrors."""
-        urls = list(self.all_bases())
+        urls: list[str] = list(self.all_bases())
         urls += [self.manifest_url, self.client_url]
         for m in self.mirrors:
             urls += [m.manifest_url, m.client_url]
@@ -122,6 +122,16 @@ def _https_url(value: str) -> str | None:
     if parts.scheme != "https" or not parts.hostname:
         return None
     return url
+
+
+def _default_manifest(base: str) -> str:
+    """The derived manifest endpoint for a base URL (\"latest\" version)."""
+    return base + "/api/file/latest/manifest.json"
+
+
+def _default_client(base: str) -> str:
+    """The derived client-files root for a base URL (\"latest\" version)."""
+    return base + "/client/latest"
 
 
 def _derive(data: dict) -> LauncherConfig:
@@ -155,14 +165,14 @@ def _derive(data: dict) -> LauncherConfig:
             name=(m.get("name") or mhost).strip(),
             base_url=mb,
             manifest_url=_https_url(m.get("manifest_url"))
-            or (mb + "/api/file/latest/manifest.json"),
+            or _default_manifest(mb),
             client_url=_https_url(m.get("client_url"))
-            or (mb + "/client/latest"),
+            or _default_client(mb),
         ))
 
     manifest_url = _https_url(server.get("manifest_url")) \
-        or (base + "/api/file/latest/manifest.json")
-    client_url = _https_url(server.get("client_url")) or (base + "/client/latest")
+        or _default_manifest(base)
+    client_url = _https_url(server.get("client_url")) or _default_client(base)
 
     return LauncherConfig(
         server_name=(server.get("name") or host).strip(),
@@ -213,13 +223,14 @@ def _auto_path() -> str:
 
 def persist(path: str) -> tuple[str, str]:
     """Copy a validated launcher config into the per-user directory, writing
-    atomically (temp file + rename). Returns (destination, error); exactly
-    one is set."""
+    atomically (temp file + rename). Only a semantically valid launcher
+    config (parseable JSON that passes `_derive`) is persisted. Returns
+    (destination, error); exactly one is set."""
     dest = user_config_path()
     try:
         with open(path, encoding="utf-8") as f:
             raw = f.read()
-        json.loads(raw)  # don't trust a truncated/unparseable file
+        _derive(json.loads(raw))  # don't persist truncated/invalid configs
         directory = os.path.dirname(dest) or "."
         os.makedirs(directory, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
@@ -344,6 +355,6 @@ def realm() -> str:
     return c.realm if c else ""
 
 
-def mirrors() -> list:
+def mirrors() -> list["Mirror"]:
     c = config()
     return list(c.mirrors) if c else []

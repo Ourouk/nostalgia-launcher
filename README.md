@@ -166,22 +166,24 @@ uv run vanilla-wow-launcher           # or: uv run python -m vanilla_wow_launche
 ```
 
 Vanilla WoW Launcher needs a
-[`vanilla_wow_launcher.json`](#launcher-configuration) in the repo root (or
-`--launcher-config PATH`) before it will start — there is no built-in server
-or mod/addon list.
+[`vanilla_wow_launcher.json`](#launcher-configuration) before it will start —
+there is no built-in server or mod/addon list. On the very first launch it
+looks next to the executable / in the repo root, and if none is found a
+wizard lets you pick one (which is then remembered for later runs); an
+explicit `--launcher-config PATH` always takes precedence.
 
-The updater writes two JSON files — see
+The app keeps three JSON files — see
 [Configuration location](#configuration-location) for where each platform
-keeps them:
+stores them:
 
 | File | Purpose |
 |------|---------|
+| `vanilla_wow_launcher.json` | The server config (chosen via the wizard or shipped next to the executable); imported by the user, never written by the app |
 | `vanilla_wow_launcher_config.json` | Settings, mod/addon install records, caches |
 | `vanilla_wow_launcher_hash_cache.json` | Per-file SHA-1 cache to speed up verifies |
-| `vanilla_wow_launcher.json` | The server config chosen via the first-launch wizard, persisted here and reused on later runs |
 
-The first two are safe to delete — they'll be recreated (deleting the config
-re-runs first-time setup).
+Deleting `vanilla_wow_launcher.json` (when it was imported) re-runs the
+first-launch wizard; deleting the settings config re-runs first-time setup.
 
 ### Launcher configuration
 
@@ -193,16 +195,14 @@ distribution provides:
   source), or passed explicitly with `--launcher-config PATH`.
 - On first launch, if none is found, a wizard asks you to pick one; the
   chosen file is copied into the per-user config directory and reused on
-  every later launch (until you pass `--launcher-config` again).
+  every later launch (until you pass `--launcher-config` again). An explicit
+  `--launcher-config` that is missing/invalid is a hard error — the wizard is
+  never shown for an explicit path.
 
-The app exits at startup with a clear message if it can't find one. Only
-`server.base_url` is required — every other endpoint is derived from it
-unless overridden, and mirrors are optional.
-
-A real, working example is bundled at
-[`examples/octowow.json`](examples/octowow.json) —
-copy it to the repo root (or pass it via `--launcher-config`) and edit the
-URLs to match your server:
+Only `server.base_url` is required — every other endpoint is derived from it
+unless overridden, and mirrors are optional. The manifest and client files
+are fetched from the configured endpoints, so a mirror's `client_url` may
+point at a separate CDN host while the manifest stays on the server:
 
 ```json
 {
@@ -210,16 +210,26 @@ URLs to match your server:
     "name": "My Vanilla WoW Server",
     "base_url": "https://server.example",
     "realm": "server.example",
+    "manifest_url": "https://server.example/api/file/latest/manifest.json",
+    "client_url": "https://server.example/client/latest",
     "news_url": "https://server.example/news",
     "featured_news_url": "https://server.example/news/featured",
     "mods_registry_url": "https://server.example/api/mods.json",
     "addons_registry_url": "https://server.example/api/addons.json"
   },
   "mirrors": [
-    { "name": "Backup", "base_url": "https://mirror.example" }
+    {
+      "name": "Backup",
+      "base_url": "https://mirror.example",
+      "client_url": "https://dl.mirror.example/client/latest"
+    }
   ]
 }
 ```
+
+A real, working example is bundled at
+[`examples/octowow.json`](examples/octowow.json) — copy it to the repo root
+(or pass it via `--launcher-config`) and edit the URLs to match your server.
 
 This configures:
 
@@ -230,7 +240,9 @@ This configures:
 - the **realm** written to `Config.wtf`,
 - the **mod** and **addon** catalogs,
 - the HTTPS download allowlist (built from the configured server + mirror
-  hosts; git hosts are always allowed for addon/mod downloads).
+  hosts plus any custom `manifest_url`/`client_url` endpoints, so a CDN host
+  like `dl.example` is allowed automatically; git hosts are always allowed
+  for addon/mod downloads).
 
 The per-user config (`vanilla_wow_launcher_config.json`) only holds
 preferences and install records — it never overwrites the launcher file.

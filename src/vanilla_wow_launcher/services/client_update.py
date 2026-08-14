@@ -1,9 +1,10 @@
 """Client update engine: manifest verification and incremental update.
 
-`VerifyWorker` fetches the server manifest and reports which files differ.
-`UpdateWorker` downloads (resumably) the changed files, verifies SHA-1s,
-patches WoW.exe, and clears the WDB cache. Both speak to the GUI exclusively
-through the log/progress queues using the documented message protocol.
+`VerifyWorker` fetches the manifest from the selected download source and
+reports which files differ. `UpdateWorker` downloads (resumably) the changed
+files, verifies SHA-1s, patches WoW.exe, and clears the WDB cache. Both speak
+to the GUI exclusively through the log/progress queues using the documented
+message protocol.
 """
 
 import hashlib
@@ -182,7 +183,7 @@ class UpdateWorker:
         self._cache: dict = load_cache()
         self.expected_patched_wow_hash = expected_patched_wow_hash
         self.original_server_wow_hash  = ""
-        self._base = None
+        self._source: DownloadSource | None = None
 
     def cancel(self):
         self._cancel = True
@@ -296,9 +297,11 @@ class UpdateWorker:
     def traverse(self, node, path_parts):
         if self._cancel:
             return
-        if self._base is None:
-            self._base = _download_source()
-        src = self._base
+        if self._source is None:
+            self._source = _download_source()
+        src = self._source
+        if src is None:
+            raise RuntimeError("No download source configured.")
         t    = node["type"]
         name = node["name"]
         cur  = path_parts + [name]
@@ -409,11 +412,11 @@ class UpdateWorker:
             else:
                 self.progress(0.02, "Fetching manifest…")
                 self.log("Fetching manifest.json…")
-                self._base = _download_source()
-                if self._base is None:
+                self._source = _download_source()
+                if self._source is None:
                     raise RuntimeError("No download source configured.")
                 req = urllib.request.Request(
-                    self._base.manifest_url, headers={"User-Agent": UA})
+                    self._source.manifest_url, headers={"User-Agent": UA})
                 with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
                     manifest = json.load(r)
                 self.log("Manifest received.", "ok")

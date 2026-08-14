@@ -31,7 +31,6 @@ from .platform_support import (
 )
 
 UPDATER_VERSION  = "1.2"
-DOWNLOAD_VERSION = "latest"
 UA               = f"VanillaWoWLauncher/{UPDATER_VERSION}"
 DOWNLOAD_RETRY   = 5
 DOWNLOAD_TIMEOUT = 10    # seconds without any data before a transfer aborts

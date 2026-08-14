@@ -140,6 +140,41 @@ def test_main_wizard_selection_persists_config(monkeypatch, launcher_file,
     assert launcher.config().server_url == "https://launcher.test"
 
 
+def test_main_wizard_persistence_failure_aborts(monkeypatch, capsys,
+                                                launcher_file, tmp_path):
+    """If saving the imported config fails, startup aborts and the backend is
+    never constructed."""
+    calls = []
+
+    class FakeQtApp:
+        def __init__(self):
+            calls.append("constructed")
+
+        def show(self):
+            calls.append("shown")
+
+        def run(self):
+            calls.append("run")
+            return 0
+
+    monkeypatch.setattr(launcher, "user_config_path",
+                        lambda: str(tmp_path / "none.json"))
+    monkeypatch.setattr(
+        launcher, "persist",
+        lambda path: ("", "Could not save the launcher configuration: boom"))
+    monkeypatch.setenv("VANILLA_WOW_UI_BACKEND", "qt")
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(cli, "_pick_launcher_config",
+                        lambda: launcher_file)
+    monkeypatch.setattr(cli, "resolve_backend", lambda name: FakeQtApp)
+    assert cli.main([]) == 1
+    assert ("Could not save the launcher configuration"
+            in capsys.readouterr().err)
+    assert calls == []
+
+
 def test_main_explicit_bad_config_never_opens_wizard(monkeypatch, capsys,
                                                      tmp_path):
     recorder = []

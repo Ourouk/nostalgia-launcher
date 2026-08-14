@@ -198,6 +198,31 @@ def test_persist_rejects_invalid_json(monkeypatch, tmp_path):
     assert not dest.exists()
 
 
+def test_persist_rejects_semantically_invalid_config(monkeypatch, tmp_path):
+    """Parseable JSON that isn't a valid launcher config (no server.base_url)
+    must not be persisted."""
+    src = tmp_path / "bad.json"
+    src.write_text(json.dumps({"server": {}}), encoding="utf-8")
+    dest = tmp_path / "dest.json"
+    monkeypatch.setattr(launcher, "user_config_path", lambda: str(dest))
+    got, err = launcher.persist(str(src))
+    assert err
+    assert got == ""
+    assert not dest.exists()
+
+
+def test_auto_path_prefers_invalid_persisted_file_over_discovery(
+        monkeypatch, tmp_path):
+    """An existing persisted file wins over discovery even when invalid, so
+    startup surfaces the corruption instead of silently switching servers."""
+    user = tmp_path / "vanilla_wow_launcher.json"
+    user.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(launcher, "user_config_path", lambda: str(user))
+    monkeypatch.setattr(launcher, "discover_path",
+                        lambda: "/elsewhere/config.json")
+    assert launcher._auto_path() == str(user)
+
+
 def test_persist_reports_write_failure(monkeypatch, tmp_path):
     src = tmp_path / "src.json"
     src.write_text(json.dumps(
