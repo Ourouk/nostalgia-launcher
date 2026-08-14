@@ -419,6 +419,23 @@ The launcher configuration is discovered next to the `.app` bundle (e.g. in
 the DMG root) in addition to the normal locations; game launching and
 `WoW.exe` patching stay disabled on macOS.
 
+### Continuous integration / releases
+
+GitHub Actions builds and ships the launcher (`.github/workflows/`):
+
+- **CI** — on every push/PR: `uv sync --dev` + the full pytest suite.
+- **Release** — on a `v*` tag push (`git tag v1.3 && git push origin v1.3`):
+  builds Windows (onefile exe), Linux (AppImage) and macOS (universal2 DMG)
+  in parallel, verifies the macOS binary contains both `arm64` and `x86_64`
+  via `lipo`, uploads `SHA256SUMS` + the `octowow-config-example.json`
+  sample, and creates a GitHub Release with auto-generated notes.
+
+Linux AppImage tooling (`imagemagick`, `linuxdeploy`) is installed on the
+runner; the macOS job installs a universal2 CPython from python.org so
+PyInstaller can produce a universal2 bundle. Signing/notarization stay
+opt-in — wire the workflow's `CODESIGN_IDENTITY` / `NOTARY_*` env vars to
+repository secrets when you have an Apple Developer account.
+
 ### Notes
 
 - Installing `certifi` before building bundles an up-to-date CA certificate

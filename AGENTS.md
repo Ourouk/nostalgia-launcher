@@ -19,6 +19,7 @@ uv run pytest                    # full suite (508 pass, 3 display-only skips)
 - Windows build: `uv run pyinstaller --noconfirm --clean VanillaWoWLauncher.spec`
 - Linux AppImage: `./packaging/linux/build-appimage.sh` → `dist/VanillaWoWLauncher-$(uname -m).AppImage`
 - macOS DMG (universal2, build on macOS): `./packaging/macos/build-dmg.sh` → `dist/VanillaWoWLauncher-universal2.dmg`
+- CI/CD (GitHub Actions): `ci.yml` = pytest on push/PR; `release.yml` = on `v*` tag push, builds Windows/Linux/macOS and creates a GitHub Release
 - Manual run against a real server config (the only example in the repo):
   `uv run vanilla-wow-launcher --launcher-config examples/octowow.json`
 
