@@ -231,3 +231,25 @@ def test_fetch_updater_latest_tag_stores_result(tmp_path, monkeypatch):
     assert self_update.fetch_updater_latest_tag() == "v3.0.0"
     cache = config_store.load_config()["updater_release_cache"]
     assert cache["tag"] == "v3.0.0"
+
+
+def test_example_octowow_mods_catalog_validates():
+    """The bundled OctoWoW example catalog must load and pass the validator,
+    so the example config's mods_registry_url stays usable."""
+    import vanilla_wow_launcher.services.catalog as catalog
+    path = os.path.join(os.path.dirname(__file__), "..", "examples",
+                        "octowow_mods.json")
+    with open(path, encoding="utf-8") as f:
+        raw = json.load(f)
+    assert isinstance(raw, list)
+    assert len(raw) == 9
+    ids = []
+    for entry in raw:
+        cleaned = catalog.validate_mod(entry)
+        assert cleaned is not None, entry.get("id")
+        ids.append(cleaned["id"])
+    assert ids == [
+        "VanillaFixes", "ClassicAPI", "dxvk", "nampower", "SuperWoW",
+        "transmogfix", "UnitXP_SP3", "VanillaHelpers",
+        "VanillaMultiMonitorFix",
+    ]

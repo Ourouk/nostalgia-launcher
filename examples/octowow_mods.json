@@ -1,0 +1,170 @@
+[
+  {
+    "id": "VanillaFixes",
+    "essential": true,
+    "name": "VanillaFixes",
+    "description": "Eliminates stuttering and animation lag. REQUIRED BY OTHER MODS.",
+    "repo_url": "https://github.com/hannesmann/vanillafixes",
+    "source": {
+      "kind": "github_release",
+      "owner": "hannesmann",
+      "repo": "vanillafixes",
+      "asset_pattern": "vanillafixes-*.zip",
+      "prefer_no": "-dxvk",
+      "extract_map": {
+        "VfPatcher.dll": "VfPatcher.dll",
+        "VanillaFixes.exe": "VanillaFixes.exe"
+      }
+    },
+    "register_dll": "VfPatcher.dll",
+    "installed_files": ["VfPatcher.dll", "VanillaFixes.exe"]
+  },
+  {
+    "id": "ClassicAPI",
+    "essential": true,
+    "name": "ClassicAPI",
+    "description": "Adds Lua API calls from later WoW versions. Required by addons.",
+    "repo_url": "https://github.com/brues-code/ClassicAPI",
+    "source": {
+      "kind": "github_release",
+      "owner": "brues-code",
+      "repo": "ClassicAPI",
+      "asset_pattern": "ClassicAPI.dll",
+      "prefer_no": null,
+      "extract_map": null
+    },
+    "register_dll": "ClassicAPI.dll",
+    "installed_files": ["ClassicAPI.dll"]
+  },
+  {
+    "id": "dxvk",
+    "essential": true,
+    "name": "dxvk",
+    "description": "Enables Vulkan-based rendering for improved performance.",
+    "repo_url": "https://github.com/doitsujin/dxvk",
+    "source": {
+      "kind": "github_release",
+      "owner": "doitsujin",
+      "repo": "dxvk",
+      "asset_pattern": "dxvk-[0-9]*.tar.gz",
+      "prefer_no": "-native",
+      "extract_map": {
+        "dxvk-*/x32/d3d9.dll": "d3d9.dll"
+      },
+      "post_install": ["write_dxvk_conf"]
+    },
+    "register_dll": "dxvk",
+    "installed_files": ["d3d9.dll", "dxvk.conf"]
+  },
+  {
+    "id": "nampower",
+    "essential": true,
+    "name": "nampower",
+    "description": "A client modification that minimizes your input lag if you have higher latency.",
+    "repo_url": "https://github.com/Emyrk/nampower",
+    "source": {
+      "kind": "github_release",
+      "owner": "Emyrk",
+      "repo": "nampower",
+      "asset_pattern": "nampower.dll",
+      "prefer_no": null,
+      "extract_map": null
+    },
+    "register_dll": "nampower.dll",
+    "installed_files": ["nampower.dll"]
+  },
+  {
+    "id": "SuperWoW",
+    "essential": true,
+    "name": "SuperWoW",
+    "description": "Expands the client API with backported features from later WoW versions. Required by addons.",
+    "repo_url": "https://github.com/balakethelock/SuperWoW",
+    "source": {
+      "kind": "github_release",
+      "owner": "balakethelock",
+      "repo": "SuperWoW",
+      "asset_pattern": "SuperWoW*.zip",
+      "prefer_no": null,
+      "version_from": "asset",
+      "extract_map": {
+        "SuperWoWhook.dll": "SuperWoWhook.dll"
+      }
+    },
+    "register_dll": "SuperWoWhook.dll",
+    "installed_files": ["SuperWoWhook.dll"]
+  },
+  {
+    "id": "transmogfix",
+    "essential": true,
+    "name": "transmogfix",
+    "description": "A client-side fix that eliminates frame drops caused by the server transmogrification durability workaround.",
+    "repo_url": "https://codeberg.org/MarcelineVQ/WeirdUtils",
+    "source": {
+      "kind": "direct_file",
+      "url": "https://codeberg.org/MarcelineVQ/WeirdUtils/releases/download/v0.7.0/transmogfix.dll",
+      "dest": "transmogfix.dll",
+      "pinned_version": "v0.7.0"
+    },
+    "register_dll": "transmogfix.dll",
+    "installed_files": ["transmogfix.dll"]
+  },
+  {
+    "id": "UnitXP_SP3",
+    "essential": true,
+    "name": "UnitXP_SP3",
+    "description": "Introduces modern quality-of-life features and improvements.",
+    "repo_url": "https://codeberg.org/konaka/UnitXP_SP3",
+    "source": {
+      "kind": "codeberg_release",
+      "owner": "konaka",
+      "repo": "UnitXP_SP3",
+      "asset_pattern": "UnitXP_SP3 v*.zip",
+      "prefer_no": "-debug",
+      "extract_map": {
+        "UnitXP_SP3.dll": "UnitXP_SP3.dll"
+      }
+    },
+    "register_dll": "UnitXP_SP3.dll",
+    "installed_files": ["UnitXP_SP3.dll"]
+  },
+  {
+    "id": "VanillaHelpers",
+    "essential": true,
+    "name": "VanillaHelpers",
+    "description": "Increases the maximum supported texture resolution and improves memory allocation.",
+    "repo_url": "https://github.com/isfir/VanillaHelpers",
+    "source": {
+      "kind": "github_release",
+      "owner": "isfir",
+      "repo": "VanillaHelpers",
+      "asset_pattern": "VanillaHelpers.dll",
+      "prefer_no": null,
+      "extract_map": null
+    },
+    "register_dll": "VanillaHelpers.dll",
+    "installed_files": ["VanillaHelpers.dll"]
+  },
+  {
+    "id": "VanillaMultiMonitorFix",
+    "essential": false,
+    "name": "VanillaMultiMonitorFix",
+    "description": "Fixes the client misbehaving on multi-monitor setups with differing resolutions.",
+    "repo_url": "https://github.com/Mates1500/VanillaMultiMonitorFix",
+    "source": {
+      "kind": "github_release",
+      "owner": "Mates1500",
+      "repo": "VanillaMultiMonitorFix",
+      "asset_pattern": "release.zip",
+      "prefer_no": null,
+      "extract_map": {
+        "VanillaMultiMonitorFix.dll": "VanillaMultiMonitorFix.dll",
+        "VMMFix_preferred_monitor.txt": "VMMFix_preferred_monitor.txt"
+      }
+    },
+    "register_dll": "VanillaMultiMonitorFix.dll",
+    "installed_files": [
+      "VanillaMultiMonitorFix.dll",
+      "VMMFix_preferred_monitor.txt"
+    ]
+  }
+]
