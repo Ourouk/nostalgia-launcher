@@ -119,6 +119,39 @@ def test_load_latest_versions_skips_failed_fetch(controller, monkeypatch):
     assert controller.state.latest_versions == {}
 
 
+def test_load_latest_versions_fetches_catalog_on_first_launch(
+        controller, monkeypatch, versions):
+    calls = []
+    monkeypatch.setattr(mc.mods, "mods_registry",
+                        lambda *a, **k: calls.append(k) or [MOD_A, MOD_B])
+    controller.load_latest_versions()
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    # No cached catalog → a force fetch runs (the refresh re-reads from cache).
+    assert calls[0] == {"force": True}
+    assert calls.count({"force": True}) == 1
+
+
+def test_load_latest_versions_uses_cache_without_fetching(
+        controller, monkeypatch, cfg, versions):
+    cfg["mods_catalog_cache"] = {"timestamp": 0, "catalog": [{}]}
+    calls = []
+    monkeypatch.setattr(mc.mods, "mods_registry",
+                        lambda *a, **k: calls.append(k) or [MOD_A, MOD_B])
+    controller.load_latest_versions()
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    assert calls == [{}, {}]
+
+
+def test_load_latest_versions_offline_first_launch_stays_empty(
+        controller, monkeypatch, versions):
+    def boom(*a, **k):
+        raise ConnectionError("offline")
+    monkeypatch.setattr(mc.mods, "mods_registry", boom)
+    controller.load_latest_versions()
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    assert controller.state.latest_versions == {}
+
+
 # ── updates_count ──────────────────────────────────────────────────────
 
 def test_updates_count_matches_apply_semantics(controller, versions, cfg):

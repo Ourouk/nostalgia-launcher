@@ -14,6 +14,7 @@ import json
 import io
 import os
 import shutil
+import subprocess
 import time
 import urllib.request
 import zipfile
@@ -221,7 +222,15 @@ def addon_remote_sha(git_url: str, branch=None, ref=None,
                      force=False, raise_errors=False) -> str | None:
     """Latest commit sha of a repo's branch (or pinned ref), cached in the
     config file so repeated verifies don't burn API quota. Returns None on
-    failure — or raises with a readable cause when raise_errors is set."""
+    failure — or raises with a readable cause when raise_errors is set.
+
+    The git hosts' REST APIs are rate-limited from shared IPs (GitHub in
+    particular), so when the API path fails the call falls back to the
+    smart-HTTP endpoint via ``git ls-remote`` — same result, no API quota.
+    Git itself remains optional: without it (or without a reachable remote)
+    the cached sha / None path still applies, so the packaged launcher never
+    hard-depends on a Git executable.
+    """
     key = f"{git_url}#{ref or branch or ''}"
     now = time.time()
     if not force:
@@ -232,6 +241,7 @@ def addon_remote_sha(git_url: str, branch=None, ref=None,
     kind, _repo_url, owner, repo, api = _git_parts(git_url)
     pin = ref or branch          # explicit branch/ref when the caller has one
     sha = None
+    api_error = None
     try:
         if kind == "github":
             if pin:
@@ -256,13 +266,57 @@ def addon_remote_sha(git_url: str, branch=None, ref=None,
             lst = _api_json(f"{api}/repos/{owner}/{repo}/commits{q}")
             sha = lst[0].get("sha") if lst else None
     except Exception as e:
-        if raise_errors:
-            raise RuntimeError(describe_net_error(e)) from e
-        return None
+        api_error = e
+        sha = None
+
+    if not sha:
+        # API failed (rate limit, outage) or returned nothing — fall back to
+        # `git ls-remote` against the repo's smart-HTTP endpoint.
+        sha = _git_ls_remote_sha(git_url, pin)
+
+    if sha is None and raise_errors:
+        cause = api_error or RuntimeError(
+            f"could not resolve remote commit for {git_url}")
+        raise RuntimeError(describe_net_error(cause)) from cause
+
     if sha:
         update_config(lambda c: c.setdefault("addon_sha_cache", {}).__setitem__(
             key, {"timestamp": now, "sha": sha}))
     return sha
+
+
+def _git_ls_remote_sha(git_url: str, pin: str | None) -> str | None:
+    """Latest commit sha via ``git ls-remote`` — the smart-HTTP fallback that
+    sidesteps the git hosts' REST API quota. No clone, no worktree mutation.
+
+    Returns None when git is missing, the command fails/times out, or the
+    requested ref can't be resolved — never raises (a broken git must not
+    take down the addon scan).
+    """
+    args = ["git", "ls-remote", git_url]
+    args.append(pin if pin else "HEAD")
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True,
+                              timeout=15, env=env)
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    lines = [line.partition("\t") for line in proc.stdout.splitlines()]
+    if pin:
+        exact = [sha for sha, _, ref in lines
+                 if ref in (f"refs/heads/{pin}", f"refs/tags/{pin}")]
+        if exact:
+            return exact[0]
+        # Loose match (e.g. a short branch/ref name resolving via remotes).
+        loose = [sha for sha, _, ref in lines if ref.endswith("/" + pin)]
+        return loose[0] if loose else None
+    for sha, _, ref in lines:
+        if ref == "HEAD":
+            return sha
+    return None
 
 
 def addon_cached_sha(git_url: str, branch=None, ref=None):

@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import urllib.error
 import zipfile
 
 import pytest
@@ -190,6 +191,94 @@ def test_addon_remote_sha_resolves_and_caches(tmp_path, monkeypatch):
     monkeypatch.setattr(addons, "_api_json", fake_api_json)
     assert addons.addon_remote_sha("https://github.com/a/b") == sha
     assert addons.addon_cached_sha("https://github.com/a/b") == sha
+
+
+# ── git ls-remote fallback ────────────────────────────────────────────────
+
+
+class _FakeProc:
+    def __init__(self, stdout="", returncode=0):
+        self.stdout = stdout
+        self.returncode = returncode
+
+
+def test_git_ls_remote_parses_head(monkeypatch):
+    proc = _FakeProc(stdout=("ab" * 20 + "\tHEAD\n" +
+                             "cd" * 20 + "\trefs/heads/main\n"))
+    calls = []
+    monkeypatch.setattr(addons.subprocess, "run",
+                        lambda *a, **k: calls.append((a, k)) or proc)
+    assert addons._git_ls_remote_sha(
+        "https://github.com/a/b", None) == "ab" * 20
+    args, kwargs = calls[0]
+    assert args[0] == ["git", "ls-remote", "https://github.com/a/b", "HEAD"]
+    assert kwargs.get("env", {}).get("GIT_TERMINAL_PROMPT") == "0"
+
+
+def test_git_ls_remote_parses_branch_and_tag(monkeypatch):
+    proc = _FakeProc(stdout=("ab" * 20 + "\trefs/heads/main\n" +
+                             "cd" * 20 + "\trefs/tags/v1.0\n"))
+    monkeypatch.setattr(addons.subprocess, "run", lambda *a, **k: proc)
+    assert addons._git_ls_remote_sha(
+        "https://github.com/a/b", "main") == "ab" * 20
+    assert addons._git_ls_remote_sha(
+        "https://github.com/a/b", "v1.0") == "cd" * 20
+
+
+def test_git_ls_remote_matches_short_ref(monkeypatch):
+    proc = _FakeProc(stdout="ef" * 20 + "\trefs/remotes/origin/release\n")
+    monkeypatch.setattr(addons.subprocess, "run", lambda *a, **k: proc)
+    assert addons._git_ls_remote_sha("https://github.com/a/b", "release") \
+        == "ef" * 20
+
+
+def test_git_ls_remote_missing_git_returns_none(monkeypatch):
+    def boom(*a, **k):
+        raise FileNotFoundError("git not found")
+    monkeypatch.setattr(addons.subprocess, "run", boom)
+    assert addons._git_ls_remote_sha("https://github.com/a/b", None) is None
+
+
+def test_git_ls_remote_failure_returns_none(monkeypatch):
+    monkeypatch.setattr(addons.subprocess, "run",
+                        lambda *a, **k: _FakeProc(returncode=2))
+    assert addons._git_ls_remote_sha("https://github.com/a/b", "main") is None
+    monkeypatch.setattr(
+        addons.subprocess, "run",
+        lambda *a, **k: (_ for _ in ()).throw(
+            addons.subprocess.TimeoutExpired("git", 15)))
+    assert addons._git_ls_remote_sha("https://github.com/a/b", None) is None
+
+
+def test_addon_remote_sha_falls_back_to_git_ls_remote_on_api_error(
+        tmp_path, monkeypatch):
+    config_store.configure(str(tmp_path / "config.json"),
+                           str(tmp_path / "cache.json"))
+    config_store.save_config({})
+    sha = "beef" * 10
+
+    def api_boom(url, timeout=10):
+        raise urllib.error.HTTPError(url, 403, "rate limited", {}, None)
+
+    monkeypatch.setattr(addons, "_api_json", api_boom)
+    monkeypatch.setattr(addons, "_git_ls_remote_sha",
+                        lambda url, pin: sha)
+    assert addons.addon_remote_sha("https://github.com/a/b") == sha
+    assert addons.addon_cached_sha("https://github.com/a/b") == sha
+
+
+def test_addon_remote_sha_raises_when_both_paths_fail(tmp_path, monkeypatch):
+    config_store.configure(str(tmp_path / "config.json"),
+                           str(tmp_path / "cache.json"))
+    config_store.save_config({})
+
+    def api_boom(url, timeout=10):
+        raise urllib.error.HTTPError(url, 403, "rate limited", {}, None)
+
+    monkeypatch.setattr(addons, "_api_json", api_boom)
+    monkeypatch.setattr(addons, "_git_ls_remote_sha", lambda url, pin: None)
+    with pytest.raises(RuntimeError, match="rate limit"):
+        addons.addon_remote_sha("https://github.com/a/b", raise_errors=True)
 
 
 def _zip_bytes(entries):

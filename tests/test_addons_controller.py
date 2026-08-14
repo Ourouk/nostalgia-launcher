@@ -162,6 +162,57 @@ def test_verify_remote_checks_false_never_calls_remote_sha(controller, cfg,
     assert controller.state.addons["Foo"].status == "upToDate"
 
 
+def test_verify_uses_catalog_source_when_saved_differs(controller, cfg,
+                                                       tmp_path,
+                                                       monkeypatch):
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["addons"]["Foo"] = {"git": "https://github.com/old/Foo",
+                            "branch": None, "ref": None, "sha": "OLD"}
+    monkeypatch.setattr(ac.addons, "addons_catalog", lambda force=False: [
+        {"name": "Foo", "git": "https://github.com/launcher/Foo",
+         "branch": "main", "ref": None}])
+    calls = []
+    monkeypatch.setattr(ac.addons, "addon_remote_sha",
+                        lambda *a, **k: calls.append(a) or "LIVE")
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+
+    # The launcher catalog wins: a source conflict surfaces as an update
+    # that migrates to the catalog repo — no remote check against the old one.
+    assert controller.state.addons["Foo"].status == "outOfDate"
+    assert controller.state.addons["Foo"].git == "https://github.com/launcher/Foo"
+    assert controller.state.addons["Foo"].branch == "main"
+    assert calls == []
+
+
+def test_verify_checks_catalog_branch_when_repos_match(controller, cfg,
+                                                       tmp_path,
+                                                       monkeypatch):
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["addons"]["Foo"] = {"git": "https://github.com/launcher/Foo",
+                            "branch": None, "ref": None, "sha": "CURRENT"}
+    monkeypatch.setattr(ac.addons, "addons_catalog", lambda force=False: [
+        {"name": "Foo", "git": "https://github.com/launcher/Foo",
+         "branch": "main", "ref": None}])
+    seen = {}
+    monkeypatch.setattr(
+        ac.addons, "addon_remote_sha",
+        lambda git, branch=None, ref=None, force=False, raise_errors=False:
+        seen.update(git=git, branch=branch) or "LIVE")
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+
+    # Same repo but a different configured branch: verify uses the catalog's
+    # branch, so the new branch's sha surfaces as an update.
+    assert seen == {"git": "https://github.com/launcher/Foo", "branch": "main"}
+    assert controller.state.addons["Foo"].status == "outOfDate"
+    assert controller.state.addons["Foo"].branch == "main"
+
+
 def test_verify_honors_catalog_recommended_and_blocked(controller, cfg,
                                                        monkeypatch):
     monkeypatch.setattr(ac.addons, "addons_catalog", lambda force=False: [

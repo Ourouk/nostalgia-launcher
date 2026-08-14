@@ -596,8 +596,7 @@ class MainWindow(QMainWindow):
         if not hub.settings.state.first_run_verify_pending:
             self._after(300, self._start_verify)
         self._after(600, hub.news.load)
-        if hub.settings.state.config.get("mod_release_cache"):
-            self._after(900, hub.mods.load_latest_versions)
+        self._after(900, hub.mods.load_latest_versions)
         if hub.settings.state.config.get("addons") is not None:
             self._after(1500, hub.addons.verify)
         self._after(2000, hub.updater.check_updater_update)

@@ -65,11 +65,26 @@ class ModsController:
 
     def load_latest_versions(self):
         """Background-fetch every registry mod's latest release and publish a
-        ModsLoaded snapshot so the panel can re-render and refresh its badge."""
+        ModsLoaded snapshot so the panel can re-render and refresh its badge.
+
+        On a first launch (or whenever the mod catalog has never been fetched)
+        the catalog is fetched once first — otherwise the MODS tab would stay
+        empty until the user hits Settings → Reload. Offline/failed fetches
+        leave it empty rather than blocking startup.
+        """
 
         def worker():
             latest = {}
-            for mod in mods.mods_registry():
+            if (config_store.load_config().get("mods_catalog_cache") or {}).get(
+                    "catalog") is None:
+                # Never cached: fetch once so the tab isn't empty.
+                try:
+                    registry = mods.mods_registry(force=True)
+                except Exception:
+                    registry = []
+            else:
+                registry = mods.mods_registry()
+            for mod in registry:
                 try:
                     v = mods.fetch_mod_latest_version_cached(mod)
                 except Exception:
@@ -187,8 +202,12 @@ class ModsController:
         }
 
     def _refresh_updates_count(self):
+        try:
+            registry = mods.mods_registry()
+        except Exception:
+            registry = []
         count = 0
-        for mod in mods.mods_registry():
+        for mod in registry:
             state = self._state_dict(mod["id"])
             if state is None or state.get("error"):
                 continue

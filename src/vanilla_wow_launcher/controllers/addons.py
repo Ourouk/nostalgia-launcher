@@ -172,7 +172,40 @@ class AddonsController:
                         # fork — offer an update that migrates to the fork.
                         rec.update(git=override, branch=None, ref=None,
                                    status="outOfDate")
+                    elif saved and saved.get("git") and avail:
+                        # The launcher catalog is authoritative for the addon's
+                        # source. A saved repo that differs means the addon was
+                        # installed from elsewhere — offer an update that
+                        # migrates to the catalog's repo. Even when the repos
+                        # match, verify against the catalog's branch/ref (the
+                        # saved record may predate a catalog branch change).
+                        if not same_git_repo(saved["git"], avail["git"]):
+                            rec.update(git=avail["git"], branch=avail["branch"],
+                                       ref=avail["ref"], status="outOfDate")
+                        else:
+                            rec.update(git=avail["git"], branch=avail["branch"],
+                                       ref=avail["ref"])
+                            if remote_checks:
+                                remote = addons.addon_remote_sha(
+                                    rec["git"], rec["branch"], rec["ref"],
+                                    force=force)
+                            else:
+                                remote = addons.addon_cached_sha(
+                                    rec["git"], rec["branch"], rec["ref"])
+                                if remote is None:
+                                    # no cached answer — assume current rather
+                                    # than hitting the network
+                                    remote = saved.get("sha")
+                            if remote is None:
+                                rec.update(status="invalid",
+                                           error="Failed to verify")
+                            elif remote == saved.get("sha"):
+                                rec["status"] = "upToDate"
+                            else:
+                                rec["status"] = "outOfDate"
                     elif saved and saved.get("git"):
+                        # Installed addon not in the catalog (a custom entry) —
+                        # keep tracking the saved source.
                         rec.update(git=saved.get("git"),
                                    branch=saved.get("branch"),
                                    ref=saved.get("ref"))
