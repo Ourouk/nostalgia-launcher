@@ -10,7 +10,7 @@ is PySide6.
 uv sync                          # installs the package editable + PySide6
 uv run vanilla-wow-launcher      # run the app
 uv run python -m vanilla_wow_launcher # equivalent
-uv run pytest                    # full suite (429 pass, 3 display-only skips)
+uv run pytest                    # full suite (508 pass, 3 display-only skips)
 ```
 
 - Qt widget tests set `QT_QPA_PLATFORM=offscreen` themselves; no display needed.
@@ -18,6 +18,8 @@ uv run pytest                    # full suite (429 pass, 3 display-only skips)
   `QT_QPA_PLATFORM=xcb RUN_QT_DISPLAY_TESTS=1 uv run pytest tests/test_qt_display.py -k display`
 - Windows build: `uv run pyinstaller --noconfirm --clean VanillaWoWLauncher.spec`
 - Linux AppImage: `./packaging/linux/build-appimage.sh` → `dist/VanillaWoWLauncher-$(uname -m).AppImage`
+- Manual run against a real server config (the only example in the repo):
+  `uv run vanilla-wow-launcher --launcher-config examples/octowow.json`
 
 ## Layout (`src/` layout)
 
@@ -44,11 +46,16 @@ src/vanilla_wow_launcher/
   `~/Library/Application Support`; cache is Linux XDG / `%LOCALAPPDATA%` /
   `~/Library/Caches`. Superseded (next-to-exe, old XDG) and pre-rename
   (`octo-updater`) files are migrated on first run via the `LEGACY_*_FILES`
-  tuples in `core/constants.py`.
+  tuples in `core/constants.py`, plus `legacy_custom_pairs()` for the custom
+  catalog files that move with the config dir.
 - **There are no hardcoded server/mod/addon values.** Everything is configured
   by `core/launcher.py` reading `vanilla_wow_launcher.json` (server, news,
   realm, registry URLs, mirrors; auto-discovered next to the exe / repo root,
-  or `--launcher-config`). `cli.main()` exits if it's missing/invalid. The
+  or `--launcher-config`). Missing/invalid config with no `--launcher-config`
+  opens a **modal first-launch wizard** (`ui/qt/launcher_config_dialog.py`,
+  driven by `cli._pick_launcher_config()`); an explicit `--launcher-config`
+  that is missing/invalid is a hard `cli.main()` error (no wizard). The wizard
+  validates via `launcher.validate_path()` (no global-state side effect). The
   download host allowlist (`security_http.allowed_download_hosts()`) is built
   from the launcher's server+mirror hosts plus the git hosts.
 - The mods/addons lists come from remote JSON catalogs (`services/catalog.py`
@@ -59,7 +66,9 @@ src/vanilla_wow_launcher/
   tests provide one by monkeypatching `mods.mods_registry()`.
 - Tests get a launcher config from the autouse `_launcher_env` fixture in
   `tests/conftest.py` (server `https://launcher.test` + a "Backup" mirror) —
-  never rely on real network in tests.
+  never rely on real network in tests. Launcher state is **process-global**:
+  `_launcher_env` calls `launcher.reset()` + `launcher.configure_from_dict(...)`
+  before and after each test, so override `launcher.*` the same way.
 
 ## Architecture rules
 
