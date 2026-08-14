@@ -135,6 +135,7 @@ class VerifyWorker:
         return None
 
     def run(self):
+        manifest_ok = False
         try:
             self.progress(0.02, "Fetching manifest...")
             self.log("Verifying files...", "acct")
@@ -145,6 +146,8 @@ class VerifyWorker:
                 src.manifest_url, headers={"User-Agent": UA})
             with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
                 manifest = json.load(r)
+            manifest_ok = True
+            self.log_q.put(("__MANIFEST_AVAILABLE__", ""))
             self.progress(0.5, "Checking...")
 
             stale_nodes = [c for child in manifest["root"].get("files", [])
@@ -169,7 +172,12 @@ class VerifyWorker:
                 self.log_q.put(("__UP_TO_DATE__", ""))
         except Exception as e:
             self.log(f"Verification failed: {e}", "err")
-            self.log_q.put(("__UPDATE_NEEDED__", ""))
+            # A failed manifest fetch must not masquerade as "update needed":
+            # the controller uses __MANIFEST_UNAVAILABLE__ to gray out the
+            # update button. Failures *after* the manifest parsed are a
+            # genuine "update needed" verdict.
+            self.log_q.put(("__MANIFEST_UNAVAILABLE__" if not manifest_ok
+                            else "__UPDATE_NEEDED__", ""))
             self.log_q.put(("__DIFF_TREE__", None))
 
 
@@ -419,6 +427,7 @@ class UpdateWorker:
                     self._source.manifest_url, headers={"User-Agent": UA})
                 with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
                     manifest = json.load(r)
+                self.log_q.put(("__MANIFEST_AVAILABLE__", ""))
                 self.log("Manifest received.", "ok")
                 self.progress(0.05, "Downloading…")
                 self.log("\nStarting client update…\n")

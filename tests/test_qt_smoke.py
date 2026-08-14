@@ -191,12 +191,12 @@ def test_construction_builds_full_app(qapp, app):
     assert win._navButtons["NEWS"].isChecked()
     assert win._gearButton is not None
 
-    # Footer chrome is wired up; the client isn't verified yet, so the
-    # button offers UPDATE (can_launch_client is faked True in the env).
+    # Footer chrome is wired up; the client isn't verified yet and no
+    # manifest has been fetched, so the button stays grayed-out UPDATE.
     assert win._updateButton.objectName() == "updateButton"
     assert win._updateButton.text() == "UPDATE"
-    assert win._updateButton.isEnabled()
-    assert win._statusLabel.text() == "Update available!"
+    assert not win._updateButton.isEnabled()
+    assert win._statusLabel.text() == "Manifest unavailable"
     assert win._progressBar is not None
 
     for name, obj in (("NEWS", "newsPanel"), ("TWEAKS", "tweaksPanel"),
@@ -329,6 +329,7 @@ def test_update_status_progress_finish_cycle(qapp, app_no_startup):
     # The update worker sets client_ready and posts 100% progress before the
     # finish event; the footer mirrors that real controller state.
     hub.updater.state.client_ready = True
+    hub.updater.state.manifest_available = True
     hub.dispatcher.post(ProgressChanged(1.0, ""))
     QTest.qWait(120)
     assert not win._progressBar.isVisible()

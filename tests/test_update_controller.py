@@ -159,6 +159,36 @@ def test_verify_failure_records_null_diff(controller, worker_cls, config):
     assert controller.state.running is False
 
 
+def test_manifest_available_marker_sets_flag(controller, worker_cls, config):
+    worker_cls.script = [("__MANIFEST_AVAILABLE__", "")]
+    controller.start_verify()
+    assert controller.state.manifest_available is False
+    _wait_and_poll(controller, worker_cls)
+    assert controller.state.manifest_available is True
+
+
+def test_manifest_unavailable_disables_and_posts_finished(
+        controller, worker_cls, config):
+    worker_cls.script = [("__MANIFEST_UNAVAILABLE__", "")]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    events = controller._dispatcher.drain()
+    assert OperationFinished("verify", False) in events
+    assert controller.state.manifest_available is False
+    assert controller.state.client_ready is False
+    assert controller.state.running is False
+
+
+def test_start_verify_and_invalidate_reset_manifest_available(
+        controller, worker_cls, config):
+    controller.state.manifest_available = True
+    controller.start_verify()
+    assert controller.state.manifest_available is False
+    controller.state.manifest_available = True
+    controller.invalidate()
+    assert controller.state.manifest_available is False
+
+
 def test_verify_passes_overwrite_and_config_hashes(controller, worker_cls, config):
     config["expected_patched_wow_hash"] = "exp"
     config["original_server_wow_hash"] = "orig"
@@ -283,9 +313,11 @@ def test_cancel_stops_live_workers(controller, worker_cls, config):
 
 def test_invalidate_resets_readiness(controller, worker_cls, config):
     controller.state.client_ready = True
+    controller.state.manifest_available = True
     controller.state.diff_nodes = [{"type": "file", "name": "a.bin"}]
     controller.invalidate()
     assert controller.state.client_ready is False
+    assert controller.state.manifest_available is False
     assert controller.state.diff_nodes is None
 
 
@@ -304,7 +336,15 @@ def test_events_delivered_to_subscribers(controller, worker_cls, config):
 
 # ── compute_readiness ────────────────────────────────────────────────────
 
+def test_readiness_disabled_without_manifest(controller, worker_cls, config):
+    r = controller.compute_readiness()
+    assert r.mode == "disabled"
+    assert r.label == "UPDATE"
+    assert r.status == "Manifest unavailable"
+
+
 def test_readiness_update_available_when_not_ready(controller, worker_cls, config):
+    controller.state.manifest_available = True
     r = controller.compute_readiness()
     assert r.mode == "update"
     assert r.label == "UPDATE"
@@ -313,6 +353,7 @@ def test_readiness_update_available_when_not_ready(controller, worker_cls, confi
 
 def test_readiness_play_when_ready_and_launchable(controller, worker_cls, config):
     controller.state.client_ready = True
+    controller.state.manifest_available = True
     r = controller.compute_readiness()
     assert r.mode == "play"
     assert r.status == "Everything up to date!"
@@ -321,6 +362,7 @@ def test_readiness_play_when_ready_and_launchable(controller, worker_cls, config
 def test_readiness_ready_when_not_launchable(controller, worker_cls, config, monkeypatch):
     monkeypatch.setattr(uc, "can_launch_client", lambda: False)
     controller.state.client_ready = True
+    controller.state.manifest_available = True
     r = controller.compute_readiness()
     assert r.mode == "busy"
     assert r.label == "READY"
@@ -330,6 +372,7 @@ def test_readiness_ready_when_not_launchable(controller, worker_cls, config, mon
 def test_readiness_play_blocked_by_mod_errors(controller, worker_cls, config):
     config["mods"] = {"SomeMod": {"error": "download blocked"}}
     controller.state.client_ready = True
+    controller.state.manifest_available = True
     r = controller.compute_readiness()
     assert r.mode == "busy"
     assert r.label == "PLAY"

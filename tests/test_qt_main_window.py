@@ -103,6 +103,7 @@ def test_operation_events_flip_button_state(qapp, window, monkeypatch):
     # A finished update marks the client ready on the controller before the
     # event is posted — the footer mirrors that real state.
     hub.updater.state.client_ready = True
+    hub.updater.state.manifest_available = True
     hub.dispatcher.post(StatusChanged("all up to date"))
     hub.dispatcher.post(OperationFinished("update", True, "done"))
     QTest.qWait(200)

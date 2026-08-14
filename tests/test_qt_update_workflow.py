@@ -32,6 +32,7 @@ _PLAY = Readiness("play", "PLAY", "Everything up to date!")
 _UPDATE = Readiness("update", "UPDATE", "Update available!")
 _CHECKING = Readiness("busy", "Checking…", "Verifying…")
 _INSTALLING = Readiness("busy", "Installing…", "Downloading addons…")
+_DISABLED = Readiness("disabled", "UPDATE", "Manifest unavailable")
 
 
 @pytest.fixture(autouse=True)
@@ -51,6 +52,9 @@ def window(qapp, monkeypatch):
     hub.settings.state.first_run = False
     hub.settings.state.first_run_av_pending = False
     hub.settings.state.first_run_verify_pending = False
+    # A previously verified setup: a manifest has been fetched, so the
+    # real compute_readiness baseline is the gold UPDATE button.
+    hub.updater.state.manifest_available = True
     monkeypatch.setattr(hub.updater, "start_verify", Mock())
     monkeypatch.setattr(hub.updater, "start_update", Mock())
     monkeypatch.setattr(hub.updater, "launch_game", Mock(return_value=(True, False)))
@@ -103,6 +107,22 @@ def test_busy_readiness_disables_button(qapp, window, monkeypatch):
     window._refresh_ready_state()
     assert window._updateButton.text() == "Installing…"
     assert not window._updateButton.isEnabled()
+
+
+def test_disabled_readiness_grays_update_button(qapp, window, monkeypatch):
+    """No manifest available → the button keeps the UPDATE label but is
+    grayed out and unclickable."""
+    hub = window._hub
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _DISABLED)
+    window._refresh_ready_state()
+    assert window._updateButton.text() == "UPDATE"
+    assert not window._updateButton.isEnabled()
+    assert window._statusLabel.text() == "Manifest unavailable"
+
+    window._updateButton.click()
+    hub.updater.start_update.assert_not_called()
+    hub.updater.launch_game.assert_not_called()
 
 
 # ── button clicks ─────────────────────────────────────────────────────────

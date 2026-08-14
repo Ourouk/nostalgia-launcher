@@ -91,6 +91,7 @@ class UpdateController:
         self.state.running = True
         self._op = "verify"
         self.state.status = "Verifying…"
+        self.state.manifest_available = False   # a fresh verify re-fetches it
         self._log_q = queue.Queue()
         self._prog_q = queue.Queue()
         cfg = load_config()
@@ -140,6 +141,7 @@ class UpdateController:
         """Drop readiness and the cached diff tree (game folder changed or a
         verify-game-files recheck)."""
         self.state.client_ready = False
+        self.state.manifest_available = False
         self.state.diff_nodes = None
 
     def read_client_version(self) -> str:
@@ -252,6 +254,10 @@ class UpdateController:
         if self.state.running:
             label = "Updating…" if self._op == "update" else "Checking…"
             return Readiness("busy", label, self.state.status)
+        if not self.state.manifest_available:
+            # No manifest was ever fetched/parsed — the update path is a
+            # blind guess, so gray the button out rather than offer UPDATE.
+            return Readiness("disabled", "UPDATE", "Manifest unavailable")
         if not self.state.client_ready:
             return Readiness("update", "UPDATE", "Update available!")
         if self._mods_have_errors():
@@ -266,6 +272,7 @@ class UpdateController:
         if msg == "__DONE__":
             self.state.running = False
             self.state.client_ready = True
+            self.state.manifest_available = True
             self._op = None
             self._dispatcher.post(ProgressChanged(1.0, ""))
             self._dispatcher.post(OperationFinished("update", True))
@@ -275,15 +282,30 @@ class UpdateController:
             self._op = None
             self._dispatcher.post(ProgressChanged(0.0, ""))
             self._dispatcher.post(OperationFailed("update", ""))
+        elif msg == "__MANIFEST_AVAILABLE__":
+            # A valid manifest was fetched and parsed — the update button may
+            # offer its real verdict again.
+            self.state.manifest_available = True
+        elif msg == "__MANIFEST_UNAVAILABLE__":
+            # The manifest couldn't be fetched/parsed — treat the client as
+            # never verified and gray out the update button.
+            self.state.manifest_available = False
+            self.state.client_ready = False
+            self.state.running = False
+            self._op = None
+            self._dispatcher.post(ProgressChanged(0.0, ""))
+            self._dispatcher.post(OperationFinished("verify", False))
         elif msg == "__UP_TO_DATE__":
             self.state.running = False
             self.state.client_ready = True
+            self.state.manifest_available = True
             self._op = None
             self._dispatcher.post(ProgressChanged(1.0, ""))
             self._dispatcher.post(OperationFinished("verify", True))
         elif msg == "__UPDATE_NEEDED__":
             self.state.running = False
             self.state.client_ready = False
+            self.state.manifest_available = True
             self._op = None
             self._dispatcher.post(ProgressChanged(0.0, ""))
             self._dispatcher.post(OperationFinished("verify", False))

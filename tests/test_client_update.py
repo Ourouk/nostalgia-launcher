@@ -39,6 +39,7 @@ def test_verify_worker_up_to_date(tmp_path, monkeypatch):
 
     msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
     assert "__UP_TO_DATE__" in msgs
+    assert "__MANIFEST_AVAILABLE__" in msgs
     assert "__DIFF_TREE__" not in msgs
 
 
@@ -63,7 +64,28 @@ def test_verify_worker_detects_stale_file(tmp_path, monkeypatch):
 
     msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
     assert "__UPDATE_NEEDED__" in msgs
+    assert "__MANIFEST_AVAILABLE__" in msgs
     assert "__DIFF_TREE__" in msgs
+
+
+def test_verify_worker_manifest_failure_marks_unavailable(tmp_path,
+                                                          monkeypatch):
+    client = _mk_client(tmp_path)
+
+    def boom(*a, **k):
+        raise urllib.error.HTTPError("https://srv.example/m.json", 404,
+                                     "not found", {}, None)
+
+    monkeypatch.setattr(client_update, "secure_urlopen", boom)
+
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    vw = VerifyWorker(str(client), log_q, prog_q)
+    vw.run()
+
+    msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
+    assert "__MANIFEST_UNAVAILABLE__" in msgs
+    assert "__UPDATE_NEEDED__" not in msgs
+    assert "__MANIFEST_AVAILABLE__" not in msgs
 
 
 def test_verify_worker_config_wtf_created_when_missing(tmp_path, monkeypatch):

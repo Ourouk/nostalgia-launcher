@@ -20,6 +20,7 @@ class UpdateState:
     progress_label: str = ""
     running: bool = False
     client_ready: bool = False
+    manifest_available: bool = False
     diff_nodes: list | None = None
     client_version: str = ""
 

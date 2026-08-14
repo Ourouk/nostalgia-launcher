@@ -569,6 +569,10 @@ class MainWindow(QMainWindow):
             self._set_button_ready(True)
         elif r.mode == "update":
             self._set_button_ready(False)
+        elif r.mode == "disabled":
+            # No manifest available: keep the UPDATE label but gray the
+            # button out so it can't start a blind update.
+            self._set_button_busy("UPDATE")
         else:
             self._set_button_busy(r.label)
         if update_status:
