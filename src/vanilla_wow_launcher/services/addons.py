@@ -1,8 +1,9 @@
 """Addons engine: catalog, Git commit resolution and archive installation.
 
 Addons are installed directly from Git hosts (GitHub, GitLab, Gitea,
-Codeberg) by downloading the repo archive pinned to a commit SHA — no git
-client needed. Also hosts the pfUI "Default" profile patch.
+Codeberg, and the OctoWoW Gitea at octowow.st) by downloading the repo
+archive pinned to a commit SHA — no git client needed. Also hosts the pfUI
+"Default" profile patch.
 
 There is no bundled addon list — the ADDONS tab comes entirely from the
 addon catalog (launcher-configured or user-set URL) merged with the per-user
@@ -45,10 +46,11 @@ RECOMMENDED_ADDONS: dict = {}
 BLOCKED_ADDONS = set()
 
 
-ADDON_GIT_HOSTS = ("github.com", "gitlab.com", "gitea.com", "codeberg.org")
+ADDON_GIT_HOSTS = ("github.com", "gitlab.com", "gitea.com", "codeberg.org",
+                   "octowow.st")
 
 ADDON_ZIP_HOSTS = {"github.com", "codeload.github.com", "gitlab.com",
-                   "gitea.com", "codeberg.org"}
+                   "gitea.com", "codeberg.org", "octowow.st"}
 
 
 def addons_path(client_dir: str) -> str:

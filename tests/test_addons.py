@@ -15,10 +15,28 @@ def test_is_allowed_git_url():
     assert addons.is_allowed_git_url("https://github.com/a/b")
     assert addons.is_allowed_git_url("https://gitlab.com/a/b")
     assert addons.is_allowed_git_url("https://codeberg.org/a/b")
+    assert addons.is_allowed_git_url("https://octowow.st/git/a/b")
+    assert addons.is_allowed_git_url("https://gitea.com/a/b")
     assert not addons.is_allowed_git_url("http://github.com/a/b")
     assert not addons.is_allowed_git_url("https://evil.com/a/b")
     assert not addons.is_allowed_git_url("https://github.com.evil.com/a/b")
     assert not addons.is_allowed_git_url("not a url")
+
+
+def test_git_parts_octowow_gitea():
+    """OctoWoW-hosted repos are Gitea, API at <host>/git/api/v1."""
+    kind, repo_url, owner, repo, api = addons._git_parts(
+        "https://octowow.st/git/octocontr/OctoWoW")
+    assert kind == "gitea"
+    assert (owner, repo) == ("octocontr", "OctoWoW")
+    assert repo_url == "https://octowow.st/git/octocontr/OctoWoW"
+    assert api == "https://octowow.st/git/api/v1"
+
+
+def test_addon_zip_url_octowow_gitea():
+    url = addons.addon_zip_url(
+        "https://octowow.st/git/a/b", "abc123" * 6)
+    assert url == "https://octowow.st/git/a/b/archive/abc123abc123abc123abc123abc123abc123.zip"
 
 
 def test_git_parts_github():
