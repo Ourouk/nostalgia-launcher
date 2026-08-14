@@ -56,7 +56,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from .log_sink import log
-from .platform_support import config_dir
+from .platform_support import config_dir, is_macos
 
 LAUNCHER_FILE = "vanilla_wow_launcher.json"
 
@@ -209,9 +209,17 @@ def _derive(data: dict) -> LauncherConfig:
 
 def discover_path() -> str:
     """Locate ``vanilla_wow_launcher.json``: next to the executable (frozen)
-    or the repo root (source), then the current working directory."""
+    or the repo root (source), then the current working directory. On macOS
+    the frozen app also searches the folder *containing* the .app bundle, so
+    the config can sit next to the bundle (e.g. in the DMG root) rather than
+    buried in Contents/MacOS."""
     if getattr(sys, "frozen", False):
         roots = [os.path.dirname(os.path.abspath(sys.executable))]
+        if is_macos():
+            # <bundle>.app/Contents/MacOS/<exe> → <bundle>.app → parent dir
+            roots.append(os.path.dirname(os.path.dirname(
+                os.path.dirname(os.path.dirname(
+                    os.path.abspath(sys.executable))))))
     else:
         roots = [os.path.dirname(os.path.dirname(
             os.path.dirname(os.path.abspath(__file__))))]

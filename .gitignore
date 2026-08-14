@@ -19,6 +19,7 @@ dist/
 *.spec
 !VanillaWoWLauncher.spec
 !VanillaWoWLauncher-linux.spec
+!VanillaWoWLauncher-macos.spec
 
 # Local editor / OS files
 .vscode/

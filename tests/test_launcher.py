@@ -1,6 +1,8 @@
 """Unit tests for the launcher configuration (core/launcher)."""
 
 import json
+import os
+import sys
 
 import pytest
 
@@ -172,11 +174,32 @@ def test_user_config_path_lives_in_config_dir(monkeypatch):
 def test_auto_path_prefers_persisted_user_config(monkeypatch, tmp_path):
     user = tmp_path / "vanilla_wow_launcher.json"
     user.write_text(json.dumps(
-        {"server": {"base_url": "https://user.example"}}), encoding="utf-8")
+        {"server": {"base_url": "https://srv.example"}}), encoding="utf-8")
     monkeypatch.setattr(launcher, "user_config_path", lambda: str(user))
     monkeypatch.setattr(launcher, "discover_path",
                         lambda: "/elsewhere/config.json")
     assert launcher._auto_path() == str(user)
+
+
+def test_discover_path_macos_frozen_finds_config_next_to_bundle(
+        monkeypatch, tmp_path):
+    """A frozen macOS .app must find vanilla_wow_launcher.json sitting next
+    to the bundle (e.g. in the DMG root), not just in Contents/MacOS."""
+    bundle = tmp_path / "VanillaWoWLauncher.app"
+    exe = bundle / "Contents" / "MacOS" / "VanillaWoWLauncher"
+    exe.parent.mkdir(parents=True)
+    cfg = tmp_path / "vanilla_wow_launcher.json"
+    cfg.write_text(json.dumps(
+        {"server": {"base_url": "https://srv.example"}}), encoding="utf-8")
+
+    monkeypatch.setattr(launcher.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(launcher.sys, "executable", str(exe))
+    monkeypatch.setattr(launcher, "is_macos", lambda: True)
+    nowhere = tmp_path / "nowhere"
+    nowhere.mkdir()
+    monkeypatch.chdir(nowhere)  # cwd must not be needed
+
+    assert launcher.discover_path() == str(cfg)
 
 
 def test_auto_path_falls_back_to_discovery(monkeypatch, tmp_path):

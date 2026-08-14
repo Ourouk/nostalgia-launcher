@@ -18,6 +18,7 @@ uv run pytest                    # full suite (508 pass, 3 display-only skips)
   `QT_QPA_PLATFORM=xcb RUN_QT_DISPLAY_TESTS=1 uv run pytest tests/test_qt_display.py -k display`
 - Windows build: `uv run pyinstaller --noconfirm --clean VanillaWoWLauncher.spec`
 - Linux AppImage: `./packaging/linux/build-appimage.sh` → `dist/VanillaWoWLauncher-$(uname -m).AppImage`
+- macOS DMG (universal2, build on macOS): `./packaging/macos/build-dmg.sh` → `dist/VanillaWoWLauncher-universal2.dmg`
 - Manual run against a real server config (the only example in the repo):
   `uv run vanilla-wow-launcher --launcher-config examples/octowow.json`
 
@@ -91,15 +92,21 @@ src/vanilla_wow_launcher/
 ## Packaging gotchas
 
 - The PyInstaller specs (`VanillaWoWLauncher.spec` = Windows onefile,
-  `VanillaWoWLauncher-linux.spec` = onedir for AppImage) freeze the entry
-  script as **`packaging/pyinstaller_entry.py`** (a top-level shim), NOT
-  `src/vanilla_wow_launcher/cli.py` directly — relative imports inside the
+  `VanillaWoWLauncher-linux.spec` = onedir for AppImage,
+  `VanillaWoWLauncher-macos.spec` = universal2 onedir + `.app` BUNDLE) freeze
+  the entry script as **`packaging/pyinstaller_entry.py`** (a top-level shim),
+  NOT `src/vanilla_wow_launcher/cli.py` directly — relative imports inside the
   package fail if `cli.py` is run as the frozen script. Specs use
   `pathex=["src"]` and package-qualified hidden imports.
 - AppImage uses `linuxdeploy`, which names the output after the desktop entry's
   `Name` (spaces→underscores) and drops it in CWD; `build-appimage.sh` relocates
   it to `dist/`. Requires `magick` (IMv7) and `linuxdeploy` on PATH or
   `LINUXDEPLOY=` pointing at it.
+- macOS: `build-dmg.sh` must run on macOS with a *universal* Python/PySide6
+  (`lipo -archs` verifies both arm64+x86_64 and fails otherwise). UPX is off in
+  `VanillaWoWLauncher-macos.spec` (unsupported on macOS); the `.icns` is built
+  by `build-icons.sh` from `packaging/icons/VanillaWoWLauncher.png`. The result
+  is unsigned by default — signing/notarization are opt-in via env vars.
 
 ## Version consistency
 

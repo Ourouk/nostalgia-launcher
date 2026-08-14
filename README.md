@@ -384,6 +384,41 @@ QT_QPA_PLATFORM=xcb     ./dist/VanillaWoWLauncher-x86_64.AppImage
 QT_QPA_PLATFORM=wayland ./dist/VanillaWoWLauncher-x86_64.AppImage
 ```
 
+### DMG (macOS)
+
+The macOS build is a universal2 PyInstaller `.app` bundle (arm64 + x86_64)
+wrapped into a `.dmg`, so it runs on both Apple Silicon and Intel Macs.
+Everything lives in `packaging/macos/`:
+
+| File | Purpose |
+|------|---------|
+| `VanillaWoWLauncher-macos.spec` | PyInstaller onedir spec with `target_arch="universal2"` + `.app` bundle (Info.plist, icon) |
+| `build-dmg.sh` | Full build: icon → PyInstaller → `lipo` arch check → optional sign/notarize → `hdiutil` DMG |
+| `build-icons.sh` | Render `packaging/icons/VanillaWoWLauncher.png` into the `.icns` via `iconutil` |
+
+**The build must run on macOS** with a *universal* Python/PySide6
+environment (single-arch Python produces a single-arch or failed build):
+
+```bash
+uv sync --dev
+./packaging/macos/build-dmg.sh        # → dist/VanillaWoWLauncher-universal2.dmg
+```
+
+The bundle is **unsigned by default** — Gatekeeper will warn on first open.
+Optional hooks (all env-gated, none required):
+
+```bash
+CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+NOTARY_APPLE_ID="you@example.com" \
+NOTARY_TEAM_ID="TEAMID" \
+NOTARY_PASSWORD="app-specific-password" \
+./packaging/macos/build-dmg.sh
+```
+
+The launcher configuration is discovered next to the `.app` bundle (e.g. in
+the DMG root) in addition to the normal locations; game launching and
+`WoW.exe` patching stay disabled on macOS.
+
 ### Notes
 
 - Installing `certifi` before building bundles an up-to-date CA certificate
