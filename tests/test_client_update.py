@@ -224,6 +224,34 @@ def test_download_source_uses_mirror_endpoint_overrides(monkeypatch):
     assert src.client_url == "https://dl.example/client/latest"
 
 
+def test_download_source_probes_client_url_and_accepts_http_error(monkeypatch):
+    """A CDN-only mirror is selected by probing its client-files endpoint, and
+    an HTTP error status (e.g. 404 on the root path) still proves the host is
+    reachable."""
+    from urllib.error import HTTPError
+
+    from vanilla_wow_launcher.core import launcher
+    launcher.configure_from_dict({
+        "server": {"base_url": "https://srv.example"},
+        "mirrors": [{
+            "name": "CDN",
+            "base_url": "https://m1.example",
+            "client_url": "https://dl.example/client/latest",
+        }],
+    })
+    probed = []
+
+    def http_error(req, timeout=5):
+        probed.append(req.full_url)
+        raise HTTPError(req.full_url, 404, "Not Found", None, None)
+
+    monkeypatch.setattr(client_update, "secure_urlopen", http_error)
+    src = client_update._download_source()
+    assert probed == ["https://dl.example/client/latest"]
+    assert src.client_url == "https://dl.example/client/latest"
+    assert src.manifest_url == "https://m1.example/api/file/latest/manifest.json"
+
+
 def test_verify_uses_selected_manifest_url(monkeypatch, tmp_path):
     """VerifyWorker must fetch the manifest from the selected source's
     configured manifest URL."""

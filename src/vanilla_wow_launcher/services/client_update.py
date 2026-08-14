@@ -15,6 +15,7 @@ import struct
 import time
 import urllib.request
 from typing import NamedTuple
+from urllib.error import HTTPError
 
 from ..core.constants import (
     UA,
@@ -41,24 +42,34 @@ class DownloadSource(NamedTuple):
     client_url: str
 
 
+def _source_reachable(url: str) -> bool:
+    """Whether a download source answers at `url`. Any HTTP response — even an
+    error status (4xx/5xx) — proves the host is reachable; only transport
+    failures (DNS, refused, timeout) count as down."""
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    try:
+        with secure_urlopen(req, timeout=5) as r:
+            r.read(1)
+        return True
+    except HTTPError:
+        return True
+    except Exception:
+        return False
+
+
 def _download_source() -> "DownloadSource | None":
     """Resolve the active download source: mirrors are tried in order
-    (automatic failover, probed via their manifest URL) and the server is the
-    fallback. Returns None when the launcher configuration is missing."""
+    (automatic failover, probed via their client-files endpoint) and the
+    server is the fallback. Returns None when the launcher configuration is
+    missing."""
     from ..core import launcher
     cfg = launcher.config()
     server = cfg.server_url if cfg else ""
     if not server:
         return None
     for mirror in (cfg.mirrors if cfg else []):
-        try:
-            req = urllib.request.Request(
-                mirror.manifest_url, headers={"User-Agent": UA})
-            with secure_urlopen(req, timeout=5) as r:
-                r.read(1)
+        if _source_reachable(mirror.client_url):
             return DownloadSource(mirror.manifest_url, mirror.client_url)
-        except Exception:
-            continue
     return DownloadSource(cfg.manifest_url, cfg.client_url)
 
 

@@ -13,6 +13,7 @@ import os
 import threading
 import urllib.request
 import webbrowser
+from urllib.error import HTTPError
 
 from ..services import addons
 from ..core import config_store
@@ -478,25 +479,30 @@ class SettingsController:
             ok=ok_any, text="online" if ok_any else "offline"))
 
     def _probe_mirror(self, name: str) -> bool:
-        """Whether a named download source answers its manifest endpoint."""
-        url = self._mirror_manifest_url(name)
+        """Whether a named download source can serve client files. Any HTTP
+        response (even an error status) proves it is reachable; only transport
+        failures count as down."""
+        url = self._mirror_probe_url(name)
         if not url:
             return False
         try:
             req = urllib.request.Request(url, headers={"User-Agent": UA})
             with secure_urlopen(req, timeout=6):
                 return True
+        except HTTPError:
+            return True
         except Exception:
             return False
 
-    def _mirror_manifest_url(self, name: str) -> str:
-        """The manifest URL of a named download source (server or mirror)."""
+    def _mirror_probe_url(self, name: str) -> str:
+        """The client-files endpoint of a named download source (the server
+        or a mirror)."""
         cfg = launcher.config()
         if cfg is None:
             return ""
         if cfg.server_name == name:
-            return cfg.manifest_url
+            return cfg.client_url
         for m in cfg.mirrors:
             if m.name == name:
-                return m.manifest_url
+                return m.client_url
         return ""

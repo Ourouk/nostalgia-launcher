@@ -400,6 +400,23 @@ def test_check_mirror_posts_offline(controller, monkeypatch):
         "Test Server": "offline", "Backup": "offline"}
 
 
+def test_check_mirror_http_error_still_online(controller, monkeypatch):
+    """An HTTP error status from a source (e.g. a CDN root returning 404)
+    still proves it is reachable — only transport failures are offline."""
+    from urllib.error import HTTPError
+
+    def http_error(req, timeout=6):
+        raise HTTPError(req.full_url, 404, "Not Found", None, None)
+    monkeypatch.setattr(sc, "secure_urlopen", http_error)
+    controller.check_mirror()
+    events = _drain_for(controller._dispatcher,
+                        lambda e: isinstance(e, MirrorStatusChanged))
+    assert any(isinstance(e, MirrorStatusChanged) and e.ok is True
+               and e.text == "online" for e in events)
+    assert controller.mirror_statuses == {
+        "Test Server": "online", "Backup": "online"}
+
+
 def test_mirror_names_follow_launcher(controller):
     assert controller.mirror_names() == ["Test Server", "Backup"]
 
