@@ -46,6 +46,8 @@ def test_allowed_download_hosts_include_launcher_and_git_hosts():
     # hosts in the runtime allowlist.
     assert "launcher.test" in hosts
     assert "github.com" in hosts
+    assert "gitlab.com" in hosts
+    assert "codeberg.org" in hosts
 
 
 def test_redirect_handler_forbids_https_downgrade():

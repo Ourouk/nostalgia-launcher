@@ -41,6 +41,7 @@ ALLOWED_DOWNLOAD_HOSTS = {
     "github.com",
     "objects.githubusercontent.com",
     "release-assets.githubusercontent.com",
+    "gitlab.com",
     "codeberg.org",
 }
 
