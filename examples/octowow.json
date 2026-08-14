@@ -8,5 +8,12 @@
     "mods_registry_url": "https://octowow.st/api/mods.json",
     "addons_registry_url": "https://octowow.st/api/addons.json"
   },
-  "mirrors": []
+  "mirrors": [
+    {
+      "name": "OctoWoW CDN",
+      "base_url": "https://octowow.st",
+      "manifest_url": "https://octowow.st/api/file/latest/manifest.json",
+      "client_url": "https://dl.octowow.st/client/latest"
+    }
+  ]
 }

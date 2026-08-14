@@ -156,7 +156,7 @@ def _resp():
                           "read": lambda s, n=1: b"{}"[:n]})()
 
 
-def test_download_base_fails_over_to_first_reachable_mirror(monkeypatch):
+def test_download_source_fails_over_to_first_reachable_mirror(monkeypatch):
     from vanilla_wow_launcher.core import launcher
     launcher.configure_from_dict({
         "server": {"base_url": "https://srv.example"},
@@ -174,12 +174,14 @@ def test_download_base_fails_over_to_first_reachable_mirror(monkeypatch):
         return _resp()
 
     monkeypatch.setattr(client_update, "secure_urlopen", fake_urlopen)
-    assert client_update._download_base() == "https://b.example"
+    src = client_update._download_source()
+    assert src.manifest_url == "https://b.example/api/file/latest/manifest.json"
+    assert src.client_url == "https://b.example/client/latest"
     assert calls[0].startswith("https://a.example")
     assert calls[1].startswith("https://b.example")
 
 
-def test_download_base_falls_back_to_server_when_all_down(monkeypatch):
+def test_download_source_falls_back_to_server_when_all_down(monkeypatch):
     from vanilla_wow_launcher.core import launcher
     launcher.configure_from_dict({
         "server": {"base_url": "https://srv.example"},
@@ -190,10 +192,99 @@ def test_download_base_falls_back_to_server_when_all_down(monkeypatch):
         raise ConnectionError("down")
 
     monkeypatch.setattr(client_update, "secure_urlopen", boom)
-    assert client_update._download_base() == "https://srv.example"
+    src = client_update._download_source()
+    assert src.manifest_url == "https://srv.example/api/file/latest/manifest.json"
+    assert src.client_url == "https://srv.example/client/latest"
 
 
-def test_download_base_empty_without_launcher(monkeypatch):
+def test_download_source_none_without_launcher(monkeypatch):
     from vanilla_wow_launcher.core import launcher
     launcher.reset()
-    assert client_update._download_base() == ""
+    assert client_update._download_source() is None
+
+
+def test_download_source_uses_mirror_endpoint_overrides(monkeypatch):
+    """A mirror's custom manifest/client URLs are what the updater uses, not
+    the reconstructed defaults."""
+    from vanilla_wow_launcher.core import launcher
+    launcher.configure_from_dict({
+        "server": {"base_url": "https://srv.example"},
+        "mirrors": [{
+            "name": "CDN",
+            "base_url": "https://m1.example",
+            "manifest_url": "https://m1.example/custom/manifest.json",
+            "client_url": "https://dl.example/client/latest",
+        }],
+    })
+
+    monkeypatch.setattr(client_update, "secure_urlopen",
+                        lambda req, timeout=5: _resp())
+    src = client_update._download_source()
+    assert src.manifest_url == "https://m1.example/custom/manifest.json"
+    assert src.client_url == "https://dl.example/client/latest"
+
+
+def test_verify_uses_selected_manifest_url(monkeypatch, tmp_path):
+    """VerifyWorker must fetch the manifest from the selected source's
+    configured manifest URL."""
+    from vanilla_wow_launcher.core import launcher
+    launcher.configure_from_dict({
+        "server": {"base_url": "https://srv.example"},
+        "mirrors": [{
+            "name": "CDN",
+            "base_url": "https://m1.example",
+            "manifest_url": "https://m1.example/custom/manifest.json",
+            "client_url": "https://dl.example/client/latest",
+        }],
+    })
+    fetched = []
+
+    def fake_urlopen(req, timeout, allowed_hosts=None):
+        fetched.append(req.full_url)
+        return _resp()
+
+    monkeypatch.setattr(client_update, "secure_urlopen", fake_urlopen)
+    monkeypatch.setattr(client_update, "load_cache", lambda: {})
+    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
+    monkeypatch.setattr(client_update, "write_config_wtf", lambda d: None)
+
+    client = tmp_path / "client"
+    client.mkdir()
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = client_update.VerifyWorker(str(client), log_q, prog_q)
+    worker.run()
+    assert any(u.startswith("https://m1.example/custom/manifest.json")
+               for u in fetched)
+
+
+def test_traverse_downloads_from_mirror_client_url(monkeypatch, tmp_path):
+    """File downloads must come from the selected mirror's client_url."""
+    from vanilla_wow_launcher.core import launcher
+    launcher.configure_from_dict({
+        "server": {"base_url": "https://srv.example"},
+        "mirrors": [{
+            "name": "CDN",
+            "base_url": "https://m1.example",
+            "client_url": "https://dl.example/client/latest",
+        }],
+    })
+
+    monkeypatch.setattr(client_update, "secure_urlopen",
+                        lambda req, timeout=5: _resp())
+
+    client = tmp_path / "client"
+    client.mkdir()
+    recorded = []
+
+    class _RecordingWorker(client_update.UpdateWorker):
+        def download(self, url, dest, size, name=""):
+            recorded.append(url)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            open(dest, "wb").close()
+            return "A" * 40
+
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = _RecordingWorker(str(client), log_q, prog_q)
+    worker.traverse({"type": "file", "name": "data.bin", "size": 1,
+                     "hash": "A" * 40}, [])
+    assert recorded == ["https://dl.example/client/latest/data.bin"]

@@ -14,9 +14,9 @@ import shutil
 import struct
 import time
 import urllib.request
+from typing import NamedTuple
 
 from ..core.constants import (
-    DOWNLOAD_VERSION,
     UA,
     DOWNLOAD_RETRY,
     DOWNLOAD_TIMEOUT,
@@ -35,25 +35,31 @@ from ..core.security_http import secure_urlopen, allowed_download_hosts
 from .tweaks import build_tweaks, write_config_wtf
 
 
-def _download_base() -> str:
-    """The base URL client files are fetched from. Mirrors are tried in order
-    (automatic failover) and the server is the fallback. '' when the launcher
-    configuration is missing."""
+class DownloadSource(NamedTuple):
+    """The resolved endpoints of the active download source."""
+    manifest_url: str
+    client_url: str
+
+
+def _download_source() -> "DownloadSource | None":
+    """Resolve the active download source: mirrors are tried in order
+    (automatic failover, probed via their manifest URL) and the server is the
+    fallback. Returns None when the launcher configuration is missing."""
     from ..core import launcher
     cfg = launcher.config()
     server = cfg.server_url if cfg else ""
     if not server:
-        return ""
+        return None
     for mirror in (cfg.mirrors if cfg else []):
         try:
             req = urllib.request.Request(
                 mirror.manifest_url, headers={"User-Agent": UA})
             with secure_urlopen(req, timeout=5) as r:
                 r.read(1)
-            return mirror.base_url
+            return DownloadSource(mirror.manifest_url, mirror.client_url)
         except Exception:
             continue
-    return server
+    return DownloadSource(cfg.manifest_url, cfg.client_url)
 
 
 class VerifyWorker:
@@ -120,10 +126,11 @@ class VerifyWorker:
         try:
             self.progress(0.02, "Fetching manifest...")
             self.log("Verifying files...", "acct")
-            base = _download_base()
+            src = _download_source()
+            if src is None:
+                raise RuntimeError("No download source configured.")
             req = urllib.request.Request(
-                f"{base}/api/file/{DOWNLOAD_VERSION}/manifest.json",
-                headers={"User-Agent": UA})
+                src.manifest_url, headers={"User-Agent": UA})
             with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
                 manifest = json.load(r)
             self.progress(0.5, "Checking...")
@@ -279,8 +286,8 @@ class UpdateWorker:
         if self._cancel:
             return
         if self._base is None:
-            self._base = _download_base()
-        base = self._base
+            self._base = _download_source()
+        src = self._base
         t    = node["type"]
         name = node["name"]
         cur  = path_parts + [name]
@@ -294,7 +301,7 @@ class UpdateWorker:
 
         elif t == "file":
             self.log(f"[file] {rel}", "acct")
-            url = f"{base}/client/{DOWNLOAD_VERSION}/{'/'.join(cur)}"
+            url = f"{src.client_url}/{'/'.join(cur)}"
 
             if name == "WoW.exe" and self.expected_patched_wow_hash:
                 server_hash = node["hash"]
@@ -324,7 +331,7 @@ class UpdateWorker:
             cur_mpq  = path_parts + [mpq_name]
             rel      = os.path.join(*cur_mpq)
             dest     = os.path.join(self.out_dir, rel)
-            url      = f"{base}/client/{DOWNLOAD_VERSION}/{'/'.join(cur_mpq)}"
+            url      = f"{src.client_url}/{'/'.join(cur_mpq)}"
             self.log(f"[mpq]  {rel}", "acct")
             if already_updated(dest, node["hash"]):
                 self.log("  Already up to date.", "dim")
@@ -391,10 +398,11 @@ class UpdateWorker:
             else:
                 self.progress(0.02, "Fetching manifest…")
                 self.log("Fetching manifest.json…")
-                self._base = _download_base()
+                self._base = _download_source()
+                if self._base is None:
+                    raise RuntimeError("No download source configured.")
                 req = urllib.request.Request(
-                    f"{self._base}/api/file/{DOWNLOAD_VERSION}/manifest.json",
-                    headers={"User-Agent": UA})
+                    self._base.manifest_url, headers={"User-Agent": UA})
                 with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
                     manifest = json.load(r)
                 self.log("Manifest received.", "ok")

@@ -24,7 +24,6 @@ from ..core.constants import (
     CACHE_FILE,
     CONFIG_FILE,
     DEFAULT_OUT_DIR,
-    DOWNLOAD_VERSION,
     UA,
 )
 from ..core.security_http import secure_urlopen
@@ -480,25 +479,24 @@ class SettingsController:
 
     def _probe_mirror(self, name: str) -> bool:
         """Whether a named download source answers its manifest endpoint."""
-        base = self._mirror_base(name)
-        if not base:
+        url = self._mirror_manifest_url(name)
+        if not url:
             return False
         try:
-            req = urllib.request.Request(
-                f"{base}/api/file/{DOWNLOAD_VERSION}/manifest.json",
-                headers={"User-Agent": UA})
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
             with secure_urlopen(req, timeout=6):
                 return True
         except Exception:
             return False
 
-    def _mirror_base(self, name: str) -> str:
+    def _mirror_manifest_url(self, name: str) -> str:
+        """The manifest URL of a named download source (server or mirror)."""
         cfg = launcher.config()
         if cfg is None:
             return ""
         if cfg.server_name == name:
-            return cfg.server_url
+            return cfg.manifest_url
         for m in cfg.mirrors:
             if m.name == name:
-                return m.base_url
+                return m.manifest_url
         return ""

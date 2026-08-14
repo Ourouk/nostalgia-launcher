@@ -7,23 +7,34 @@ own server.
 
 The file is `vanilla_wow_launcher.json`, discovered next to the executable
 (frozen) or in the repo root (running from source), or passed explicitly via
-``--launcher-config``. Only ``server.base_url`` is required — every other URL
-is derived from it unless overridden, and mirrors are optional:
+``--launcher-config``. Only ``server.base_url`` is required; every other URL
+is derived from it unless overridden:
 
     {
       "server": {
         "name": "My Server",
         "base_url": "https://server.example",
         "realm": "server.example",
+        "manifest_url": "https://server.example/api/file/latest/manifest.json",
+        "client_url": "https://server.example/client/latest",
         "news_url": "https://server.example/news",
         "featured_news_url": "https://server.example/news/featured",
         "mods_registry_url": "https://server.example/api/mods.json",
         "addons_registry_url": "https://server.example/api/addons.json"
       },
       "mirrors": [
-        { "name": "Backup", "base_url": "https://mirror.example" }
+        {
+          "name": "Backup",
+          "base_url": "https://mirror.example",
+          "manifest_url": "https://mirror.example/api/file/latest/manifest.json",
+          "client_url": "https://dl.mirror.example/client/latest"
+        }
       ]
     }
+
+The manifest and client files are fetched from the configured endpoints; a
+mirror's ``client_url`` may point at a separate CDN host, and mirrors are
+optional (the server is the fallback).
 
 A missing or invalid configuration is a hard startup error: the app has
 nothing to point at. This module is network-free; `core/security_http` builds
@@ -61,6 +72,8 @@ class LauncherConfig:
     """Validated launcher configuration with every endpoint resolved."""
     server_name: str
     server_url: str
+    manifest_url: str
+    client_url: str
     news_url: str
     featured_news_url: str
     mods_registry_url: str
@@ -73,10 +86,12 @@ class LauncherConfig:
         return bool(self.server_url)
 
     def download_hosts(self) -> set:
-        """Every host the configured server and mirrors may serve from."""
+        """Every host the configured server and mirrors may serve from —
+        the base URLs plus any custom manifest/client endpoints (e.g. a
+        separate CDN host)."""
         hosts = set()
-        for base in self.all_bases():
-            host = urlsplit(base).hostname
+        for url in self._all_urls():
+            host = urlsplit(url).hostname
             if host:
                 hosts.add(host)
         return hosts
@@ -84,6 +99,15 @@ class LauncherConfig:
     def all_bases(self) -> list:
         """The server followed by every mirror's base URL."""
         return [self.server_url] + [m.base_url for m in self.mirrors]
+
+    def _all_urls(self) -> list:
+        """Every endpoint URL the app may contact: base URLs plus the
+        resolved manifest/client endpoints of the server and mirrors."""
+        urls = list(self.all_bases())
+        urls += [self.manifest_url, self.client_url]
+        for m in self.mirrors:
+            urls += [m.manifest_url, m.client_url]
+        return urls
 
 
 def _https_url(value: str) -> str | None:
@@ -132,9 +156,15 @@ def _derive(data: dict) -> LauncherConfig:
             or (mb + "/client/latest"),
         ))
 
+    manifest_url = _https_url(server.get("manifest_url")) \
+        or (base + "/api/file/latest/manifest.json")
+    client_url = _https_url(server.get("client_url")) or (base + "/client/latest")
+
     return LauncherConfig(
         server_name=(server.get("name") or host).strip(),
         server_url=base,
+        manifest_url=manifest_url,
+        client_url=client_url,
         news_url=_url("news_url",
                       "/forum/octonews.php?mode=list&forum=2&limit=8"),
         featured_news_url=_url(

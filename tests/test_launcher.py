@@ -22,6 +22,9 @@ def test_derives_endpoints_from_base_url():
     cfg = _config({"server": {"name": "My", "base_url": "https://srv.example"}})
     assert cfg is not None
     assert cfg.server_url == "https://srv.example"
+    assert cfg.manifest_url == (
+        "https://srv.example/api/file/latest/manifest.json")
+    assert cfg.client_url == "https://srv.example/client/latest"
     assert cfg.news_url == (
         "https://srv.example/forum/octonews.php?mode=list&forum=2&limit=8")
     assert cfg.featured_news_url == (
@@ -29,6 +32,16 @@ def test_derives_endpoints_from_base_url():
     assert cfg.mods_registry_url == "https://srv.example/api/mods.json"
     assert cfg.addons_registry_url == "https://srv.example/api/addons.json"
     assert cfg.realm == "srv.example"
+
+
+def test_server_manifest_and_client_overrides():
+    cfg = _config({"server": {
+        "base_url": "https://srv.example",
+        "manifest_url": "https://cdn.example/api/manifest.json",
+        "client_url": "https://dl.example/client/latest",
+    }})
+    assert cfg.manifest_url == "https://cdn.example/api/manifest.json"
+    assert cfg.client_url == "https://dl.example/client/latest"
 
 
 def test_endpoint_overrides_and_realm():
@@ -75,6 +88,17 @@ def test_download_hosts_cover_server_and_mirrors():
     cfg = _config({"server": {"base_url": "https://srv.example"},
                    "mirrors": [{"base_url": "https://m1.example"}]})
     assert cfg.download_hosts() == {"srv.example", "m1.example"}
+
+
+def test_download_hosts_cover_custom_manifest_client_hosts():
+    cfg = _config({"server": {"base_url": "https://srv.example"},
+                   "mirrors": [{
+                       "base_url": "https://m1.example",
+                       "manifest_url": "https://api.example/m.json",
+                       "client_url": "https://dl.example/client/latest",
+                   }]})
+    assert cfg.download_hosts() == {
+        "srv.example", "m1.example", "api.example", "dl.example"}
 
 
 def test_configure_from_file(tmp_path):
