@@ -249,9 +249,9 @@ def test_example_octowow_mods_catalog_validates():
         assert cleaned is not None, entry.get("id")
         ids.append(cleaned["id"])
     assert ids == [
-        "VanillaFixes", "ClassicAPI", "dxvk", "nampower", "SuperWoW",
-        "transmogfix", "UnitXP_SP3", "VanillaHelpers",
-        "VanillaMultiMonitorFix",
+        "VanillaFixes", "ClassicAPI", "dxvk", "nampower", "no1600x1200",
+        "PerfBoost", "SuperWoW", "transmogfix", "UnitXP_SP3",
+        "VanillaHelpers", "VanillaMultiMonitorFix",
     ]
     dxvk = next(c for c in (catalog.validate_mod(e) for e in raw)
                 if c["id"] == "dxvk")

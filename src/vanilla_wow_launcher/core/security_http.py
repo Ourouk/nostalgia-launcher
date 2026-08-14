@@ -39,6 +39,7 @@ except (AttributeError, ValueError):
 # time via allowed_download_hosts().
 ALLOWED_DOWNLOAD_HOSTS = {
     "github.com",
+    "raw.githubusercontent.com",
     "objects.githubusercontent.com",
     "release-assets.githubusercontent.com",
     "gitlab.com",

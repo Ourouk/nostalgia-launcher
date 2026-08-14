@@ -72,6 +72,34 @@
     "installed_files": ["nampower.dll"]
   },
   {
+    "id": "no1600x1200",
+    "essential": false,
+    "name": "no1600x1200",
+    "description": "Removes the 1600x1200 resolution cap so all monitor resolutions are available.",
+    "repo_url": "https://github.com/RetroCro/TurtleWoW-Mods",
+    "source": {
+      "kind": "direct_file",
+      "url": "https://raw.githubusercontent.com/RetroCro/TurtleWoW-Mods/refs/heads/main/Archive/DLL%20BACKUP/no1600x1200.dll",
+      "dest": "no1600x1200.dll"
+    },
+    "register_dll": "no1600x1200.dll",
+    "installed_files": ["no1600x1200.dll"]
+  },
+  {
+    "id": "PerfBoost",
+    "essential": false,
+    "name": "PerfBoost",
+    "description": "Adjustable render distances per unit type to improve FPS in crowded areas and raids.",
+    "repo_url": "https://github.com/RetroCro/TurtleWoW-Mods",
+    "source": {
+      "kind": "direct_file",
+      "url": "https://raw.githubusercontent.com/RetroCro/TurtleWoW-Mods/refs/heads/main/Archive/DLL%20BACKUP/perf_boost.dll",
+      "dest": "perf_boost.dll"
+    },
+    "register_dll": "perf_boost.dll",
+    "installed_files": ["perf_boost.dll"]
+  },
+  {
     "id": "SuperWoW",
     "essential": true,
     "name": "SuperWoW",
