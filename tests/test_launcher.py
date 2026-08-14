@@ -31,7 +31,45 @@ def test_derives_endpoints_from_base_url():
         "https://srv.example/forum/octonews.php?forum=35&mode=full")
     assert cfg.mods_registry_url == "https://srv.example/api/mods.json"
     assert cfg.addons_registry_url == "https://srv.example/api/addons.json"
+    assert cfg.addons_registry_urls == ["https://srv.example/api/addons.json"]
     assert cfg.realm == "srv.example"
+
+
+def test_addons_registry_urls_override_order():
+    cfg = _config({"server": {
+        "base_url": "https://srv.example",
+        "addons_registry_url": "https://a.example/official.json",
+        "addons_registry_urls": [
+            "https://a.example/official.json",
+            "https://b.example/overrides.json",
+        ],
+    }})
+    assert cfg is not None
+    assert cfg.addons_registry_url == "https://a.example/official.json"
+    assert cfg.addons_registry_urls == [
+        "https://a.example/official.json",
+        "https://b.example/overrides.json",
+    ]
+
+
+def test_addons_registry_urls_drop_insecure_entries():
+    cfg = _config({"server": {
+        "base_url": "https://srv.example",
+        "addons_registry_urls": [
+            "https://a.example/ok.json",
+            "http://b.example/insecure.json",
+        ],
+    }})
+    assert cfg is not None
+    assert cfg.addons_registry_urls == ["https://a.example/ok.json"]
+
+
+def test_addons_registry_urls_fall_back_to_singular():
+    cfg = _config({"server": {
+        "base_url": "https://srv.example",
+        "addons_registry_url": "https://a.example/only.json",
+    }})
+    assert cfg.addons_registry_urls == ["https://a.example/only.json"]
 
 
 def test_server_manifest_and_client_overrides():

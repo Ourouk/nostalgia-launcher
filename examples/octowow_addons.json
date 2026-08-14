@@ -1,0 +1,8 @@
+[
+  {
+    "name": "pfUI",
+    "git": "https://github.com/roby-brok/pfUI",
+    "branch": "master",
+    "description": "OctoWoW-maintained pfUI fork with UI-scale/border fixes, mailbox performance and repairs to silently-broken features."
+  }
+]

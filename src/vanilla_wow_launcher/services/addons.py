@@ -80,69 +80,131 @@ def _custom_validator(entry: dict) -> dict | None:
 
 
 def fetch_addons_catalog(force=False) -> list:
-    """Addon catalog, cached in the config file for a day
-    ({"addons_catalog_cache": {"timestamp": epoch, "catalog": […]}}). A
-    network failure falls back to the last good cached catalog; an unset
-    catalog URL returns an empty list."""
-    url = registry_url()
-    if not url:
+    """The ordered addon catalog: every configured registry URL is fetched
+    (or served from its own cache entry) and merged in order — a later
+    registry overrides an earlier one by addon folder name. Cached per URL
+    for a day ({"addons_catalog_cache": {url: {"timestamp", "catalog"}}}).
+    A failed URL falls back to its last cached copy; an unconfigured URL
+    list returns an empty list."""
+    urls = registry_urls()
+    if not urls:
         log("Addon catalog URL is not configured.", "err")
         return []
     now = time.time()
-    if not force:
-        entry = load_config().get("addons_catalog_cache", {})
-        if entry.get("catalog") is not None \
-                and (now - entry.get("timestamp", 0)) < ADDONS_CATALOG_TTL:
-            return entry["catalog"]
+    cache = load_config().get("addons_catalog_cache", {})
+    if isinstance(cache, dict) and "catalog" in cache and urls[0] not in cache:
+        # Legacy single-URL cache shape → re-key it under the first
+        # configured URL so the per-URL lookup keeps working.
+        update_config(
+            lambda c, u=urls[0]: c.setdefault("addons_catalog_cache", {})
+            .__setitem__(u, c["addons_catalog_cache"]))
+    merged = []
+    for url in urls:
+        part = _fetch_url_catalog(url, force, now)
+        merged = catalog.merge_addons(merged, part)
+    return merged
+
+
+def _cache_entry(url: str) -> dict:
+    """The cached catalog record for a URL, handling the legacy single-URL
+    shape (a bare {"timestamp", "catalog"} object). Read through
+    `_config_store` so the controller's offline fallback honors test
+    monkeypatches of `config_store.load_config`."""
+    cache = _config_store.load_config().get("addons_catalog_cache", {}) or {}
+    if isinstance(cache, dict) and url in cache:
+        return cache[url]
+    if isinstance(cache, dict) and "catalog" in cache:
+        return cache
+    return {}
+
+
+def _fetch_url_catalog(url: str, force: bool, now: float) -> list:
+    """Fetch and cache one catalog URL; on failure serve its cached copy."""
+    entry = _cache_entry(url)
+    if not force and entry.get("catalog") is not None \
+            and (now - entry.get("timestamp", 0)) < ADDONS_CATALOG_TTL:
+        return entry["catalog"]
     try:
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with secure_urlopen(req, timeout=10) as r:
             raw = json.load(r)
     except Exception:
-        # offline — serve the last good cached copy
-        return (load_config().get("addons_catalog_cache", {})
-                .get("catalog") or [])
+        # offline — serve the last good cached copy for this URL
+        return entry.get("catalog") or []
     catalog_list = []
-    for entry in raw if isinstance(raw, list) else []:
-        if not isinstance(entry, dict):
+    for e in raw if isinstance(raw, list) else []:
+        if not isinstance(e, dict):
             continue
-        cleaned = _custom_validator(entry)
+        cleaned = _custom_validator(e)
         if cleaned is None:
             continue
         catalog_list.append(cleaned)
-    update_config(lambda c: c.__setitem__(
-        "addons_catalog_cache", {"timestamp": now, "catalog": catalog_list}))
+    update_config(lambda c, u=url, o=catalog_list, t=now:
+                  c.setdefault("addons_catalog_cache", {})
+                  .__setitem__(u, {"timestamp": t, "catalog": o}))
     return catalog_list
 
 
 def addons_catalog(force=False) -> list:
-    """The effective addon catalog: the remote/cached catalog merged with the
-    per-user custom file (custom entries override by folder name)."""
+    """The effective addon catalog: the remote/cached catalogs merged in
+    registry order (later wins) and then merged with the per-user custom
+    file (custom entries override by folder name)."""
     remote = fetch_addons_catalog(force=force)
     return catalog.merge_addons(
         remote, catalog.load_custom("addons", _custom_validator))
 
 
 def catalog_from_cache() -> list:
-    """The cached catalog merged with the custom file, without any network —
+    """The cached catalogs merged with the custom file, without any network —
     used as the offline fallback when a fresh fetch fails."""
-    cached = (_config_store.load_config()
-              .get("addons_catalog_cache", {})
-              .get("catalog") or [])
+    cache = _config_store.load_config().get("addons_catalog_cache", {}) or {}
+    urls = registry_urls()
+    parts = []
+    if urls:
+        for url in urls:
+            entry = _cache_entry(url)
+            if entry.get("catalog"):
+                parts.append(entry["catalog"])
+    elif isinstance(cache, dict) and cache.get("catalog"):
+        parts.append(cache["catalog"])
+    merged = []
+    for part in parts:
+        merged = catalog.merge_addons(merged, part)
     return catalog.merge_addons(
-        cached, catalog.load_custom("addons", _custom_validator))
+        merged, catalog.load_custom("addons", _custom_validator))
 
 
 def registry_url() -> str:
-    """The active addon catalog URL: a user override (Settings), else the
-    launcher-configured URL, else ''."""
-    return catalog.get_registry_url("addons") or addons_registry_default_url()
+    """The addon catalog URL shown in Settings: a per-user override, else the
+    first launcher-configured URL, else ''."""
+    override = catalog.get_registry_url("addons")
+    if override:
+        return override
+    urls = addons_registry_default_urls()
+    return urls[0] if urls else ""
+
+
+def registry_urls() -> list[str]:
+    """The ordered list of addon catalog URLs in effect: a per-user override
+    (Settings) replaces the whole list with itself; otherwise the
+    launcher-configured list is used."""
+    override = catalog.get_registry_url("addons")
+    if override:
+        return [override]
+    return addons_registry_default_urls()
 
 
 def addons_registry_default_url() -> str:
     """The launcher-configured addon catalog URL ('' when not configured)."""
+    urls = addons_registry_default_urls()
+    return urls[0] if urls else ""
+
+
+def addons_registry_default_urls() -> list[str]:
+    """The launcher-configured addon catalog URLs, in override order ('' list
+    when not configured)."""
     from ..core import launcher
-    return launcher.addons_registry_url()
+    return launcher.addons_registry_urls()
 
 
 def set_registry_url(url: str) -> str | None:

@@ -149,6 +149,140 @@ def test_fetch_addons_catalog_drops_disallowed_git(tmp_path, monkeypatch):
     assert addons.fetch_addons_catalog() == []
 
 
+# ── multiple registries (ordered override) ───────────────────────────────
+
+
+def _fake_response(payload):
+    return type("R", (), {"__enter__": lambda s: s,
+                          "__exit__": lambda *x: False,
+                          "read": lambda s=0: payload})
+
+
+def _configure_urls(urls):
+    from vanilla_wow_launcher.core import launcher
+    launcher.configure_from_dict({
+        "server": {"base_url": "https://launcher.test",
+                   "addons_registry_urls": list(urls)}})
+
+
+def test_fetch_addons_catalog_merges_registries_in_order(tmp_path,
+                                                         monkeypatch):
+    config_store.configure(str(tmp_path / "config.json"),
+                           str(tmp_path / "cache.json"))
+    config_store.save_config({})
+    _configure_urls(["https://a.test/official.json",
+                     "https://b.test/overrides.json"])
+    by_url = {
+        "https://a.test/official.json": [
+            {"name": "pfUI", "git": "https://github.com/brues-code/pfUI",
+             "branch": "master"},
+            {"name": "OnlyA", "git": "https://github.com/a/OnlyA"},
+        ],
+        "https://b.test/overrides.json": [
+            {"name": "pfUI", "git": "https://github.com/roby-brok/pfUI",
+             "branch": "master", "description": "OctoWoW fork"},
+        ],
+    }
+
+    def fake(req, *a, **k):
+        return _fake_response(json.dumps(by_url[req.full_url]).encode())()
+
+    monkeypatch.setattr(addons, "secure_urlopen", fake)
+
+    out = addons.fetch_addons_catalog()
+    by_name = {a["name"]: a for a in out}
+    assert len(out) == 2
+    # The later registry overrides the earlier one for pfUI.
+    assert by_name["pfUI"]["git"] == "https://github.com/roby-brok/pfUI"
+    assert by_name["pfUI"]["branch"] == "master"
+    # Entries only present in the first registry survive.
+    assert by_name["OnlyA"]["git"] == "https://github.com/a/OnlyA"
+
+
+def test_fetch_addons_catalog_failed_registry_uses_its_cache(tmp_path,
+                                                             monkeypatch):
+    config_store.configure(str(tmp_path / "config.json"),
+                           str(tmp_path / "cache.json"))
+    _configure_urls(["https://a.test/official.json",
+                     "https://b.test/overrides.json"])
+    config_store.save_config({"addons_catalog_cache": {
+        "https://a.test/official.json": {
+            "timestamp": 9999999999,
+            "catalog": [{"name": "pfUI",
+                         "git": "https://github.com/brues-code/pfUI"}]},
+        "https://b.test/overrides.json": {
+            "timestamp": 9999999999,
+            "catalog": [{"name": "pfUI",
+                         "git": "https://github.com/roby-brok/pfUI"}]},
+    }})
+
+    def boom(*a, **k):
+        raise AssertionError("cached catalogs must not hit the network")
+
+    monkeypatch.setattr(addons, "secure_urlopen", boom)
+
+    out = addons.fetch_addons_catalog()
+    pfui = next(a for a in out if a["name"] == "pfUI")
+    assert pfui["git"] == "https://github.com/roby-brok/pfUI"
+
+
+def test_registry_urls_override_replaces_launcher_list(tmp_path):
+    config_store.configure(str(tmp_path / "config.json"),
+                           str(tmp_path / "cache.json"))
+    config_store.save_config({})
+    _configure_urls(["https://a.test/1.json", "https://b.test/2.json"])
+    assert addons.registry_urls() == ["https://a.test/1.json",
+                                      "https://b.test/2.json"]
+
+    addons.set_registry_url("https://c.test/custom.json")
+    assert addons.registry_urls() == ["https://c.test/custom.json"]
+    assert addons.registry_url() == "https://c.test/custom.json"
+
+    addons.reset_registry_url()
+    assert addons.registry_urls() == ["https://a.test/1.json",
+                                      "https://b.test/2.json"]
+
+
+def test_catalog_from_cache_merges_in_configured_order(tmp_path):
+    config_store.configure(str(tmp_path / "config.json"),
+                           str(tmp_path / "cache.json"))
+    _configure_urls(["https://a.test/official.json",
+                     "https://b.test/overrides.json"])
+    config_store.save_config({"addons_catalog_cache": {
+        "https://a.test/official.json": {
+            "timestamp": 1,
+            "catalog": [{"name": "pfUI",
+                         "git": "https://github.com/brues-code/pfUI",
+                         "branch": None, "ref": None}]},
+        "https://b.test/overrides.json": {
+            "timestamp": 1,
+            "catalog": [{"name": "pfUI",
+                         "git": "https://github.com/roby-brok/pfUI",
+                         "branch": "master", "ref": None,
+                         "description": "fork"}]},
+    }})
+
+    out = addons.catalog_from_cache()
+    pfui = next(a for a in out if a["name"] == "pfUI")
+    assert pfui["git"] == "https://github.com/roby-brok/pfUI"
+    assert pfui["branch"] == "master"
+
+
+def test_example_octowow_addons_overrides_validate():
+    """The bundled override list must pass the addon validator so the
+    launcher config's addons_registry_urls stays usable."""
+    import os
+    path = os.path.join(os.path.dirname(__file__), "..", "examples",
+                        "octowow_addons.json")
+    raw = json.load(open(path, encoding="utf-8"))
+    assert isinstance(raw, list) and len(raw) >= 1
+    for entry in raw:
+        cleaned = addons._custom_validator(entry)
+        assert cleaned is not None, entry
+    assert any(a["name"] == "pfUI" for a in
+               (addons._custom_validator(e) for e in raw))
+
+
 def test_addons_catalog_merges_custom(tmp_path, monkeypatch):
     config_store.configure(str(tmp_path / "config.json"), str(tmp_path / "cache.json"))
     config_store.save_config({})

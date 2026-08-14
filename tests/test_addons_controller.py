@@ -34,9 +34,12 @@ def cfg(monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def backends(monkeypatch):
+def backends(monkeypatch, tmp_path):
     monkeypatch.setattr(ac.addons, "fetch_addons_catalog",
                         lambda force=False: [])
+    # Isolate the per-user custom file so a real user's config can't leak in.
+    monkeypatch.setattr(ac.addons.catalog, "custom_file",
+                        lambda kind: str(tmp_path / f"{kind}_custom.json"))
     monkeypatch.setattr(ac.addons, "addon_remote_sha",
                         lambda git, branch=None, ref=None, force=False,
                                raise_errors=False: "REMOTE")

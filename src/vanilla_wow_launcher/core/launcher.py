@@ -22,7 +22,11 @@ other URL is derived from it unless overridden:
         "news_url": "https://server.example/news",
         "featured_news_url": "https://server.example/news/featured",
         "mods_registry_url": "https://server.example/api/mods.json",
-        "addons_registry_url": "https://server.example/api/addons.json"
+        "addons_registry_url": "https://server.example/api/addons.json",
+        "addons_registry_urls": [
+          "https://server.example/api/addons.json",
+          "https://server.example/addons-overrides.json"
+        ]
       },
       "mirrors": [
         {
@@ -83,6 +87,7 @@ class LauncherConfig:
     mods_registry_url: str
     addons_registry_url: str
     realm: str
+    addons_registry_urls: list[str] = field(default_factory=list)
     mirrors: list["Mirror"] = field(default_factory=list)
 
     @property
@@ -174,6 +179,17 @@ def _derive(data: dict) -> LauncherConfig:
         or _default_manifest(base)
     client_url = _https_url(server.get("client_url")) or _default_client(base)
 
+    addons_registry_url = _url("addons_registry_url", "/api/addons.json")
+    addons_registry_urls: list[str] = []
+    raw_urls = server.get("addons_registry_urls")
+    if isinstance(raw_urls, list) and raw_urls:
+        for u in raw_urls:
+            https = _https_url(u)
+            if https:
+                addons_registry_urls.append(https)
+    if not addons_registry_urls:
+        addons_registry_urls = [addons_registry_url]
+
     return LauncherConfig(
         server_name=(server.get("name") or host).strip(),
         server_url=base,
@@ -184,7 +200,8 @@ def _derive(data: dict) -> LauncherConfig:
         featured_news_url=_url(
             "featured_news_url", "/forum/octonews.php?forum=35&mode=full"),
         mods_registry_url=_url("mods_registry_url", "/api/mods.json"),
-        addons_registry_url=_url("addons_registry_url", "/api/addons.json"),
+        addons_registry_url=addons_registry_url,
+        addons_registry_urls=addons_registry_urls,
         realm=(server.get("realm") or host).strip(),
         mirrors=mirrors,
     )
@@ -348,6 +365,13 @@ def mods_registry_url() -> str:
 def addons_registry_url() -> str:
     c = config()
     return c.addons_registry_url if c else ""
+
+
+def addons_registry_urls() -> list[str]:
+    """The ordered launcher-configured addon catalog URLs — later entries
+    override earlier ones by addon folder name."""
+    c = config()
+    return list(c.addons_registry_urls) if c else []
 
 
 def realm() -> str:
