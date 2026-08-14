@@ -8,7 +8,11 @@ VanillaWoWLauncher.spec`` after ``uv sync --dev``). Produces ``dist/VanillaWoWLa
 
 from PyInstaller.utils.hooks import collect_all
 
-datas, binaries, hiddenimports = collect_all("PySide6")
+pyside_datas, pyside_binaries, pyside_hiddenimports = collect_all("PySide6")
+shiboken_datas, shiboken_binaries, shiboken_hiddenimports = collect_all("shiboken6")
+datas = pyside_datas + shiboken_datas
+binaries = pyside_binaries + shiboken_binaries
+hiddenimports = pyside_hiddenimports + shiboken_hiddenimports
 
 # The panels/dialogs are constructed by the Qt main window at runtime, so
 # list every app module explicitly to be safe under a frozen build.
