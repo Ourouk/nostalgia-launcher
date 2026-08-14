@@ -3,6 +3,10 @@
 Wires the launcher configuration and the config-store paths, then starts the
 Qt interface. The console-script entry (`vanilla-wow-launcher`), `python -m
 vanilla_wow_launcher` and the PyInstaller specs all reach this module.
+
+On first launch, when no `vanilla_wow_launcher.json` is found and no
+``--launcher-config`` was given, a modal Qt wizard asks the user to pick one
+instead of failing hard.
 """
 
 import argparse
@@ -62,10 +66,49 @@ def backend_error_message(name, exc) -> str:
 
 def main(argv=None) -> int:
     args = _parse_args(argv)
+    explicit = bool(args.launcher_config)
     _cfg, err = launcher.configure(args.launcher_config)
+    if err:
+        if explicit:
+            sys.stderr.write(f"{err}\n")
+            return 1
+        return _first_launch()
+    return _run_backend()
+
+
+def _first_launch() -> int:
+    """No launcher config and no --launcher-config: ask the user to pick one."""
+    try:
+        chosen = _pick_launcher_config()
+    except ImportError as e:
+        sys.stderr.write(backend_error_message("qt", e))
+        return 1
+    if chosen is None:
+        sys.stderr.write(
+            "No launcher configuration selected. A vanilla_wow_launcher.json "
+            "is required — launch again with --launcher-config.\n")
+        return 1
+    _cfg, err = launcher.configure(chosen)
     if err:
         sys.stderr.write(f"{err}\n")
         return 1
+    return _run_backend()
+
+
+def _pick_launcher_config() -> str | None:
+    """Modal first-launch config picker; returns the chosen path or None."""
+    from PySide6.QtWidgets import QDialog
+    from .ui.qt.app import create_qt_app
+    from .ui.qt.launcher_config_dialog import LauncherConfigDialog
+    create_qt_app()
+    dlg = LauncherConfigDialog(initial_path=launcher.discover_path())
+    if dlg.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return dlg.selected_path()
+
+
+def _run_backend() -> int:
+    """Config-store setup + Qt backend resolution/construction/run."""
     config_store.configure(
         CONFIG_FILE, CACHE_FILE,
         legacy_config=(LEGACY_CONFIG_FILE, LEGACY_USER_CONFIG_FILE),

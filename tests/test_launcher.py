@@ -100,6 +100,43 @@ def test_configure_missing_returns_error():
     assert "required" in err
 
 
+def test_validate_path_valid(tmp_path):
+    path = tmp_path / "vanilla_wow_launcher.json"
+    path.write_text(json.dumps(
+        {"server": {"base_url": "https://launcher.test"}}), encoding="utf-8")
+    config, err = launcher.validate_path(str(path))
+    assert err == ""
+    assert config is not None
+    assert config.server_url == "https://launcher.test"
+
+
+def test_validate_path_missing_file(tmp_path):
+    config, err = launcher.validate_path(str(tmp_path / "nope.json"))
+    assert config is None
+    assert err
+
+
+def test_validate_path_invalid_json(tmp_path):
+    path = tmp_path / "bad.json"
+    path.write_bytes(b"not json")
+    config, err = launcher.validate_path(str(path))
+    assert config is None
+    assert err
+
+
+def test_validate_path_does_not_touch_active_config(tmp_path):
+    launcher.configure_from_dict(
+        {"server": {"base_url": "https://launcher.test"}})
+    before = launcher.config()
+    assert before is not None
+    invalid = tmp_path / "bad.json"
+    invalid.write_bytes(b"not json")
+    config, err = launcher.validate_path(str(invalid))
+    assert config is None
+    assert err
+    assert launcher.config() is before
+
+
 def test_accessors_empty_when_not_configured():
     launcher.reset()
     assert launcher.server_url() == ""

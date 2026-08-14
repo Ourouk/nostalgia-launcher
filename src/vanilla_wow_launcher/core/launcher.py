@@ -162,6 +162,17 @@ def discover_path() -> str:
     return ""
 
 
+def validate_path(path: str) -> tuple["LauncherConfig | None", str]:
+    """Validate a launcher config file WITHOUT storing it as the active config.
+    Returns (config, error); exactly one is set. Never touches module globals."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)
+        return _derive(raw), ""
+    except Exception as e:
+        return None, str(e)
+
+
 def configure(path: str | None = None) -> tuple["LauncherConfig | None", str]:
     """Load and validate the launcher configuration from ``path`` (or an
     auto-discovered file). Returns (config, error); exactly one is set."""
