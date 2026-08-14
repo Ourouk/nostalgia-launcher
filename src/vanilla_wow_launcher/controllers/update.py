@@ -16,6 +16,7 @@ from ..services.client_update import UpdateWorker, VerifyWorker
 from ..core.config_store import load_config, update_config
 from ..core.constants import DEFAULT_OUT_DIR
 from ..core.filesystem import get_client_version, remove_wdb
+from ..core.log_sink import debug_emit
 from ..core.platform_support import can_launch_client
 from ..services.self_update import fetch_updater_latest_tag, updater_update_available
 from ..state.events import (
@@ -297,6 +298,7 @@ class UpdateController:
         elif msg.startswith("__VERSION__"):
             self.state.client_version = msg[len("__VERSION__"):]
         else:
+            debug_emit(msg)
             self._dispatcher.post(LogMessage(msg, tag))
 
     def _mods_have_errors(self) -> bool:

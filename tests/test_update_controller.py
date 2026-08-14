@@ -112,6 +112,30 @@ def test_verify_up_to_date_marks_client_ready(controller, worker_cls, config):
     assert controller.state.running is False
 
 
+# ── debug stdout mirroring ───────────────────────────────────────────────
+
+def test_poll_echoes_worker_logs_to_stdout_in_debug(controller, worker_cls,
+                                                    config, monkeypatch,
+                                                    capsys):
+    monkeypatch.setenv("VANILLA_WOW_DEBUG", "1")
+    worker_cls.script = [("Verifying files...", "acct"), ("__DONE__", "")]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    out = capsys.readouterr().out
+    assert "Verifying files..." in out
+    assert "__DONE__" not in out
+
+
+def test_poll_does_not_echo_to_stdout_by_default(controller, worker_cls,
+                                                 config, monkeypatch,
+                                                 capsys):
+    monkeypatch.delenv("VANILLA_WOW_DEBUG", raising=False)
+    worker_cls.script = [("Verifying files...", "acct"), ("__DONE__", "")]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    assert capsys.readouterr().out == ""
+
+
 def test_verify_needs_update_sets_diff_and_not_ready(controller, worker_cls, config):
     diff = [{"type": "file", "name": "a.bin"}]
     worker_cls.script = [("__DIFF_TREE__", diff), ("__UPDATE_NEEDED__", "")]
