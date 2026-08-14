@@ -121,13 +121,17 @@ logs, add the game folder to Defender exclusions, and adjust general options.
 ### Configuration location
 
 Where the config and hash-cache files live depends on the platform (see
-`platform_support.config_dir()` / `cache_dir()`):
+`platform_support.config_dir()` / `cache_dir()`). Config and cache are kept in
+separate per-user directories, never next to the executable:
 
-| Platform | Config & cache location |
-|----------|-------------------------|
-| Windows | Next to the executable |
-| Linux | `$XDG_CONFIG_HOME/vanilla-wow-launcher` and `$XDG_CACHE_HOME/vanilla-wow-launcher` (defaults: `~/.config/vanilla-wow-launcher` and `~/.cache/vanilla-wow-launcher`) |
-| macOS | `~/Library/Application Support/VanillaWoWLauncher` and `~/Library/Caches/VanillaWoWLauncher` |
+| Platform | Config | Hash cache |
+|----------|--------|------------|
+| Windows | `%APPDATA%\VanillaWoWLauncher` | `%LOCALAPPDATA%\VanillaWoWLauncher` |
+| Linux | `~/.vanilla-wow-launcher` | `$XDG_CACHE_HOME/vanilla-wow-launcher` (default: `~/.cache/vanilla-wow-launcher`) |
+| macOS | `~/Library/Application Support/VanillaWoWLauncher` | `~/Library/Caches/VanillaWoWLauncher` |
+
+Files from earlier locations (next to the executable, the old XDG paths, and
+the pre-rename `octo-updater` dirs) are migrated on first run.
 
 All are safe to delete — they're recreated on next run (deleting the config
 re-runs first-time setup).

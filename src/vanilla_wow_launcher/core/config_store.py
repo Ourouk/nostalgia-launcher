@@ -20,13 +20,15 @@ cache_file: str = ""
 
 
 def configure(cfg_file: str, cache: str,
-              legacy_config=(), legacy_cache=()):
+              legacy_config=(), legacy_cache=(), legacy_pairs=()):
     """Point the store at the on-disk config and hash-cache files.
 
     `legacy_config`/`legacy_cache` accept a single path string or an
     iterable of paths. When a legacy path is given and the new location is
     empty but the legacy file exists, the legacy file is copied over
     (first-use migration after the data moved to OS-appropriate directories).
+    `legacy_pairs` accepts an iterable of (legacy, new) path pairs for extra
+    files that moved directories too (e.g. the custom catalog files).
     """
     global config_file, cache_file
     config_file = cfg_file
@@ -35,6 +37,8 @@ def configure(cfg_file: str, cache: str,
         _migrate(legacy, config_file)
     for legacy in _as_paths(legacy_cache):
         _migrate(legacy, cache_file)
+    for legacy, new in _as_pairs(legacy_pairs):
+        _migrate(legacy, new)
 
 
 def _as_paths(value) -> tuple:
@@ -42,6 +46,11 @@ def _as_paths(value) -> tuple:
     if isinstance(value, str):
         return (value,) if value else ()
     return tuple(value)
+
+
+def _as_pairs(value) -> tuple:
+    """Normalize a (legacy, new) pairs argument to a tuple of tuples."""
+    return tuple(tuple(pair) for pair in value)
 
 
 def _migrate(legacy: str, new: str):

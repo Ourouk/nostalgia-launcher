@@ -70,23 +70,34 @@ def test_capabilities_non_windows(fake_platform, platform):
 
 # ── config/cache dirs ───────────────────────────────────────────────────────
 
-def test_config_dir_windows_uses_app_dir(fake_platform, monkeypatch, tmp_path):
+def test_config_dir_windows_uses_appdata(fake_platform, monkeypatch, tmp_path):
     fake_platform("win32")
-    monkeypatch.setattr(platform_support, "_app_dir", lambda: str(tmp_path))
-    assert config_dir() == str(tmp_path)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
+    assert config_dir() == str(tmp_path / "roaming" / "VanillaWoWLauncher")
 
 
-def test_config_dir_linux_uses_xdg(fake_platform, monkeypatch, tmp_path):
+def test_config_dir_windows_falls_back_to_userprofile(fake_platform,
+                                                      monkeypatch):
+    fake_platform("win32")
+    monkeypatch.delenv("APPDATA", raising=False)
+    monkeypatch.setenv("USERPROFILE", os.path.join("C:\\", "Users", "user"))
+    assert config_dir() == os.path.join(
+        os.path.join("C:\\", "Users", "user"),
+        "AppData", "Roaming", "VanillaWoWLauncher")
+
+
+def test_config_dir_linux_uses_hidden_home_dir(fake_platform, monkeypatch,
+                                               tmp_path):
+    fake_platform("linux")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert config_dir() == str(tmp_path / "home" / ".vanilla-wow-launcher")
+
+
+def test_config_dir_linux_ignores_xdg(fake_platform, monkeypatch, tmp_path):
     fake_platform("linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    assert config_dir() == str(tmp_path / "xdg" / "vanilla-wow-launcher")
-
-
-def test_config_dir_linux_falls_back_to_home(fake_platform, monkeypatch):
-    fake_platform("linux")
-    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-    monkeypatch.setenv("HOME", "/home/user")
-    assert config_dir() == "/home/user/.config/vanilla-wow-launcher"
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert config_dir() == str(tmp_path / "home" / ".vanilla-wow-launcher")
 
 
 def test_config_dir_macos_application_support(fake_platform, monkeypatch):
@@ -94,6 +105,27 @@ def test_config_dir_macos_application_support(fake_platform, monkeypatch):
     monkeypatch.setenv("HOME", "/Users/user")
     assert config_dir() == \
         "/Users/user/Library/Application Support/VanillaWoWLauncher"
+
+
+def test_cache_dir_windows_uses_localappdata(fake_platform, monkeypatch,
+                                             tmp_path):
+    fake_platform("win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    assert cache_dir() == str(tmp_path / "local" / "VanillaWoWLauncher")
+
+
+def test_cache_dir_windows_falls_back_to_appdata(fake_platform, monkeypatch,
+                                                 tmp_path):
+    fake_platform("win32")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
+    assert cache_dir() == str(tmp_path / "roaming" / "VanillaWoWLauncher")
+
+
+def test_cache_dir_linux_uses_xdg(fake_platform, monkeypatch, tmp_path):
+    fake_platform("linux")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xcache"))
+    assert cache_dir() == str(tmp_path / "xcache" / "vanilla-wow-launcher")
 
 
 def test_cache_dir_macos(fake_platform, monkeypatch):

@@ -2,13 +2,17 @@
 
 Vanilla WoW Launcher: the executable dir (APP_DIR) is next to the .exe when
 frozen (PyInstaller), otherwise next to this file — never the current working
-directory. On non-Windows platforms the persistent config/cache files live in
-the OS-appropriate per-user directories (XDG on Linux, Application Support on
-macOS) so the app works from read-only install locations.
+directory. Persistent config/cache files live in OS-appropriate per-user
+directories so the app works from read-only install locations: Linux config
+in ~/.vanilla-wow-launcher, Windows config in %APPDATA%\\VanillaWoWLauncher,
+macOS config in ~/Library/Application Support; the hash cache is kept
+separate (Linux XDG cache dir, %LOCALAPPDATA%, ~/Library/Caches).
 
 Files from earlier versions are migrated on first run: the old next-to-exe
-``octo_updater_config.json`` / ``octo_updater_hash_cache.json`` (LEGACY_*) and
-the old per-user files under the pre-rename directories (LEGACY_USER_*).
+``octo_updater_config.json`` / ``octo_updater_hash_cache.json`` (LEGACY_*), the
+pre-rename per-user files under the old "octo-updater" directories
+(LEGACY_USER_*), and the superseded current-version locations (next-to-exe and
+XDG) after config/cache moved to the per-user dirs.
 
 There is deliberately no hardcoded server here: every endpoint (client
 updates, news, mod/addon catalogs, realm, mirrors) comes from the launcher
@@ -47,8 +51,7 @@ CONFIG_FILE = os.path.join(config_dir(), "vanilla_wow_launcher_config.json")
 CACHE_FILE  = os.path.join(cache_dir(), "vanilla_wow_launcher_hash_cache.json")
 
 # Legacy location: the config/cache used to live next to the executable
-# under the old "octo_updater" names. On Windows that's still the case;
-# elsewhere we migrate on first use.
+# under the old "octo_updater" names. Migrated on first use.
 LEGACY_CONFIG_FILE = os.path.join(APP_DIR, "octo_updater_config.json")
 LEGACY_CACHE_FILE  = os.path.join(APP_DIR, "octo_updater_hash_cache.json")
 
@@ -82,6 +85,74 @@ LEGACY_USER_CONFIG_FILE = os.path.join(
     _legacy_user_config_dir(), "octo_updater_config.json")
 LEGACY_USER_CACHE_FILE = os.path.join(
     _legacy_user_cache_dir(), "octo_updater_hash_cache.json")
+
+
+# Superseded current-version locations: where config/cache lived before the
+# move to the per-user dirs (Windows: next to the executable; Linux: XDG).
+def _legacy_app_config_file() -> str:
+    return os.path.join(APP_DIR, "vanilla_wow_launcher_config.json")
+
+
+def _legacy_app_cache_file() -> str:
+    return os.path.join(APP_DIR, "vanilla_wow_launcher_hash_cache.json")
+
+
+def _legacy_xdg_config_file() -> str:
+    base = os.environ.get("XDG_CONFIG_HOME") \
+        or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "vanilla-wow-launcher",
+                        "vanilla_wow_launcher_config.json")
+
+
+def _legacy_xdg_cache_file() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") \
+        or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "vanilla-wow-launcher",
+                        "vanilla_wow_launcher_hash_cache.json")
+
+
+# Ordered migration candidates, most recent location first: the first file
+# that exists on disk is copied to the new per-user location on first run.
+LEGACY_CONFIG_FILES = (
+    _legacy_app_config_file(),
+    _legacy_xdg_config_file(),
+    LEGACY_CONFIG_FILE,
+    LEGACY_USER_CONFIG_FILE,
+)
+LEGACY_CACHE_FILES = (
+    _legacy_app_cache_file(),
+    _legacy_xdg_cache_file(),
+    LEGACY_CACHE_FILE,
+    LEGACY_USER_CACHE_FILE,
+)
+
+
+def legacy_config_dir() -> str:
+    """The config directory used by previous versions, for migrating files
+    that share it (e.g. the custom catalog files). macOS never moved, so it
+    returns '' — there is nothing to migrate from."""
+    if is_windows():
+        return APP_DIR
+    if is_macos():
+        return ""
+    base = os.environ.get("XDG_CONFIG_HOME") \
+        or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "vanilla-wow-launcher")
+
+
+def legacy_custom_pairs() -> tuple:
+    """(legacy, new) path pairs for the custom catalog files that moved with
+    the config directory (empty when it didn't move)."""
+    old = legacy_config_dir()
+    if not old:
+        return ()
+    pairs = []
+    for kind in ("mods", "addons"):
+        legacy = os.path.join(old, f"vanilla_wow_launcher_{kind}_custom.json")
+        new = os.path.join(config_dir(), f"vanilla_wow_launcher_{kind}_custom.json")
+        if legacy != new:
+            pairs.append((legacy, new))
+    return tuple(pairs)
 
 # First-run default game folder — a user-writable location.
 DEFAULT_OUT_DIR  = default_out_dir()

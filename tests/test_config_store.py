@@ -235,3 +235,31 @@ def test_configure_legacy_new_same_path_missing_is_noop(tmp_path):
     assert config_store.load_config() == {}
     assert not cfg.exists()
     config_store.configure("", "")
+
+
+def test_configure_migrates_legacy_pairs(tmp_path):
+    """Extra (legacy, new) pairs migrate files that moved with the config
+    dir, e.g. the custom catalog files."""
+    legacy = tmp_path / "old" / "vanilla_wow_launcher_mods_custom.json"
+    legacy.parent.mkdir()
+    legacy.write_text("[]")
+    new = tmp_path / "new" / "vanilla_wow_launcher_mods_custom.json"
+
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json"),
+        legacy_pairs=[(str(legacy), str(new))])
+    assert new.exists()
+    assert new.read_text() == "[]"
+    assert not new.parent.joinpath("cache.json").exists()
+    config_store.configure("", "")
+
+
+def test_configure_legacy_pairs_same_path_is_noop(tmp_path):
+    """A pair where legacy and new coincide must never copy onto itself."""
+    cfg = tmp_path / "config.json"
+    cfg.write_text('{"keep": true}')
+
+    config_store.configure(str(cfg), str(tmp_path / "cache.json"),
+                           legacy_pairs=[(str(cfg), str(cfg))])
+    assert cfg.read_text() == '{"keep": true}'
+    config_store.configure("", "")

@@ -38,9 +38,13 @@ src/vanilla_wow_launcher/
   `"vanilla_wow_launcher.ui.qt.addons_panel.QMessageBox.question"`), not the
   bare module name.
 - `core/constants.py` computes `APP_DIR`: repo root (3 dirs up from the file)
-  when run from source, exe dir when frozen. On non-Windows, config/cache live
-  in XDG / `~/Library` via `platform_support.config_dir()/cache_dir()`; legacy
-  next-to-exe files are migrated on first run.
+  when run from source, exe dir when frozen. Config and cache live in separate
+  per-user dirs via `platform_support.config_dir()/cache_dir()`: Linux config
+  `~/.vanilla-wow-launcher`, Windows `%APPDATA%\VanillaWoWLauncher`, macOS
+  `~/Library/Application Support`; cache is Linux XDG / `%LOCALAPPDATA%` /
+  `~/Library/Caches`. Superseded (next-to-exe, old XDG) and pre-rename
+  (`octo-updater`) files are migrated on first run via the `LEGACY_*_FILES`
+  tuples in `core/constants.py`.
 - **There are no hardcoded server/mod/addon values.** Everything is configured
   by `core/launcher.py` reading `vanilla_wow_launcher.json` (server, news,
   realm, registry URLs, mirrors; auto-discovered next to the exe / repo root,

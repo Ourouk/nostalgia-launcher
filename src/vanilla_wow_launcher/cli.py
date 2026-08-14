@@ -17,10 +17,9 @@ from .core import config_store, launcher
 from .core.constants import (
     CACHE_FILE,
     CONFIG_FILE,
-    LEGACY_CACHE_FILE,
-    LEGACY_CONFIG_FILE,
-    LEGACY_USER_CACHE_FILE,
-    LEGACY_USER_CONFIG_FILE,
+    LEGACY_CACHE_FILES,
+    LEGACY_CONFIG_FILES,
+    legacy_custom_pairs,
 )
 
 _QT_UNAVAILABLE = (
@@ -111,8 +110,9 @@ def _run_backend() -> int:
     """Config-store setup + Qt backend resolution/construction/run."""
     config_store.configure(
         CONFIG_FILE, CACHE_FILE,
-        legacy_config=(LEGACY_CONFIG_FILE, LEGACY_USER_CONFIG_FILE),
-        legacy_cache=(LEGACY_CACHE_FILE, LEGACY_USER_CACHE_FILE))
+        legacy_config=LEGACY_CONFIG_FILES,
+        legacy_cache=LEGACY_CACHE_FILES,
+        legacy_pairs=legacy_custom_pairs())
     backend = os.environ.get("VANILLA_WOW_UI_BACKEND", "qt")
     try:
         app_cls = resolve_backend(backend)

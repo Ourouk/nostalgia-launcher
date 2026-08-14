@@ -44,28 +44,57 @@ def can_manage_antivirus() -> bool:
 
 
 def config_dir() -> str:
-    """OS-appropriate directory for the persistent JSON config file."""
+    """OS-appropriate directory for the persistent JSON config file.
+
+    User data never lives next to the executable (which may be read-only or
+    shared between users): Linux uses a hidden per-user dir
+    (~/.vanilla-wow-launcher), Windows uses the roaming %APPDATA% dir, macOS
+    uses ~/Library/Application Support.
+    """
     if is_windows():
-        # Keep historical behavior: config lives next to the executable.
-        return _app_dir()
+        return os.path.join(_windows_roaming_dir(), "VanillaWoWLauncher")
     if is_macos():
         home = os.environ.get("HOME") or os.path.expanduser("~")
-        return os.path.join(home, "Library", "Application Support", "VanillaWoWLauncher")
-    base = os.environ.get("XDG_CONFIG_HOME") \
-        or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "vanilla-wow-launcher")
+        return os.path.join(home, "Library", "Application Support",
+                            "VanillaWoWLauncher")
+    home = os.environ.get("HOME") or os.path.expanduser("~")
+    return os.path.join(home, ".vanilla-wow-launcher")
 
 
 def cache_dir() -> str:
-    """OS-appropriate directory for the SHA-1 hash cache."""
+    """OS-appropriate directory for the SHA-1 hash cache — disposable data,
+    kept separate from the config. Windows uses %LOCALAPPDATA%, macOS uses
+    ~/Library/Caches and Linux uses the XDG cache dir."""
     if is_windows():
-        return _app_dir()
+        return os.path.join(_windows_local_dir(), "VanillaWoWLauncher")
     if is_macos():
         home = os.environ.get("HOME") or os.path.expanduser("~")
         return os.path.join(home, "Library", "Caches", "VanillaWoWLauncher")
     base = os.environ.get("XDG_CACHE_HOME") \
         or os.path.join(os.path.expanduser("~"), ".cache")
     return os.path.join(base, "vanilla-wow-launcher")
+
+
+def _windows_roaming_dir() -> str:
+    """%APPDATA% (roaming), falling back to USERPROFILE\\AppData\\Roaming."""
+    base = os.environ.get("APPDATA")
+    if base:
+        return base
+    profile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+    return os.path.join(profile, "AppData", "Roaming")
+
+
+def _windows_local_dir() -> str:
+    """%LOCALAPPDATA%, falling back to %APPDATA%, then
+    USERPROFILE\\AppData\\Local."""
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        return base
+    base = os.environ.get("APPDATA")
+    if base:
+        return base
+    profile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+    return os.path.join(profile, "AppData", "Local")
 
 
 def default_out_dir() -> str:
