@@ -28,6 +28,7 @@ other URL is derived from it unless overridden:
           "https://server.example/addons-overrides.json"
         ]
       },
+      "discord_url": "https://discord.gg/example",
       "mirrors": [
         {
           "name": "Backup",
@@ -89,6 +90,7 @@ class LauncherConfig:
     realm: str
     addons_registry_urls: list[str] = field(default_factory=list)
     mirrors: list["Mirror"] = field(default_factory=list)
+    discord_url: str | None = None
 
     @property
     def configured(self) -> bool:
@@ -152,6 +154,18 @@ def _derive(data: dict) -> LauncherConfig:
 
     host = urlsplit(base).hostname or ""
 
+    raw_discord_url = data.get("discord_url")
+    if raw_discord_url is None:
+        discord_url = None
+    elif isinstance(raw_discord_url, str) and raw_discord_url.strip():
+        discord_url = _https_url(raw_discord_url)
+        if discord_url is None:
+            raise ValueError("launcher config 'discord_url' must be an https URL")
+    elif isinstance(raw_discord_url, str):
+        discord_url = None
+    else:
+        raise ValueError("launcher config 'discord_url' must be an https URL")
+
     def _url(key, suffix):
         v = server.get(key)
         if isinstance(v, str) and v.strip():
@@ -204,6 +218,7 @@ def _derive(data: dict) -> LauncherConfig:
         addons_registry_urls=addons_registry_urls,
         realm=(server.get("realm") or host).strip(),
         mirrors=mirrors,
+        discord_url=discord_url,
     )
 
 
@@ -353,6 +368,11 @@ def server_url() -> str:
 def server_name() -> str:
     c = config()
     return c.server_name if c else ""
+
+
+def discord_url() -> str | None:
+    c = config()
+    return c.discord_url if c else None
 
 
 def news_url() -> str:

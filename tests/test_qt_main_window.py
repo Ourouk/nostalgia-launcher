@@ -21,6 +21,7 @@ from PySide6.QtTest import QTest
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
 from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
 from vanilla_wow_launcher.ui.qt.main_window import MainWindow
+from vanilla_wow_launcher.core import launcher
 from vanilla_wow_launcher.state.events import OperationFailed, OperationFinished, ProgressChanged, StatusChanged
 
 
@@ -49,6 +50,28 @@ def test_construction_sets_title_and_default_tab(qapp, window):
     assert window._pages == {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
     assert window._stack.currentIndex() == 0
     assert window._navButtons["NEWS"].isChecked()
+    assert window._discordButton is None
+
+
+def test_discord_button_opens_configured_url(qapp, monkeypatch):
+    launcher.configure_from_dict({
+        "server": {"base_url": "https://launcher.test"},
+        "discord_url": "https://discord.gg/example",
+    })
+    hub = ControllerHub()
+    win = MainWindow(hub)
+    win.show()
+    try:
+        opened = []
+        monkeypatch.setattr(
+            "vanilla_wow_launcher.ui.qt.main_window.webbrowser.open",
+            opened.append)
+        assert win._discordButton is not None
+        assert win._discordButton.text() == "DISCORD"
+        win._discordButton.click()
+        assert opened == ["https://discord.gg/example"]
+    finally:
+        win.close()
 
 
 def test_switch_tab_changes_stack_and_checked_state(qapp, window):

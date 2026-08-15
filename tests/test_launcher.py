@@ -35,6 +35,34 @@ def test_derives_endpoints_from_base_url():
     assert cfg.addons_registry_url == "https://srv.example/api/addons.json"
     assert cfg.addons_registry_urls == ["https://srv.example/api/addons.json"]
     assert cfg.realm == "srv.example"
+    assert cfg.discord_url is None
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_optional_discord_url_can_be_omitted_or_empty(value):
+    data = {"server": {"base_url": "https://srv.example"}}
+    if value is not None:
+        data["discord_url"] = value
+    cfg = _config(data)
+    assert cfg is not None
+    assert cfg.discord_url is None
+
+
+def test_discord_url_accepts_https():
+    cfg = _config({
+        "server": {"base_url": "https://srv.example"},
+        "discord_url": " https://discord.gg/example/ ",
+    })
+    assert cfg.discord_url == "https://discord.gg/example"
+
+
+@pytest.mark.parametrize("value", ["http://discord.gg/example", "discord.gg/example", 42])
+def test_discord_url_rejects_invalid_nonempty_value(value):
+    assert _config({
+        "server": {"base_url": "https://srv.example"},
+        "discord_url": value,
+    }) is None
+    assert "discord_url" in launcher.config_error()
 
 
 def test_addons_registry_urls_override_order():

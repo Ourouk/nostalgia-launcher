@@ -10,6 +10,7 @@ exposed as attributes for the settings and update workflows.
 """
 
 import queue
+import webbrowser
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.constants import UPDATER_VERSION
+from ...core import launcher
 from ...core.log_sink import _LOG_Q, log
 from .addons_panel import AddonsPanel
 from .bridge import ControllerHub
@@ -60,6 +62,7 @@ class MainWindow(QMainWindow):
         self._log_buffer: list = []
         self._logWindow = None
         self._customAddonDialog = None
+        self._discordButton = None
         self._firstRunTimer = None
         self._oneShotTimers: list = []
         self.setStyleSheet(theme_qss(self._palette))
@@ -185,6 +188,20 @@ class MainWindow(QMainWindow):
         layout.addWidget(navRow)
 
         layout.addStretch(1)
+
+        discord_url = launcher.discord_url()
+        if discord_url:
+            self._discordButton = QToolButton(header)
+            self._discordButton.setObjectName("discordButton")
+            self._discordButton.setText("DISCORD")
+            self._discordButton.setToolTip("Open Discord")
+            self._discordButton.setCursor(Qt.PointingHandCursor)
+            self._discordButton.setStyleSheet(
+                f"QToolButton {{ color: {p.text_dim.name()}; font-weight: bold; }}"
+                f"QToolButton:hover {{ color: {p.gold.name()}; }}")
+            self._discordButton.clicked.connect(
+                lambda: webbrowser.open(discord_url))
+            layout.addWidget(self._discordButton)
 
         self._gearButton = QToolButton(header)
         self._gearButton.setText("⚙")
