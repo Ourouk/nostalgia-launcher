@@ -168,6 +168,25 @@ def test_first_run_flags_initialized(cfg, monkeypatch):
     assert c.state.first_run_av_pending is False  # can_manage_antivirus → off
 
 
+def test_client_updates_default_to_enabled(cfg, fakes):
+    c = SettingsController(fakes.dispatcher, fakes.updater, fakes.mods,
+                           fakes.addons, fakes.news)
+    assert c.client_update_enabled is True
+    assert c.state.first_run_verify_pending is True
+
+
+def test_client_updates_setting_persists_and_controls_first_run(cfg, fakes):
+    c = SettingsController(fakes.dispatcher, fakes.updater, fakes.mods,
+                           fakes.addons, fakes.news)
+    c.set_client_update_enabled(False)
+    assert cfg["client_update_enabled"] is False
+    assert c.client_update_enabled is False
+    assert c.state.first_run_verify_pending is False
+    c.set_client_update_enabled(True)
+    assert cfg["client_update_enabled"] is True
+    assert c.state.first_run_verify_pending is True
+
+
 def test_first_run_av_pending_on_windows(cfg, monkeypatch):
     monkeypatch.setattr(sc.platform_support, "can_manage_antivirus",
                         lambda: True)

@@ -83,8 +83,8 @@ def test_gear_opens_settings_dialog(qapp, window):
     for name in ("settingsPath", "settingsChange", "settingsOpenFolder",
                  "settingsMirrorRefresh",
                  "settingsVerify", "settingsLogs", "settingsKoFi",
-                 "settingsBmc", "settingsClose", "settingsAutoMods",
-                 "settingsAutoAddons"):
+                  "settingsBmc", "settingsClose", "settingsAutoMods",
+                  "settingsAutoAddons", "settingsClientUpdate"):
         assert dialog.findChild(QWidget, name) is not None
 
 
@@ -298,6 +298,19 @@ def test_toggle_auto_addons_calls_set_auto_addons(qapp, window, monkeypatch):
     assert check.isChecked() is True
     check.setChecked(False)
     set_addons.assert_called_once_with(False)
+
+
+def test_client_update_checkbox_reflects_and_persists_setting(
+        qapp, window, monkeypatch):
+    hub = window._hub
+    hub.settings.state.config = {"client_update_enabled": False}
+    set_enabled = Mock()
+    monkeypatch.setattr(hub.settings, "set_client_update_enabled", set_enabled)
+    dialog = _open(window)
+    check = dialog.findChild(QCheckBox, "settingsClientUpdate")
+    assert check.isChecked() is False
+    check.setChecked(True)
+    set_enabled.assert_called_once_with(True)
 
 
 def test_toggle_clear_wdb_calls_set_clear_wdb(qapp, window, monkeypatch):

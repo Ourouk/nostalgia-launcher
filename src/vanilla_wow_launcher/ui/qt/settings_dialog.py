@@ -308,6 +308,10 @@ class SettingsDialog(QDialog):
                 "settingsCloseOnLaunch",
                 bool(cfg.get("close_on_launch", False)),
                 self._settings.set_close_on_launch)
+        self._client_update_check = self._add_check(
+            rcol_layout, "Enable client updates", "settingsClientUpdate",
+            self._settings.client_update_enabled,
+            self._settings.set_client_update_enabled)
         self._auto_mods_check = self._add_check(
             rcol_layout, "Install essential mods", "settingsAutoMods",
             bool(cfg.get("auto_install_mods", True)),

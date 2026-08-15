@@ -396,7 +396,8 @@ class MainWindow(QMainWindow):
         """First-run close: run the deferred verification against the chosen
         folder, recommend the Defender exclusion once, then mark the prompt
         done so closing Settings again never re-asks."""
-        if self._hub.settings.state.first_run_verify_pending:
+        if (self._hub.settings.client_update_enabled
+                and self._hub.settings.state.first_run_verify_pending):
             self._hub.settings.state.first_run_verify_pending = False
             self._after(100, lambda: self._start_verify(overwrite_config=True))
         if not self._hub.settings.state.first_run_av_pending:
@@ -614,7 +615,8 @@ class MainWindow(QMainWindow):
         the self-update check, all cancelled on close. On first run the
         settings dialog defers verification to its close."""
         hub = self._hub
-        if not hub.settings.state.first_run_verify_pending:
+        if (hub.settings.client_update_enabled
+                and not hub.settings.state.first_run_verify_pending):
             self._after(300, self._start_verify)
         self._after(600, hub.news.load)
         self._after(900, hub.mods.load_latest_versions)

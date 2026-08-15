@@ -68,7 +68,8 @@ class SettingsController:
         # the default folder before they've picked their real game folder. A
         # folder change supersedes this (it verifies the new folder right
         # away).
-        self.state.first_run_verify_pending = self.state.first_run
+        self.state.first_run_verify_pending = (
+            self.state.first_run and self.client_update_enabled)
 
         # Download-mirror reachability, as reported by the last check_mirror()
         # ({name: "" | "checking…" | "online" | "offline"}). Not part of
@@ -83,6 +84,11 @@ class SettingsController:
         self._pending_auto_addons = False
 
     # ── public API ──────────────────────────────────────────────────────────
+
+    @property
+    def client_update_enabled(self) -> bool:
+        """Whether client verification and downloads are enabled."""
+        return bool(self.state.config.get("client_update_enabled", True))
 
     def set_path(self, new_path: str) -> bool:
         """Apply a game-folder change.
@@ -145,7 +151,8 @@ class SettingsController:
         # our defaults + realmList. It also supersedes the first-run
         # settings-close verify.
         self.state.first_run_verify_pending = False
-        self._updater.start_verify(overwrite_config=True)
+        if self.client_update_enabled:
+            self._updater.start_verify(overwrite_config=True)
 
         # A deliberate folder change already covers the antivirus
         # recommendation, so the first-run settings-close shouldn't ask again.
@@ -212,7 +219,7 @@ class SettingsController:
         bookkeeping so every file is re-hashed against the manifest and
         WoW.exe gets re-downloaded and re-patched (tweaks reapplied). Unlike
         a game-folder change, installed mods are left alone."""
-        if self._updater.running:
+        if self._updater.running or not self.client_update_enabled:
             return
         try:
             if os.path.exists(CACHE_FILE):
@@ -238,6 +245,15 @@ class SettingsController:
     def set_close_on_launch(self, enabled: bool) -> dict:
         self.state.config = config_store.update_config(
             lambda c: c.__setitem__("close_on_launch", enabled))
+        return self.state.config
+
+    def set_client_update_enabled(self, enabled: bool) -> dict:
+        """Persist the client-update switch and update first-run scheduling."""
+        enabled = bool(enabled)
+        self.state.config = config_store.update_config(
+            lambda c: c.__setitem__("client_update_enabled", enabled))
+        if self.state.first_run:
+            self.state.first_run_verify_pending = enabled
         return self.state.config
 
     def set_auto_mods(self, enabled: bool) -> dict:

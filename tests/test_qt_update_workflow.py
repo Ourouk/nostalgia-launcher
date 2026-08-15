@@ -317,3 +317,12 @@ def test_startup_auto_verifies_when_not_first_run(qapp, window):
     QTest.qWait(700)
     hub.updater.start_verify.assert_called_once_with(False)
     hub.news.load.assert_called_once_with()
+
+
+def test_startup_skips_client_verify_when_disabled(qapp, window):
+    hub = window._hub
+    hub.settings.state.config["client_update_enabled"] = False
+    hub.updater.start_verify.reset_mock()
+    window.schedule_startup_tasks()
+    QTest.qWait(700)
+    hub.updater.start_verify.assert_not_called()

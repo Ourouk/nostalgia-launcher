@@ -219,6 +219,15 @@ def test_start_verify_without_folder_is_noop(worker_cls, config):
     assert not worker_cls.instances
 
 
+def test_disabled_client_updates_prevent_verify_and_update(
+        controller, worker_cls, config):
+    config["client_update_enabled"] = False
+    controller.start_verify()
+    controller.start_update()
+    assert not worker_cls.instances
+    assert controller.state.running is False
+
+
 # ── update flow ─────────────────────────────────────────────────────────
 
 def test_update_done_reports_version(controller, worker_cls, config):
@@ -341,6 +350,14 @@ def test_readiness_disabled_without_manifest(controller, worker_cls, config):
     assert r.mode == "disabled"
     assert r.label == "UPDATE"
     assert r.status == "Manifest unavailable"
+
+
+def test_readiness_allows_play_without_manifest_when_updates_disabled(
+        controller, worker_cls, config):
+    config["client_update_enabled"] = False
+    r = controller.compute_readiness()
+    assert r.mode == "play"
+    assert r.status == "Client updates disabled"
 
 
 def test_readiness_update_available_when_not_ready(controller, worker_cls, config):

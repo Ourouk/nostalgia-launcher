@@ -81,6 +81,8 @@ class UpdateController:
         return self.state.diff_nodes
 
     def start_verify(self, overwrite_config: bool = False):
+        if not self._client_updates_enabled():
+            return
         out = (self._get_out_dir() or "").strip()
         if not out:
             return
@@ -106,7 +108,7 @@ class UpdateController:
         self._dispatcher.post(ProgressChanged(0.0, ""))
 
     def start_update(self):
-        if self.state.running:
+        if self.state.running or not self._client_updates_enabled():
             return
         out = (self._get_out_dir() or "").strip()
         if not out:
@@ -254,6 +256,12 @@ class UpdateController:
         if self.state.running:
             label = "Updating…" if self._op == "update" else "Checking…"
             return Readiness("busy", label, self.state.status)
+        if not self._client_updates_enabled():
+            if self._mods_have_errors():
+                return Readiness("busy", "PLAY", "Mod errors — check MODS tab")
+            if not can_launch_client():
+                return Readiness("busy", "READY", "Client updates disabled")
+            return Readiness("play", "PLAY", "Client updates disabled")
         if not self.state.manifest_available:
             # No manifest was ever fetched/parsed — the update path is a
             # blind guess, so gray the button out rather than offer UPDATE.
@@ -267,6 +275,9 @@ class UpdateController:
         return Readiness("play", "PLAY", "Everything up to date!")
 
     # ── internals ───────────────────────────────────────────────────────────
+
+    def _client_updates_enabled(self) -> bool:
+        return bool(load_config().get("client_update_enabled", True))
 
     def _handle_log(self, msg: str, tag: str):
         if msg == "__DONE__":
