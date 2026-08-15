@@ -36,9 +36,9 @@ Available packages may include:
 | Linux | `VanillaWoWLauncher-linux-x86_64.AppImage` |
 | macOS | `VanillaWoWLauncher-universal2.dmg` |
 
-The release page also includes checksums and an example launcher
-configuration. Verify the checksum when downloading from an untrusted or
-mirrored source.
+The release page also includes a matching `.sha256` checksum file for each
+package and an example launcher configuration. Verify the checksum when
+downloading from an untrusted or mirrored source.
 
 ## Installation
 
@@ -219,7 +219,7 @@ details.
 
 Unsigned applications can trigger SmartScreen or antivirus warnings. Confirm
 that the executable was downloaded from the official release page and compare
-its SHA-256 checksum with `SHA256SUMS` before allowing it to run.
+its SHA-256 checksum with the matching `.sha256` file before allowing it to run.
 
 ### macOS shows a security warning
 

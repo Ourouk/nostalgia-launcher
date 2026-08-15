@@ -132,7 +132,10 @@ jobs:
       - name: Checksums + sample config
         run: |
           cd artifacts
-          sha256sum * > SHA256SUMS
+          for file in VanillaWoWLauncher-*; do
+            [ -f "$file" ] || continue
+            sha256sum "$file" > "$file.sha256"
+          done
           cp ../examples/octowow.json octowow-config-example.json
 
       - name: Create GitHub release
