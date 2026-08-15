@@ -38,7 +38,7 @@ from .log_window import LogWindow
 from .mods_panel import ModsPanel
 from .news_panel import NewsPanel
 from .settings_dialog import SettingsDialog
-from .theme import Palette, theme_qss
+from .theme import palette_for_config, theme_qss
 from .tweaks_panel import TweaksPanel
 from ...state.events import LogMessage
 from .metrics import BASE_H, BASE_W, clamp
@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
     def __init__(self, hub: ControllerHub, parent=None):
         super().__init__(parent)
         self._hub = hub
-        self._palette = Palette()
+        self._palette = palette_for_config(launcher.config())
         self._settingsDialog = None
         self._log_buffer: list = []
         self._logWindow = None

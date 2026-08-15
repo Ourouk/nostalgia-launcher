@@ -370,3 +370,28 @@ def test_accessors_empty_when_not_configured():
     assert launcher.mods_registry_url() == ""
     assert launcher.mirrors() == []
     assert launcher.is_configured() is False
+
+
+def test_theme_dict_parses():
+    cfg = _config({
+        "server": {"base_url": "https://srv.example"},
+        "theme": {"C_GOLD": "#d4a02f"},
+    })
+    assert cfg is not None
+    assert cfg.theme == {"C_GOLD": "#d4a02f"}
+
+
+def test_theme_omitted_is_none():
+    cfg = _config({"server": {"base_url": "https://srv.example"}})
+    assert cfg is not None
+    assert cfg.theme is None
+
+
+def test_non_dict_theme_parses_as_none_and_does_not_fail_config():
+    for value in ("octowow", 42, ["C_GOLD"]):
+        cfg = _config({
+            "server": {"base_url": "https://srv.example"},
+            "theme": value,
+        })
+        assert cfg is not None
+        assert cfg.theme is None

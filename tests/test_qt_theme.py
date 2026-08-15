@@ -15,7 +15,7 @@ import pytest
 pytest.importorskip("PySide6")
 
 from vanilla_wow_launcher.ui.qt.app import QtVanillaWoWLauncherApp, create_qt_app
-from vanilla_wow_launcher.ui.qt.theme import HEX, Palette, theme_qss
+from vanilla_wow_launcher.ui.qt.theme import HEX, Palette, palette_for_config, theme_qss
 
 
 @pytest.fixture(autouse=True)
@@ -70,6 +70,27 @@ def test_theme_qss_uses_palette_colors():
 
 def test_qapp_is_singleton():
     assert create_qt_app() is create_qt_app()
+
+
+def test_palette_for_config_applies_theme_overrides():
+    palette = palette_for_config(None)
+    assert palette.gold.name() == HEX["C_GOLD"]
+
+    class Cfg:
+        theme = {"C_GOLD": "#d4a02f"}
+
+    themed = palette_for_config(Cfg())
+    assert themed.gold.name() == "#d4a02f"
+    # Unlisted slots keep the default palette.
+    assert themed.bg.name() == HEX["C_BG"]
+
+
+def test_palette_for_config_falls_back_on_invalid_theme():
+    class Cfg:
+        theme = {"C_GOLD": "not-a-color"}
+
+    palette = palette_for_config(Cfg())
+    assert palette.gold.name() == HEX["C_GOLD"]
 
 
 def test_app_shell_constructs_shows_and_closes_offscreen(qapp):

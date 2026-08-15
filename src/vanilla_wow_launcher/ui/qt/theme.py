@@ -1,7 +1,11 @@
 """Vanilla WoW Launcher Qt (PySide6) design system — palette, stylesheet, metrics.
 
-The single source of the dark purple/gold palette and the QSS stylesheet.
-Pure Qt (PySide6) — no other GUI toolkit involved.
+The source of the dark purple/gold palette (the octowow theme) and the QSS
+stylesheet. Pure Qt (PySide6) — no other GUI toolkit involved.
+
+The palette can be themed by the launcher configuration: `palette_for_config`
+builds a `Palette` from the server's ``"theme"`` color overrides (see
+`core/themes`), falling back to the default octowow palette on any problem.
 
 - `Palette` exposes the palette colors as QColor values.
 - `theme_qss(palette)` renders the dark-purple/gold stylesheet.
@@ -9,34 +13,11 @@ Pure Qt (PySide6) — no other GUI toolkit involved.
 
 from PySide6.QtGui import QColor
 
+from ...core.themes import DEFAULT_COLORS, resolve_colors
+
 # Hex values of the Vanilla WoW Launcher palette (dark backgrounds, gold accents,
 # the parchment addon cards, and the semantic ok/err colors).
-HEX = {
-    "C_BG": "#120e1a",
-    "C_PANEL": "#161120",
-    "C_HDR": "#0d0a14",
-    "C_PANEL_BDR": "#261d3a",
-    "C_DIVIDER": "#2a2142",
-    "C_GOLD": "#c8922a",
-    "C_GOLD_LT": "#e8b84b",
-    "C_PURPLE": "#8a4fa5",
-    "C_GREEN_BTN": "#4a7c2f",
-    "C_GREEN_HOV": "#5a9438",
-    "C_TEXT": "#d8d4cc",
-    "C_TEXT_DIM": "#7a7670",
-    "C_LOG_BG": "#0f0b16",
-    "C_OK": "#6abf69",
-    "C_ERR": "#bf6969",
-    "C_MOD_HL": "#a8b83c",
-    "C_PARCH": "#e9dcb8",
-    "C_PARCH_BAND": "#ddcda0",
-    "C_PARCH_LINE": "#c3b083",
-    "C_PARCH_TITLE": "#7c5a12",
-    "C_PARCH_TEXT": "#3a352a",
-    "C_PARCH_DIM": "#8b8064",
-    "C_PARCH_LINK": "#a3561c",
-    "C_PARCH_EDGE": "#b7a678",
-}
+HEX = dict(DEFAULT_COLORS)
 
 _ATTRS = [
     ("bg", "C_BG"),
@@ -70,11 +51,14 @@ class Palette:
     """Qt color set for the dark purple/gold design.
 
     Convenience attributes (``palette.bg``, ``palette.gold``, ...) plus a
-    ``colors`` dict keyed by the HEX constant name for dynamic lookup.
+    ``colors`` dict keyed by the HEX constant name for dynamic lookup. A
+    ``colors`` dict may be passed to theme the palette (the launcher config's
+    ``"theme"`` overrides); the default is the octowow palette.
     """
 
-    def __init__(self):
-        self.colors = {name: QColor(value) for name, value in HEX.items()}
+    def __init__(self, colors: dict | None = None):
+        colors = colors or HEX
+        self.colors = {name: QColor(value) for name, value in colors.items()}
         for attr, key in _ATTRS:
             setattr(self, attr, self.colors[key])
         # Extra accent colors beyond the core palette (pink/warn), added as
@@ -82,6 +66,17 @@ class Palette:
         self.pink = QColor("#d76f9e")
         self.pink_lt = QColor("#eb96ba")
         self.warn = QColor("#d4b43c")
+
+
+def palette_for_config(cfg) -> Palette:
+    """The app palette for a launcher configuration.
+
+    Uses the config's ``theme`` color overrides (falling back to the default
+    octowow palette on any problem), or the default palette when there is no
+    config.
+    """
+    spec = getattr(cfg, "theme", None)
+    return Palette(resolve_colors(spec))
 
 
 def theme_qss(palette):
