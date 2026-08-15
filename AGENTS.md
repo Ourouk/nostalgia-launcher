@@ -81,6 +81,26 @@ src/vanilla_wow_launcher/
   `EventDispatcher` (`state/events.py`) from worker threads; they never touch
   widgets. The Qt side (`ui/qt/bridge.py`) converts events to Qt signals on the
   main thread.
+- **Linux game launch goes through umu-launcher** (`services/umu.py`): the PLAY
+  button is gated on `core.platform_support.can_launch_client()`, which is now
+  True on Windows (native) and on Linux only when `umu.umu_available()` finds
+  `umu-run` on PATH (or `~/.local/bin/umu-run`). `controllers/update.py`'s
+  `launch_game()` splits into `_launch_game_windows()` (Popen, DXVK notice,
+  VanillaFixes.exe preference) and `_launch_game_via_umu()` (WoW.exe under
+  Proton in the launcher-wide `data_dir()/wineprefix`, no DXVK notice). umu
+  settings (`GE-Proton` codename, binary override, GAMEID) live in the config's
+  `"launch"` key, edited via `SettingsController.set_umu_*` and rendered in the
+  Settings dialog's Linux (UMU) section. Tests patch the FULL path, e.g.
+  `"vanilla_wow_launcher.services.umu.launch"` (the controller imports the umu
+  module lazily inside the launch method).
+- **One game process at a time**: `umu.launch()` returns `(pid, pgid, proc)`;
+  `UpdateController` records it in `state.game_*`, posts `GameLaunched`, and
+  spawns a daemon `_watch_game()` thread that `proc.wait()`s and posts
+  `GameExited` (clearing the running state). `compute_readiness()` returns
+  mode `"terminate"` while a game runs — the footer shows an enabled red
+  TERMINATE button (`_terminate_game()` → `umu.kill_game()`: SIGTERM to the
+  process group, SIGKILL after 2 s). A second `launch_game()` while one is
+  running is refused.
 - **Update workers are queue-based**: `UpdateController.start_verify()/start_update()`
   write to internal queues drained by `UpdateController.poll()`. The Qt
   `MainWindow._pollTimer` calls `hub.updater.poll()` every 50 ms — if you add a

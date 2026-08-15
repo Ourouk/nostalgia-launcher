@@ -191,11 +191,12 @@ def test_construction_builds_full_app(qapp, app):
     assert win._navButtons["NEWS"].isChecked()
     assert win._gearButton is not None
 
-    # Footer chrome is wired up; the client isn't verified yet and no
-    # manifest has been fetched, so the button stays grayed-out UPDATE.
+    # Footer chrome is wired up. The client isn't verified yet and no manifest
+    # has been fetched, but launch is available (umu on PATH), so the button
+    # offers PLAY — the game folder may already be ready to run.
     assert win._updateButton.objectName() == "updateButton"
-    assert win._updateButton.text() == "UPDATE"
-    assert not win._updateButton.isEnabled()
+    assert win._updateButton.text() == "PLAY"
+    assert win._updateButton.isEnabled()
     assert win._statusLabel.text() == "Manifest unavailable"
     assert win._progressBar is not None
 
@@ -313,12 +314,14 @@ def test_settings_dialog_opens_from_gear_and_closes(qapp, app_no_startup):
 def test_update_status_progress_finish_cycle(qapp, app_no_startup):
     win = app_no_startup._window
     hub = app_no_startup._hub
-    assert win._updateButton.text() == "UPDATE"
+    # No manifest fetched yet, but launch is available → PLAY (the folder
+    # may already be ready to run).
+    assert win._updateButton.text() == "PLAY"
 
     hub.dispatcher.post(StatusChanged("Ready to update"))
     QTest.qWait(120)
     assert win._statusLabel.text() == "Ready to update"
-    assert win._updateButton.text() == "UPDATE"
+    assert win._updateButton.text() == "PLAY"
 
     hub.dispatcher.post(ProgressChanged(0.5, "Downloading…"))
     QTest.qWait(120)

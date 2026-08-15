@@ -18,6 +18,8 @@ Event → signal mapping:
     MirrorStatusChanged(ok, text)        → mirrorStatusChanged(bool, str)
     OperationFinished(kind, ok, message) → operationFinished(str, bool, str)
     OperationFailed(kind, message)       → operationFailed(str, str)
+    GameLaunched(pid, pgid)              → gameLaunched(int, int)
+    GameExited(pid, exit_code)           → gameExited(int, object)
 
 The object-typed signals carry the full event dataclass (kind + payload); the
 scalar signals carry the event's fields in argument order. `ControllerHub` is a
@@ -35,6 +37,8 @@ from ...controllers.tweaks import TweaksController
 from ...state.events import (
     AddonsLoaded,
     EventDispatcher,
+    GameExited,
+    GameLaunched,
     LogMessage,
     MirrorStatusChanged,
     ModsLoaded,
@@ -68,6 +72,8 @@ class ControllerBridge(QObject):
     mirrorStatusChanged = Signal(bool, str)
     operationFinished = Signal(str, bool, str)
     operationFailed = Signal(str, str)
+    gameLaunched = Signal(int, int)
+    gameExited = Signal(int, object)
 
     def __init__(self, dispatcher: EventDispatcher, parent=None):
         super().__init__(parent)
@@ -104,6 +110,10 @@ class ControllerBridge(QObject):
             self.operationFinished.emit(event.kind, event.ok, event.message)
         elif isinstance(event, OperationFailed):
             self.operationFailed.emit(event.kind, event.message)
+        elif isinstance(event, GameLaunched):
+            self.gameLaunched.emit(event.pid, event.pgid)
+        elif isinstance(event, GameExited):
+            self.gameExited.emit(event.pid, event.exit_code)
 
     def close(self):
         """Stop polling and unsubscribe from the dispatcher.

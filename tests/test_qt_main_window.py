@@ -119,10 +119,10 @@ def test_progress_bar_hides_when_idle(qapp, window):
 
 def test_operation_events_flip_button_state(qapp, window, monkeypatch):
     hub = window._hub
-    # The client can only be PLAY-launched where the Windows client runs.
+    # Launch available + no manifest yet → PLAY (the folder may be ready).
     import vanilla_wow_launcher.controllers.update as update_controller
     monkeypatch.setattr(update_controller, "can_launch_client", lambda: True)
-    assert window._updateButton.text() == "UPDATE"
+    assert window._updateButton.text() == "PLAY"
 
     # A finished update marks the client ready on the controller before the
     # event is posted — the footer mirrors that real state.
@@ -138,6 +138,49 @@ def test_operation_events_flip_button_state(qapp, window, monkeypatch):
     hub.dispatcher.post(OperationFailed("update", "boom"))
     QTest.qWait(200)
     assert window._updateButton.text() == "UPDATE"
+
+
+def test_terminate_readiness_shows_red_enabled_button(qapp, window,
+                                                      monkeypatch):
+    import vanilla_wow_launcher.controllers.update as update_controller
+    from vanilla_wow_launcher.controllers.update import Readiness
+    monkeypatch.setattr(
+        update_controller, "can_launch_client", lambda: True)
+    monkeypatch.setattr(
+        window._hub.updater, "compute_readiness",
+        lambda addons_installing=False: Readiness(
+            "terminate", "TERMINATE",
+            "Running WoW.exe — click TERMINATE to quit"))
+    window._refresh_ready_state()
+
+    assert window._updateButton.text() == "TERMINATE"
+    assert window._updateButton.isEnabled()
+    assert "#bf6969" in window._updateButton.styleSheet()
+
+
+def test_game_events_flip_footer_between_play_and_terminate(qapp, window,
+                                                            monkeypatch):
+    import vanilla_wow_launcher.controllers.update as update_controller
+    monkeypatch.setattr(update_controller, "can_launch_client", lambda: True)
+    hub = window._hub
+    hub.updater.state.client_ready = True
+    hub.updater.state.manifest_available = True
+
+    # Game starts → footer offers TERMINATE.
+    hub.updater.state.game_running = True
+    hub.dispatcher.post(StatusChanged(
+        "Running WoW.exe — click TERMINATE to quit"))
+    QTest.qWait(200)
+    assert window._updateButton.text() == "TERMINATE"
+    assert window._updateButton.isEnabled()
+    assert "Running WoW.exe" in window._statusLabel.text()
+
+    # Game exits → footer returns to PLAY.
+    hub.updater.state.game_running = False
+    hub.dispatcher.post(StatusChanged("Game exited."))
+    QTest.qWait(200)
+    assert window._updateButton.text() == "PLAY"
+    assert "Game exited." in window._statusLabel.text()
 
 
 def test_close_stops_bridge(qapp, window):

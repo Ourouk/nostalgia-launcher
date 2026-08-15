@@ -60,8 +60,10 @@ release checksum.
 3. Run the AppImage and select your game folder.
 
 The AppImage includes the launcher's Qt libraries. Your desktop environment
-must still provide a working graphical session. Game launching and patching
-the Windows `WoW.exe` binary are not available on Linux.
+must still provide a working graphical session. Patching the Windows `WoW.exe`
+binary is not available on Linux, and game launching requires
+[umu-launcher](https://github.com/Open-Wine-Components/umu-launcher)
+(see [Linux](#linux-1)).
 
 ### macOS
 
@@ -189,6 +191,26 @@ the configured server does not publish client manifests or client downloads.
 
 Only add a Defender exclusion for a game folder you control and trust.
 
+### Linux
+
+On Linux the **PLAY** button runs `WoW.exe` through
+[umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) (the
+Unified Launcher for Windows Games), so no Steam client or manual Wine prefix
+setup is required. To use it:
+
+1. Install `umu-launcher` from your distribution (e.g. `pacman -S umu-launcher`
+   or `apt install umu-launcher`) — `umu-run` must be on `PATH`.
+2. Install a Proton build, e.g. a GE-Proton release under
+   `~/.local/share/Steam/compatibilitytools.d` (a Steam install provides this),
+   or let umu fetch the latest UMU-Proton.
+3. Open **Settings → Linux (UMU)** to review the Proton path, the umu-run
+   binary override, and the GAMEID token.
+
+The launcher defaults to `GE-Proton` (umu resolves the newest installed
+matching build) and a single launcher-wide WINEPREFIX under the user data dir
+(`$XDG_DATA_HOME/vanilla-wow-launcher/wineprefix`). The PLAY button only
+appears when `umu-run` is detected; otherwise the log suggests installing it.
+
 ## Supported Platforms
 
 | Capability | Windows | Linux | macOS |
@@ -197,7 +219,7 @@ Only add a Defender exclusion for a game folder you control and trust.
 | Mods and addons | Yes | Yes | Yes |
 | News and configuration | Yes | Yes | Yes |
 | `Config.wtf` tweaks | Yes | Yes | Yes |
-| Launch the Windows game client | Yes | No | No |
+| Launch the Windows game client | Yes | Yes (via umu-launcher) | No |
 | Patch the Windows `WoW.exe` binary | Yes | No | No |
 | Windows Defender exclusions | Yes | No | No |
 

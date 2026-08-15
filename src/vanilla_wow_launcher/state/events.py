@@ -76,6 +76,20 @@ class OperationFailed(Event):
     message: str = ""
 
 
+@dataclass
+class GameLaunched(Event):
+    """A game process was started by the launcher (umu on Linux)."""
+    pid: int
+    pgid: int
+
+
+@dataclass
+class GameExited(Event):
+    """A game process launched by the launcher has ended."""
+    pid: int
+    exit_code: int | None = None
+
+
 class EventDispatcher:
     """Thread-safe, non-blocking event bus.
 

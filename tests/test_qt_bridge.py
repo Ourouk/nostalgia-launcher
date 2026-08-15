@@ -21,6 +21,8 @@ from vanilla_wow_launcher.ui.qt.bridge import ControllerBridge, ControllerHub
 from vanilla_wow_launcher.state.events import (
     AddonsLoaded,
     EventDispatcher,
+    GameExited,
+    GameLaunched,
     LogMessage,
     MirrorStatusChanged,
     ModsLoaded,
@@ -74,7 +76,8 @@ def test_every_event_type_reaches_its_signal(qapp):
     spies = {name: _connect(bridge, name) for name in (
         "statusChanged", "logMessage", "progressChanged", "newsLoaded",
         "modsLoaded", "addonsLoaded", "mirrorStatusChanged",
-        "operationFinished", "operationFailed")}
+        "operationFinished", "operationFailed", "gameLaunched",
+        "gameExited")}
 
     dispatcher.post(StatusChanged("Updating…"))
     dispatcher.post(LogMessage("hello", "ok"))
@@ -88,6 +91,8 @@ def test_every_event_type_reaches_its_signal(qapp):
     dispatcher.post(MirrorStatusChanged(True, "online"))
     dispatcher.post(OperationFinished("mods", True, "done"))
     dispatcher.post(OperationFailed("update", "boom"))
+    dispatcher.post(GameLaunched(1234, 9999))
+    dispatcher.post(GameExited(1234, 0))
 
     QTest.qWait(250)
 
@@ -100,6 +105,8 @@ def test_every_event_type_reaches_its_signal(qapp):
     assert spies["mirrorStatusChanged"].calls == [(True, "online")]
     assert spies["operationFinished"].calls == [("mods", True, "done")]
     assert spies["operationFailed"].calls == [("update", "boom")]
+    assert spies["gameLaunched"].calls == [(1234, 9999)]
+    assert spies["gameExited"].calls == [(1234, 0)]
     bridge.close()
 
 

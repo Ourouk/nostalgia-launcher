@@ -33,6 +33,8 @@ _UPDATE = Readiness("update", "UPDATE", "Update available!")
 _CHECKING = Readiness("busy", "Checking…", "Verifying…")
 _INSTALLING = Readiness("busy", "Installing…", "Downloading addons…")
 _DISABLED = Readiness("disabled", "UPDATE", "Manifest unavailable")
+_TERMINATE = Readiness("terminate", "TERMINATE",
+                       "Running WoW.exe — click TERMINATE to quit")
 
 
 @pytest.fixture(autouse=True)
@@ -168,6 +170,24 @@ def test_click_update_starts_update(qapp, window, monkeypatch):
 
     hub.updater.start_update.assert_called_once_with()
     hub.updater.launch_game.assert_not_called()
+
+
+def test_click_terminate_terminates_game(qapp, window, monkeypatch):
+    hub = window._hub
+    terminate = Mock(return_value=True)
+    monkeypatch.setattr(hub.updater, "terminate_game", terminate)
+    monkeypatch.setattr(hub.updater, "compute_readiness",
+                        lambda addons_installing=False: _TERMINATE)
+    window._refresh_ready_state()
+
+    assert window._updateButton.text() == "TERMINATE"
+    assert window._updateButton.isEnabled()
+
+    window._updateButton.click()
+
+    terminate.assert_called_once_with()
+    hub.updater.launch_game.assert_not_called()
+    assert window._statusLabel.text() == "Terminating…"
 
 
 def test_click_ignored_while_running(qapp, window, monkeypatch):

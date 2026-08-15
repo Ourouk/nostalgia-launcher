@@ -1,9 +1,11 @@
 """Platform detection and cross-platform helpers.
 
 Vanilla WoW Launcher's core update/mod/addon/news features are generic, but a few
-actions are inherently Windows-only (launching the Windows game client,
-binary-patching WoW.exe, Windows Defender exclusions). On Linux/macOS those
-are disabled and the app falls back to the generic features only.
+actions are platform-specific: launching the Windows game client (native on
+Windows, via umu-launcher/Proton on Linux when ``umu-run`` is available),
+binary-patching WoW.exe and Windows Defender exclusions (Windows-only). On
+unsupported platforms those are disabled and the app falls back to the generic
+features only.
 
 Detection is done through functions (not module constants) so tests can
 monkeypatch `sys.platform`.
@@ -29,8 +31,14 @@ def is_linux() -> bool:
 
 
 def can_launch_client() -> bool:
-    """The game client is a Windows binary — launch is Windows-only."""
-    return is_windows()
+    """The game client is a Windows binary — launched natively on Windows
+    and via umu-launcher (Proton/Wine) on Linux when umu-run is available."""
+    if is_windows():
+        return True
+    if is_linux():
+        from ..services import umu
+        return umu.umu_available()
+    return False
 
 
 def can_patch_client() -> bool:
@@ -72,6 +80,22 @@ def cache_dir() -> str:
         return os.path.join(home, "Library", "Caches", "VanillaWoWLauncher")
     base = os.environ.get("XDG_CACHE_HOME") \
         or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "vanilla-wow-launcher")
+
+
+def data_dir() -> str:
+    """OS-appropriate directory for persistent, non-config runtime data the
+    launcher owns (e.g. the umu-launcher WINEPREFIX). Windows uses
+    %LOCALAPPDATA%, macOS uses ~/Library/Application Support and Linux uses
+    the XDG data dir."""
+    if is_windows():
+        return os.path.join(_windows_local_dir(), "VanillaWoWLauncher")
+    if is_macos():
+        home = os.environ.get("HOME") or os.path.expanduser("~")
+        return os.path.join(home, "Library", "Application Support",
+                            "VanillaWoWLauncher")
+    base = os.environ.get("XDG_DATA_HOME") \
+        or os.path.join(os.path.expanduser("~"), ".local", "share")
     return os.path.join(base, "vanilla-wow-launcher")
 
 

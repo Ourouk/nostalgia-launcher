@@ -30,7 +30,7 @@ from ..core.constants import (
 from ..core.security_http import secure_urlopen
 from ..core.errors import describe_net_error
 from ..state.events import EventDispatcher, LogMessage, MirrorStatusChanged
-from ..state.models import SettingsState
+from ..state.models import LaunchSettings, SettingsState
 
 
 class SettingsController:
@@ -56,6 +56,7 @@ class SettingsController:
             path=os.path.normpath(cfg.get("out_dir", DEFAULT_OUT_DIR)),
             config=cfg,
         )
+        self.launch = LaunchSettings.from_config(cfg)
         # Detect first run before anything writes the config.
         self.state.first_run = not os.path.exists(CONFIG_FILE)
         # On first run Settings auto-opens with the folder auto-set to the
@@ -254,6 +255,48 @@ class SettingsController:
             lambda c: c.__setitem__("client_update_enabled", enabled))
         if self.state.first_run:
             self.state.first_run_verify_pending = enabled
+        return self.state.config
+
+    # ── umu-launcher (Linux play) ──────────────────────────────────────────
+
+    def _set_launch(self, mutator) -> dict:
+        """Apply `mutator(launch_dict)` to the config's "launch" sub-dict and
+        refresh the in-memory LaunchSettings."""
+        def _mutate(c):
+            launch = dict(c.get("launch") or {})
+            mutator(launch)
+            c["launch"] = launch
+        self.state.config = config_store.update_config(_mutate)
+        self.launch = LaunchSettings.from_config(self.state.config)
+        return self.state.config
+
+    def resolve_umu_binary(self) -> str:
+        """The umu-run binary to spawn: the user override when set, else the
+        PATH-discovered one ('' when umu isn't installed)."""
+        if self.launch.umu_binary_path.strip():
+            return self.launch.umu_binary_path.strip()
+        from ..services.umu import find_umu
+        return find_umu()
+
+    def set_umu_proton(self, name: str) -> dict:
+        """Persist the PROTONPATH value (a codename like GE-Proton, or a
+        path). An empty value resets to the default codename."""
+        name = (name or "").strip()
+        self._set_launch(lambda l: l.__setitem__(
+            "umu_proton", name or "GE-Proton"))
+        return self.state.config
+
+    def set_umu_binary_path(self, path: str) -> dict:
+        """Persist an explicit umu-run binary override; '' means auto-detect
+        on PATH."""
+        self._set_launch(lambda l: l.__setitem__(
+            "umu_binary_path", (path or "").strip()))
+        return self.state.config
+
+    def set_umu_game_id(self, game_id: str) -> dict:
+        """Persist the umu GAMEID token."""
+        self._set_launch(lambda l: l.__setitem__(
+            "umu_game_id", (game_id or "").strip() or "umu-vanilla-wow"))
         return self.state.config
 
     def set_auto_mods(self, enabled: bool) -> dict:

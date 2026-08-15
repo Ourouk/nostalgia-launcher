@@ -6,21 +6,47 @@ are swapped for a scripted fake via monkeypatch.
 """
 
 import queue
+import subprocess
 import threading
 import time
 
 import pytest
 
+from unittest.mock import Mock
+
 import vanilla_wow_launcher.controllers.update as uc
 from vanilla_wow_launcher.controllers.update import UpdateController
 from vanilla_wow_launcher.state.events import (
     EventDispatcher,
+    GameExited,
+    GameLaunched,
     LogMessage,
     OperationFailed,
     OperationFinished,
     ProgressChanged,
     StatusChanged,
 )
+
+
+class _FakeProc:
+    """A Popen stand-in whose wait() blocks until released, so the game
+    watcher thread completes only when the test says so."""
+
+    def __init__(self):
+        self.exit_event = threading.Event()
+
+    def wait(self):
+        self.exit_event.wait()
+        return 0
+
+
+def _wait_until_true(predicate, timeout=2.0):
+    """Spin until `predicate` is true (assertion failure on timeout)."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            raise AssertionError("condition never became true")
+        time.sleep(0.005)
 
 
 class ScriptedWorker:
@@ -345,10 +371,23 @@ def test_events_delivered_to_subscribers(controller, worker_cls, config):
 
 # ── compute_readiness ────────────────────────────────────────────────────
 
-def test_readiness_disabled_without_manifest(controller, worker_cls, config):
+def test_readiness_disabled_without_manifest_when_cannot_launch(
+        controller, worker_cls, config, monkeypatch):
+    """No manifest + no launch possibility → button grayed UPDATE."""
+    monkeypatch.setattr(uc, "can_launch_client", lambda: False)
     r = controller.compute_readiness()
     assert r.mode == "disabled"
     assert r.label == "UPDATE"
+    assert r.status == "Manifest unavailable"
+
+
+def test_readiness_play_without_manifest_when_can_launch(
+        controller, worker_cls, config):
+    """No manifest + launchable → PLAY (the client may be on disk; the
+    manifest just couldn't be verified)."""
+    r = controller.compute_readiness()
+    assert r.mode == "play"
+    assert r.label == "PLAY"
     assert r.status == "Manifest unavailable"
 
 
@@ -418,3 +457,231 @@ def test_readiness_busy_while_updating(controller, worker_cls, config):
     assert r.mode == "busy"
     assert r.label == "Updating…"
     assert r.status == "Updating…"
+
+
+# ── launch_game ──────────────────────────────────────────────────────────
+
+def test_launch_game_unavailable_logs_error(controller, worker_cls, config,
+                                            monkeypatch):
+    monkeypatch.setattr(uc, "can_launch_client", lambda: False)
+    ok, dxvk = controller.launch_game()
+    assert ok is False
+    assert dxvk is False
+    events = controller._dispatcher.drain()
+    assert any(isinstance(e, LogMessage) and "not available" in e.text
+               for e in events)
+
+
+def test_launch_game_linux_via_umu(controller, worker_cls, config, monkeypatch,
+                                   tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "WoW.exe").write_text("")
+    config["out_dir"] = str(game)
+    config["launch"] = {"umu_proton": "GE-Proton9-4",
+                        "umu_game_id": "umu-test"}
+    monkeypatch.setattr(uc, "can_launch_client", lambda: True)
+    monkeypatch.setattr(uc, "is_linux", lambda: True)
+    monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
+    launched = {}
+    monkeypatch.setattr(
+        "vanilla_wow_launcher.services.umu.launch",
+        lambda out_dir, exe, **kw: launched.update(exe=exe, kw=kw) or (
+            1234, 9999, _FakeProc()))
+    monkeypatch.setattr(
+        "vanilla_wow_launcher.services.umu.compute_wine_prefix",
+        lambda: "/prefix")
+
+    ok, dxvk = controller.launch_game()
+
+    assert ok is True
+    assert dxvk is False
+    assert launched["exe"] == str(game / "WoW.exe")
+    assert launched["kw"]["proton"] == "GE-Proton9-4"
+    assert launched["kw"]["game_id"] == "umu-test"
+    events = controller._dispatcher.drain()
+    assert any(isinstance(e, LogMessage) and "via umu" in e.text
+               for e in events)
+    assert GameLaunched(1234, 9999) in events
+    assert controller.state.game_running is True
+    assert controller.state.game_pid == 1234
+    assert controller.state.game_pgid == 9999
+
+
+def test_launch_game_linux_prefers_vanillafixes(controller, worker_cls, config,
+                                                monkeypatch, tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "WoW.exe").write_text("")
+    (game / "VanillaFixes.exe").write_text("")
+    config["out_dir"] = str(game)
+    monkeypatch.setattr(uc, "can_launch_client", lambda: True)
+    monkeypatch.setattr(uc, "is_linux", lambda: True)
+    monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
+    launched = {}
+    monkeypatch.setattr(
+        "vanilla_wow_launcher.services.umu.launch",
+        lambda out_dir, exe, **kw: launched.update(exe=exe, kw=kw) or (
+            1234, 9999, _FakeProc()))
+    monkeypatch.setattr(
+        "vanilla_wow_launcher.services.umu.compute_wine_prefix",
+        lambda: "/prefix")
+
+    ok, _ = controller.launch_game()
+
+    assert ok is True
+    assert launched["exe"] == str(game / "VanillaFixes.exe")
+    events = controller._dispatcher.drain()
+    assert any(isinstance(e, LogMessage)
+               and "Launched VanillaFixes.exe via umu" in e.text
+               for e in events)
+
+
+def test_game_watcher_posts_exited_and_clears_state(controller, worker_cls,
+                                                    config, monkeypatch,
+                                                    tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "WoW.exe").write_text("")
+    config["out_dir"] = str(game)
+    monkeypatch.setattr(uc, "can_launch_client", lambda: True)
+    monkeypatch.setattr(uc, "is_linux", lambda: True)
+    monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
+    proc = _FakeProc()
+    monkeypatch.setattr("vanilla_wow_launcher.services.umu.launch",
+                        lambda *a, **k: (1234, 9999, proc))
+    monkeypatch.setattr(
+        "vanilla_wow_launcher.services.umu.compute_wine_prefix",
+        lambda: "/prefix")
+
+    controller.launch_game()
+    controller._dispatcher.drain()
+    assert controller.state.game_running is True
+
+    proc.exit_event.set()
+    _wait_until_true(lambda: not controller.state.game_running)
+
+    events = controller._dispatcher.drain()
+    assert GameExited(1234, 0) in events
+    assert any(isinstance(e, StatusChanged) and "Game exited" in e.text
+               for e in events)
+    assert controller.state.game_pid is None
+    assert controller.state.game_pgid is None
+
+
+def test_single_instance_refuses_second_launch(controller, worker_cls, config,
+                                               monkeypatch, tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "WoW.exe").write_text("")
+    config["out_dir"] = str(game)
+    monkeypatch.setattr(uc, "can_launch_client", lambda: True)
+    monkeypatch.setattr(uc, "is_linux", lambda: True)
+    monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
+    monkeypatch.setattr("vanilla_wow_launcher.services.umu.launch",
+                        lambda *a, **k: (1234, 9999, _FakeProc()))
+    monkeypatch.setattr(
+        "vanilla_wow_launcher.services.umu.compute_wine_prefix",
+        lambda: "/prefix")
+
+    assert controller.launch_game()[0] is True
+    controller._dispatcher.drain()
+
+    ok, dxvk = controller.launch_game()
+
+    assert ok is False
+    assert dxvk is False
+    events = controller._dispatcher.drain()
+    assert any(isinstance(e, LogMessage) and "already running" in e.text
+               for e in events)
+
+
+def test_terminate_game_kills_running_process(controller, worker_cls, config,
+                                              monkeypatch):
+    controller.state.game_running = True
+    controller.state.game_pid = 1234
+    controller.state.game_pgid = 9999
+    killed = []
+    monkeypatch.setattr("vanilla_wow_launcher.services.umu.kill_game",
+                        lambda pid, pgid: killed.append((pid, pgid)))
+
+    assert controller.terminate_game() is True
+
+    assert killed == [(1234, 9999)]
+    events = controller._dispatcher.drain()
+    assert any(isinstance(e, LogMessage) and "Terminating game" in e.text
+               for e in events)
+
+
+def test_terminate_game_noop_when_nothing_running(controller, worker_cls,
+                                                  config, monkeypatch):
+    killed = []
+    monkeypatch.setattr("vanilla_wow_launcher.services.umu.kill_game",
+                        lambda pid, pgid: killed.append((pid, pgid)))
+    assert controller.terminate_game() is False
+    assert killed == []
+
+
+def test_readiness_terminate_when_game_running(controller, worker_cls, config):
+    controller.state.game_running = True
+    r = controller.compute_readiness()
+    assert r.mode == "terminate"
+    assert r.label == "TERMINATE"
+    assert r.status == "Running WoW.exe — click TERMINATE to quit"
+
+
+def test_launch_game_linux_missing_exe(controller, worker_cls, config,
+                                       monkeypatch, tmp_path):
+    config["out_dir"] = str(tmp_path / "nope")
+    monkeypatch.setattr(uc, "can_launch_client", lambda: True)
+    monkeypatch.setattr(uc, "is_linux", lambda: True)
+    ok, dxvk = controller.launch_game()
+    assert ok is False
+    assert dxvk is False
+    events = controller._dispatcher.drain()
+    assert any(isinstance(e, LogMessage) and "WoW.exe not found" in e.text
+               for e in events)
+
+
+def test_launch_game_linux_umu_failure(controller, worker_cls, config,
+                                       monkeypatch, tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "WoW.exe").write_text("")
+    config["out_dir"] = str(game)
+    monkeypatch.setattr(uc, "can_launch_client", lambda: True)
+    monkeypatch.setattr(uc, "is_linux", lambda: True)
+    monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
+    monkeypatch.setattr("vanilla_wow_launcher.services.umu.launch",
+                        Mock(side_effect=RuntimeError("umu-run missing")))
+
+    ok, dxvk = controller.launch_game()
+
+    assert ok is False
+    assert dxvk is False
+    events = controller._dispatcher.drain()
+    assert any(isinstance(e, LogMessage) and "via umu" in e.text
+               for e in events)
+
+
+def test_launch_game_windows_prefers_vanillafixes(controller, worker_cls,
+                                                  config, monkeypatch,
+                                                  tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "WoW.exe").write_text("")
+    (game / "VanillaFixes.exe").write_text("")
+    config["out_dir"] = str(game)
+    monkeypatch.setattr(uc, "can_launch_client", lambda: True)
+    monkeypatch.setattr(uc, "is_linux", lambda: False)
+    monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
+    popen = Mock()
+    monkeypatch.setattr(subprocess, "Popen", popen)
+
+    ok, dxvk = controller.launch_game()
+
+    assert ok is True
+    assert dxvk is False
+    args, kwargs = popen.call_args
+    assert args[0] == [str(game / "VanillaFixes.exe")]
+    assert kwargs["cwd"] == str(game)

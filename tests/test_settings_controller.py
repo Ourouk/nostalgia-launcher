@@ -187,6 +187,68 @@ def test_client_updates_setting_persists_and_controls_first_run(cfg, fakes):
     assert c.state.first_run_verify_pending is True
 
 
+# ── umu-launcher settings ─────────────────────────────────────────────────
+
+def test_launch_settings_defaults(cfg, fakes):
+    c = SettingsController(fakes.dispatcher, fakes.updater, fakes.mods,
+                           fakes.addons, fakes.news)
+    assert c.launch.umu_proton == "GE-Proton"
+    assert c.launch.umu_binary_path == ""
+    assert c.launch.umu_game_id == "umu-vanilla-wow"
+
+
+def test_launch_settings_loaded_from_config(cfg, fakes):
+    cfg["launch"] = {"umu_proton": "UMU-Proton",
+                     "umu_binary_path": "/opt/umu-run",
+                     "umu_game_id": "umu-custom"}
+    c = SettingsController(fakes.dispatcher, fakes.updater, fakes.mods,
+                           fakes.addons, fakes.news)
+    assert c.launch.umu_proton == "UMU-Proton"
+    assert c.launch.umu_binary_path == "/opt/umu-run"
+    assert c.launch.umu_game_id == "umu-custom"
+
+
+def test_set_umu_proton_persists(cfg, fakes):
+    c = SettingsController(fakes.dispatcher, fakes.updater, fakes.mods,
+                           fakes.addons, fakes.news)
+    c.set_umu_proton("GE-Proton9-4")
+    assert cfg["launch"]["umu_proton"] == "GE-Proton9-4"
+    assert c.launch.umu_proton == "GE-Proton9-4"
+    c.set_umu_proton("  ")
+    assert c.launch.umu_proton == "GE-Proton"
+
+
+def test_set_umu_binary_path_persists(cfg, fakes):
+    c = SettingsController(fakes.dispatcher, fakes.updater, fakes.mods,
+                           fakes.addons, fakes.news)
+    c.set_umu_binary_path("/opt/umu-run")
+    assert cfg["launch"]["umu_binary_path"] == "/opt/umu-run"
+    assert c.launch.umu_binary_path == "/opt/umu-run"
+    c.set_umu_binary_path("  ")
+    assert c.launch.umu_binary_path == ""
+
+
+def test_set_umu_game_id_persists(cfg, fakes):
+    c = SettingsController(fakes.dispatcher, fakes.updater, fakes.mods,
+                           fakes.addons, fakes.news)
+    c.set_umu_game_id("umu-test")
+    assert cfg["launch"]["umu_game_id"] == "umu-test"
+    assert c.launch.umu_game_id == "umu-test"
+    c.set_umu_game_id("  ")
+    assert c.launch.umu_game_id == "umu-vanilla-wow"
+
+
+def test_resolve_umu_binary_prefers_override(cfg, fakes, monkeypatch):
+    c = SettingsController(fakes.dispatcher, fakes.updater, fakes.mods,
+                           fakes.addons, fakes.news)
+    c.set_umu_binary_path("/opt/umu-run")
+    assert c.resolve_umu_binary() == "/opt/umu-run"
+    c.set_umu_binary_path("")
+    monkeypatch.setattr("vanilla_wow_launcher.services.umu.find_umu",
+                        lambda: "/usr/bin/umu-run")
+    assert c.resolve_umu_binary() == "/usr/bin/umu-run"
+
+
 def test_first_run_av_pending_on_windows(cfg, monkeypatch):
     monkeypatch.setattr(sc.platform_support, "can_manage_antivirus",
                         lambda: True)

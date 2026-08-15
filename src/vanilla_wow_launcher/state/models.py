@@ -23,6 +23,9 @@ class UpdateState:
     manifest_available: bool = False
     diff_nodes: list | None = None
     client_version: str = ""
+    game_running: bool = False
+    game_pid: int | None = None
+    game_pgid: int | None = None
 
 # ── news ──────────────────────────────────────────────────────────────────────
 
@@ -161,6 +164,23 @@ class SettingsState:
     first_run: bool = False
     first_run_av_pending: bool = False
     first_run_verify_pending: bool = False
+
+
+@dataclass
+class LaunchSettings:
+    """Linux umu-launcher launch settings (the "launch" config key)."""
+    umu_proton: str = "GE-Proton"      # PROTONPATH value (codename or path)
+    umu_binary_path: str = ""          # "" = auto-detect umu-run on PATH
+    umu_game_id: str = "umu-vanilla-wow"
+
+    @classmethod
+    def from_config(cls, cfg: dict) -> "LaunchSettings":
+        data = cfg.get("launch") or {}
+        return cls(
+            umu_proton=data.get("umu_proton", "GE-Proton"),
+            umu_binary_path=data.get("umu_binary_path", ""),
+            umu_game_id=data.get("umu_game_id", "umu-vanilla-wow"),
+        )
 
 # ── log ───────────────────────────────────────────────────────────────────────
 

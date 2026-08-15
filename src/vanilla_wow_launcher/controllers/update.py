@@ -15,12 +15,14 @@ from dataclasses import dataclass
 from ..services.client_update import UpdateWorker, VerifyWorker
 from ..core.config_store import load_config, update_config
 from ..core.constants import DEFAULT_OUT_DIR
-from ..core.filesystem import get_client_version, remove_wdb
+from ..core.filesystem import get_client_version, pick_game_executable, remove_wdb
 from ..core.log_sink import debug_emit
-from ..core.platform_support import can_launch_client
+from ..core.platform_support import can_launch_client, is_linux
 from ..services.self_update import fetch_updater_latest_tag, updater_update_available
 from ..state.events import (
     EventDispatcher,
+    GameExited,
+    GameLaunched,
     LogMessage,
     OperationFailed,
     OperationFinished,
@@ -34,8 +36,9 @@ from ..state.models import UpdateState
 class Readiness:
     """Footer button decision produced by UpdateController.compute_readiness.
 
-    mode is "play", "update" or "busy"; label is the button text used in busy
-    mode; status is the footer status line the UI should show.
+    mode is "play", "update", "busy", "disabled" or "terminate"; label is the
+    button text used in busy mode; status is the footer status line the UI
+    should show.
     """
     mode: str
     label: str
@@ -178,25 +181,35 @@ class UpdateController:
         Returns ``(ok, dxvk_notice)``: ``ok`` is False when the client can't
         be launched (a LogMessage explains why) and ``dxvk_notice`` is True
         when the one-time DXVK first-launch notice should be shown. Consumes
-        the notice flag, the clear-wdb and the launch itself; Windows-only —
-        the client is a Windows binary.
+        the notice flag, the clear-wdb and the launch itself. Windows runs
+        the binary directly; Linux runs it through umu-launcher (Proton/Wine)
+        when umu-run is available. Only one game process is allowed at a
+        time — a second launch is refused while one is running.
         """
         if not can_launch_client():
             self._dispatcher.post(LogMessage(
-                "Game launch is only available on Windows (the client is a "
-                "Windows binary).\n", "err"))
+                "Game launch is not available on this platform — on Linux, "
+                "umu-run must be installed (the client is a Windows "
+                "binary).\n", "err"))
             return False, False
-        import subprocess
+        if self.state.game_running:
+            self._dispatcher.post(LogMessage(
+                "A game is already running — use TERMINATE to end it "
+                "first.\n", "err"))
+            return False, False
         client_dir = (self._get_out_dir() or "").strip()
         cfg = load_config()
+        if is_linux():
+            return self._launch_game_via_umu(client_dir, cfg)
+        return self._launch_game_windows(client_dir, cfg)
+
+    def _launch_game_windows(self, client_dir: str, cfg: dict) -> tuple:
+        """Windows direct launch: prefer the loader mod's executable, then
+        WoW.exe, spawned detached from the caller's job object."""
+        import subprocess
         # Prefer the loader mod's executable when it's present on disk
         # (whatever the catalog called it).
-        if os.path.exists(os.path.join(client_dir, "VanillaFixes.exe")):
-            exe = os.path.join(client_dir, "VanillaFixes.exe")
-            exe_lbl = "VanillaFixes.exe"
-        else:
-            exe = os.path.join(client_dir, "WoW.exe")
-            exe_lbl = "WoW.exe"
+        exe, exe_lbl = pick_game_executable(client_dir)
         if not os.path.exists(exe):
             self._dispatcher.post(LogMessage(
                 f"{exe_lbl} not found at: {exe}\n", "err"))
@@ -227,6 +240,82 @@ class UpdateController:
                 f"Failed to launch {exe_lbl}: {e}\n", "err"))
             return False, dxvk_notice
 
+    def _launch_game_via_umu(self, client_dir: str, cfg: dict) -> tuple:
+        """Linux launch through umu-launcher: the client run under Proton in
+        a launcher-wide WINEPREFIX. Prefers the VanillaFixes loader like
+        Windows. No DXVK notice (shader-cache stutter is a Windows/DXVK-mod
+        concern). Records the running game and watches its exit."""
+        from ..services import umu
+        exe, exe_lbl = pick_game_executable(client_dir)
+        if not os.path.exists(exe):
+            self._dispatcher.post(LogMessage(
+                f"{exe_lbl} not found at: {exe}\n", "err"))
+            return False, False
+        if cfg.get("clear_wdb_on_launch", False):
+            remove_wdb(client_dir)
+
+        launch_cfg = cfg.get("launch") or {}
+        try:
+            pid, pgid, proc = umu.launch(
+                client_dir, exe,
+                proton=launch_cfg.get("umu_proton", "GE-Proton"),
+                game_id=launch_cfg.get("umu_game_id", "umu-vanilla-wow"),
+                umu_binary=launch_cfg.get("umu_binary_path", ""))
+            self.state.game_running = True
+            self.state.game_pid = pid
+            self.state.game_pgid = pgid
+            self._dispatcher.post(GameLaunched(pid, pgid))
+            threading.Thread(target=self._watch_game, args=(proc, pid),
+                             daemon=True).start()
+            prefix = umu.compute_wine_prefix()
+            self._dispatcher.post(LogMessage(
+                f"Launched {exe_lbl} via umu (PID {pid}, WINEPREFIX "
+                f"{prefix}).\n", "ok"))
+            self._dispatcher.post(StatusChanged(
+                "Running WoW.exe — click TERMINATE to quit"))
+            return True, False
+        except Exception as e:
+            self.state.game_running = False
+            self.state.game_pid = None
+            self.state.game_pgid = None
+            self._dispatcher.post(LogMessage(
+                f"Failed to launch {exe_lbl} via umu: {e}\n", "err"))
+            return False, False
+
+    def _watch_game(self, proc, pid: int):
+        """Background watcher: blocks until the umu process exits, then
+        clears the running state and publishes GameExited."""
+        try:
+            code = proc.wait()
+        except Exception:
+            code = None
+        self.state.game_running = False
+        self.state.game_pid = None
+        self.state.game_pgid = None
+        self._dispatcher.post(GameExited(pid, code))
+        if code in (0, None):
+            self._dispatcher.post(StatusChanged("Game exited."))
+        else:
+            self._dispatcher.post(StatusChanged(f"Game exited (code {code})."))
+
+    def terminate_game(self) -> bool:
+        """Request termination of the running game (umu + WoW.exe process
+        group). Returns True when a game was running; the actual exit is
+        reported asynchronously via GameExited from the watcher."""
+        if not self.state.game_running:
+            return False
+        pid = self.state.game_pid
+        pgid = self.state.game_pgid
+        self._dispatcher.post(LogMessage(
+            f"Terminating game (PID {pid})…\n", "acct"))
+        from ..services import umu
+        try:
+            umu.kill_game(pid, pgid)
+        except Exception as e:
+            self._dispatcher.post(LogMessage(
+                f"Failed to terminate game: {e}\n", "err"))
+        return True
+
     def poll(self):
         """Drain the worker queues once and post the resulting events."""
         try:
@@ -255,6 +344,9 @@ class UpdateController:
         its own flag so the button stays disabled while addons download,
         exactly like the mods flow.
         """
+        if self.state.game_running:
+            return Readiness("terminate", "TERMINATE",
+                             "Running WoW.exe — click TERMINATE to quit")
         if addons_installing:
             return Readiness("busy", "Installing…", "Downloading addons…")
         if self.state.running:
@@ -267,9 +359,12 @@ class UpdateController:
                 return Readiness("busy", "READY", "Client updates disabled")
             return Readiness("play", "PLAY", "Client updates disabled")
         if not self.state.manifest_available:
-            # No manifest was ever fetched/parsed — the update path is a
-            # blind guess, so gray the button out rather than offer UPDATE.
-            return Readiness("disabled", "UPDATE", "Manifest unavailable")
+            # No manifest → can't verify updates, but the game folder may
+            # still be ready to play. Offer PLAY when launch is possible;
+            # gray UPDATE otherwise so we never start a blind update.
+            if not can_launch_client():
+                return Readiness("disabled", "UPDATE", "Manifest unavailable")
+            return Readiness("play", "PLAY", "Manifest unavailable")
         if not self.state.client_ready:
             return Readiness("update", "UPDATE", "Update available!")
         if self._mods_have_errors():

@@ -91,3 +91,24 @@ def test_rmtree_force_removes_readonly(tmp_path):
     os.chmod(p, stat.S_IREAD)
     filesystem.rmtree_force(str(d))
     assert not d.exists()
+
+
+def test_pick_game_executable_prefers_vanillafixes(tmp_path):
+    (tmp_path / "WoW.exe").write_bytes(b"")
+    (tmp_path / "VanillaFixes.exe").write_bytes(b"")
+    exe, label = filesystem.pick_game_executable(str(tmp_path))
+    assert label == "VanillaFixes.exe"
+    assert exe == str(tmp_path / "VanillaFixes.exe")
+
+
+def test_pick_game_executable_falls_back_to_wow(tmp_path):
+    (tmp_path / "WoW.exe").write_bytes(b"")
+    exe, label = filesystem.pick_game_executable(str(tmp_path))
+    assert label == "WoW.exe"
+    assert exe == str(tmp_path / "WoW.exe")
+
+
+def test_pick_game_executable_missing_dir_returns_wow(tmp_path):
+    exe, label = filesystem.pick_game_executable(str(tmp_path))
+    assert label == "WoW.exe"
+    assert exe == str(tmp_path / "WoW.exe")

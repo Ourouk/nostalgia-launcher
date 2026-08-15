@@ -329,6 +329,12 @@ class MainWindow(QMainWindow):
                 " padding: 8px 26px; font-weight: bold; }"
                 "QPushButton:hover { background-color: %s; }"
                 % (p.green_btn.name(), p.green_hov.name(), p.green_hov.name())),
+            "terminate": (
+                "QPushButton { background-color: %s; color: #ffffff;"
+                " border: 1px solid %s; border-radius: 6px;"
+                " padding: 8px 26px; font-weight: bold; }"
+                "QPushButton:hover { background-color: %s; }"
+                % (p.err.name(), p.err.name(), p.err.name())),
             "busy": (
                 "QPushButton { background-color: %s; color: %s;"
                 " border: 1px solid %s; border-radius: 6px;"
@@ -384,6 +390,9 @@ class MainWindow(QMainWindow):
         # re-evaluates readiness (addons installing / mod errors gate PLAY).
         bridge.addonsLoaded.connect(self._on_addons_or_mods_loaded)
         bridge.modsLoaded.connect(self._on_addons_or_mods_loaded)
+        # A game launch/exit flips the footer between PLAY and TERMINATE.
+        bridge.gameLaunched.connect(self._on_game_launched)
+        bridge.gameExited.connect(self._on_game_exited)
 
     # ── tabs ─────────────────────────────────────────────────────────────────
 
@@ -566,11 +575,19 @@ class MainWindow(QMainWindow):
     def _on_addons_or_mods_loaded(self, _event=None):
         self._refresh_ready_state()
 
+    def _on_game_launched(self, pid: int, pgid: int):
+        """The game started — the footer flips to TERMINATE via readiness."""
+        self._refresh_ready_state()
+
+    def _on_game_exited(self, pid: int, exit_code):
+        """The game ended — the footer flips back to PLAY via readiness."""
+        self._refresh_ready_state()
+
     # ── footer button / update workflow ──────────────────────────────────────
 
     def _on_update_button_clicked(self):
-        """Footer PLAY/UPDATE click — launch when ready, update otherwise.
-        Busy states are ignored."""
+        """Footer PLAY/UPDATE/TERMINATE click — launch when ready, update
+        otherwise, terminate a running game. Busy states are ignored."""
         updater = self._hub.updater
         if updater.running or self._hub.full_update.running:
             return
@@ -580,6 +597,8 @@ class MainWindow(QMainWindow):
             self._launch_game()
         elif ready.mode == "update":
             self._start_update()
+        elif ready.mode == "terminate":
+            self._terminate_game()
 
     def _start_update(self):
         updater = self._hub.updater
@@ -616,6 +635,15 @@ class MainWindow(QMainWindow):
             return
         self._after(5000, self._refresh_ready_state)
 
+    def _terminate_game(self):
+        """End the running game; the button stays disabled until the watcher
+        reports GameExited, then flips back to PLAY."""
+        if not self._hub.updater.terminate_game():
+            return
+        self._set_button_busy("TERMINATE")
+        self._statusLabel.setText("Terminating…")
+        self._after(3000, self._refresh_ready_state)
+
     def _show_dxvk_notice(self):
         QMessageBox.information(
             self, "DXVK mod first launch",
@@ -643,6 +671,8 @@ class MainWindow(QMainWindow):
             self._set_button_ready(True)
         elif r.mode == "update":
             self._set_button_ready(False)
+        elif r.mode == "terminate":
+            self._set_button_terminate()
         elif r.mode == "disabled":
             # No manifest available: keep the UPDATE label but gray the
             # button out so it can't start a blind update.
@@ -657,6 +687,12 @@ class MainWindow(QMainWindow):
         self._updateButton.setText("PLAY" if ready else "UPDATE")
         self._updateButton.setStyleSheet(
             self._buttonStyles["play" if ready else "update"])
+        self._updateButton.setEnabled(True)
+
+    def _set_button_terminate(self):
+        """Red TERMINATE button — clickable, ends the running game."""
+        self._updateButton.setText("TERMINATE")
+        self._updateButton.setStyleSheet(self._buttonStyles["terminate"])
         self._updateButton.setEnabled(True)
 
     def _set_button_busy(self, label: str):
