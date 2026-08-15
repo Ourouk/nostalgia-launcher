@@ -68,6 +68,9 @@ jobs:
       # AppImage toolchain: ImageMagick for the icon + linuxdeploy. linuxdeploy
       # is an AppImage itself, so APPIMAGE_EXTRACT_AND_RUN=1 avoids needing
       # FUSE on the runner.
+      - name: Install Qt runtime dependencies (Linux)
+        if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1
       - name: Install ImageMagick (Linux)
         if: matrix.target == 'linux'
         run: sudo apt-get update && sudo apt-get install -y imagemagick

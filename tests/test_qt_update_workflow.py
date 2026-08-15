@@ -226,7 +226,7 @@ def test_mods_finished_rerenders_mods_panel(qapp, window, monkeypatch):
     QTest.qWait(200)
 
     assert panel._running is False
-    assert window._versionLabel.text() == "v1.2"
+    assert window._versionLabel.text() == "v1.3"
     assert window._updateButton.text() == "UPDATE"
 
 
