@@ -16,6 +16,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QTest
 
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
@@ -146,3 +147,53 @@ def test_close_stops_bridge(qapp, window):
     window._hub.dispatcher.post(StatusChanged("after close"))
     QTest.qWait(200)
     assert window._statusLabel.text() != "after close"
+
+
+# ── header wordmark ─────────────────────────────────────────────────────────
+
+def test_wordmark_shows_server_name_without_logo(qapp, window):
+    assert window._wordmark.text() == "Test Server"
+
+
+def test_wordmark_shows_themed_logo_pixmap(qapp, tmp_path, monkeypatch):
+    launcher.configure_from_dict({
+        "server": {"name": "OctoWoW", "base_url": "https://octowow.st"},
+        "theme": {"logo": "https://octowow.st/logo.png"},
+    })
+    png = tmp_path / "logo.png"
+    img = QImage(64, 32, QImage.Format_RGB32)
+    img.fill(QColor(255, 0, 0))
+    assert img.save(str(png), "PNG")
+    monkeypatch.setattr(
+        "vanilla_wow_launcher.services.logo.fetch_logo", lambda url: str(png))
+
+    hub = ControllerHub()
+    win = MainWindow(hub)
+    win.show()
+    try:
+        QTest.qWait(200)
+        pix = win._wordmark.pixmap()
+        assert pix is not None and not pix.isNull()
+        assert pix.height() <= 28
+    finally:
+        win.close()
+
+
+def test_wordmark_keeps_server_name_when_logo_fails(qapp, tmp_path,
+                                                    monkeypatch):
+    launcher.configure_from_dict({
+        "server": {"name": "OctoWoW", "base_url": "https://octowow.st"},
+        "theme": {"logo": "https://octowow.st/logo.png"},
+    })
+    monkeypatch.setattr(
+        "vanilla_wow_launcher.services.logo.fetch_logo", lambda url: None)
+
+    hub = ControllerHub()
+    win = MainWindow(hub)
+    win.show()
+    try:
+        QTest.qWait(200)
+        assert win._wordmark.pixmap().isNull()
+        assert win._wordmark.text() == "OctoWoW"
+    finally:
+        win.close()

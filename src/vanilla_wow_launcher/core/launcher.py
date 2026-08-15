@@ -30,7 +30,8 @@ other URL is derived from it unless overridden:
       },
       "discord_url": "https://discord.gg/example",
       "theme": {
-        "C_GOLD": "#d4a02f"
+        "C_GOLD": "#d4a02f",
+        "logo": "https://server.example/logo.png"
       },
       "mirrors": [
         {
@@ -46,10 +47,11 @@ The manifest and client files are fetched from the configured endpoints; a
 mirror's ``client_url`` may point at a separate CDN host, and mirrors are
 optional (the server is the fallback).
 
-The optional ``theme`` object overrides the app's color theme per server
-(slots named like ``C_GOLD``, each a ``#rrggbb`` hex value; see
-`core/themes`). It is cosmetic and never validated strictly — a malformed
-theme falls back to the default octowow palette instead of failing startup.
+The optional ``theme`` object overrides the app's color theme per server:
+color slots named like ``C_GOLD`` (each a ``#rrggbb`` hex value) plus an
+optional ``logo`` URL shown as the header wordmark (see `core/themes`). It
+is cosmetic and never validated strictly — a malformed theme falls back to
+the default octowow palette instead of failing startup.
 
 A missing or invalid configuration is a hard startup error: the app has
 nothing to point at. This module is network-free; `core/security_http` builds

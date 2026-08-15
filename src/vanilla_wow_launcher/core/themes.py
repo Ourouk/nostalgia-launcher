@@ -2,13 +2,16 @@
 
 The app's color theme is driven by the server: `vanilla_wow_launcher.json`
 may carry an optional ``"theme"`` object listing hex colors for the app's
-color slots (e.g. ``{"C_GOLD": "#d4a02f"}``). Any theme problem silently
-falls back to the default theme — a cosmetic setting must never stop the
-launcher from starting.
+color slots (e.g. ``{"C_GOLD": "#d4a02f"}``) plus an optional ``"logo"`` URL
+for the header wordmark. Any theme problem silently falls back to the
+default theme — a cosmetic setting must never stop the launcher from
+starting.
 
 This module is pure data + pure-stdlib logic (no Qt), so `core/launcher.py`
 can stay toolkit-agnostic while the Qt layer binds the resulting colors.
 """
+
+from urllib.parse import urlsplit
 
 # The default (octowow) theme: the dark purple/gold palette. A theme dict is
 # applied on top of this base, so a distribution only lists the slots it
@@ -43,6 +46,9 @@ DEFAULT_COLORS = {
 # The color slots a theme may set — exactly the default theme's keys.
 COLOR_KEYS = frozenset(DEFAULT_COLORS)
 
+# The one non-color key a theme may carry: the header logo URL.
+LOGO_KEY = "logo"
+
 
 def _valid_hex(value) -> bool:
     """Whether a value is a 6-digit ``#rrggbb`` hex color string."""
@@ -58,19 +64,39 @@ def _valid_hex(value) -> bool:
     return True
 
 
+def _valid_logo_url(value) -> bool:
+    """Whether a value is an https logo URL (no embedded credentials)."""
+    if not isinstance(value, str):
+        return False
+    value = value.strip()
+    if not value:
+        return False
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return False
+    if parts.scheme != "https" or not parts.hostname:
+        return False
+    if parts.username or parts.password:
+        return False
+    return True
+
+
 def resolve_colors(spec) -> dict:
     """The effective color dict for a launcher ``theme`` value.
 
     Returns `DEFAULT_COLORS` whenever the spec is unusable — None, not a
     dict, empty, or containing anything invalid (an unknown color slot or a
-    non-hex value). A valid dict yields the default palette overlaid with the
-    given colors. Never raises: a bad theme falls back, it does not break the
-    launcher.
+    non-hex value). The ``logo`` key is not a color slot and is ignored here.
+    A valid dict yields the default palette overlaid with the given colors.
+    Never raises: a bad theme falls back, it does not break the launcher.
     """
     if not isinstance(spec, dict) or not spec:
         return DEFAULT_COLORS
     overrides = {}
     for key, value in spec.items():
+        if key == LOGO_KEY:
+            continue
         if key not in COLOR_KEYS or not _valid_hex(value):
             # A single bad entry poisons the whole theme — no partial themes.
             return DEFAULT_COLORS
@@ -78,3 +104,17 @@ def resolve_colors(spec) -> dict:
     merged = dict(DEFAULT_COLORS)
     merged.update(overrides)
     return merged
+
+
+def resolve_logo(spec) -> str | None:
+    """The header logo URL from a launcher ``theme`` value, or None.
+
+    Only a non-empty https URL is accepted (bad values fall back to no logo
+    rather than an error). Never raises.
+    """
+    if not isinstance(spec, dict):
+        return None
+    value = spec.get(LOGO_KEY)
+    if not _valid_logo_url(value):
+        return None
+    return value.strip()

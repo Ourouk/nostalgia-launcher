@@ -10,9 +10,11 @@ exposed as attributes for the settings and update workflows.
 """
 
 import queue
+import threading
 import webbrowser
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QGridLayout,
@@ -31,6 +33,7 @@ from PySide6.QtWidgets import (
 from ...core.constants import UPDATER_VERSION
 from ...core import launcher
 from ...core.log_sink import _LOG_Q, log
+from ...services import logo
 from .addons_panel import AddonsPanel
 from .bridge import ControllerHub
 from .custom_addon_dialog import CustomAddonDialog
@@ -38,10 +41,31 @@ from .log_window import LogWindow
 from .mods_panel import ModsPanel
 from .news_panel import NewsPanel
 from .settings_dialog import SettingsDialog
-from .theme import palette_for_config, theme_qss
+from .theme import palette_for_config, theme_qss, logo_for_config
 from .tweaks_panel import TweaksPanel
 from ...state.events import LogMessage
 from .metrics import BASE_H, BASE_W, clamp
+
+
+class _LogoFetcher(QObject):
+    """Fetches the configured logo on a worker thread.
+
+    Reports the cached local path (or '' on failure) via a Qt signal, which
+    is auto-queued to the main thread so the pixmap is always built there.
+    """
+
+    finished = Signal(str)
+
+    def start(self, url: str):
+        threading.Thread(target=self._run, args=(url,), daemon=True).start()
+
+    def _run(self, url: str):
+        self.finished.emit(logo.fetch_logo(url) or "")
+
+
+# The header wordmark logo is scaled to fit within this box.
+_LOGO_HEIGHT = 28
+_LOGO_MAX_WIDTH = 320
 
 
 class MainWindow(QMainWindow):
@@ -121,7 +145,8 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(24, 12, 24, 12)
         layout.setSpacing(16)
 
-        self._wordmark = QLabel("Vanilla WoW Launcher", header)
+        self._wordmark = QLabel(launcher.server_name() or "Vanilla WoW Launcher",
+                                header)
         font = self._wordmark.font()
         font.setPointSize(17)
         font.setBold(True)
@@ -141,6 +166,14 @@ class MainWindow(QMainWindow):
         wmLayout.addWidget(self._updateAvailableLabel)
         self._updateAvailableShown = False
         layout.addWidget(wordmarkBox)
+
+        # A themed logo replaces the wordmark text once it has been fetched
+        # (the server-name text shows until then, and stays on failure).
+        logo_url = logo_for_config(launcher.config())
+        if logo_url:
+            self._logo_fetcher = _LogoFetcher(self)
+            self._logo_fetcher.finished.connect(self._apply_logo)
+            self._logo_fetcher.start(logo_url)
 
         navRow = QWidget(header)
         navLayout = QHBoxLayout(navRow)
@@ -213,7 +246,28 @@ class MainWindow(QMainWindow):
         self._gearButton.clicked.connect(self._open_settings_dialog)
         layout.addWidget(self._gearButton)
 
+        # The wordmark text (server name or the app name) varies in length —
+        # keep the header chrome at the design minimum so a short server name
+        # can't collapse the header below it.
+        header.setMinimumWidth(clamp(BASE_W // 2, 560, 800))
         return header
+
+    def _apply_logo(self, path: str):
+        """Swap the wordmark text for the fetched logo image.
+
+        Called on the main thread when the logo fetch finished. A missing or
+        unreadable logo leaves the server-name text in place.
+        """
+        if not path:
+            return
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            return
+        scaled = pixmap.scaledToHeight(_LOGO_HEIGHT, Qt.SmoothTransformation)
+        if scaled.width() > _LOGO_MAX_WIDTH:
+            scaled = scaled.scaled(_LOGO_MAX_WIDTH, _LOGO_HEIGHT,
+                                   Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._wordmark.setPixmap(scaled)
 
     def _build_central(self) -> QStackedWidget:
         self._stack = QStackedWidget(self)

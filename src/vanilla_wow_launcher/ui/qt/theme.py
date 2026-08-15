@@ -13,7 +13,7 @@ builds a `Palette` from the server's ``"theme"`` color overrides (see
 
 from PySide6.QtGui import QColor
 
-from ...core.themes import DEFAULT_COLORS, resolve_colors
+from ...core.themes import DEFAULT_COLORS, resolve_colors, resolve_logo
 
 # Hex values of the Vanilla WoW Launcher palette (dark backgrounds, gold accents,
 # the parchment addon cards, and the semantic ok/err colors).
@@ -77,6 +77,16 @@ def palette_for_config(cfg) -> Palette:
     """
     spec = getattr(cfg, "theme", None)
     return Palette(resolve_colors(spec))
+
+
+def logo_for_config(cfg) -> str | None:
+    """The header logo URL from a launcher configuration's theme, or None.
+
+    Only an https URL is accepted; anything else (missing, malformed, not a
+    dict) resolves to no logo rather than an error.
+    """
+    spec = getattr(cfg, "theme", None)
+    return resolve_logo(spec)
 
 
 def theme_qss(palette):

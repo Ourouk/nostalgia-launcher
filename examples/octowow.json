@@ -38,7 +38,8 @@
     "C_PARCH_TEXT": "#3a352a",
     "C_PARCH_DIM": "#8b8064",
     "C_PARCH_LINK": "#a3561c",
-    "C_PARCH_EDGE": "#b7a678"
+    "C_PARCH_EDGE": "#b7a678",
+    "logo": "https://octowow.st/turtle_assets/build/assets/big_logo-D0C_AT5h.png"
   },
   "mirrors": []
 }

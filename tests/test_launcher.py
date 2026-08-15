@@ -375,10 +375,11 @@ def test_accessors_empty_when_not_configured():
 def test_theme_dict_parses():
     cfg = _config({
         "server": {"base_url": "https://srv.example"},
-        "theme": {"C_GOLD": "#d4a02f"},
+        "theme": {"C_GOLD": "#d4a02f", "logo": "https://srv.example/logo.png"},
     })
     assert cfg is not None
-    assert cfg.theme == {"C_GOLD": "#d4a02f"}
+    assert cfg.theme == {"C_GOLD": "#d4a02f",
+                         "logo": "https://srv.example/logo.png"}
 
 
 def test_theme_omitted_is_none():
