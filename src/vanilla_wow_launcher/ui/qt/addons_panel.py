@@ -6,64 +6,34 @@ description, repo link, status text and an install/update/remove action — plus
 a check-for-updates / custom-addon footer and a nav-badge callback driven by
 the out-of-date count. Rows are rebuilt from every AddonsLoaded snapshot the
 bridge forwards; user actions are forwarded straight into the toolkit-agnostic
-AddonsController.
+AddonsController. The list shell is shared with the mods panel via
+`list_panel.ScrollListPanel`.
 """
-
-import webbrowser
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QToolButton,
-    QVBoxLayout,
     QWidget,
 )
 
 from ...core.helpers import parse_wow_colored, strip_wow_colors
 from .theme import Palette
-from ...state.events import AddonsLoaded
+from .list_panel import (
+    ClickableLabel,
+    ScrollListPanel,
+    add_row_divider,
+    add_row_error,
+    add_row_link,
+    add_star,
+    make_row_shell,
+)
 
 _INTERFACE_VERSION = "11200"
-
-
-def _clear_layout(layout):
-    """Drop every widget a layout owns so a re-render can rebuild the list."""
-    while layout.count():
-        item = layout.takeAt(0)
-        widget = item.widget()
-        if widget is not None:
-            widget.setParent(None)
-            widget.deleteLater()
-
-
-class _ClickableLabel(QLabel):
-    """A QLabel that emits clicked on a left mouse release."""
-
-    clicked = Signal()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit()
-        super().mouseReleaseEvent(event)
-
-
-class _LinkLabel(_ClickableLabel):
-    """A QLabel that opens a URL on left-click."""
-
-    def __init__(self, text, url, parent=None):
-        super().__init__(text, parent)
-        self._url = url
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self._url:
-            webbrowser.open(self._url)
-        super().mouseReleaseEvent(event)
 
 
 class AddonRow(QWidget):
@@ -90,23 +60,11 @@ class AddonRow(QWidget):
             if missing:
                 warnings.append("Missing deps: " + ", ".join(missing))
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 6, 4, 0)
-        root.setSpacing(3)
-
-        top = QWidget(self)
-        top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(8)
+        root, top, top_layout = make_row_shell(self)
 
         # Fixed-width slot keeps titles aligned whether or not the star shows.
-        self.star_label = QLabel("★" if recommended else "", top)
-        self.star_label.setObjectName(f"addonsStar_{rec.folder}")
-        self.star_label.setFixedWidth(20)
-        self.star_label.setStyleSheet(f"color: {p.gold.name()};")
-        if recommended:
-            self.star_label.setToolTip("Recommended addon")
-        top_layout.addWidget(self.star_label, 0, Qt.AlignTop)
+        self.star_label = add_star(top_layout, f"addonsStar_{rec.folder}",
+                                   recommended, "Recommended addon", p)
 
         # Title honouring WoW colour escapes — one label per colour segment.
         title = toc.get("Title") or rec.folder
@@ -133,7 +91,7 @@ class AddonRow(QWidget):
             status = QLabel("⛔ Addon error", top)
             status.setStyleSheet(f"color: {p.err.name()};")
         elif rec.status == "outOfDate" and installed:
-            status = _ClickableLabel("Update", top)
+            status = ClickableLabel("Update", top)
             status.setStyleSheet(
                 f"color: {p.gold.name()}; font-weight: bold;")
             status.clicked.connect(lambda: on_install(rec))
@@ -152,11 +110,9 @@ class AddonRow(QWidget):
         if rec.git:
             repo_url = (rec.git[:-4] if rec.git.endswith(".git")
                         else rec.git)
-            link = _LinkLabel("⧉", repo_url, top)
-            link.setObjectName(f"addonsLink_{rec.folder}")
-            link.setStyleSheet(f"color: {p.text_dim.name()};")
-            link.setToolTip(repo_url)
-            top_layout.addWidget(link, 0, Qt.AlignTop)
+            self.link_label = add_row_link(top_layout,
+                                           f"addonsLink_{rec.folder}",
+                                           repo_url, p)
 
         if installed:
             action = QPushButton("🗑", top)
@@ -189,55 +145,39 @@ class AddonRow(QWidget):
         self.desc_label.setStyleSheet(f"color: {p.text_dim.name()};")
         root.addWidget(self.desc_label)
 
-        self.error_label = QLabel("", self)
-        self.error_label.setObjectName(f"addonsError_{rec.folder}")
-        self.error_label.setStyleSheet(f"color: {p.err.name()};")
-        if rec.error:
-            self.error_label.setText(f"  ⚠  {rec.error}")
-        self.error_label.setVisible(bool(rec.error))
-        root.addWidget(self.error_label)
+        self.error_label = add_row_error(root, f"addonsError_{rec.folder}",
+                                         rec.error, p)
 
-        divider = QFrame(self)
-        divider.setFrameShape(QFrame.HLine)
-        divider.setStyleSheet(
-            f"background-color: {p.divider.name()};"
-            f" border: none; max-height: 1px;")
-        root.addWidget(divider)
+        add_row_divider(root, p)
 
 
-class AddonsPanel(QWidget):
+class AddonsPanel(ScrollListPanel):
     """The ADDONS tab: a searchable, collapsible addon list with a footer.
 
     Renders from the controller's state; re-renders on every AddonsLoaded and
     on filter/section changes. The optional `on_badge` callback receives the
     out-of-date count after each snapshot so the shell can paint a nav-tab
     badge. The custom-addon footer button only emits `customAddonRequested` —
-    the dialog wiring lands in C21.
+    the dialog wiring lives in the main window.
     """
 
     customAddonRequested = Signal()
 
     def __init__(self, addons, bridge, palette: Palette, parent=None,
                  on_badge=None):
-        super().__init__(parent)
+        super().__init__("addons", bridge.addonsLoaded, palette, bridge,
+                         on_badge, parent)
         self._addons = addons
-        self._palette = palette
-        self._on_badge = on_badge or (lambda count: None)
-        self._rows: dict[str, AddonRow] = {}
-        self.setObjectName("addonsPanel")
-        p = palette
+        self._op_kind = "addons"
+        self._build_header()
+        self._add_scroll_list()
+        self._build_footer()
+        self._render(self._addons.state)
 
-        self.setStyleSheet(
-            f"""
-            #addonsPanel {{ background-color: {p.panel.name()}; }}
-            #addonsContent {{ background-color: {p.panel.name()}; }}
-            #addonsScroll {{ background-color: {p.panel.name()}; border: none; }}
-            """)
+    # ── shell ─────────────────────────────────────────────────────────────
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
+    def _build_header(self):
+        p = self._palette
         top = QWidget(self)
         top_layout = QHBoxLayout(top)
         top_layout.setContentsMargins(16, 8, 16, 6)
@@ -268,36 +208,38 @@ class AddonsPanel(QWidget):
         self._filter.textChanged.connect(
             lambda *_: self._debounce.start())
         top_layout.addWidget(self._filter)
-        root.addWidget(top)
+        self._root_layout.addWidget(top)
+        self._add_hsep()
 
-        sep = QFrame(self)
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(
-            f"background-color: {p.divider.name()};"
-            f" border: none; max-height: 1px;")
-        root.addWidget(sep)
+    def _build_footer(self):
+        p = self._palette
+        self._add_hsep()
+        footer = QWidget(self)
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(16, 6, 16, 10)
 
-        self.scroll = QScrollArea(self)
-        self.scroll.setObjectName("addonsScroll")
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.NoFrame)
-        root.addWidget(self.scroll, 1)
+        check = ClickableLabel("⟳  Check for updates", footer)
+        check.setObjectName("addonsCheck")
+        check.setStyleSheet(f"color: {p.text_dim.name()};")
+        check.clicked.connect(self._on_check)
+        footer_layout.addWidget(check)
 
-        self._content = QWidget()
-        self._content.setObjectName("addonsContent")
-        self._rows_layout = QVBoxLayout(self._content)
-        self._rows_layout.setContentsMargins(16, 0, 16, 6)
-        self._rows_layout.setSpacing(0)
-        self._rows_layout.setAlignment(Qt.AlignTop)
-        self.scroll.setWidget(self._content)
+        footer_layout.addStretch(1)
 
-        self._build_footer()
+        custom = ClickableLabel("+  Add custom git addon", footer)
+        custom.setObjectName("addonsCustom")
+        custom.setStyleSheet(f"color: {p.pink.name()}; font-weight: bold;")
+        custom.clicked.connect(self.customAddonRequested.emit)
+        footer_layout.addWidget(custom)
 
-        bridge.addonsLoaded.connect(self._on_addons_loaded)
-        bridge.operationFinished.connect(self._on_operation_finished)
-        bridge.operationFailed.connect(self._on_operation_failed)
+        footer_layout.addStretch(1)
 
-        self._render(self._addons.state)
+        self._footer_label = ClickableLabel("", footer)
+        self._footer_label.setObjectName("addonsFooter")
+        self._footer_label.clicked.connect(self._on_update_all)
+        footer_layout.addWidget(self._footer_label)
+
+        self._root_layout.addWidget(footer)
 
     # ── rendering ───────────────────────────────────────────────────────────
 
@@ -313,8 +255,7 @@ class AddonsPanel(QWidget):
 
     def _render(self, state=None):
         state = state or self._addons.state
-        _clear_layout(self._rows_layout)
-        self._rows = {}
+        self._clear_rows()
 
         installed = [r for r in state.addons.values()
                      if self._matches(r.to_dict())]
@@ -342,7 +283,7 @@ class AddonsPanel(QWidget):
                         on_remove=self._on_remove,
                         parent=self._content)
                     self._rows[rec.folder] = row
-                    self._rows_layout.addWidget(row)
+                    self._add_row(row)
 
         self._refresh_footer()
 
@@ -363,7 +304,7 @@ class AddonsPanel(QWidget):
         toggle.clicked.connect(lambda: self._toggle_section(title))
         layout.addWidget(toggle)
 
-        label = _ClickableLabel(title, hdr)
+        label = ClickableLabel(title, hdr)
         label.setStyleSheet(
             f"color: {p.gold.name()}; font-weight: bold; font-size: 11pt;")
         label.clicked.connect(lambda: self._toggle_section(title))
@@ -411,42 +352,6 @@ class AddonsPanel(QWidget):
 
     # ── footer ──────────────────────────────────────────────────────────────
 
-    def _build_footer(self):
-        p = self._palette
-        sep = QFrame(self)
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(
-            f"background-color: {p.divider.name()};"
-            f" border: none; max-height: 1px;")
-        self.layout().addWidget(sep)
-
-        footer = QWidget(self)
-        footer_layout = QHBoxLayout(footer)
-        footer_layout.setContentsMargins(16, 6, 16, 10)
-
-        check = _ClickableLabel("⟳  Check for updates", footer)
-        check.setObjectName("addonsCheck")
-        check.setStyleSheet(f"color: {p.text_dim.name()};")
-        check.clicked.connect(self._on_check)
-        footer_layout.addWidget(check)
-
-        footer_layout.addStretch(1)
-
-        custom = _ClickableLabel("+  Add custom git addon", footer)
-        custom.setObjectName("addonsCustom")
-        custom.setStyleSheet(f"color: {p.pink.name()}; font-weight: bold;")
-        custom.clicked.connect(self.customAddonRequested.emit)
-        footer_layout.addWidget(custom)
-
-        footer_layout.addStretch(1)
-
-        self._footer_label = _ClickableLabel("", footer)
-        self._footer_label.setObjectName("addonsFooter")
-        self._footer_label.clicked.connect(self._on_update_all)
-        footer_layout.addWidget(self._footer_label)
-
-        self.layout().addWidget(footer)
-
     def _refresh_footer(self):
         text, fg, cursor = self._addons.footer_state()
         self._footer_label.setText(text)
@@ -456,18 +361,7 @@ class AddonsPanel(QWidget):
         self._footer_label.setCursor(
             Qt.PointingHandCursor if clickable else Qt.ArrowCursor)
 
-    # ── event wiring ────────────────────────────────────────────────────────
+    # ── event hooks ────────────────────────────────────────────────────────
 
-    def _on_addons_loaded(self, event):
-        if not isinstance(event, AddonsLoaded) or event.state is None:
-            return
-        self._render(event.state)
-        self._on_badge(event.state.updates_count)
-
-    def _on_operation_finished(self, kind: str, ok: bool, message: str):
-        if kind == "addons":
-            self._refresh_footer()
-
-    def _on_operation_failed(self, kind: str, message: str):
-        if kind == "addons":
-            self._refresh_footer()
+    def _after_operation(self):
+        self._refresh_footer()

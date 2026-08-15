@@ -5,49 +5,28 @@ essential star badge, install state, enable/ignore checkboxes, repo link,
 retry/update action and error line — plus an Apply footer and a nav-badge
 callback driven by the updates count. Rows are rebuilt from every ModsLoaded
 snapshot the bridge forwards; user actions are forwarded straight into the
-toolkit-agnostic ModsController.
+toolkit-agnostic ModsController. The list shell is shared with the addons
+panel via `list_panel.ScrollListPanel`.
 """
-
-import webbrowser
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QScrollArea,
-    QVBoxLayout,
     QWidget,
 )
 
 from .theme import Palette
-from ...state.events import ModsLoaded
-
-
-def _clear_layout(layout):
-    """Drop every widget a layout owns so a re-render can rebuild the list."""
-    while layout.count():
-        item = layout.takeAt(0)
-        widget = item.widget()
-        if widget is not None:
-            widget.setParent(None)
-            widget.deleteLater()
-
-
-class _LinkLabel(QLabel):
-    """A QLabel that opens a URL on left-click."""
-
-    def __init__(self, text, url, parent=None):
-        super().__init__(text, parent)
-        self._url = url
-        self.setCursor(Qt.PointingHandCursor)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self._url:
-            webbrowser.open(self._url)
-        super().mouseReleaseEvent(event)
+from .list_panel import (
+    ScrollListPanel,
+    add_row_divider,
+    add_row_error,
+    add_row_link,
+    add_star,
+    make_row_shell,
+)
 
 
 class ModRow(QWidget):
@@ -78,23 +57,11 @@ class ModRow(QWidget):
         desc_col = p.text if enabled else p.text_dim
         version = installed_version or latest_versions.get(mid) or "unknown"
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 6, 4, 0)
-        root.setSpacing(3)
-
-        top = QWidget(self)
-        top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(8)
+        root, top, top_layout = make_row_shell(self)
 
         # Fixed-width slot keeps names aligned whether or not the star shows.
-        self.star_label = QLabel("★" if essential else "", top)
-        self.star_label.setObjectName(f"modsStar_{mid}")
-        self.star_label.setFixedWidth(20)
-        self.star_label.setStyleSheet(f"color: {p.gold.name()};")
-        if essential:
-            self.star_label.setToolTip("Essential mod")
-        top_layout.addWidget(self.star_label, 0, Qt.AlignTop)
+        self.star_label = add_star(top_layout, f"modsStar_{mid}", essential,
+                                   "Essential mod", p)
 
         self.name_label = QLabel(mod["name"], top)
         self.name_label.setObjectName(f"modsName_{mid}")
@@ -128,11 +95,8 @@ class ModRow(QWidget):
                 f" color: {p.hdr.name()}; }}")
             top_layout.addWidget(self.action_button)
 
-        self.link_label = _LinkLabel("⧉", mod["repo_url"], top)
-        self.link_label.setObjectName(f"modsLink_{mid}")
-        self.link_label.setStyleSheet(f"color: {p.text_dim.name()};")
-        self.link_label.setToolTip(mod["repo_url"])
-        top_layout.addWidget(self.link_label, 0, Qt.AlignTop)
+        self.link_label = add_row_link(top_layout, f"modsLink_{mid}",
+                                       mod["repo_url"], p)
 
         self.ignore_check = QCheckBox(top)
         self.ignore_check.setObjectName(f"modsIgnore_{mid}")
@@ -152,23 +116,12 @@ class ModRow(QWidget):
         self.desc_label.setStyleSheet(f"color: {desc_col.name()};")
         root.addWidget(self.desc_label)
 
-        self.error_label = QLabel("", self)
-        self.error_label.setObjectName(f"modsError_{mid}")
-        self.error_label.setStyleSheet(f"color: {p.err.name()};")
-        if has_error:
-            self.error_label.setText(f"  \u26a0  {has_error}")
-        self.error_label.setVisible(bool(has_error))
-        root.addWidget(self.error_label)
+        self.error_label = add_row_error(root, f"modsError_{mid}", has_error, p)
 
-        divider = QFrame(self)
-        divider.setFrameShape(QFrame.HLine)
-        divider.setStyleSheet(
-            f"background-color: {p.divider.name()};"
-            f" border: none; max-height: 1px;")
-        root.addWidget(divider)
+        add_row_divider(root, p)
 
 
-class ModsPanel(QWidget):
+class ModsPanel(ScrollListPanel):
     """The MODS tab: a scrollable mod list with an Apply footer.
 
     Renders from the controller's registry and state; re-renders on every
@@ -179,26 +132,21 @@ class ModsPanel(QWidget):
 
     def __init__(self, mods, bridge, palette: Palette, parent=None,
                  on_badge=None):
-        super().__init__(parent)
+        super().__init__("mods", bridge.modsLoaded, palette, bridge, on_badge,
+                         parent)
         self._mods = mods
-        self._palette = palette
-        self._on_badge = on_badge or (lambda count: None)
+        self._op_kind = "mods"
         self._running = False
-        self._rows: dict[str, ModRow] = {}
-        self.setObjectName("modsPanel")
-        p = palette
+        self._build_header()
+        self._add_scroll_list()
+        self._build_footer()
+        self._render(self._mods.state)
+        self._refresh_apply_visibility()
 
-        self.setStyleSheet(
-            f"""
-            #modsPanel {{ background-color: {p.panel.name()}; }}
-            #modsContent {{ background-color: {p.panel.name()}; }}
-            #modsScroll {{ background-color: {p.panel.name()}; border: none; }}
-            """)
+    # ── shell ─────────────────────────────────────────────────────────────
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-
+    def _build_header(self):
+        p = self._palette
         banner = QWidget(self)
         banner.setObjectName("modsBanner")
         banner_layout = QHBoxLayout(banner)
@@ -210,34 +158,12 @@ class ModsPanel(QWidget):
             part.setStyleSheet(f"color: {color.name()};")
             banner_layout.addWidget(part)
         banner_layout.addStretch(1)
-        root.addWidget(banner)
+        self._root_layout.addWidget(banner)
+        self._add_hsep()
 
-        sep = QFrame(self)
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"background-color: {p.divider.name()};"
-                          f" border: none; max-height: 1px;")
-        root.addWidget(sep)
-
-        self.scroll = QScrollArea(self)
-        self.scroll.setObjectName("modsScroll")
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.NoFrame)
-        root.addWidget(self.scroll, 1)
-
-        self._content = QWidget()
-        self._content.setObjectName("modsContent")
-        self._rows_layout = QVBoxLayout(self._content)
-        self._rows_layout.setContentsMargins(16, 0, 16, 6)
-        self._rows_layout.setSpacing(0)
-        self._rows_layout.setAlignment(Qt.AlignTop)
-        self.scroll.setWidget(self._content)
-
-        sep = QFrame(self)
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"background-color: {p.divider.name()};"
-                          f" border: none; max-height: 1px;")
-        root.addWidget(sep)
-
+    def _build_footer(self):
+        p = self._palette
+        self._add_hsep()
         footer = QWidget(self)
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(16, 6, 16, 10)
@@ -255,22 +181,14 @@ class ModsPanel(QWidget):
         self._apply_button.setVisible(False)
         footer_layout.addWidget(self._apply_button)
         footer_layout.addStretch(1)
-        root.addWidget(footer)
-
-        bridge.modsLoaded.connect(self._on_mods_loaded)
-        bridge.operationFinished.connect(self._on_operation_finished)
-        bridge.operationFailed.connect(self._on_operation_failed)
-
-        self._render(self._mods.state)
-        self._refresh_apply_visibility()
+        self._root_layout.addWidget(footer)
 
     # ── rendering ───────────────────────────────────────────────────────────
 
     def _render(self, state):
         if state is None:
             return
-        _clear_layout(self._rows_layout)
-        self._rows = {}
+        self._clear_rows()
         for mod in sorted(self._mods.registry,
                           key=lambda m: m["name"].lower()):
             mid = mod["id"]
@@ -286,7 +204,7 @@ class ModsPanel(QWidget):
                 row.action_button.clicked.connect(
                     lambda checked=False, m=mid: self._on_action(m))
             self._rows[mid] = row
-            self._rows_layout.addWidget(row)
+            self._add_row(row)
 
     def _refresh_apply_visibility(self):
         """Apply is offered only when there is something to apply: pending
@@ -317,23 +235,11 @@ class ModsPanel(QWidget):
         self._running = running
         self._apply_button.setEnabled(not running)
 
-    # ── event wiring ────────────────────────────────────────────────────────
+    # ── event hooks ────────────────────────────────────────────────────────
 
-    def _on_mods_loaded(self, event):
-        if not isinstance(event, ModsLoaded) or event.state is None:
-            return
-        self._render(event.state)
-        self._on_badge(event.state.updates_count)
+    def _after_loaded(self):
         self._refresh_apply_visibility()
 
-    def _on_operation_finished(self, kind: str, ok: bool, message: str):
-        if kind != "mods":
-            return
-        self._set_running(False)
-        self._refresh_apply_visibility()
-
-    def _on_operation_failed(self, kind: str, message: str):
-        if kind != "mods":
-            return
+    def _after_operation(self):
         self._set_running(False)
         self._refresh_apply_visibility()
