@@ -518,7 +518,7 @@ class MainWindow(QMainWindow):
         """Footer PLAY/UPDATE click — launch when ready, update otherwise.
         Busy states are ignored."""
         updater = self._hub.updater
-        if updater.running:
+        if updater.running or self._hub.full_update.running:
             return
         ready = updater.compute_readiness(
             addons_installing=self._hub.addons.installing)
@@ -535,7 +535,7 @@ class MainWindow(QMainWindow):
             self._hub.dispatcher.post(
                 LogMessage("✗  Please set the game folder first.\n", "err"))
             return
-        updater.start_update()
+        self._hub.full_update.start()
         self._refresh_ready_state()
 
     def _start_verify(self, overwrite_config: bool = False):
@@ -579,6 +579,8 @@ class MainWindow(QMainWindow):
         self._apply_readiness(self._readiness())
 
     def _readiness(self):
+        if self._hub.full_update.running:
+            return Readiness("busy", "Updating…", "Updating game…")
         return self._hub.updater.compute_readiness(
             addons_installing=self._hub.addons.installing)
 
@@ -653,7 +655,10 @@ class MainWindow(QMainWindow):
         # Ask live update workers to stop before the UI goes away, so a
         # background download/verify can't keep mutating files or config
         # after the window is closed.
-        self._hub.updater.cancel()
+        if self._hub.full_update.running:
+            self._hub.full_update.cancel()
+        else:
+            self._hub.updater.cancel()
         self._hub.close()
 
     def _stop_timers(self):

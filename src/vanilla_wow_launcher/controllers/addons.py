@@ -302,6 +302,7 @@ class AddonsController:
             1 for rec in self.state.addons.values()
             if rec.status == "outOfDate")
         self._dispatcher.post(AddonsLoaded(self.state))
+        self._dispatcher.post(OperationFinished("addons_verify", True, ""))
 
     def maybe_install_default_addons(self) -> bool:
         """One-shot auto-install of every recommended addon for a fresh game

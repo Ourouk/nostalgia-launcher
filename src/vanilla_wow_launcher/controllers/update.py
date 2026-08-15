@@ -77,6 +77,10 @@ class UpdateController:
         return self.state.client_ready
 
     @property
+    def client_update_enabled(self) -> bool:
+        return self._client_updates_enabled()
+
+    @property
     def diff_nodes(self):
         return self.state.diff_nodes
 

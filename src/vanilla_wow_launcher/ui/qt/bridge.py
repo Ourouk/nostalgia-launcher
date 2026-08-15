@@ -45,6 +45,7 @@ from ...state.events import (
     StatusChanged,
 )
 from ...controllers.update import UpdateController
+from ...controllers.full_update import FullUpdateController
 
 # Poll interval: responsive without busy-spinning the event loop.
 _DRAIN_INTERVAL_MS = 50
@@ -82,8 +83,7 @@ class ControllerBridge(QObject):
     @Slot()
     def _drain(self):
         """Drain the pending events and emit the matching signal per event."""
-        for event in self._dispatcher.drain():
-            self._on_event(event)
+        self._dispatcher.dispatch_all()
 
     def _on_event(self, event):
         if isinstance(event, StatusChanged):
@@ -135,6 +135,8 @@ class ControllerHub:
         self.mods = ModsController(self.dispatcher, get_out_dir)
         self.addons = AddonsController(self.dispatcher, get_out_dir)
         self.tweaks = TweaksController(self.dispatcher, get_out_dir)
+        self.full_update = FullUpdateController(
+            self.dispatcher, self.updater, self.mods, self.addons)
         self.settings = SettingsController(
             self.dispatcher, self.updater, self.mods, self.addons, self.news)
         self.bridge = ControllerBridge(self.dispatcher)
