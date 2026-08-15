@@ -95,7 +95,8 @@ After selecting a configuration:
 
 1. Open **Settings** and select the game folder if it was not detected.
 2. Review the configured server and mirror information.
-3. Click **UPDATE** to verify and update the client.
+3. Click **UPDATE** to run the complete update sequence: client, mods, then
+   addons.
 4. Use **PLAY** when the client is ready on supported platforms.
 
 ## Using the Launcher
@@ -105,6 +106,18 @@ After selecting a configuration:
 The launcher compares the files in your game folder with the configured server
 manifest. Only missing or changed files are downloaded. Downloads can resume
 after an interruption, and files are checked again after downloading.
+
+The **UPDATE** button runs updates in this order:
+
+1. Client files are verified and updated.
+2. Registered mods are installed or updated.
+3. Addons are verified, then available addon updates are installed.
+
+The next step starts only after the previous step completes successfully. If a
+server does not provide a client manifest or client downloads, open **Settings**
+and clear **Enable client updates**. This stores `"client_update_enabled":
+false` in the launcher's settings, skips the client step, and lets **UPDATE**
+run the mods and addons steps. Client updates are enabled by default.
 
 Do not edit or remove files while an update or verification is running.
 
@@ -151,6 +164,14 @@ The **NEWS** tab displays announcements and featured posts from the configured
 server. News is retrieved from the URLs in the selected launcher
 configuration.
 
+### Discord
+
+When the selected launcher configuration includes an optional top-level
+`discord_url`, the header shows a **DISCORD** button. Clicking it opens the
+configured server invitation or community page in your web browser. The button
+is hidden when `discord_url` is omitted, set to `null`, or set to an empty
+string.
+
 ### Settings
 
 Settings lets you:
@@ -162,6 +183,9 @@ Settings lets you:
 - Configure catalog URLs when the server permits it.
 - Add the game folder to Windows Defender exclusions.
 - Manage general launcher options.
+
+General options include **Enable client updates**, which should be cleared when
+the configured server does not publish client manifests or client downloads.
 
 Only add a Defender exclusion for a game folder you control and trust.
 
