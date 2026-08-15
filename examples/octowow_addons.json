@@ -4,5 +4,11 @@
     "git": "https://github.com/roby-brok/pfUI",
     "branch": "master",
     "description": "OctoWoW-maintained pfUI fork with UI-scale/border fixes, mailbox performance and repairs to silently-broken features."
+  },
+  {
+    "name": "Puppeteer",
+    "git": "https://github.com/OldManAlpha/Puppeteer",
+    "branch": "main",
+    "description": "Healer-oriented unit frames addon for WoW Vanilla 1.12 (formerly HealersMate) with mouse/key bindings, incoming healing, role assignment and raid frames."
   }
 ]
