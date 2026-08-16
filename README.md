@@ -1,9 +1,10 @@
 # Vanilla WoW Launcher
 
-Vanilla WoW Launcher is a desktop updater and mod manager for Vanilla WoW
-clients. It keeps game files current, installs community mods and addons,
-applies quality-of-life settings, and displays server news from the
-configuration you choose.
+Vanilla WoW Launcher is a config-driven desktop companion for Vanilla WoW
+clients. It incrementally updates game files, installs registered mods and
+Git-hosted addons, applies `Config.wtf` and client tweaks, and shows server
+news — all sourced from whichever server you point it at, with no built-in
+server list.
 
 ![Vanilla WoW Launcher](screenshot.png)
 
@@ -321,6 +322,10 @@ This project is derived from the original Octo Updater project:
 The derivative work is maintained by:
 
 - **Andrea Spelgatti** — <spelgattiandrea@ourouk.be>
+
+If you enjoy the launcher, you can support its development:
+
+- Buy Me a Coffee: <https://buymeacoffee.com/ourouk>
 
 The original author's attribution and donation links are retained as required
 by the project license:
