@@ -133,6 +133,7 @@ def test_operation_events_flip_button_state(qapp, window, monkeypatch):
     import vanilla_wow_launcher.controllers.update as update_controller
 
     monkeypatch.setattr(update_controller, "can_launch_client", lambda: True)
+    window._refresh_ready_state()
     assert window._updateButton.text() == "PLAY"
 
     # A finished update marks the client ready on the controller before the
