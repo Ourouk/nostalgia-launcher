@@ -30,21 +30,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...core.constants import UPDATER_VERSION
 from ...core import launcher
+from ...core.constants import UPDATER_VERSION
 from ...core.log_sink import _LOG_Q, log
 from ...services import logo
+from ...state.events import LogMessage
 from .addons_panel import AddonsPanel
 from .bridge import ControllerHub
 from .custom_addon_dialog import CustomAddonDialog
 from .log_window import LogWindow
+from .metrics import BASE_H, BASE_W, clamp
 from .mods_panel import ModsPanel
 from .news_panel import NewsPanel
 from .settings_dialog import SettingsDialog
-from .theme import palette_for_config, theme_qss, logo_for_config
+from .theme import logo_for_config, palette_for_config, theme_qss
 from .tweaks_panel import TweaksPanel
-from ...state.events import LogMessage
-from .metrics import BASE_H, BASE_W, clamp
 
 
 class _LogoFetcher(QObject):
@@ -213,11 +213,11 @@ class MainWindow(QMainWindow):
             button.clicked.connect(
                 lambda checked=False, tab=name: self.switch_tab(tab))
         navRow.setStyleSheet(
-            "QPushButton { color: %s; background: transparent; border: none;"
+            f"QPushButton {{ color: {p.text.name()}; background: transparent;"
+            " border: none;"
             " padding: 6px 12px; font-size: 10pt; font-weight: bold; }"
-            "QPushButton:hover { color: %s; }"
-            "QPushButton:checked { color: %s; }"
-            % (p.text.name(), p.gold.name(), p.gold_lt.name()))
+            f"QPushButton:hover {{ color: {p.gold.name()}; }}"
+            f"QPushButton:checked {{ color: {p.gold_lt.name()}; }}")
         layout.addWidget(navRow)
 
         layout.addStretch(1)
@@ -318,28 +318,31 @@ class MainWindow(QMainWindow):
 
         self._buttonStyles = {
             "update": (
-                "QPushButton { background-color: %s; color: #ffffff;"
-                " border: 1px solid %s; border-radius: 6px;"
+                f"QPushButton {{ background-color: {p.gold.name()};"
+                " color: #ffffff; border: 1px solid"
+                f" {p.gold_lt.name()}; border-radius: 6px;"
                 " padding: 8px 26px; font-weight: bold; }"
-                "QPushButton:hover { background-color: %s; }"
-                % (p.gold.name(), p.gold_lt.name(), p.gold_lt.name())),
+                f"QPushButton:hover {{ background-color:"
+                f" {p.gold_lt.name()}; }}"),
             "play": (
-                "QPushButton { background-color: %s; color: #ffffff;"
-                " border: 1px solid %s; border-radius: 6px;"
+                f"QPushButton {{ background-color: {p.green_btn.name()};"
+                " color: #ffffff; border: 1px solid"
+                f" {p.green_hov.name()}; border-radius: 6px;"
                 " padding: 8px 26px; font-weight: bold; }"
-                "QPushButton:hover { background-color: %s; }"
-                % (p.green_btn.name(), p.green_hov.name(), p.green_hov.name())),
+                f"QPushButton:hover {{ background-color:"
+                f" {p.green_hov.name()}; }}"),
             "terminate": (
-                "QPushButton { background-color: %s; color: #ffffff;"
-                " border: 1px solid %s; border-radius: 6px;"
+                f"QPushButton {{ background-color: {p.err.name()};"
+                " color: #ffffff; border: 1px solid"
+                f" {p.err.name()}; border-radius: 6px;"
                 " padding: 8px 26px; font-weight: bold; }"
-                "QPushButton:hover { background-color: %s; }"
-                % (p.err.name(), p.err.name(), p.err.name())),
+                f"QPushButton:hover {{ background-color:"
+                f" {p.err.name()}; }}"),
             "busy": (
-                "QPushButton { background-color: %s; color: %s;"
-                " border: 1px solid %s; border-radius: 6px;"
-                " padding: 8px 26px; font-weight: bold; }"
-                % (p.panel.name(), p.text_dim.name(), p.panel_bdr.name())),
+                f"QPushButton {{ background-color: {p.panel.name()};"
+                f" color: {p.text_dim.name()}; border: 1px solid"
+                f" {p.panel_bdr.name()}; border-radius: 6px;"
+                " padding: 8px 26px; font-weight: bold; }"),
         }
         self._updateButton = QPushButton("UPDATE", left)
         self._updateButton.setObjectName("updateButton")
@@ -366,11 +369,11 @@ class MainWindow(QMainWindow):
         self._progressBar.setValue(0)
         self._progressBar.hide()
         self._progressBar.setStyleSheet(
-            "QProgressBar { background-color: %s; border: 1px solid %s;"
-            " border-radius: 3px; height: 8px; }"
-            "QProgressBar::chunk { background-color: %s;"
-            " border-radius: 3px; }"
-            % (p.hdr.name(), p.panel_bdr.name(), p.gold.name()))
+            f"QProgressBar {{ background-color: {p.hdr.name()};"
+            " border: 1px solid"
+            f" {p.panel_bdr.name()}; border-radius: 3px; height: 8px; }"
+            f"QProgressBar::chunk {{ background-color: {p.gold.name()};"
+            " border-radius: 3px; }")
         rightLayout.addWidget(self._progressBar)
 
         self._progressLabel = QLabel("", right)
@@ -712,8 +715,10 @@ class MainWindow(QMainWindow):
             self._after(300, self._start_verify)
         self._after(600, hub.news.load)
         self._after(900, hub.mods.load_latest_versions)
-        if hub.settings.state.config.get("addons") is not None:
-            self._after(1500, hub.addons.verify)
+        # Verify unconditionally so a first-launch user with an
+        # uninitialized config still sees the catalog list (the verify TTL
+        # skips redundant rescans on later launches).
+        self._after(1500, hub.addons.verify)
         self._after(2000, hub.updater.check_updater_update)
 
     def _after(self, ms: int, callback):

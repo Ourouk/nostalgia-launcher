@@ -20,12 +20,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QLineEdit, QMessageBox, QWidget
 
+from vanilla_wow_launcher.state.events import AddonsLoaded
+from vanilla_wow_launcher.state.models import AddonsState, AddonState
 from vanilla_wow_launcher.ui.qt.addons_panel import AddonsPanel
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
 from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
 from vanilla_wow_launcher.ui.qt.main_window import MainWindow
-from vanilla_wow_launcher.state.events import AddonsLoaded
-from vanilla_wow_launcher.state.models import AddonsState, AddonState
 
 MIX_ADDONS = {
     "SellValue": dict(
@@ -33,7 +33,9 @@ MIX_ADDONS = {
         toc={"Title": "Sell Value", "Interface": "11200"}),
     "Downloading": dict(
         status="downloading", git="https://github.com/octo/Downloading"),
-    "ManualInstall": dict(status="unknown"),
+    "ManualInstall": dict(status="unknown",
+                          git="https://github.com/octo/ManualInstall"),
+    "Magnify": dict(status="unknown"),
 }
 MIX_AVAILABLE = [
     dict(folder="pfUI", status="available",
@@ -134,13 +136,19 @@ def test_mixed_rows_render(qapp, window, hub):
     assert download is not None and download.toolTip() == "Install addon"
     assert panel.findChild(QWidget, "addonsAction_Bagsort") is not None
 
-    # downloading / error / not-versioned status texts.
+    # downloading / error / couldn't-check status texts.
     assert panel.findChild(QLabel, "addonsStatus_Downloading").text() == \
         "downloading…"
     assert panel.findChild(QLabel, "addonsStatus_Broken").text() == \
         "⛔ Addon error"
     assert panel.findChild(QLabel, "addonsStatus_ManualInstall").text() == \
-        "Not versioned"
+        "⟳ Couldn't check"
+    # An addon neither in the catalog nor recorded is just not tracked.
+    assert panel.findChild(QLabel, "addonsStatus_Magnify").text() == \
+        "Not tracked"
+    # The couldn't-check status has no red error line under the row.
+    assert panel.findChild(QLabel, "addonsError_ManualInstall").isVisible() \
+        is False
 
     # Error line sits under the failing row.
     error = panel.findChild(QLabel, "addonsError_Broken")
@@ -149,6 +157,20 @@ def test_mixed_rows_render(qapp, window, hub):
     # A coloured title is rendered from the .toc Title.
     assert panel.findChild(QLabel, "addonsName_SellValue").text() == \
         "Sell Value"
+
+
+def test_couldnt_check_status_retry_triggers_verify(qapp, window, hub,
+                                                    monkeypatch):
+    window.switch_tab("ADDONS")
+    _post(hub, _make_state(addons=MIX_ADDONS))
+    panel = _panel(window)
+    status = panel.findChild(QLabel, "addonsStatus_ManualInstall")
+    assert status.text() == "⟳ Couldn't check"
+
+    verify = Mock(return_value=True)
+    monkeypatch.setattr(hub.addons, "verify", verify)
+    QTest.mouseClick(status, Qt.LeftButton)
+    verify.assert_called_once_with(force=True)
 
 
 def test_warning_status_for_interface_mismatch(qapp, window, hub):

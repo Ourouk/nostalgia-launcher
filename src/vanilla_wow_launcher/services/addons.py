@@ -10,8 +10,8 @@ addon catalog (launcher-configured or user-set URL) merged with the per-user
 custom file, so a distribution decides what it ships.
 """
 
-import json
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -20,9 +20,9 @@ import urllib.request
 import zipfile
 from urllib.parse import quote, urlsplit
 
-from ..core.config_store import load_config, update_config
 from ..core import config_store as _config_store
-from ..core.constants import UA, GITHUB_API
+from ..core.config_store import load_config, update_config
+from ..core.constants import GITHUB_API, UA
 from ..core.errors import describe_net_error
 from ..core.filesystem import rmtree_force
 from ..core.log_sink import log
@@ -237,7 +237,7 @@ def read_toc_file(path: str) -> dict:
     """Parse '## Key: Value' metadata lines from a WoW addon .toc file."""
     toc = {}
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             content = f.read()
     except OSError:
         return toc
@@ -340,6 +340,14 @@ def addon_remote_sha(git_url: str, branch=None, ref=None,
         cause = api_error or RuntimeError(
             f"could not resolve remote commit for {git_url}")
         raise RuntimeError(describe_net_error(cause)) from cause
+
+    if sha is None and not raise_errors:
+        # Not an error for the caller (returns None), but worth a diagnostic
+        # line so a wall of "Failed to verify" isn't a silent mystery.
+        api_cause = describe_net_error(api_error) if api_error \
+            else "API returned no commits"
+        log(f"  Could not resolve remote commit for {git_url} — {api_cause}; "
+            f"git ls-remote fallback also failed.", "dim")
 
     if sha:
         update_config(lambda c: c.setdefault("addon_sha_cache", {}).__setitem__(

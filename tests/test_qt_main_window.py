@@ -16,14 +16,21 @@ import pytest
 
 pytest.importorskip("PySide6")
 
+from unittest.mock import Mock
+
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QTest
 
+from vanilla_wow_launcher.core import launcher
+from vanilla_wow_launcher.state.events import (
+    OperationFailed,
+    OperationFinished,
+    ProgressChanged,
+    StatusChanged,
+)
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
 from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
 from vanilla_wow_launcher.ui.qt.main_window import MainWindow
-from vanilla_wow_launcher.core import launcher
-from vanilla_wow_launcher.state.events import OperationFailed, OperationFinished, ProgressChanged, StatusChanged
 
 
 @pytest.fixture(autouse=True)
@@ -190,6 +197,27 @@ def test_close_stops_bridge(qapp, window):
     window._hub.dispatcher.post(StatusChanged("after close"))
     QTest.qWait(200)
     assert window._statusLabel.text() != "after close"
+
+
+def test_startup_tasks_schedule_addons_verify_on_first_run(qapp, window,
+                                                           monkeypatch):
+    """The ADDONS verify runs unconditionally, so a first-launch user with an
+    uninitialized config still sees the catalog list (the old code skipped it
+    when the config had no 'addons' key yet)."""
+    hub = window._hub
+    hub.settings.state.first_run = True
+    hub.settings.state.first_run_verify_pending = True  # defer updater verify
+    hub.settings.state.config.pop("addons", None)
+    addons_verify = Mock()
+    monkeypatch.setattr(hub.addons, "verify", addons_verify)
+    monkeypatch.setattr(hub.news, "load", Mock())
+    monkeypatch.setattr(hub.mods, "load_latest_versions", Mock())
+    monkeypatch.setattr(hub.updater, "check_updater_update", Mock())
+
+    window.schedule_startup_tasks()
+    QTest.qWait(1700)
+
+    addons_verify.assert_called_once_with()
 
 
 # ── header wordmark ─────────────────────────────────────────────────────────

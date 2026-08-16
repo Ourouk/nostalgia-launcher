@@ -8,12 +8,18 @@ network or the real filesystem.
 """
 
 import os
+import threading
 import time
+from unittest.mock import Mock
 
 import pytest
 
 import vanilla_wow_launcher.controllers.addons as ac
-from vanilla_wow_launcher.controllers.addons import C_OK, C_TEXT_DIM, AddonsController
+from vanilla_wow_launcher.controllers.addons import (
+    C_OK,
+    C_TEXT_DIM,
+    AddonsController,
+)
 from vanilla_wow_launcher.state.events import (
     AddonsLoaded,
     EventDispatcher,
@@ -107,6 +113,83 @@ def test_verify_scans_and_posts_addons_loaded(controller, cfg, tmp_path):
     # installed, so it must not also show as available).
     assert {a.folder for a in controller.state.available} == set(
         ac.addons.RECOMMENDED_ADDONS)
+    assert controller.updates_count == 0
+
+
+def test_verify_marks_unreachable_addon_unknown(controller, cfg, tmp_path,
+                                                monkeypatch):
+    """A remote that can't be reached to compare SHAs → status 'unknown'
+    (retryable), not 'invalid' — and it doesn't count as an update."""
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["addons"]["Foo"] = {"git": "https://github.com/x/y",
+                            "branch": None, "ref": None, "sha": "REMOTE"}
+    monkeypatch.setattr(ac.addons, "addon_remote_sha", lambda *a, **k: None)
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+
+    rec = controller.state.addons["Foo"]
+    assert rec.status == "unknown"
+    assert rec.error == "Couldn't check for updates"
+    assert controller.updates_count == 0
+    assert [r.folder for r in controller.update_all()] == []
+
+
+def test_verify_adopts_untracked_installed_catalog_addon(controller, cfg,
+                                                         tmp_path,
+                                                         monkeypatch):
+    """An installed addon the launcher has never recorded but that is in the
+    catalog is adopted silently: recorded with its current remote sha and
+    marked up to date — no re-download, no 'update' flag on every
+    pre-existing addon (the /srv/games first-scan case)."""
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["addons"] = {}   # nothing tracked yet
+    cfg["addons_catalog_cache"] = {}
+    monkeypatch.setattr(ac.addons, "addons_catalog", lambda force=False: [
+        {"name": "Foo", "git": "https://github.com/catalog/Foo",
+         "branch": "main", "ref": None}])
+    seen = {}
+    monkeypatch.setattr(
+        ac.addons, "addon_remote_sha",
+        lambda git, branch=None, ref=None, force=False, raise_errors=False:
+        seen.update(git=git, branch=branch) or "LIVE")
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+
+    rec = controller.state.addons["Foo"]
+    assert rec.status == "upToDate"
+    assert rec.git == "https://github.com/catalog/Foo"
+    assert seen == {"git": "https://github.com/catalog/Foo", "branch": "main"}
+    # The adoption wrote a tracking record so later verifies track it.
+    assert cfg["addons"]["Foo"] == {
+        "git": "https://github.com/catalog/Foo", "branch": "main",
+        "ref": None, "sha": "LIVE"}
+    assert controller.updates_count == 0
+
+
+def test_verify_adoption_unresolvable_is_unknown(controller, cfg, tmp_path,
+                                                 monkeypatch):
+    """When the remote can't be resolved during adoption the addon is
+    'unknown' (retryable), never flagged for update."""
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["addons"] = {}
+    monkeypatch.setattr(ac.addons, "addons_catalog", lambda force=False: [
+        {"name": "Foo", "git": "https://github.com/catalog/Foo",
+         "branch": "main", "ref": None}])
+    monkeypatch.setattr(ac.addons, "addon_remote_sha", lambda *a, **k: None)
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+
+    rec = controller.state.addons["Foo"]
+    assert rec.status == "unknown"
+    assert rec.error == "Couldn't check for updates"
+    # Nothing recorded — a later retry can adopt it.
+    assert "Foo" not in cfg.get("addons", {})
     assert controller.updates_count == 0
 
 
@@ -261,14 +344,120 @@ def test_apply_success_records_and_posts_finished(controller, cfg, tmp_path):
                                     "sha": "REMOTE"}
     assert controller.state.errors == {}
 
-    # The install resolved/cached the sha, so the follow-up re-verify is
-    # cache-only and marks the addon up to date.
-    collected = _drain_for(controller._dispatcher,
-                           lambda e: isinstance(e, AddonsLoaded))
+    # The worker resolved/cached the sha, marked the addon up to date and
+    # posted the snapshot before finishing — on full success we skip the
+    # follow-up verify, so the AddonsLoaded is already in the drain.
     assert any(isinstance(e, AddonsLoaded) for e in collected)
     assert controller.state.addons["Foo"].status == "upToDate"
     assert controller.state.installing is False
     assert controller.state.busy is False
+
+
+def test_apply_success_does_not_run_post_install_verify(controller, cfg,
+                                                        tmp_path,
+                                                        monkeypatch):
+    """On full success the worker has already marked the just-installed
+    addon upToDate; running verify() afterward can flip it back to
+    outOfDate (fork migration, repo authoritative mismatch)."""
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["out_dir"] = client
+    cfg["addons"] = {}
+    rec = {"folder": "Foo", "status": "available",
+           "git": "https://github.com/a/b", "branch": None, "ref": None,
+           "toc": {}, "description": None, "error": None}
+    verify_mock = Mock(return_value=False)
+    monkeypatch.setattr(controller, "verify", verify_mock)
+
+    assert controller.apply([rec]) is True
+    _drain_for(controller._dispatcher,
+               lambda e: isinstance(e, OperationFinished))
+
+    verify_mock.assert_not_called()
+
+
+def test_apply_failure_still_runs_post_install_verify(controller, cfg,
+                                                      monkeypatch):
+    """Failures need the verify so the error is overlaid on the
+    AVAILABLE row."""
+    monkeypatch.setattr(
+        ac.addons, "install_addon_files",
+        lambda client, folder, git, sha:
+        (_ for _ in ()).throw(RuntimeError("boom")))
+    rec = {"folder": "Foo", "status": "available",
+           "git": "https://github.com/a/b", "branch": None, "ref": None,
+           "toc": {}, "description": None, "error": None}
+    verify_mock = Mock(return_value=False)
+    monkeypatch.setattr(controller, "verify", verify_mock)
+
+    assert controller.apply([rec]) is True
+    _drain_for(controller._dispatcher,
+               lambda e: isinstance(e, OperationFinished))
+
+    verify_mock.assert_called_once_with(remote_checks=False)
+
+
+def test_apply_marks_existing_addon_downloading(controller, cfg, tmp_path,
+                                                monkeypatch):
+    """An update (the addon is already tracked) must flip its status to
+    'downloading' synchronously — the panel re-renders immediately after
+    apply() and relies on the new status to show progress instead of the
+    stale outOfDate button."""
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    cfg["out_dir"] = client
+    cfg["addons"] = {}
+    rec = AddonState(folder="Foo", status="outOfDate",
+                     git="https://github.com/a/b", toc={})
+    controller.state.addons["Foo"] = rec
+
+    release = threading.Event()
+    monkeypatch.setattr(ac.addons, "install_addon_files",
+                        lambda client, folder, git, sha: release.wait())
+
+    assert controller.apply([rec.to_dict()]) is True
+
+    # Synchronous mutation: status is "downloading" right after apply().
+    assert controller.state.addons["Foo"].status == "downloading"
+
+    # Let the install finish — the worker marks it up to date and posts the
+    # snapshot without waiting for the post-install verify.
+    release.set()
+    _drain_for(controller._dispatcher,
+               lambda e: isinstance(e, OperationFinished))
+    assert controller.state.addons["Foo"].status == "upToDate"
+    assert controller.state.installing is False
+    assert controller.state.busy is False
+
+
+def test_update_all_flips_records_to_downloading(controller, cfg, tmp_path,
+                                                 monkeypatch):
+    """The footer's 'Update all' path goes through apply() too — every
+    out-of-date record must show 'downloading' synchronously."""
+    client = str(tmp_path)
+    _install_folder(client, "Foo")
+    _install_folder(client, "Bar")
+    cfg["out_dir"] = client
+    cfg["addons"] = {}
+    for name in ("Foo", "Bar"):
+        controller.state.addons[name] = AddonState(
+            folder=name, status="outOfDate",
+            git=f"https://github.com/a/{name}", toc={})
+
+    release = threading.Event()
+    monkeypatch.setattr(ac.addons, "install_addon_files",
+                        lambda client, folder, git, sha: release.wait())
+
+    assert controller.apply(controller.update_all()) is True
+
+    for name in ("Foo", "Bar"):
+        assert controller.state.addons[name].status == "downloading"
+
+    release.set()
+    _drain_for(controller._dispatcher,
+               lambda e: isinstance(e, OperationFinished))
+    for name in ("Foo", "Bar"):
+        assert controller.state.addons[name].status == "upToDate"
 
 
 def test_apply_failure_records_error_and_posts_finished(controller, cfg,

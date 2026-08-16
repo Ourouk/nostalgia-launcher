@@ -8,8 +8,8 @@ import zipfile
 
 import pytest
 
-import vanilla_wow_launcher.services.addons as addons
 import vanilla_wow_launcher.core.config_store as config_store
+import vanilla_wow_launcher.services.addons as addons
 
 
 def test_is_allowed_git_url():
@@ -271,7 +271,6 @@ def test_catalog_from_cache_merges_in_configured_order(tmp_path):
 def test_example_octowow_addons_overrides_validate():
     """The bundled override list must pass the addon validator so the
     launcher config's addons_registry_urls stays usable."""
-    import os
     path = os.path.join(os.path.dirname(__file__), "..", "examples",
                         "octowow_addons.json")
     raw = json.load(open(path, encoding="utf-8"))
@@ -413,6 +412,30 @@ def test_addon_remote_sha_raises_when_both_paths_fail(tmp_path, monkeypatch):
     monkeypatch.setattr(addons, "_git_ls_remote_sha", lambda url, pin: None)
     with pytest.raises(RuntimeError, match="rate limit"):
         addons.addon_remote_sha("https://github.com/a/b", raise_errors=True)
+
+
+def test_addon_remote_sha_logs_cause_when_unresolvable(tmp_path, monkeypatch):
+    """A failed resolve returns None but still logs a dim diagnostic line so
+    a wall of 'Couldn't check' isn't a silent mystery."""
+    config_store.configure(str(tmp_path / "config.json"),
+                           str(tmp_path / "cache.json"))
+    config_store.save_config({})
+
+    def api_boom(url, timeout=10):
+        raise urllib.error.HTTPError(url, 403, "rate limited", {}, None)
+
+    monkeypatch.setattr(addons, "_api_json", api_boom)
+    monkeypatch.setattr(addons, "_git_ls_remote_sha", lambda url, pin: None)
+    logged = []
+    monkeypatch.setattr(addons, "log",
+                        lambda msg, tag="": logged.append((msg, tag)))
+
+    assert addons.addon_remote_sha("https://github.com/a/b") is None
+
+    assert logged
+    msg, tag = logged[0]
+    assert tag == "dim"
+    assert "rate limit" in msg
 
 
 def _zip_bytes(entries):

@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.helpers import parse_wow_colored, strip_wow_colors
-from .theme import Palette
 from .list_panel import (
     ClickableLabel,
     ScrollListPanel,
@@ -32,6 +31,7 @@ from .list_panel import (
     add_star,
     make_row_shell,
 )
+from .theme import Palette
 
 _INTERFACE_VERSION = "11200"
 
@@ -41,7 +41,8 @@ class AddonRow(QWidget):
     status text and an install/update/remove action."""
 
     def __init__(self, rec, installed, recommended, installed_names,
-                 palette: Palette, on_install, on_remove, parent=None):
+                 palette: Palette, on_install, on_remove, on_retry=None,
+                 parent=None):
         super().__init__(parent)
         self.setObjectName(f"addonsRow_{rec.folder}")
         p = palette
@@ -87,6 +88,27 @@ class AddonRow(QWidget):
         if rec.status == "downloading":
             status = QLabel("downloading…", top)
             status.setStyleSheet(f"color: {p.text_dim.name()};")
+        elif rec.status == "unknown":
+            if rec.git:
+                # Remote couldn't be reached to compare SHAs — a retry, not
+                # an error (the log holds the actual cause).
+                status = ClickableLabel("⟳ Couldn't check", top)
+                status.setStyleSheet(
+                    f"color: {p.warn.name()}; font-weight: bold;")
+                status.setToolTip(
+                    "Couldn't reach the remote to check for updates — "
+                    "click to retry")
+                if on_retry is not None:
+                    status.clicked.connect(lambda: on_retry(rec))
+            else:
+                # Installed but not in the catalog and never recorded — no
+                # source to check against, so just note it isn't tracked.
+                status = QLabel("Not tracked", top)
+                status.setStyleSheet(f"color: {p.text_dim.name()};")
+                status.setToolTip(
+                    "This addon isn't in the launcher's catalog and wasn't "
+                    "installed by the launcher — it isn't tracked for "
+                    "updates.")
         elif rec.status == "invalid" or rec.error:
             status = QLabel("⛔ Addon error", top)
             status.setStyleSheet(f"color: {p.err.name()};")
@@ -145,8 +167,9 @@ class AddonRow(QWidget):
         self.desc_label.setStyleSheet(f"color: {p.text_dim.name()};")
         root.addWidget(self.desc_label)
 
-        self.error_label = add_row_error(root, f"addonsError_{rec.folder}",
-                                         rec.error, p)
+        self.error_label = add_row_error(
+            root, f"addonsError_{rec.folder}",
+            None if rec.status == "unknown" else rec.error, p)
 
         add_row_divider(root, p)
 
@@ -281,6 +304,7 @@ class AddonsPanel(ScrollListPanel):
                         palette=self._palette,
                         on_install=self._on_install,
                         on_remove=self._on_remove,
+                        on_retry=self._on_retry,
                         parent=self._content)
                     self._rows[rec.folder] = row
                     self._add_row(row)
@@ -345,6 +369,11 @@ class AddonsPanel(ScrollListPanel):
     def _on_check(self):
         if self._addons.verify(force=True):
             self._refresh_footer()
+
+    def _on_retry(self, rec):
+        """Re-verify after a "Couldn't check" — same force-verify as the
+        footer's Check for updates."""
+        self._on_check()
 
     def _on_update_all(self):
         if self._addons.apply(self._addons.update_all()):

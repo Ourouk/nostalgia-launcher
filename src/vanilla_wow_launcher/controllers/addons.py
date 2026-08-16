@@ -14,11 +14,11 @@ import shutil
 import threading
 import time
 
-from ..services import addons
 from ..core import config_store
 from ..core.constants import DEFAULT_OUT_DIR
 from ..core.errors import describe_install_error
 from ..core.helpers import same_git_repo
+from ..services import addons
 from ..state.events import (
     AddonsLoaded,
     EventDispatcher,
@@ -32,6 +32,10 @@ from ..state.models import AddonError, AddonsState, AddonState
 # toolkit-agnostic footer_state() can render without importing Qt.
 C_OK = "#6abf69"
 C_TEXT_DIM = "#7a7670"
+
+# Status message when the remote could not be reached to compare SHAs — a
+# transient state (rate limit, outage), distinct from a broken addon folder.
+C_COULD_NOT_CHECK = "Couldn't check for updates"
 
 
 class AddonsController:
@@ -49,8 +53,9 @@ class AddonsController:
         self._recommended = set(addons.RECOMMENDED_ADDONS)
         self._default_addons_install_started = False
         if get_out_dir is None:
-            get_out_dir = lambda: config_store.load_config().get(
-                "out_dir", DEFAULT_OUT_DIR)
+            def get_out_dir():
+                return config_store.load_config().get(
+                    "out_dir", DEFAULT_OUT_DIR)
         self._get_out_dir = get_out_dir
 
     # ── public API ──────────────────────────────────────────────────────────
@@ -197,8 +202,8 @@ class AddonsController:
                                     # than hitting the network
                                     remote = saved.get("sha")
                             if remote is None:
-                                rec.update(status="invalid",
-                                           error="Failed to verify")
+                                rec.update(status="unknown",
+                                           error=C_COULD_NOT_CHECK)
                             elif remote == saved.get("sha"):
                                 rec["status"] = "upToDate"
                             else:
@@ -221,17 +226,41 @@ class AddonsController:
                                 # than hitting the network
                                 remote = saved.get("sha")
                         if remote is None:
-                            rec.update(status="invalid",
-                                       error="Failed to verify")
+                            rec.update(status="unknown",
+                                       error=C_COULD_NOT_CHECK)
                         elif remote == saved.get("sha"):
                             rec["status"] = "upToDate"
                         else:
                             rec["status"] = "outOfDate"
                     elif avail:
-                        # Known catalog addon installed outside the updater —
-                        # offer to take it over via a fresh install.
+                        # Installed addon the launcher has never recorded (a
+                        # folder set up elsewhere, or addons pre-dating the
+                        # launcher). Adopt it silently: record its catalog
+                        # source and resolve its current remote sha as the
+                        # baseline, so it's tracked like any launcher-installed
+                        # addon from now on — no re-download and no "update"
+                        # flag on every pre-existing addon. Offline/rate-limited
+                        # resolution leaves it retryable, never "out of date".
+                        if remote_checks:
+                            remote = addons.addon_remote_sha(
+                                avail["git"], avail["branch"], avail["ref"],
+                                force=force)
+                        else:
+                            remote = addons.addon_cached_sha(
+                                avail["git"], avail["branch"], avail["ref"])
                         rec.update(git=avail["git"], branch=avail["branch"],
-                                   ref=avail["ref"], status="outOfDate")
+                                   ref=avail["ref"])
+                        if remote:
+                            rec["status"] = "upToDate"
+                            config_store.update_config(
+                                lambda c, f=name, g=avail["git"],
+                                b=avail["branch"], r=avail["ref"], s=remote:
+                                c.setdefault("addons", {}).__setitem__(
+                                    f, {"git": g, "branch": b,
+                                        "ref": r, "sha": s}))
+                        else:
+                            rec.update(status="unknown",
+                                       error=C_COULD_NOT_CHECK)
                     installed[name] = rec
 
             # Overlay install failures from this session: the rescan drops
@@ -267,8 +296,16 @@ class AddonsController:
         self.state.installing = True
         for rec in recs:
             rec["status"] = "downloading"
-            self.state.addons.setdefault(
-                rec["folder"], AddonState.from_dict(rec))
+            rec_state = self.state.addons.get(rec["folder"])
+            if rec_state is None:
+                rec_state = AddonState.from_dict(rec)
+                self.state.addons[rec["folder"]] = rec_state
+            else:
+                # Existing record (this is an update, not a first install) —
+                # flip its status in place so the panel's immediate _render()
+                # shows "downloading…" instead of the stale outOfDate.
+                rec_state.status = "downloading"
+                rec_state.error = None
         self._dispatcher.post(StatusChanged("Downloading addons…"))
         threading.Thread(target=self._apply_worker,
                          args=(client, list(recs)), daemon=True).start()
@@ -413,6 +450,14 @@ class AddonsController:
                     lambda c, f=rec["folder"], r=record:
                     c.setdefault("addons", {}).__setitem__(f, r))
                 self.state.errors.pop(rec["folder"], None)
+                st_rec = self.state.addons.get(rec["folder"])
+                if st_rec is not None:
+                    # Instant feedback: the row flips to "Up to date" now
+                    # instead of staying on the stale status until the
+                    # post-install verify reconciles it.
+                    st_rec.status = "upToDate"
+                    st_rec.error = None
+                self._dispatcher.post(AddonsLoaded(self.state))
                 self._dispatcher.post(
                     LogMessage(f"  ✓ Addon {rec['folder']} installed."))
             except Exception as e:
@@ -433,6 +478,13 @@ class AddonsController:
         self._dispatcher.post(OperationFinished(
             "addons", not failed,
             "" if not failed else f"Failed addons: {', '.join(failed)}"))
-        # Cache-only refresh: the install itself already resolved and cached
-        # the shas — no further API requests are needed.
-        self.verify(remote_checks=False)
+        if failed:
+            # Only rescan when something failed — the overlay attaches the
+            # install error to the matching AVAILABLE row. On full success
+            # the worker has already marked every just-installed addon
+            # upToDate and published the snapshot; running verify() here
+            # would re-scan the disk and could flip those rows back to
+            # outOfDate (e.g. when RECOMMENDED_ADDONS defines a curated
+            # fork with a different git URL than the catalog entry the
+            # user just installed).
+            self.verify(remote_checks=False)
