@@ -1,8 +1,10 @@
 # AGENTS.md
 
 Vanilla WoW Launcher — a PySide6 desktop app (updater + mod manager for the
-Vanilla WoW client). Pure stdlib business logic; only third-party runtime dep
-is PySide6.
+Vanilla WoW client). Runtime deps: PySide6 (GUI) and libtorrent (the
+BitTorrent backend for client updates, imported lazily — the client update
+path degrades to per-file HTTP downloads when it isn't installed, so tests
+never need it); business logic is otherwise pure stdlib.
 
 ## Commands
 
@@ -10,7 +12,7 @@ is PySide6.
 uv sync                          # installs the package editable + PySide6
 uv run vanilla-wow-launcher      # run the app
 uv run python -m vanilla_wow_launcher # equivalent
-uv run pytest                    # full suite (696 pass, 3 display-only skips)
+uv run pytest                    # full suite (721 pass, 3 display-only skips)
 uv run ruff format .             # pep8-style 79-col wrapping ([tool.ruff])
 uv run ruff check .              # lint gate: E4/E7/E9/F/I/W/UP/B — run after edits
 ```
@@ -79,6 +81,13 @@ src/vanilla_wow_launcher/
   network-free on non-forced calls (cache → empty list); only Settings
   "Reload" forces a fetch. There is no bundled registry/recommended list —
   tests provide one by monkeypatching `mods.mods_registry()`.
+- Client updates get a second download backend: when the active download
+  source advertises a `torrent_url` (launcher config, server or mirror) and
+  libtorrent is importable, `UpdateWorker` bulk-downloads the stale files via
+  `services/torrent_download.py` before its per-file HTTP `traverse()`, which
+  re-verifies every file and HTTP-resumes anything the torrent missed. Tests
+  inject a fake `libtorrent` into `sys.modules`; libtorrent is never needed
+  to run the suite.
 - Tests get a launcher config from the autouse `_launcher_env` fixture in
   `tests/conftest.py` (server `https://launcher.test` + a "Backup" mirror) —
   never rely on real network in tests. Launcher state is **process-global**:

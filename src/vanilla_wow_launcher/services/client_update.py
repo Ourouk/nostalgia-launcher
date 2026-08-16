@@ -42,6 +42,7 @@ class DownloadSource(NamedTuple):
 
     manifest_url: str
     client_url: str
+    torrent_url: str | None = None
 
 
 def _source_reachable(url: str) -> bool:
@@ -72,8 +73,20 @@ def _download_source() -> "DownloadSource | None":
         return None
     for mirror in cfg.mirrors if cfg else []:
         if _source_reachable(mirror.client_url):
-            return DownloadSource(mirror.manifest_url, mirror.client_url)
-    return DownloadSource(cfg.manifest_url, cfg.client_url)
+            return DownloadSource(
+                mirror.manifest_url, mirror.client_url, mirror.torrent_url
+            )
+    return DownloadSource(cfg.manifest_url, cfg.client_url, cfg.torrent_url)
+
+
+def _torrent_available() -> bool:
+    """Whether the BitTorrent backend can run (libtorrent installed)."""
+    try:
+        from .torrent_download import available
+
+        return available()
+    except Exception:
+        return False
 
 
 class VerifyWorker:
@@ -345,6 +358,76 @@ class UpdateWorker:
             f"Download failed after {DOWNLOAD_RETRY} attempts: {url}"
         )
 
+    def _skip_download(self, node, dest, name) -> bool:
+        """Whether a file node can be skipped because the local copy already
+        matches the manifest (or is the expected patched WoW.exe)."""
+        if name == "WoW.exe" and self.expected_patched_wow_hash:
+            server_hash = node["hash"]
+            original_server_hash = self.original_server_wow_hash
+            local_hash = sha1_file(dest) if os.path.exists(dest) else ""
+            return (
+                local_hash == self.expected_patched_wow_hash
+                and server_hash == original_server_hash
+            )
+        return already_updated(dest, node["hash"])
+
+    def _torrent_download(self, nodes) -> bool:
+        """Bulk-download the stale files via BitTorrent when the active source
+        advertises a ``torrent_url`` and libtorrent is available. Returns True
+        when the torrent backend ran; ``traverse()`` still re-verifies every
+        file afterwards and HTTP-resumes anything the torrent didn't cover."""
+        src = self._source
+        if src is None or not src.torrent_url:
+            return False
+        if not _torrent_available():
+            self.log("  libtorrent not available — using HTTP.", "dim")
+            return False
+        wanted: set[str] = set()
+        if nodes is not None:
+            for child in nodes:
+                self._collect_wanted(child, [], wanted)
+        if not wanted:
+            return False
+        self.log(
+            f"\nDownloading {len(wanted)} stale file(s) via BitTorrent…",
+            "acct",
+        )
+        try:
+            from .torrent_download import TorrentDownloader
+
+            dl = TorrentDownloader(self.out_dir, self.log_q, self.prog_q)
+            dl.download(src.torrent_url, wanted)
+            self.log("  BitTorrent download complete.", "ok")
+            return True
+        except RuntimeError as e:
+            if self._cancel:
+                raise
+            self.log(f"  BitTorrent download failed: {e}", "err")
+            self.log("  Falling back to HTTP downloads.", "err")
+            return False
+
+    def _collect_wanted(self, node, path_parts, wanted):
+        """Collect the relative paths of stale file/mpq nodes for the torrent
+        backend, reusing the same up-to-date checks as `traverse`."""
+        if self._cancel:
+            return
+        t = node["type"]
+        name = node["name"]
+        cur = path_parts + [name]
+        if t == "dir":
+            for child in node.get("files", []):
+                self._collect_wanted(child, cur, wanted)
+        elif t == "file":
+            rel = "/".join(cur)
+            dest = os.path.join(self.out_dir, rel)
+            if not self._skip_download(node, dest, name):
+                wanted.add(rel)
+        elif t == "mpq":
+            rel = "/".join(path_parts + [name + ".mpq"])
+            dest = os.path.join(self.out_dir, rel)
+            if not self._skip_download(node, dest, name + ".mpq"):
+                wanted.add(rel)
+
     def traverse(self, node, path_parts):
         if self._cancel:
             return
@@ -368,18 +451,7 @@ class UpdateWorker:
             self.log(f"[file] {rel}", "acct")
             url = f"{src.client_url}/{'/'.join(cur)}"
 
-            if name == "WoW.exe" and self.expected_patched_wow_hash:
-                server_hash = node["hash"]
-                original_server_hash = self.original_server_wow_hash
-                local_hash = sha1_file(dest) if os.path.exists(dest) else ""
-                already_patched = (
-                    local_hash == self.expected_patched_wow_hash
-                    and server_hash == original_server_hash
-                )
-                if already_patched:
-                    self.log("  Already up to date (patched).", "dim")
-                    return
-            elif already_updated(dest, node["hash"]):
+            if self._skip_download(node, dest, name):
                 self.log("  Already up to date.", "dim")
                 return
 
@@ -400,7 +472,7 @@ class UpdateWorker:
             dest = os.path.join(self.out_dir, rel)
             url = f"{src.client_url}/{'/'.join(cur_mpq)}"
             self.log(f"[mpq]  {rel}", "acct")
-            if already_updated(dest, node["hash"]):
+            if self._skip_download(node, dest, mpq_name):
                 self.log("  Already up to date.", "dim")
                 return
             got_hash = self.download(url, dest, node["size"], rel)
@@ -462,8 +534,7 @@ class UpdateWorker:
             if diff_nodes is not None:
                 self.log("\nStarting client update…\n")
                 self.progress(0.05, "Downloading…")
-                for child in diff_nodes:
-                    self.traverse(child, [])
+                nodes = diff_nodes
             else:
                 self.progress(0.02, "Fetching manifest…")
                 self.log("Fetching manifest.json…")
@@ -479,8 +550,15 @@ class UpdateWorker:
                 self.log("Manifest received.", "ok")
                 self.progress(0.05, "Downloading…")
                 self.log("\nStarting client update…\n")
-                for child in manifest["root"].get("files", []):
-                    self.traverse(child, [])
+                nodes = manifest["root"].get("files", [])
+
+            if self._source is None:
+                self._source = _download_source()
+            if self._source is None:
+                raise RuntimeError("No download source configured.")
+            self._torrent_download(nodes)
+            for child in nodes:
+                self.traverse(child, [])
 
             if self._cancel:
                 self.log("\nUpdate cancelled.", "err")
