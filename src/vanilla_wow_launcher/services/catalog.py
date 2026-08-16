@@ -38,6 +38,7 @@ CUSTOM_FILE_TEMPLATE = "[\n]\n"
 
 # ── catalog URL storage ──────────────────────────────────────────────────────
 
+
 def get_registry_url(kind: str) -> str:
     """The per-user catalog URL override, or '' when the launcher-configured
     URL should be used instead."""
@@ -51,7 +52,8 @@ def set_registry_url(kind: str, url: str) -> str | None:
     url = (url or "").strip().rstrip("/")
     if not url:
         config_store.update_config(
-            lambda c: c.pop(f"{kind}_registry_url", None))
+            lambda c: c.pop(f"{kind}_registry_url", None)
+        )
         return None
     try:
         parts = urlsplit(url)
@@ -64,7 +66,8 @@ def set_registry_url(kind: str, url: str) -> str | None:
     if parts.username or parts.password:
         return "Catalog URL must not embed credentials."
     config_store.update_config(
-        lambda c: c.__setitem__(f"{kind}_registry_url", url))
+        lambda c: c.__setitem__(f"{kind}_registry_url", url)
+    )
     return None
 
 
@@ -75,9 +78,12 @@ def reset_registry_url(kind: str):
 
 # ── custom-file helpers ──────────────────────────────────────────────────────
 
+
 def custom_file(kind: str) -> str:
     """Path of the per-user custom JSON file for a catalog kind."""
-    return os.path.join(config_dir(), f"vanilla_wow_launcher_{kind}_custom.json")
+    return os.path.join(
+        config_dir(), f"vanilla_wow_launcher_{kind}_custom.json"
+    )
 
 
 def load_custom(kind: str, validator) -> list:
@@ -103,8 +109,10 @@ def load_custom(kind: str, validator) -> list:
     for entry in raw:
         cleaned = validator(entry) if isinstance(entry, dict) else None
         if cleaned is None:
-            log(f"  {kind} custom file: skipping invalid entry {entry!r}",
-                "err")
+            log(
+                f"  {kind} custom file: skipping invalid entry {entry!r}",
+                "err",
+            )
             continue
         out.append(cleaned)
     return out
@@ -139,14 +147,19 @@ def clear_custom(kind: str) -> bool:
 
 # ── shared validation helpers ────────────────────────────────────────────────
 
+
 def safe_folder(name) -> bool:
     """A directory name we are willing to install into (no separators, no
     traversal, no NUL)."""
     if not isinstance(name, str):
         return False
     name = name.strip()
-    return bool(name) and name not in (".", "..") and \
-        not any(ch in name for ch in "/\\") and "\x00" not in name
+    return (
+        bool(name)
+        and name not in (".", "..")
+        and not any(ch in name for ch in "/\\")
+        and "\x00" not in name
+    )
 
 
 def safe_relpath(p) -> bool:
@@ -156,8 +169,10 @@ def safe_relpath(p) -> bool:
     if p.startswith(("/", "\\")) or p[1:2] == ":":
         return False
     parts = p.replace("\\", "/").split("/")
-    return all(part and part not in (".", "..") for part in parts) \
+    return (
+        all(part and part not in (".", "..") for part in parts)
         and "\x00" not in p
+    )
 
 
 def safe_ref(v) -> str | None:
@@ -207,13 +222,18 @@ def _valid_extract_map(emap) -> dict | None:
         return None
     out = {}
     for pattern, dest in emap.items():
-        if (isinstance(pattern, str) and pattern
-                and isinstance(dest, str) and safe_relpath(dest)):
+        if (
+            isinstance(pattern, str)
+            and pattern
+            and isinstance(dest, str)
+            and safe_relpath(dest)
+        ):
             out[pattern] = dest
     return out or None
 
 
 # ── addon entries ────────────────────────────────────────────────────────────
+
 
 def validate_addon(entry: dict) -> dict | None:
     """Sanitize one addon catalog entry; None when unusable.
@@ -226,9 +246,16 @@ def validate_addon(entry: dict) -> dict | None:
     name = ((entry.get("name") or entry.get("folder")) or "").strip()
     if not safe_folder(name):
         return None
-    rec = {"name": name, "git": None, "branch": None, "ref": None,
-           "description": None, "toc": {}, "recommended": False,
-           "blocked": False}
+    rec = {
+        "name": name,
+        "git": None,
+        "branch": None,
+        "ref": None,
+        "description": None,
+        "toc": {},
+        "recommended": False,
+        "blocked": False,
+    }
     git = entry.get("git")
     if isinstance(git, str) and git.strip():
         rec["git"] = git.strip()
@@ -238,8 +265,9 @@ def validate_addon(entry: dict) -> dict | None:
     rec["description"] = desc if isinstance(desc, str) else None
     toc = entry.get("toc")
     if isinstance(toc, dict):
-        rec["toc"] = {k: toc[k] for k in ("Title", "Notes", "Interface")
-                      if k in toc}
+        rec["toc"] = {
+            k: toc[k] for k in ("Title", "Notes", "Interface") if k in toc
+        }
     rec["recommended"] = bool(entry.get("recommended", False))
     rec["blocked"] = bool(entry.get("blocked", False))
     return rec
@@ -262,12 +290,14 @@ def merge_addons(remote: list, custom: list) -> list:
             if entry.get(key) is not None:
                 base[key] = entry[key]
         base["recommended"] = base.get("recommended") or entry.get(
-            "recommended", False)
+            "recommended", False
+        )
         base["blocked"] = base.get("blocked") or entry.get("blocked", False)
     return list(by_folder.values())
 
 
 # ── mod entries ──────────────────────────────────────────────────────────────
+
 
 def validate_mod(entry: dict) -> dict | None:
     """Sanitize one mod catalog entry into the shape the mod installer uses;
@@ -291,15 +321,19 @@ def validate_mod(entry: dict) -> dict | None:
         "id": mid,
         "name": name,
         "essential": bool(entry.get("essential", False)),
-        "description": (entry.get("description")
-                        if isinstance(entry.get("description"), str) else ""),
+        "description": (
+            entry.get("description")
+            if isinstance(entry.get("description"), str)
+            else ""
+        ),
         "repo_url": _https_url(entry.get("repo_url")),
         "source": {},
     }
     hooks = source.get("post_install") or []
     if hooks:
         if not isinstance(hooks, list) or not all(
-                h in MOD_POST_INSTALL_HOOKS for h in hooks):
+            h in MOD_POST_INSTALL_HOOKS for h in hooks
+        ):
             return None
         mod["source"]["post_install"] = list(hooks)
 
@@ -307,28 +341,40 @@ def validate_mod(entry: dict) -> dict | None:
         owner = _safe_slug(source.get("owner"))
         repo = _safe_slug(source.get("repo"))
         pattern = source.get("asset_pattern")
-        if not owner or not repo or not isinstance(pattern, str) or not pattern:
+        if (
+            not owner
+            or not repo
+            or not isinstance(pattern, str)
+            or not pattern
+        ):
             return None
         raw_emap = source.get("extract_map")
         emap = _valid_extract_map(raw_emap)
         if raw_emap is not None and emap is None:
             return None  # a map was given but nothing in it is usable
         version_from = source.get("version_from")
-        mod["source"].update({
-            "kind": kind, "owner": owner, "repo": repo,
-            "asset_pattern": pattern,
-            "prefer_no": source.get("prefer_no")
-            if isinstance(source.get("prefer_no"), str) else None,
-            "extract_map": emap,
-            "version_from": version_from
-            if version_from == "asset" else None,
-        })
+        mod["source"].update(
+            {
+                "kind": kind,
+                "owner": owner,
+                "repo": repo,
+                "asset_pattern": pattern,
+                "prefer_no": source.get("prefer_no")
+                if isinstance(source.get("prefer_no"), str)
+                else None,
+                "extract_map": emap,
+                "version_from": version_from
+                if version_from == "asset"
+                else None,
+            }
+        )
     elif kind == "direct_file":
         url = _https_url(source.get("url"))
         dest = source.get("dest")
         emap = _valid_extract_map(source.get("extract_map"))
-        if not url or (not (isinstance(dest, str) and safe_relpath(dest))
-                       and not emap):
+        if not url or (
+            not (isinstance(dest, str) and safe_relpath(dest)) and not emap
+        ):
             return None
         mod["source"].update({"kind": "direct_file", "url": url})
         if isinstance(dest, str) and safe_relpath(dest):
@@ -342,8 +388,9 @@ def validate_mod(entry: dict) -> dict | None:
         emap = _valid_extract_map(source.get("extract_map"))
         if not url or not emap:
             return None
-        mod["source"].update({"kind": "direct_tar", "url": url,
-                              "extract_map": emap})
+        mod["source"].update(
+            {"kind": "direct_tar", "url": url, "extract_map": emap}
+        )
         if source.get("pinned_version") is not None:
             mod["source"]["pinned_version"] = str(source["pinned_version"])
 
@@ -355,7 +402,8 @@ def validate_mod(entry: dict) -> dict | None:
     files = entry.get("installed_files")
     if files is not None:
         if not isinstance(files, list) or not all(
-                isinstance(f, str) and safe_relpath(f) for f in files):
+            isinstance(f, str) and safe_relpath(f) for f in files
+        ):
             return None
         mod["installed_files"] = list(files)
     return mod
@@ -372,8 +420,15 @@ def merge_mods(remote: list, custom: list) -> list:
         if base is None:
             by_id[mid] = dict(entry)
             continue
-        for key in ("name", "description", "repo_url", "essential", "source",
-                    "register_dll", "installed_files"):
+        for key in (
+            "name",
+            "description",
+            "repo_url",
+            "essential",
+            "source",
+            "register_dll",
+            "installed_files",
+        ):
             if entry.get(key) is not None:
                 base[key] = entry[key]
     return list(by_id.values())

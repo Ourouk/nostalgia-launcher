@@ -22,16 +22,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .theme import Palette
-from ...services.tweaks import TWEAKS_DEFAULTS, TWEAKS_ITEMS, TWEAKS_LIMITS
 from ...controllers.tweaks import TweaksController
+from ...services.tweaks import TWEAKS_DEFAULTS, TWEAKS_ITEMS, TWEAKS_LIMITS
+from .theme import Palette
 
 
 class TweaksPanel(QWidget):
     """The TWEAKS tab: a scrollable tweak form with an Apply/Reset footer."""
 
-    def __init__(self, tweaks: TweaksController, bridge, palette: Palette,
-                 parent=None):
+    def __init__(
+        self, tweaks: TweaksController, bridge, palette: Palette, parent=None
+    ):
         super().__init__(parent)
         self._tweaks = tweaks
         self._palette = palette
@@ -49,7 +50,8 @@ class TweaksPanel(QWidget):
             #tweaksRowLabel[dimm="true"] {{ color: {p.text_dim.name()}; }}
             #tweaksStatus {{ color: {p.text_dim.name()}; }}
             #tweaksStatus[dimm="true"] {{ color: {p.text_dim.name()}; }}
-            """)
+            """
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -88,12 +90,23 @@ class TweaksPanel(QWidget):
         p = self._palette
         values = self._tweaks.values()
 
-        for (tid, label, kind, recommended, _, desc, mn, mx, step) in TWEAKS_ITEMS:
+        for (
+            tid,
+            label,
+            kind,
+            _recommended,
+            _,
+            desc,
+            mn,
+            _mx,
+            _step,
+        ) in TWEAKS_ITEMS:
             if kind == "section":
                 hdr = QLabel(label, self._content)
                 hdr.setObjectName(f"tweaksSection_{tid}")
                 hdr.setStyleSheet(
-                    f"color: {p.gold.name()}; font-weight: bold;")
+                    f"color: {p.gold.name()}; font-weight: bold;"
+                )
                 self._form.addWidget(hdr)
                 self._form.addSpacing(2)
                 sep = QFrame(self._content)
@@ -101,7 +114,8 @@ class TweaksPanel(QWidget):
                 sep.setFrameShape(QFrame.HLine)
                 sep.setStyleSheet(
                     f"background-color: {p.divider.name()};"
-                    f" border: none; max-height: 1px;")
+                    f" border: none; max-height: 1px;"
+                )
                 self._form.addWidget(sep)
                 self._form.addSpacing(4)
                 continue
@@ -115,8 +129,7 @@ class TweaksPanel(QWidget):
             name = QLabel(label, row)
             name.setObjectName(f"tweaksRow_{tid}_label")
             name.setFixedWidth(170)
-            name.setStyleSheet(
-                f"color: {p.text.name()}; font-weight: bold;")
+            name.setStyleSheet(f"color: {p.text.name()}; font-weight: bold;")
             row_layout.addWidget(name, 0, Qt.AlignTop)
 
             if kind == "checkbox":
@@ -157,7 +170,8 @@ class TweaksPanel(QWidget):
         sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet(
             f"background-color: {p.divider.name()};"
-            f" border: none; max-height: 1px;")
+            f" border: none; max-height: 1px;"
+        )
         self.layout().addWidget(sep)
 
         footer = QWidget(self)
@@ -200,8 +214,7 @@ class TweaksPanel(QWidget):
         lo, hi = TWEAKS_LIMITS.get(tid, (None, None))
         try:
             v = int(self._entries[tid].text())
-            return ((lo is not None and v < lo) or
-                    (hi is not None and v > hi))
+            return (lo is not None and v < lo) or (hi is not None and v > hi)
         except ValueError:
             return True
 
@@ -255,8 +268,7 @@ class TweaksPanel(QWidget):
         p = self._palette
         for tid, entry in self._entries.items():
             if self._entry_bad(tid):
-                entry.setStyleSheet(
-                    f"QLineEdit {{ color: {p.err.name()}; }}")
+                entry.setStyleSheet(f"QLineEdit {{ color: {p.err.name()}; }}")
             else:
                 entry.setStyleSheet("")
 

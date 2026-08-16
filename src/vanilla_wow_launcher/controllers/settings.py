@@ -15,20 +15,16 @@ import urllib.request
 import webbrowser
 from urllib.error import HTTPError
 
-from ..services import addons
-from ..core import config_store
-from ..core import filesystem
-from ..core import launcher
-from ..services import mods
-from ..core import platform_support
+from ..core import config_store, filesystem, launcher, platform_support
 from ..core.constants import (
     CACHE_FILE,
     CONFIG_FILE,
     DEFAULT_OUT_DIR,
     UA,
 )
-from ..core.security_http import secure_urlopen
 from ..core.errors import describe_net_error
+from ..core.security_http import secure_urlopen
+from ..services import addons, mods
 from ..state.events import EventDispatcher, LogMessage, MirrorStatusChanged
 from ..state.models import LaunchSettings, SettingsState
 
@@ -43,8 +39,9 @@ class SettingsController:
     ``state.path``.
     """
 
-    def __init__(self, dispatcher: EventDispatcher, updater, mods, addons,
-                 news):
+    def __init__(
+        self, dispatcher: EventDispatcher, updater, mods, addons, news
+    ):
         self._dispatcher = dispatcher
         self._updater = updater
         self._mods = mods
@@ -63,14 +60,16 @@ class SettingsController:
         # current dir. If the user closes it without changing the folder or
         # adding a Defender exclusion, recommend the exclusion once on close.
         self.state.first_run_av_pending = (
-            self.state.first_run and platform_support.can_manage_antivirus())
+            self.state.first_run and platform_support.can_manage_antivirus()
+        )
         # On first run we don't verify (fetch the manifest / touch
         # Config.wtf) until the user closes Settings, so nothing is written to
         # the default folder before they've picked their real game folder. A
         # folder change supersedes this (it verifies the new folder right
         # away).
         self.state.first_run_verify_pending = (
-            self.state.first_run and self.client_update_enabled)
+            self.state.first_run and self.client_update_enabled
+        )
 
         # Download-mirror reachability, as reported by the last check_mirror()
         # ({name: "" | "checking…" | "online" | "offline"}). Not part of
@@ -106,9 +105,13 @@ class SettingsController:
         if os.path.normpath(self.state.path.strip() or ".") == new_val:
             return False
         if self._updater.running:
-            self._dispatcher.post(LogMessage(
-                "Cannot change the game folder while an update is running — "
-                "folder change ignored.\n", "err"))
+            self._dispatcher.post(
+                LogMessage(
+                    "Cannot change the game folder while an update is running — "
+                    "folder change ignored.\n",
+                    "err",
+                )
+            )
             return False
         self.state.path = new_val
         if not new_val:
@@ -131,9 +134,14 @@ class SettingsController:
         # auto-install for the new folder.
         def _reset_for_new_folder(c):
             c["out_dir"] = new_val
-            for k in ("expected_patched_wow_hash", "original_server_wow_hash",
-                      "mods", "addons"):
+            for k in (
+                "expected_patched_wow_hash",
+                "original_server_wow_hash",
+                "mods",
+                "addons",
+            ):
                 c.pop(k, None)
+
         self.state.config = config_store.update_config(_reset_for_new_folder)
 
         # Reset every session controller so nothing from the previous folder is
@@ -144,9 +152,13 @@ class SettingsController:
         self._updater.invalidate()
         self._news.invalidate()
 
-        self._dispatcher.post(LogMessage(
-            "\nGame folder changed — cache reset, everything will be "
-            "re-verified.\n", "acct"))
+        self._dispatcher.post(
+            LogMessage(
+                "\nGame folder changed — cache reset, everything will be "
+                "re-verified.\n",
+                "acct",
+            )
+        )
 
         # This verify covers the new folder — overwrite its Config.wtf with
         # our defaults + realmList. It also supersedes the first-run
@@ -174,9 +186,13 @@ class SettingsController:
         """Add a Windows Defender exclusion for the game folder (asks for
         admin elevation via UAC). Windows-only — a no-op elsewhere."""
         if not platform_support.can_manage_antivirus():
-            self._dispatcher.post(LogMessage(
-                "Windows Defender exclusions are not available on this "
-                "platform.\n", "err"))
+            self._dispatcher.post(
+                LogMessage(
+                    "Windows Defender exclusions are not available on this "
+                    "platform.\n",
+                    "err",
+                )
+            )
             return
         # The user handled the exclusion themselves — no need to prompt again
         # when the first-run Settings window closes.
@@ -185,16 +201,26 @@ class SettingsController:
         if not client_dir or client_dir == ".":
             return
         import ctypes
+
         cmd = f"Add-MpPreference -ExclusionPath '{client_dir}'"
         r = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", "powershell.exe",
-            f'-NoProfile -WindowStyle Hidden -Command "{cmd}"', None, 0)
+            None,
+            "runas",
+            "powershell.exe",
+            f'-NoProfile -WindowStyle Hidden -Command "{cmd}"',
+            None,
+            0,
+        )
         if r > 32:
-            self._dispatcher.post(LogMessage(
-                f"Requested Defender exclusion for: {client_dir}\n", "ok"))
+            self._dispatcher.post(
+                LogMessage(
+                    f"Requested Defender exclusion for: {client_dir}\n", "ok"
+                )
+            )
         else:
-            self._dispatcher.post(LogMessage(
-                "Antivirus exclusion cancelled.\n", "err"))
+            self._dispatcher.post(
+                LogMessage("Antivirus exclusion cancelled.\n", "err")
+            )
 
     def check_mirror(self):
         """Background reachability check of every configured server and
@@ -204,8 +230,9 @@ class SettingsController:
         if not names:
             self._dispatcher.post(MirrorStatusChanged(False, "Not configured"))
             return
-        threading.Thread(target=self._mirror_worker, args=(names,),
-                         daemon=True).start()
+        threading.Thread(
+            target=self._mirror_worker, args=(names,), daemon=True
+        ).start()
 
     def mirror_names(self) -> list:
         """Every download source name (the server followed by its mirrors),
@@ -231,28 +258,35 @@ class SettingsController:
         def _drop_hashes(c):
             c.pop("expected_patched_wow_hash", None)
             c.pop("original_server_wow_hash", None)
+
         self.state.config = config_store.update_config(_drop_hashes)
         self._updater.invalidate()
-        self._dispatcher.post(LogMessage(
-            "\nVerify game files — cache dropped, re-checking everything.\n",
-            "acct"))
+        self._dispatcher.post(
+            LogMessage(
+                "\nVerify game files — cache dropped, re-checking everything.\n",
+                "acct",
+            )
+        )
         self._updater.start_verify(overwrite_config=False)
 
     def set_clear_wdb(self, enabled: bool) -> dict:
         self.state.config = config_store.update_config(
-            lambda c: c.__setitem__("clear_wdb_on_launch", enabled))
+            lambda c: c.__setitem__("clear_wdb_on_launch", enabled)
+        )
         return self.state.config
 
     def set_close_on_launch(self, enabled: bool) -> dict:
         self.state.config = config_store.update_config(
-            lambda c: c.__setitem__("close_on_launch", enabled))
+            lambda c: c.__setitem__("close_on_launch", enabled)
+        )
         return self.state.config
 
     def set_client_update_enabled(self, enabled: bool) -> dict:
         """Persist the client-update switch and update first-run scheduling."""
         enabled = bool(enabled)
         self.state.config = config_store.update_config(
-            lambda c: c.__setitem__("client_update_enabled", enabled))
+            lambda c: c.__setitem__("client_update_enabled", enabled)
+        )
         if self.state.first_run:
             self.state.first_run_verify_pending = enabled
         return self.state.config
@@ -262,10 +296,12 @@ class SettingsController:
     def _set_launch(self, mutator) -> dict:
         """Apply `mutator(launch_dict)` to the config's "launch" sub-dict and
         refresh the in-memory LaunchSettings."""
+
         def _mutate(c):
             launch = dict(c.get("launch") or {})
             mutator(launch)
             c["launch"] = launch
+
         self.state.config = config_store.update_config(_mutate)
         self.launch = LaunchSettings.from_config(self.state.config)
         return self.state.config
@@ -276,39 +312,51 @@ class SettingsController:
         if self.launch.umu_binary_path.strip():
             return self.launch.umu_binary_path.strip()
         from ..services.umu import find_umu
+
         return find_umu()
 
     def set_umu_proton(self, name: str) -> dict:
         """Persist the PROTONPATH value (a codename like GE-Proton, or a
         path). An empty value resets to the default codename."""
         name = (name or "").strip()
-        self._set_launch(lambda l: l.__setitem__(
-            "umu_proton", name or "GE-Proton"))
+        self._set_launch(
+            lambda launch: launch.__setitem__(
+                "umu_proton", name or "GE-Proton"
+            )
+        )
         return self.state.config
 
     def set_umu_binary_path(self, path: str) -> dict:
         """Persist an explicit umu-run binary override; '' means auto-detect
         on PATH."""
-        self._set_launch(lambda l: l.__setitem__(
-            "umu_binary_path", (path or "").strip()))
+        self._set_launch(
+            lambda launch: launch.__setitem__(
+                "umu_binary_path", (path or "").strip()
+            )
+        )
         return self.state.config
 
     def set_umu_game_id(self, game_id: str) -> dict:
         """Persist the umu GAMEID token."""
-        self._set_launch(lambda l: l.__setitem__(
-            "umu_game_id", (game_id or "").strip() or "umu-vanilla-wow"))
+        self._set_launch(
+            lambda launch: launch.__setitem__(
+                "umu_game_id", (game_id or "").strip() or "umu-vanilla-wow"
+            )
+        )
         return self.state.config
 
     def set_auto_mods(self, enabled: bool) -> dict:
         self._pending_auto_mods = enabled
         self.state.config = config_store.update_config(
-            lambda c: c.__setitem__("auto_install_mods", enabled))
+            lambda c: c.__setitem__("auto_install_mods", enabled)
+        )
         return self.state.config
 
     def set_auto_addons(self, enabled: bool) -> dict:
         self._pending_auto_addons = enabled
         self.state.config = config_store.update_config(
-            lambda c: c.__setitem__("auto_install_addons", enabled))
+            lambda c: c.__setitem__("auto_install_addons", enabled)
+        )
         return self.state.config
 
     def take_pending_auto_mods(self) -> bool:
@@ -326,9 +374,11 @@ class SettingsController:
     def prune_folder_records(self) -> dict:
         """Drop stale mods/addons install records when the configured game
         folder no longer exists (a folder that was deleted or never created)."""
+
         def _wipe(c):
             c.pop("mods", None)
             c.pop("addons", None)
+
         self.state.config = config_store.update_config(_wipe)
         return self.state.config
 
@@ -352,15 +402,17 @@ class SettingsController:
             if not mod.get("essential", False):
                 continue
             state = mods_cfg.get(mod["id"], {})
-            if (state.get("installed_version")
-                    and mods.mod_installed_files_present(mod, out)):
+            if state.get(
+                "installed_version"
+            ) and mods.mod_installed_files_present(mod, out):
                 continue  # already installed
             self._mods.toggle(mod["id"], True)
             pending = True
         if not pending:
             return False
-        self._dispatcher.post(LogMessage(
-            "\nInstalling essential mods...\n", "acct"))
+        self._dispatcher.post(
+            LogMessage("\nInstalling essential mods...\n", "acct")
+        )
         self._mods.apply()
         return True
 
@@ -374,15 +426,25 @@ class SettingsController:
         if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
             return False
         ap = addons.addons_path(out)
-        recs = [{"folder": name, "status": "available", "git": url,
-                 "branch": None, "ref": None, "toc": {},
-                 "description": None, "error": None}
-                for name, url in addons.RECOMMENDED_ADDONS.items()
-                if not os.path.isdir(os.path.join(ap, name))]
+        recs = [
+            {
+                "folder": name,
+                "status": "available",
+                "git": url,
+                "branch": None,
+                "ref": None,
+                "toc": {},
+                "description": None,
+                "error": None,
+            }
+            for name, url in addons.RECOMMENDED_ADDONS.items()
+            if not os.path.isdir(os.path.join(ap, name))
+        ]
         if not recs:
             return False
-        self._dispatcher.post(LogMessage(
-            "\nInstalling recommended addons...\n", "acct"))
+        self._dispatcher.post(
+            LogMessage("\nInstalling recommended addons...\n", "acct")
+        )
         self._addons.apply(recs)
         return True
 
@@ -392,13 +454,16 @@ class SettingsController:
             try:
                 platform_support.open_folder(path)
                 self._dispatcher.post(
-                    LogMessage(f"Opened folder: {path}\n", "dim"))
+                    LogMessage(f"Opened folder: {path}\n", "dim")
+                )
             except OSError as e:
-                self._dispatcher.post(LogMessage(
-                    f"Could not open folder: {e}\n", "err"))
+                self._dispatcher.post(
+                    LogMessage(f"Could not open folder: {e}\n", "err")
+                )
         else:
-            self._dispatcher.post(LogMessage(f"Folder not found: {path}\n",
-                                             "err"))
+            self._dispatcher.post(
+                LogMessage(f"Folder not found: {path}\n", "err")
+            )
 
     def open_url(self, url: str):
         webbrowser.open(url)
@@ -419,7 +484,8 @@ class SettingsController:
         err = addons.set_registry_url(url)
         if err is None:
             self._dispatcher.post(
-                LogMessage("Addon catalog URL updated.\n", "ok"))
+                LogMessage("Addon catalog URL updated.\n", "ok")
+            )
         return err
 
     def set_mods_registry_url(self, url: str) -> str | None:
@@ -428,103 +494,124 @@ class SettingsController:
         err = mods.set_registry_url(url)
         if err is None:
             self._dispatcher.post(
-                LogMessage("Mod catalog URL updated.\n", "ok"))
+                LogMessage("Mod catalog URL updated.\n", "ok")
+            )
         return err
 
     def reset_addons_registry_url(self):
         addons.reset_registry_url()
         self._dispatcher.post(
-            LogMessage("Addon catalog URL reset to default.\n", "dim"))
+            LogMessage("Addon catalog URL reset to default.\n", "dim")
+        )
 
     def reset_mods_registry_url(self):
         mods.reset_registry_url()
         self._dispatcher.post(
-            LogMessage("Mod catalog URL reset to default.\n", "dim"))
+            LogMessage("Mod catalog URL reset to default.\n", "dim")
+        )
 
     def open_addons_custom_file(self):
         """Create the custom addon file (with a template) when missing and
         open it in the default editor."""
         if addons.open_custom_file():
-            self._dispatcher.post(LogMessage(
-                "Created the custom addon file.\n", "dim"))
+            self._dispatcher.post(
+                LogMessage("Created the custom addon file.\n", "dim")
+            )
         try:
             platform_support.open_folder(addons.custom_file())
         except OSError as e:
-            self._dispatcher.post(LogMessage(
-                f"Could not open custom addon file: {e}\n", "err"))
+            self._dispatcher.post(
+                LogMessage(f"Could not open custom addon file: {e}\n", "err")
+            )
 
     def open_mods_custom_file(self):
         """Create the custom mod file (with a template) when missing and open
         it in the default editor."""
         if mods.open_custom_file():
-            self._dispatcher.post(LogMessage(
-                "Created the custom mod file.\n", "dim"))
+            self._dispatcher.post(
+                LogMessage("Created the custom mod file.\n", "dim")
+            )
         try:
             platform_support.open_folder(mods.custom_file())
         except OSError as e:
-            self._dispatcher.post(LogMessage(
-                f"Could not open custom mod file: {e}\n", "err"))
+            self._dispatcher.post(
+                LogMessage(f"Could not open custom mod file: {e}\n", "err")
+            )
 
     def clear_addons_custom(self):
         if addons.clear_custom_file():
-            self._dispatcher.post(LogMessage(
-                "Custom addon entries cleared.\n", "ok"))
+            self._dispatcher.post(
+                LogMessage("Custom addon entries cleared.\n", "ok")
+            )
         else:
-            self._dispatcher.post(LogMessage(
-                "No custom addon file to clear.\n", "dim"))
+            self._dispatcher.post(
+                LogMessage("No custom addon file to clear.\n", "dim")
+            )
 
     def clear_mods_custom(self):
         if mods.clear_custom_file():
-            self._dispatcher.post(LogMessage(
-                "Custom mod entries cleared.\n", "ok"))
+            self._dispatcher.post(
+                LogMessage("Custom mod entries cleared.\n", "ok")
+            )
         else:
-            self._dispatcher.post(LogMessage(
-                "No custom mod file to clear.\n", "dim"))
+            self._dispatcher.post(
+                LogMessage("No custom mod file to clear.\n", "dim")
+            )
 
     def reload_addons_registry(self):
         """Force-fetch the addon catalog and rescan the ADDONS tab."""
         if self._addons.state.busy:
-            self._dispatcher.post(LogMessage(
-                "Wait for the current addon install to finish first.\n",
-                "err"))
+            self._dispatcher.post(
+                LogMessage(
+                    "Wait for the current addon install to finish first.\n",
+                    "err",
+                )
+            )
             return
-        self._dispatcher.post(LogMessage(
-            "Reloading the addon catalog...\n", "dim"))
-        threading.Thread(target=self._reload_addons_worker,
-                         daemon=True).start()
+        self._dispatcher.post(
+            LogMessage("Reloading the addon catalog...\n", "dim")
+        )
+        threading.Thread(
+            target=self._reload_addons_worker, daemon=True
+        ).start()
 
     def reload_mods_registry(self):
         """Force-fetch the mod catalog and re-render the MODS tab."""
-        self._dispatcher.post(LogMessage(
-            "Reloading the mod catalog...\n", "dim"))
-        threading.Thread(target=self._reload_mods_worker,
-                         daemon=True).start()
+        self._dispatcher.post(
+            LogMessage("Reloading the mod catalog...\n", "dim")
+        )
+        threading.Thread(target=self._reload_mods_worker, daemon=True).start()
 
     def _reload_addons_worker(self):
         try:
             addons.fetch_addons_catalog(force=True)
         except Exception as e:
-            self._dispatcher.post(LogMessage(
-                f"✗ Addon catalog reload failed: "
-                f"{describe_net_error(e)}\n", "err"))
+            self._dispatcher.post(
+                LogMessage(
+                    f"✗ Addon catalog reload failed: "
+                    f"{describe_net_error(e)}\n",
+                    "err",
+                )
+            )
             return
         self._addons.invalidate()
         self._addons.verify()
-        self._dispatcher.post(LogMessage(
-            "✓ Addon catalog reloaded.\n", "ok"))
+        self._dispatcher.post(LogMessage("✓ Addon catalog reloaded.\n", "ok"))
 
     def _reload_mods_worker(self):
         try:
             mods.fetch_mods_catalog(force=True)
         except Exception as e:
-            self._dispatcher.post(LogMessage(
-                f"✗ Mod catalog reload failed: "
-                f"{describe_net_error(e)}\n", "err"))
+            self._dispatcher.post(
+                LogMessage(
+                    f"✗ Mod catalog reload failed: {describe_net_error(e)}\n",
+                    "err",
+                )
+            )
             return
         self._mods.invalidate()
         self._mods.load_latest_versions()
-        self._dispatcher.post(LogMessage(
-            "✓ Mod catalog reloaded.\n", "ok"))
+        self._dispatcher.post(LogMessage("✓ Mod catalog reloaded.\n", "ok"))
 
     # ── internals ───────────────────────────────────────────────────────────
 
@@ -534,8 +621,11 @@ class SettingsController:
             online = self._probe_mirror(name)
             self.mirror_statuses[name] = "online" if online else "offline"
             ok_any = ok_any or online
-        self._dispatcher.post(MirrorStatusChanged(
-            ok=ok_any, text="online" if ok_any else "offline"))
+        self._dispatcher.post(
+            MirrorStatusChanged(
+                ok=ok_any, text="online" if ok_any else "offline"
+            )
+        )
 
     def _probe_mirror(self, name: str) -> bool:
         """Whether a named download source can serve client files. Any HTTP

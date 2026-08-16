@@ -84,7 +84,8 @@ class FeaturedPanel(QWidget):
             #featuredRefresh {{ color: {p.parch_dim.name()};
                                font-size: 14pt; }}
             #featuredRefresh:hover {{ color: {p.parch_link.name()}; }}
-            """)
+            """
+        )
 
         band = QWidget(self)
         band.setObjectName("featuredBand")
@@ -101,7 +102,8 @@ class FeaturedPanel(QWidget):
         self.refresh_button.setText("⟳")
         self.refresh_button.setToolTip("Refresh")
         self.refresh_button.clicked.connect(
-            lambda: self._news.refresh_featured(force=True))
+            lambda: self._news.refresh_featured(force=True)
+        )
         band_layout.addWidget(self.refresh_button, 0, Qt.AlignTop)
 
         self.byline_label = QLabel("", self)
@@ -112,7 +114,8 @@ class FeaturedPanel(QWidget):
         self.separator.setFrameShape(QFrame.HLine)
         self.separator.setStyleSheet(
             f"#featuredSeparator {{ background-color: {p.parch_line.name()};"
-            f" border: none; max-height: 1px; }}")
+            f" border: none; max-height: 1px; }}"
+        )
 
         self.status_label = QLabel("", self)
         self.status_label.setObjectName("featuredStatus")
@@ -123,7 +126,9 @@ class FeaturedPanel(QWidget):
         self.body.setWordWrapMode(QTextOption.WordWrap)
         self.body.setFrameShape(QFrame.NoFrame)
 
-        self.link_label = _LinkLabel("⧉  Read full post on the forum", "", self)
+        self.link_label = _LinkLabel(
+            "⧉  Read full post on the forum", "", self
+        )
         self.link_label.setObjectName("featuredLink")
 
         layout = QVBoxLayout(self)
@@ -145,8 +150,9 @@ class FeaturedPanel(QWidget):
         self.link_label._url = post.get("url", "") if post else ""
 
         if not post:
-            self.status_label.setText(error or
-                                      (_LOADING if loading else _EMPTY))
+            self.status_label.setText(
+                error or (_LOADING if loading else _EMPTY)
+            )
             self.status_label.show()
             self.body.hide()
             self.link_label.hide()
@@ -196,7 +202,8 @@ class AnnouncementsPanel(QWidget):
             #announcementLink {{ color: {p.gold.name()};
                                 font-size: 10pt; }}
             #announcementLink:hover {{ color: {p.gold_lt.name()}; }}
-            """)
+            """
+        )
 
         header = QWidget(self)
         header_layout = QHBoxLayout(header)
@@ -211,7 +218,8 @@ class AnnouncementsPanel(QWidget):
         self.refresh_button.setText("⟳")
         self.refresh_button.setToolTip("Refresh")
         self.refresh_button.clicked.connect(
-            lambda: self._news.refresh_announcements(force=True))
+            lambda: self._news.refresh_announcements(force=True)
+        )
         header_layout.addWidget(self.refresh_button)
 
         divider = QFrame(self)
@@ -219,7 +227,8 @@ class AnnouncementsPanel(QWidget):
         divider.setFrameShape(QFrame.HLine)
         divider.setStyleSheet(
             f"#announcementsDivider {{ background-color: {p.divider.name()};"
-            f" border: none; max-height: 1px; }}")
+            f" border: none; max-height: 1px; }}"
+        )
 
         self.status_label = QLabel("", self)
         self.status_label.setObjectName("announcementsStatus")
@@ -230,7 +239,8 @@ class AnnouncementsPanel(QWidget):
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setStyleSheet(
             f"QScrollArea {{ background-color: {p.panel.name()};"
-            f" border: none; }}")
+            f" border: none; }}"
+        )
 
         self._list = QWidget()
         self._list.setObjectName("announcementsList")
@@ -253,8 +263,9 @@ class AnnouncementsPanel(QWidget):
     def render(self, items, loading=False, error=""):
         """Render the announcements snapshot (items list, or None)."""
         if items is None or error:
-            self.status_label.setText(error or
-                                      (_LOADING if loading else _ERROR))
+            self.status_label.setText(
+                error or (_LOADING if loading else _ERROR)
+            )
             self.status_label.show()
             self.scroll.hide()
             return
@@ -315,7 +326,8 @@ class AnnouncementsPanel(QWidget):
             separator.setStyleSheet(
                 f"#announcement_{i}_separator {{ background-color:"
                 f" {self._palette.divider.name()};"
-                f" border: none; max-height: 1px; }}")
+                f" border: none; max-height: 1px; }}"
+            )
             row_layout.addWidget(separator)
 
             self._list_layout.addWidget(row)
@@ -357,11 +369,15 @@ class NewsPanel(QWidget):
             return
         if event.kind == "featured":
             self._featured = event.data
-            self.featured_panel.render(event.data.data,
-                                       loading=event.data.loading,
-                                       error=event.data.error)
+            self.featured_panel.render(
+                event.data.data,
+                loading=event.data.loading,
+                error=event.data.error,
+            )
         else:
             self._items = event.data
-            self.announcements_panel.render(event.data.data,
-                                            loading=event.data.loading,
-                                            error=event.data.error)
+            self.announcements_panel.render(
+                event.data.data,
+                loading=event.data.loading,
+                error=event.data.error,
+            )

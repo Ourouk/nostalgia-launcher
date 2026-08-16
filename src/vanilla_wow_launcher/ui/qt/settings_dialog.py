@@ -27,10 +27,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...controllers.settings import SettingsController
 from ...core import platform_support
 from .bridge import ControllerBridge
 from .theme import Palette, theme_qss
-from ...controllers.settings import SettingsController
 
 KO_FI_URL = "https://ko-fi.com/rebased"
 BMC_URL = "https://buymeacoffee.com/rebased"
@@ -53,8 +53,9 @@ class _ClickableRow(QWidget):
 
     clicked = Signal()
 
-    def __init__(self, icon: str, text: str, palette: Palette,
-                 icon_color, parent=None):
+    def __init__(
+        self, icon: str, text: str, palette: Palette, icon_color, parent=None
+    ):
         super().__init__(parent)
         p = palette
         self.setCursor(Qt.PointingHandCursor)
@@ -65,7 +66,8 @@ class _ClickableRow(QWidget):
 
         icon_label = QLabel(icon, self)
         icon_label.setStyleSheet(
-            f"color: {icon_color.name()}; font-size: 11pt;")
+            f"color: {icon_color.name()}; font-size: 11pt;"
+        )
         icon_label.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         text_label = QLabel(text, self)
@@ -90,12 +92,14 @@ class _ClickableRow(QWidget):
 
     def enterEvent(self, event):
         self._text_label.setStyleSheet(
-            f"color: {self._palette.gold.name()}; font-size: 10pt;")
+            f"color: {self._palette.gold.name()}; font-size: 10pt;"
+        )
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         self._text_label.setStyleSheet(
-            f"color: {self._palette.text.name()}; font-size: 10pt;")
+            f"color: {self._palette.text.name()}; font-size: 10pt;"
+        )
         super().leaveEvent(event)
 
 
@@ -109,8 +113,13 @@ class SettingsDialog(QDialog):
 
     showLogsRequested = Signal()
 
-    def __init__(self, settings: SettingsController,
-                 bridge: ControllerBridge, palette: Palette, parent=None):
+    def __init__(
+        self,
+        settings: SettingsController,
+        bridge: ControllerBridge,
+        palette: Palette,
+        parent=None,
+    ):
         super().__init__(parent)
         self._settings = settings
         self._palette = palette
@@ -119,7 +128,8 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings")
         self.setMinimumSize(560, 660)
         self.setStyleSheet(
-            theme_qss(p) + f"\nQDialog {{ background-color: {p.bg.name()}; }}")
+            theme_qss(p) + f"\nQDialog {{ background-color: {p.bg.name()}; }}"
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -140,7 +150,8 @@ class SettingsDialog(QDialog):
 
         title = QLabel("SETTINGS", hdr)
         title.setStyleSheet(
-            f"color: {p.purple.name()}; font-weight: bold; font-size: 13pt;")
+            f"color: {p.purple.name()}; font-weight: bold; font-size: 13pt;"
+        )
         layout.addWidget(title)
         layout.addStretch(1)
 
@@ -151,7 +162,8 @@ class SettingsDialog(QDialog):
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.setStyleSheet(
             f"QToolButton {{ color: {p.text_dim.name()}; font-size: 12pt; }}"
-            f"QToolButton:hover {{ color: {p.gold.name()}; }}")
+            f"QToolButton:hover {{ color: {p.gold.name()}; }}"
+        )
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn)
         return hdr
@@ -162,7 +174,8 @@ class SettingsDialog(QDialog):
         sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet(
             f"background-color: {p.panel_bdr.name()};"
-            f" border: none; max-height: 1px;")
+            f" border: none; max-height: 1px;"
+        )
         return sep
 
     def _build_body(self) -> QWidget:
@@ -175,14 +188,14 @@ class SettingsDialog(QDialog):
         folder_row = QHBoxLayout()
         folder_label = QLabel("GAME FOLDER", body)
         folder_label.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;")
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
+        )
         folder_row.addWidget(folder_label)
         folder_row.addStretch(1)
         open_link = _ClickableLabel("Open folder", body)
         open_link.setObjectName("settingsOpenFolder")
         open_link.setCursor(Qt.PointingHandCursor)
-        open_link.setStyleSheet(
-            f"color: {p.text_dim.name()}; font-size: 9pt;")
+        open_link.setStyleSheet(f"color: {p.text_dim.name()}; font-size: 9pt;")
         open_link.clicked.connect(self._settings.open_client_folder)
         folder_row.addWidget(open_link)
         body_layout.addLayout(folder_row)
@@ -192,7 +205,8 @@ class SettingsDialog(QDialog):
         self._path_edit.setObjectName("settingsPath")
         self._path_edit.setReadOnly(True)
         self._path_edit.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
         path_row.addWidget(self._path_edit, 1)
         change_btn = QPushButton("Change", body)
         change_btn.setObjectName("settingsChange")
@@ -202,7 +216,8 @@ class SettingsDialog(QDialog):
 
         mirror_title = QLabel("DOWNLOAD MIRRORS", body)
         mirror_title.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;")
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
+        )
         body_layout.addWidget(mirror_title)
         body_layout.addSpacing(2)
 
@@ -210,8 +225,9 @@ class SettingsDialog(QDialog):
         self._mirror_dots: dict[str, QLabel] = {}
         names = self._settings.mirror_names()
         if not names:
-            hint = QLabel("No server configured (launcher configuration "
-                          "missing).", body)
+            hint = QLabel(
+                "No server configured (launcher configuration missing).", body
+            )
             hint.setObjectName("settingsMirrorEmpty")
             hint.setStyleSheet(f"color: {p.text_dim.name()}; font-size: 9pt;")
             body_layout.addWidget(hint)
@@ -223,12 +239,14 @@ class SettingsDialog(QDialog):
                 row.addWidget(dot)
                 label = QLabel(name, body)
                 label.setStyleSheet(
-                    f"color: {p.text.name()}; font-weight: bold; font-size: 10pt;")
+                    f"color: {p.text.name()}; font-weight: bold; font-size: 10pt;"
+                )
                 row.addWidget(label)
                 status = QLabel("", body)
                 status.setObjectName(f"settingsMirrorStatus_{name}")
                 status.setStyleSheet(
-                    f"color: {p.text_dim.name()}; font-size: 9pt;")
+                    f"color: {p.text_dim.name()}; font-size: 9pt;"
+                )
                 row.addWidget(status)
                 row.addStretch(1)
                 body_layout.addLayout(row)
@@ -241,7 +259,8 @@ class SettingsDialog(QDialog):
         refresh.setCursor(Qt.PointingHandCursor)
         refresh.setStyleSheet(
             f"QToolButton {{ color: {p.text_dim.name()}; font-size: 9pt; }}"
-            f"QToolButton:hover {{ color: {p.gold.name()}; }}")
+            f"QToolButton:hover {{ color: {p.gold.name()}; }}"
+        )
         refresh.clicked.connect(self._on_refresh_mirror)
         body_layout.addWidget(refresh)
 
@@ -259,30 +278,57 @@ class SettingsDialog(QDialog):
 
         ts_title = QLabel("TROUBLESHOOTING", lcol)
         ts_title.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;")
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
+        )
         lcol_layout.addWidget(ts_title)
 
-        self._add_row(lcol_layout, "✓", "Verify game files",
-                      self._settings.verify_files, "settingsVerify", p.gold)
-        self._add_row(lcol_layout, "☰", "Show logs",
-                      self.showLogsRequested.emit, "settingsLogs", p.gold)
+        self._add_row(
+            lcol_layout,
+            "✓",
+            "Verify game files",
+            self._settings.verify_files,
+            "settingsVerify",
+            p.gold,
+        )
+        self._add_row(
+            lcol_layout,
+            "☰",
+            "Show logs",
+            self.showLogsRequested.emit,
+            "settingsLogs",
+            p.gold,
+        )
         if platform_support.can_manage_antivirus():
             self._add_row(
-                lcol_layout, "⛊",
+                lcol_layout,
+                "⛊",
                 "Add game folder to Defender exclusions",
-                self._settings.allow_through_antivirus, "settingsAv", p.gold)
+                self._settings.allow_through_antivirus,
+                "settingsAv",
+                p.gold,
+            )
 
         support_title = QLabel("SUPPORT THE DEVELOPER", lcol)
         support_title.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;")
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
+        )
         lcol_layout.addWidget(support_title)
         self._add_row(
-            lcol_layout, "♥", "Ko-fi",
-            lambda: self._settings.open_url(KO_FI_URL), "settingsKoFi",
-            p.pink)
+            lcol_layout,
+            "♥",
+            "Ko-fi",
+            lambda: self._settings.open_url(KO_FI_URL),
+            "settingsKoFi",
+            p.pink,
+        )
         self._add_row(
-            lcol_layout, "☕", "Buy Me a Coffee",
-            lambda: self._settings.open_url(BMC_URL), "settingsBmc", p.warn)
+            lcol_layout,
+            "☕",
+            "Buy Me a Coffee",
+            lambda: self._settings.open_url(BMC_URL),
+            "settingsBmc",
+            p.warn,
+        )
 
         rcol = QWidget(body)
         rcol_layout = QVBoxLayout(rcol)
@@ -292,7 +338,8 @@ class SettingsDialog(QDialog):
 
         general_title = QLabel("GENERAL", rcol)
         general_title.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;")
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
+        )
         rcol_layout.addWidget(general_title)
 
         cfg = self._settings.state.config
@@ -300,26 +347,40 @@ class SettingsDialog(QDialog):
         self._close_on_launch_check = None
         if platform_support.can_launch_client():
             self._clear_wdb_check = self._add_check(
-                rcol_layout, "Clear WDB on game launch", "settingsClearWdb",
+                rcol_layout,
+                "Clear WDB on game launch",
+                "settingsClearWdb",
                 bool(cfg.get("clear_wdb_on_launch", False)),
-                self._settings.set_clear_wdb)
+                self._settings.set_clear_wdb,
+            )
             self._close_on_launch_check = self._add_check(
-                rcol_layout, "Close Vanilla WoW Launcher on game launch",
+                rcol_layout,
+                "Close Vanilla WoW Launcher on game launch",
                 "settingsCloseOnLaunch",
                 bool(cfg.get("close_on_launch", False)),
-                self._settings.set_close_on_launch)
+                self._settings.set_close_on_launch,
+            )
         self._client_update_check = self._add_check(
-            rcol_layout, "Enable client updates", "settingsClientUpdate",
+            rcol_layout,
+            "Enable client updates",
+            "settingsClientUpdate",
             self._settings.client_update_enabled,
-            self._settings.set_client_update_enabled)
+            self._settings.set_client_update_enabled,
+        )
         self._auto_mods_check = self._add_check(
-            rcol_layout, "Install essential mods", "settingsAutoMods",
+            rcol_layout,
+            "Install essential mods",
+            "settingsAutoMods",
             bool(cfg.get("auto_install_mods", True)),
-            self._settings.set_auto_mods)
+            self._settings.set_auto_mods,
+        )
         self._auto_addons_check = self._add_check(
-            rcol_layout, "Install recommended addons", "settingsAutoAddons",
+            rcol_layout,
+            "Install recommended addons",
+            "settingsAutoAddons",
             bool(cfg.get("auto_install_addons", True)),
-            self._settings.set_auto_addons)
+            self._settings.set_auto_addons,
+        )
 
         if platform_support.is_linux():
             self._build_linux_section(rcol_layout)
@@ -347,14 +408,16 @@ class SettingsDialog(QDialog):
 
         title = QLabel("CATALOG REGISTRIES", self)
         title.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;")
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
+        )
         layout.addWidget(title)
 
         hint = QLabel(
             "For advanced users: point the mod/addon catalogs at another "
             "HTTPS JSON registry, or add your own entries via the per-user "
             "custom JSON files.",
-            self)
+            self,
+        )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {p.text_dim.name()}; font-size: 9pt;")
         layout.addWidget(hint)
@@ -364,49 +427,68 @@ class SettingsDialog(QDialog):
         self._registry_status.setObjectName("settingsRegistryStatus")
         self._registry_status.setWordWrap(True)
         self._registry_status.setStyleSheet(
-            f"color: {p.err.name()}; font-size: 9pt;")
+            f"color: {p.err.name()}; font-size: 9pt;"
+        )
         layout.addWidget(self._registry_status)
         layout.addSpacing(2)
 
         self._build_registry_row(
-            layout, "ADDONS", "settingsAddon",
+            layout,
+            "ADDONS",
+            "settingsAddon",
             self._settings.addons_registry_url,
             self._settings.set_addons_registry_url,
             self._settings.reset_addons_registry_url,
             self._settings.reload_addons_registry,
             self._settings.open_addons_custom_file,
-            self._settings.clear_addons_custom)
+            self._settings.clear_addons_custom,
+        )
         self._build_registry_row(
-            layout, "MODS", "settingsMod",
+            layout,
+            "MODS",
+            "settingsMod",
             self._settings.mods_registry_url,
             self._settings.set_mods_registry_url,
             self._settings.reset_mods_registry_url,
             self._settings.reload_mods_registry,
             self._settings.open_mods_custom_file,
-            self._settings.clear_mods_custom)
+            self._settings.clear_mods_custom,
+        )
 
-    def _build_registry_row(self, layout, label, prefix, get_url, on_apply,
-                            on_reset, on_reload, on_open_custom,
-                            on_clear_custom):
+    def _build_registry_row(
+        self,
+        layout,
+        label,
+        prefix,
+        get_url,
+        on_apply,
+        on_reset,
+        on_reload,
+        on_open_custom,
+        on_clear_custom,
+    ):
         p = self._palette
         row = QHBoxLayout()
         name = QLabel(label, self)
         name.setStyleSheet(
-            f"color: {p.text.name()}; font-weight: bold; font-size: 9pt;")
+            f"color: {p.text.name()}; font-weight: bold; font-size: 9pt;"
+        )
         name.setFixedWidth(64)
         row.addWidget(name)
 
         edit = QLineEdit(get_url(), self)
         edit.setObjectName(f"{prefix}RegistryUrl")
         edit.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
         row.addWidget(edit, 1)
 
         apply_btn = QPushButton("Apply", self)
         apply_btn.setObjectName(f"{prefix}RegistryApply")
         apply_btn.setCursor(Qt.PointingHandCursor)
         apply_btn.clicked.connect(
-            lambda: self._on_apply_registry(edit, get_url, on_apply))
+            lambda: self._on_apply_registry(edit, get_url, on_apply)
+        )
         row.addWidget(apply_btn)
 
         reset_btn = QToolButton(self)
@@ -415,7 +497,8 @@ class SettingsDialog(QDialog):
         reset_btn.setCursor(Qt.PointingHandCursor)
         reset_btn.setToolTip("Use the default server catalog")
         reset_btn.clicked.connect(
-            lambda: self._on_reset_registry(edit, get_url, on_reset))
+            lambda: self._on_reset_registry(edit, get_url, on_reset)
+        )
         row.addWidget(reset_btn)
 
         reload_btn = QToolButton(self)
@@ -481,17 +564,20 @@ class SettingsDialog(QDialog):
         title = QLabel("LINUX (UMU)", self)
         title.setObjectName("settingsLinuxTitle")
         title.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;")
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
+        )
         layout.addWidget(title)
         layout.addSpacing(2)
 
         umu_bin = self._settings.resolve_umu_binary()
         hint = QLabel(
-            f"umu-run detected at: {umu_bin}" if umu_bin else
-            "umu-run not found on PATH — install umu-launcher "
+            f"umu-run detected at: {umu_bin}"
+            if umu_bin
+            else "umu-run not found on PATH — install umu-launcher "
             "(e.g. `pacman -S umu-launcher` / `apt install umu-launcher`) "
             "to enable PLAY on Linux.",
-            self)
+            self,
+        )
         hint.setObjectName("settingsUmuHint")
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {p.text_dim.name()}; font-size: 9pt;")
@@ -499,18 +585,27 @@ class SettingsDialog(QDialog):
         layout.addSpacing(2)
 
         self._add_launch_field(
-            layout, "Proton", "settingsProton", launch.umu_proton,
+            layout,
+            "Proton",
+            "settingsProton",
+            launch.umu_proton,
             self._settings.set_umu_proton,
-            lambda: self._settings.launch.umu_proton)
+            lambda: self._settings.launch.umu_proton,
+        )
         self._add_launch_field(
-            layout, "GAMEID", "settingsUmuGameId", launch.umu_game_id,
+            layout,
+            "GAMEID",
+            "settingsUmuGameId",
+            launch.umu_game_id,
             self._settings.set_umu_game_id,
-            lambda: self._settings.launch.umu_game_id)
+            lambda: self._settings.launch.umu_game_id,
+        )
 
         bin_row = QHBoxLayout()
         bin_name = QLabel("umu-run", self)
         bin_name.setStyleSheet(
-            f"color: {p.text.name()}; font-weight: bold; font-size: 9pt;")
+            f"color: {p.text.name()}; font-weight: bold; font-size: 9pt;"
+        )
         bin_name.setFixedWidth(64)
         bin_row.addWidget(bin_name)
         self._umu_bin_edit = QLineEdit(launch.umu_binary_path, self)
@@ -529,13 +624,15 @@ class SettingsDialog(QDialog):
         bin_row.addWidget(apply)
         layout.addLayout(bin_row)
 
-    def _add_launch_field(self, layout, label, object_name, value, on_apply,
-                          get_value):
+    def _add_launch_field(
+        self, layout, label, object_name, value, on_apply, get_value
+    ):
         p = self._palette
         row = QHBoxLayout()
         name = QLabel(label, self)
         name.setStyleSheet(
-            f"color: {p.text.name()}; font-weight: bold; font-size: 9pt;")
+            f"color: {p.text.name()}; font-weight: bold; font-size: 9pt;"
+        )
         name.setFixedWidth(64)
         row.addWidget(name)
         edit = QLineEdit(value, self)
@@ -545,7 +642,8 @@ class SettingsDialog(QDialog):
         apply.setObjectName(f"{object_name}Apply")
         apply.setCursor(Qt.PointingHandCursor)
         apply.clicked.connect(
-            lambda: self._on_apply_launch(edit, on_apply, get_value))
+            lambda: self._on_apply_launch(edit, on_apply, get_value)
+        )
         row.addWidget(apply)
         layout.addLayout(row)
         return edit
@@ -560,7 +658,8 @@ class SettingsDialog(QDialog):
 
     def _on_umu_browse(self):
         chosen, _ = QFileDialog.getOpenFileName(
-            self, "Select umu-run binary", os.path.expanduser("~"))
+            self, "Select umu-run binary", os.path.expanduser("~")
+        )
         if chosen:
             self._umu_bin_edit.setText(chosen)
             self._settings.set_umu_binary_path(chosen)
@@ -571,7 +670,8 @@ class SettingsDialog(QDialog):
         cur = self._settings.state.path
         initial = cur if os.path.isdir(cur) else os.path.expanduser("~")
         chosen = QFileDialog.getExistingDirectory(
-            self, "Select game client folder", initial)
+            self, "Select game client folder", initial
+        )
         if chosen:
             chosen = os.path.normpath(chosen)
             self._settings.set_path(chosen)
@@ -582,9 +682,11 @@ class SettingsDialog(QDialog):
         for name in self._mirror_rows:
             self._mirror_rows[name].setText("checking…")
             self._mirror_rows[name].setStyleSheet(
-                f"color: {p.text_dim.name()}; font-size: 9pt;")
+                f"color: {p.text_dim.name()}; font-size: 9pt;"
+            )
             self._mirror_dots[name].setStyleSheet(
-                f"color: {p.text_dim.name()};")
+                f"color: {p.text_dim.name()};"
+            )
         self._settings.check_mirror()
 
     # ── mirror status rendering ─────────────────────────────────────────────
@@ -594,8 +696,11 @@ class SettingsDialog(QDialog):
         statuses = self._settings.mirror_statuses
         for name, status in self._mirror_rows.items():
             text = statuses.get(name, "")
-            color = p.ok if text == "online" else (
-                p.err if text == "offline" else p.text_dim)
+            color = (
+                p.ok
+                if text == "online"
+                else (p.err if text == "offline" else p.text_dim)
+            )
             status.setText(text)
             status.setStyleSheet(f"color: {color.name()}; font-size: 9pt;")
             self._mirror_dots[name].setStyleSheet(f"color: {color.name()};")

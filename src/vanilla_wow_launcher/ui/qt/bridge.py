@@ -30,10 +30,12 @@ together with the bridge — the main window may equally do the assembly by hand
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from ...controllers.addons import AddonsController
+from ...controllers.full_update import FullUpdateController
 from ...controllers.mods import ModsController
 from ...controllers.news import NewsController
 from ...controllers.settings import SettingsController
 from ...controllers.tweaks import TweaksController
+from ...controllers.update import UpdateController
 from ...state.events import (
     AddonsLoaded,
     EventDispatcher,
@@ -48,8 +50,6 @@ from ...state.events import (
     ProgressChanged,
     StatusChanged,
 )
-from ...controllers.update import UpdateController
-from ...controllers.full_update import FullUpdateController
 
 # Poll interval: responsive without busy-spinning the event loop.
 _DRAIN_INTERVAL_MS = 50
@@ -146,9 +146,11 @@ class ControllerHub:
         self.addons = AddonsController(self.dispatcher, get_out_dir)
         self.tweaks = TweaksController(self.dispatcher, get_out_dir)
         self.full_update = FullUpdateController(
-            self.dispatcher, self.updater, self.mods, self.addons)
+            self.dispatcher, self.updater, self.mods, self.addons
+        )
         self.settings = SettingsController(
-            self.dispatcher, self.updater, self.mods, self.addons, self.news)
+            self.dispatcher, self.updater, self.mods, self.addons, self.news
+        )
         self.bridge = ControllerBridge(self.dispatcher)
 
     def close(self):

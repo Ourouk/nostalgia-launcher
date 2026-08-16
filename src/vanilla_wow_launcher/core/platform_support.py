@@ -37,6 +37,7 @@ def can_launch_client() -> bool:
         return True
     if is_linux():
         from ..services import umu
+
         return umu.umu_available()
     return False
 
@@ -63,8 +64,9 @@ def config_dir() -> str:
         return os.path.join(_windows_roaming_dir(), "VanillaWoWLauncher")
     if is_macos():
         home = os.environ.get("HOME") or os.path.expanduser("~")
-        return os.path.join(home, "Library", "Application Support",
-                            "VanillaWoWLauncher")
+        return os.path.join(
+            home, "Library", "Application Support", "VanillaWoWLauncher"
+        )
     home = os.environ.get("HOME") or os.path.expanduser("~")
     return os.path.join(home, ".vanilla-wow-launcher")
 
@@ -78,8 +80,9 @@ def cache_dir() -> str:
     if is_macos():
         home = os.environ.get("HOME") or os.path.expanduser("~")
         return os.path.join(home, "Library", "Caches", "VanillaWoWLauncher")
-    base = os.environ.get("XDG_CACHE_HOME") \
-        or os.path.join(os.path.expanduser("~"), ".cache")
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache"
+    )
     return os.path.join(base, "vanilla-wow-launcher")
 
 
@@ -92,10 +95,12 @@ def data_dir() -> str:
         return os.path.join(_windows_local_dir(), "VanillaWoWLauncher")
     if is_macos():
         home = os.environ.get("HOME") or os.path.expanduser("~")
-        return os.path.join(home, "Library", "Application Support",
-                            "VanillaWoWLauncher")
-    base = os.environ.get("XDG_DATA_HOME") \
-        or os.path.join(os.path.expanduser("~"), ".local", "share")
+        return os.path.join(
+            home, "Library", "Application Support", "VanillaWoWLauncher"
+        )
+    base = os.environ.get("XDG_DATA_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "share"
+    )
     return os.path.join(base, "vanilla-wow-launcher")
 
 

@@ -68,10 +68,12 @@ def get_client_version(out_dir: str) -> str:
     try:
         # Read only the two small fields, not the whole ~5 MB binary.
         with open(exe_path, "rb") as f:
-            f.seek(0x00437bfc)
-            build   = f.read(4).decode("utf-8", errors="replace").rstrip("\x00")
-            f.seek(0x00437c04)
-            version = f.read(6).decode("utf-8", errors="replace").rstrip("\x00")
+            f.seek(0x00437BFC)
+            build = f.read(4).decode("utf-8", errors="replace").rstrip("\x00")
+            f.seek(0x00437C04)
+            version = (
+                f.read(6).decode("utf-8", errors="replace").rstrip("\x00")
+            )
         return f"{version} ({build})"
     except Exception:
         return ""
@@ -95,10 +97,12 @@ def rmtree_force(path):
     raises PermissionError on Windows when it meets a read-only file (e.g. a
     .git object store from a manual clone, or a read-only addon shipped in an
     old zip); this clears the read-only bit and retries."""
+
     def handler(func, p, _exc):
         os.chmod(p, stat.S_IWRITE)
         func(p)
+
     if sys.version_info >= (3, 12):
-        shutil.rmtree(path, onexc=handler)      # onerror deprecated in 3.12
+        shutil.rmtree(path, onexc=handler)  # onerror deprecated in 3.12
     else:
         shutil.rmtree(path, onerror=handler)

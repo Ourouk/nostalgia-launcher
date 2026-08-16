@@ -32,9 +32,11 @@ def parse_version(v: str) -> tuple:
 
 def same_git_repo(a, b) -> bool:
     """Compare git URLs ignoring a trailing '.git' / slash and case."""
+
     def norm(u):
         u = (u or "").rstrip("/")
         return (u[:-4] if u.endswith(".git") else u).lower()
+
     return norm(a) == norm(b)
 
 
@@ -46,7 +48,7 @@ def parse_wow_colored(text: str):
     pos = 0
     for m in re.finditer(r"\|c[0-9a-fA-F]{8}|\|r", text):
         if m.start() > pos:
-            segments.append((text[pos:m.start()], color))
+            segments.append((text[pos : m.start()], color))
         tok = m.group(0)
         color = f"#{tok[4:]}" if tok.startswith("|c") else None
         pos = m.end()

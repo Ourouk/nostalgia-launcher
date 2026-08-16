@@ -36,14 +36,16 @@ class LogWindow(QWidget):
         title = QLabel("SESSION LOG", self)
         title.setStyleSheet(
             f"color: {palette.gold.name()}; font-weight: bold;"
-            " font-size: 10pt;")
+            " font-size: 10pt;"
+        )
         layout.addWidget(title)
 
         self._text = QPlainTextEdit(self)
         self._text.setObjectName("logText")
         self._text.setReadOnly(True)
         self._text.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
         layout.addWidget(self._text, 1)
 
     def _color_for_tag(self, tag: str):

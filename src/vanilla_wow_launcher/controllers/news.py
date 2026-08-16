@@ -24,6 +24,7 @@ class NewsResult:
     while still loading or when the fetch failed. `loading` and `error` let
     the renderer show the same placeholder/error states as before.
     """
+
     data: object = None
     loading: bool = False
     error: str = ""
@@ -42,8 +43,11 @@ class NewsController:
 
     def refresh_featured(self, force: bool = False):
         now = time.time()
-        if (not force and self.state.featured is not None
-                and (now - self.state.feat_ts) < NEWS_CACHE_TTL):
+        if (
+            not force
+            and self.state.featured is not None
+            and (now - self.state.feat_ts) < NEWS_CACHE_TTL
+        ):
             return
         self._dispatcher.post(NewsLoaded("featured", NewsResult(loading=True)))
 
@@ -56,14 +60,18 @@ class NewsController:
             self.state.feat_ts = time.time()
             self.state.featured = feat
             self._dispatcher.post(
-                NewsLoaded("featured", NewsResult(data=feat, error=err)))
+                NewsLoaded("featured", NewsResult(data=feat, error=err))
+            )
 
         threading.Thread(target=worker, daemon=True).start()
 
     def refresh_announcements(self, force: bool = False):
         now = time.time()
-        if (not force and self.state.items is not None
-                and (now - self.state.news_ts) < NEWS_CACHE_TTL):
+        if (
+            not force
+            and self.state.items is not None
+            and (now - self.state.news_ts) < NEWS_CACHE_TTL
+        ):
             return
         self._dispatcher.post(NewsLoaded("items", NewsResult(loading=True)))
 
@@ -76,7 +84,8 @@ class NewsController:
             self.state.news_ts = time.time()
             self.state.items = items
             self._dispatcher.post(
-                NewsLoaded("items", NewsResult(data=items, error=err)))
+                NewsLoaded("items", NewsResult(data=items, error=err))
+            )
 
         threading.Thread(target=worker, daemon=True).start()
 

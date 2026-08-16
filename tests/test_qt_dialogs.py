@@ -27,9 +27,10 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 
-import vanilla_wow_launcher.core.platform_support as platform_support
 import vanilla_wow_launcher.controllers.settings as settings_controller
+import vanilla_wow_launcher.core.platform_support as platform_support
 from vanilla_wow_launcher.core.log_sink import log
+from vanilla_wow_launcher.state.events import LogMessage
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
 from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
 from vanilla_wow_launcher.ui.qt.custom_addon_dialog import CustomAddonDialog
@@ -37,7 +38,6 @@ from vanilla_wow_launcher.ui.qt.log_window import LogWindow
 from vanilla_wow_launcher.ui.qt.main_window import MainWindow
 from vanilla_wow_launcher.ui.qt.settings_dialog import SettingsDialog
 from vanilla_wow_launcher.ui.qt.theme import Palette
-from vanilla_wow_launcher.state.events import LogMessage
 
 
 @pytest.fixture(autouse=True)
@@ -73,6 +73,7 @@ def _text(win: LogWindow) -> str:
 
 # ── LogWindow ─────────────────────────────────────────────────────────────
 
+
 def test_log_window_appends_ok_line(qapp):
     win = LogWindow(Palette())
     win.append("hello ok\n", "ok")
@@ -88,6 +89,7 @@ def test_log_window_seed_renders_buffer(qapp):
 
 
 # ── MainWindow session log ────────────────────────────────────────────────
+
 
 def test_show_logs_creates_and_reuses_window(qapp, window):
     window._on_show_logs_requested()
@@ -146,6 +148,7 @@ def test_log_window_seeds_existing_buffer_on_open(qapp, window):
 
 # ── CustomAddonDialog ─────────────────────────────────────────────────────
 
+
 def _open_dialog():
     dlg = CustomAddonDialog(Palette())
     dlg.show()
@@ -157,9 +160,11 @@ def test_custom_addon_valid_url_emits_and_closes(qapp):
     spy = Mock()
     dlg.addonRequested.connect(spy)
     dlg.findChild(QLineEdit, "customAddonUrl").setText(
-        "https://github.com/Org/Repo")
-    QTest.mouseClick(dlg.findChild(QPushButton, "customAddonInstall"),
-                     Qt.LeftButton)
+        "https://github.com/Org/Repo"
+    )
+    QTest.mouseClick(
+        dlg.findChild(QPushButton, "customAddonInstall"), Qt.LeftButton
+    )
     spy.assert_called_once()
     rec = spy.call_args[0][0]
     assert rec == {
@@ -198,13 +203,17 @@ def test_custom_addon_bad_host_shows_error_and_stays(qapp):
     spy = Mock()
     dlg.addonRequested.connect(spy)
     dlg.findChild(QLineEdit, "customAddonUrl").setText(
-        "https://example.com/Org/Repo")
-    QTest.mouseClick(dlg.findChild(QPushButton, "customAddonInstall"),
-                     Qt.LeftButton)
+        "https://example.com/Org/Repo"
+    )
+    QTest.mouseClick(
+        dlg.findChild(QPushButton, "customAddonInstall"), Qt.LeftButton
+    )
     spy.assert_not_called()
     assert dlg.isVisible()
-    assert (dlg.findChild(QLabel, "customAddonError").text()
-            == "URL must be https from an allowed host.")
+    assert (
+        dlg.findChild(QLabel, "customAddonError").text()
+        == "URL must be https from an allowed host."
+    )
 
 
 def test_custom_addon_host_only_url_folder_error(qapp):
@@ -212,22 +221,27 @@ def test_custom_addon_host_only_url_folder_error(qapp):
     spy = Mock()
     dlg.addonRequested.connect(spy)
     dlg.findChild(QLineEdit, "customAddonUrl").setText("https://github.com")
-    QTest.mouseClick(dlg.findChild(QPushButton, "customAddonInstall"),
-                     Qt.LeftButton)
+    QTest.mouseClick(
+        dlg.findChild(QPushButton, "customAddonInstall"), Qt.LeftButton
+    )
     spy.assert_not_called()
     assert dlg.isVisible()
-    assert (dlg.findChild(QLabel, "customAddonError").text()
-            == "Could not derive addon folder name.")
+    assert (
+        dlg.findChild(QLabel, "customAddonError").text()
+        == "Could not derive addon folder name."
+    )
 
 
 def test_custom_addon_hint_lists_allowed_hosts(qapp):
     import vanilla_wow_launcher.services.addons as addons
+
     dlg = CustomAddonDialog(Palette())
     hint = dlg.findChild(QLabel, "customAddonHint")
     assert hint.text() == "Allowed hosts: " + ", ".join(addons.ADDON_GIT_HOSTS)
 
 
 # ── MainWindow custom addon ───────────────────────────────────────────────
+
 
 def test_custom_addon_from_main_window_applies(qapp, window, monkeypatch):
     hub = window._hub
@@ -238,7 +252,8 @@ def test_custom_addon_from_main_window_applies(qapp, window, monkeypatch):
     dlg = window._customAddonDialog
     assert isinstance(dlg, CustomAddonDialog)
     dlg.findChild(QLineEdit, "customAddonUrl").setText(
-        "https://github.com/Org/Repo")
+        "https://github.com/Org/Repo"
+    )
     dlg.findChild(QPushButton, "customAddonInstall").click()
     apply_mock.assert_called_once()
     rec = apply_mock.call_args[0][0][0]
@@ -248,11 +263,12 @@ def test_custom_addon_from_main_window_applies(qapp, window, monkeypatch):
 
 # ── first-run flow ────────────────────────────────────────────────────────
 
+
 def test_first_run_opens_settings_and_av_prompt(qapp, monkeypatch, tmp_path):
-    monkeypatch.setattr(platform_support, "can_manage_antivirus",
-                        lambda: True)
-    monkeypatch.setattr(settings_controller, "CONFIG_FILE",
-                        str(tmp_path / "no-config.json"))
+    monkeypatch.setattr(platform_support, "can_manage_antivirus", lambda: True)
+    monkeypatch.setattr(
+        settings_controller, "CONFIG_FILE", str(tmp_path / "no-config.json")
+    )
     hub = ControllerHub()
     assert hub.settings.state.first_run is True
     assert hub.settings.state.first_run_av_pending is True
@@ -267,9 +283,12 @@ def test_first_run_opens_settings_and_av_prompt(qapp, monkeypatch, tmp_path):
 
         asked = []
         monkeypatch.setattr(
-            QMessageBox, "question",
+            QMessageBox,
+            "question",
             staticmethod(
-                lambda *a, **k: (asked.append(True), QMessageBox.Yes)[1]))
+                lambda *a, **k: (asked.append(True), QMessageBox.Yes)[1]
+            ),
+        )
         allow = Mock()
         dismissed = Mock()
         monkeypatch.setattr(hub.settings, "allow_through_antivirus", allow)

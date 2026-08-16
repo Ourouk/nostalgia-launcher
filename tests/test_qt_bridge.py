@@ -16,8 +16,6 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtTest import QTest
 
-from vanilla_wow_launcher.ui.qt.app import create_qt_app
-from vanilla_wow_launcher.ui.qt.bridge import ControllerBridge, ControllerHub
 from vanilla_wow_launcher.state.events import (
     AddonsLoaded,
     EventDispatcher,
@@ -33,6 +31,8 @@ from vanilla_wow_launcher.state.events import (
     StatusChanged,
 )
 from vanilla_wow_launcher.state.models import AddonsState, ModsState
+from vanilla_wow_launcher.ui.qt.app import create_qt_app
+from vanilla_wow_launcher.ui.qt.bridge import ControllerBridge, ControllerHub
 
 
 @pytest.fixture(autouse=True)
@@ -73,11 +73,22 @@ def test_bridge_constructs_and_closes_offscreen(qapp):
 def test_every_event_type_reaches_its_signal(qapp):
     dispatcher = EventDispatcher()
     bridge = ControllerBridge(dispatcher)
-    spies = {name: _connect(bridge, name) for name in (
-        "statusChanged", "logMessage", "progressChanged", "newsLoaded",
-        "modsLoaded", "addonsLoaded", "mirrorStatusChanged",
-        "operationFinished", "operationFailed", "gameLaunched",
-        "gameExited")}
+    spies = {
+        name: _connect(bridge, name)
+        for name in (
+            "statusChanged",
+            "logMessage",
+            "progressChanged",
+            "newsLoaded",
+            "modsLoaded",
+            "addonsLoaded",
+            "mirrorStatusChanged",
+            "operationFinished",
+            "operationFailed",
+            "gameLaunched",
+            "gameExited",
+        )
+    }
 
     dispatcher.post(StatusChanged("Updating…"))
     dispatcher.post(LogMessage("hello", "ok"))
@@ -164,8 +175,13 @@ def test_controller_hub_assembles_shared_dispatcher(qapp):
     hub = ControllerHub()
     try:
         assert hub.bridge._dispatcher is hub.dispatcher
-        for ctrl in (hub.updater, hub.news, hub.mods, hub.addons,
-                     hub.settings):
+        for ctrl in (
+            hub.updater,
+            hub.news,
+            hub.mods,
+            hub.addons,
+            hub.settings,
+        ):
             assert ctrl._dispatcher is hub.dispatcher
         status = _connect(hub.bridge, "statusChanged")
         hub.dispatcher.post(StatusChanged("via hub"))

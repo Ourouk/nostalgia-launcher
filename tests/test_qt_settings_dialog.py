@@ -31,12 +31,12 @@ from PySide6.QtWidgets import (
 )
 
 import vanilla_wow_launcher.core.platform_support as platform_support
+from vanilla_wow_launcher.state.events import MirrorStatusChanged
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
 from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
 from vanilla_wow_launcher.ui.qt.main_window import MainWindow
-from vanilla_wow_launcher.ui.qt.theme import Palette
 from vanilla_wow_launcher.ui.qt.settings_dialog import SettingsDialog
-from vanilla_wow_launcher.state.events import MirrorStatusChanged
+from vanilla_wow_launcher.ui.qt.theme import Palette
 
 
 @pytest.fixture(autouse=True)
@@ -74,17 +74,27 @@ def _open(window) -> SettingsDialog:
 
 # ── gear → dialog ───────────────────────────────────────────────────────
 
+
 def test_gear_opens_settings_dialog(qapp, window):
     assert window._settingsDialog is None
     dialog = _open(window)
     assert dialog.objectName() == "settingsDialog"
     assert dialog.isVisible()
     assert dialog.windowTitle() == "Settings"
-    for name in ("settingsPath", "settingsChange", "settingsOpenFolder",
-                 "settingsMirrorRefresh",
-                 "settingsVerify", "settingsLogs", "settingsKoFi",
-                  "settingsBmc", "settingsClose", "settingsAutoMods",
-                  "settingsAutoAddons", "settingsClientUpdate"):
+    for name in (
+        "settingsPath",
+        "settingsChange",
+        "settingsOpenFolder",
+        "settingsMirrorRefresh",
+        "settingsVerify",
+        "settingsLogs",
+        "settingsKoFi",
+        "settingsBmc",
+        "settingsClose",
+        "settingsAutoMods",
+        "settingsAutoAddons",
+        "settingsClientUpdate",
+    ):
         assert dialog.findChild(QWidget, name) is not None
 
 
@@ -96,6 +106,7 @@ def test_gear_reuses_open_dialog(qapp, window):
 
 
 # ── game folder ─────────────────────────────────────────────────────────
+
 
 def test_path_field_shows_state_path(qapp, window):
     dialog = _open(window)
@@ -109,46 +120,54 @@ def test_open_folder_calls_open_client_folder(qapp, window, monkeypatch):
     open_client = Mock()
     monkeypatch.setattr(hub.settings, "open_client_folder", open_client)
     dialog = _open(window)
-    QTest.mouseClick(dialog.findChild(QWidget, "settingsOpenFolder"),
-                     Qt.LeftButton)
+    QTest.mouseClick(
+        dialog.findChild(QWidget, "settingsOpenFolder"), Qt.LeftButton
+    )
     open_client.assert_called_once()
 
 
 def test_change_updates_path(qapp, window, monkeypatch, tmp_path):
     hub = window._hub
     chosen = str(tmp_path / "game folder")
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
-                        lambda *a, **k: chosen)
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *a, **k: chosen
+    )
     set_path = Mock(return_value=True)
     monkeypatch.setattr(hub.settings, "set_path", set_path)
     dialog = _open(window)
 
-    QTest.mouseClick(dialog.findChild(QPushButton, "settingsChange"),
-                     Qt.LeftButton)
+    QTest.mouseClick(
+        dialog.findChild(QPushButton, "settingsChange"), Qt.LeftButton
+    )
     set_path.assert_called_once_with(os.path.normpath(chosen))
-    assert (dialog.findChild(QLineEdit, "settingsPath").text()
-            == os.path.normpath(chosen))
+    assert dialog.findChild(
+        QLineEdit, "settingsPath"
+    ).text() == os.path.normpath(chosen)
 
 
 def test_change_cancelled_leaves_path(qapp, window, monkeypatch):
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
-                        lambda *a, **k: "")
+    monkeypatch.setattr(
+        QFileDialog, "getExistingDirectory", lambda *a, **k: ""
+    )
     dialog = _open(window)
     before = window._hub.settings.state.path
-    QTest.mouseClick(dialog.findChild(QPushButton, "settingsChange"),
-                     Qt.LeftButton)
-    assert (dialog.findChild(QLineEdit, "settingsPath").text() == before)
+    QTest.mouseClick(
+        dialog.findChild(QPushButton, "settingsChange"), Qt.LeftButton
+    )
+    assert dialog.findChild(QLineEdit, "settingsPath").text() == before
 
 
 # ── download mirrors ─────────────────────────────────────────────────────
 
+
 def test_mirror_rows_render_configured_sources(qapp, window):
     hub = window._hub
     dialog = _open(window)
-    assert dialog.findChild(QLabel, "settingsMirrorStatus_Test Server") \
+    assert (
+        dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
         is not None
-    assert dialog.findChild(QLabel, "settingsMirrorStatus_Backup") \
-        is not None
+    )
+    assert dialog.findChild(QLabel, "settingsMirrorStatus_Backup") is not None
     assert hub.settings.mirror_names() == ["Test Server", "Backup"]
 
 
@@ -168,15 +187,19 @@ def test_mirror_status_updates_on_event(qapp, window):
     status = dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
     p = Palette()
 
-    hub.settings.mirror_statuses = {"Test Server": "online",
-                                    "Backup": "offline"}
+    hub.settings.mirror_statuses = {
+        "Test Server": "online",
+        "Backup": "offline",
+    }
     hub.dispatcher.post(MirrorStatusChanged(True, "online"))
     QTest.qWait(200)
     assert status.text() == "online"
     assert p.ok.name() in status.styleSheet()
 
-    hub.settings.mirror_statuses = {"Test Server": "offline",
-                                    "Backup": "offline"}
+    hub.settings.mirror_statuses = {
+        "Test Server": "offline",
+        "Backup": "offline",
+    }
     hub.dispatcher.post(MirrorStatusChanged(False, "offline"))
     QTest.qWait(200)
     assert status.text() == "offline"
@@ -190,19 +213,23 @@ def test_mirror_refresh_calls_check_mirror(qapp, window, monkeypatch):
     dialog = _open(window)
     dialog.findChild(QToolButton, "settingsMirrorRefresh").click()
     check.assert_called_once()
-    assert (dialog.findChild(QLabel, "settingsMirrorStatus_Test Server").text()
-            == "checking…")
+    assert (
+        dialog.findChild(QLabel, "settingsMirrorStatus_Test Server").text()
+        == "checking…"
+    )
 
 
 # ── troubleshooting rows ────────────────────────────────────────────────
+
 
 def test_verify_row_calls_verify_files(qapp, window, monkeypatch):
     hub = window._hub
     verify = Mock()
     monkeypatch.setattr(hub.settings, "verify_files", verify)
     dialog = _open(window)
-    QTest.mouseClick(dialog.findChild(QWidget, "settingsVerify"),
-                     Qt.LeftButton)
+    QTest.mouseClick(
+        dialog.findChild(QWidget, "settingsVerify"), Qt.LeftButton
+    )
     verify.assert_called_once()
 
 
@@ -220,8 +247,7 @@ def test_av_row_absent_when_cannot_manage_antivirus(qapp, window):
 
 
 def test_av_row_calls_allow_through_antivirus(qapp, window, monkeypatch):
-    monkeypatch.setattr(platform_support, "can_manage_antivirus",
-                        lambda: True)
+    monkeypatch.setattr(platform_support, "can_manage_antivirus", lambda: True)
     hub = window._hub
     allow = Mock()
     monkeypatch.setattr(hub.settings, "allow_through_antivirus", allow)
@@ -233,6 +259,7 @@ def test_av_row_calls_allow_through_antivirus(qapp, window, monkeypatch):
 
 
 # ── support links ───────────────────────────────────────────────────────
+
 
 def test_support_links_call_open_url(qapp, window, monkeypatch):
     hub = window._hub
@@ -248,6 +275,7 @@ def test_support_links_call_open_url(qapp, window, monkeypatch):
 
 # ── general checkboxes ─────────────────────────────────────────────────
 
+
 def test_checkboxes_reflect_config(qapp, window, monkeypatch):
     hub = window._hub
     hub.settings.state.config = {
@@ -259,18 +287,20 @@ def test_checkboxes_reflect_config(qapp, window, monkeypatch):
     monkeypatch.setattr(platform_support, "can_launch_client", lambda: True)
     dialog = _open(window)
 
-    assert (dialog.findChild(QCheckBox, "settingsAutoMods").isChecked()
-            is True)
-    assert (dialog.findChild(QCheckBox, "settingsAutoAddons").isChecked()
-            is False)
-    assert (dialog.findChild(QCheckBox, "settingsClearWdb").isChecked()
-            is True)
-    assert (dialog.findChild(QCheckBox, "settingsCloseOnLaunch").isChecked()
-            is False)
+    assert dialog.findChild(QCheckBox, "settingsAutoMods").isChecked() is True
+    assert (
+        dialog.findChild(QCheckBox, "settingsAutoAddons").isChecked() is False
+    )
+    assert dialog.findChild(QCheckBox, "settingsClearWdb").isChecked() is True
+    assert (
+        dialog.findChild(QCheckBox, "settingsCloseOnLaunch").isChecked()
+        is False
+    )
 
 
-def test_launch_checkboxes_absent_when_cannot_launch_client(qapp, window,
-                                                            monkeypatch):
+def test_launch_checkboxes_absent_when_cannot_launch_client(
+    qapp, window, monkeypatch
+):
     monkeypatch.setattr(platform_support, "can_launch_client", lambda: False)
     dialog = _open(window)
     assert dialog.findChild(QCheckBox, "settingsClearWdb") is None
@@ -303,7 +333,8 @@ def test_toggle_auto_addons_calls_set_auto_addons(qapp, window, monkeypatch):
 
 
 def test_client_update_checkbox_reflects_and_persists_setting(
-        qapp, window, monkeypatch):
+    qapp, window, monkeypatch
+):
     hub = window._hub
     hub.settings.state.config = {"client_update_enabled": False}
     set_enabled = Mock()
@@ -328,11 +359,11 @@ def test_toggle_clear_wdb_calls_set_clear_wdb(qapp, window, monkeypatch):
 
 # ── close ──────────────────────────────────────────────────────────────
 
+
 def test_close_works_headlessly(qapp, window):
     dialog = _open(window)
     assert dialog.isVisible()
-    QTest.mouseClick(dialog.findChild(QWidget, "settingsClose"),
-                     Qt.LeftButton)
+    QTest.mouseClick(dialog.findChild(QWidget, "settingsClose"), Qt.LeftButton)
     QTest.qWait(20)
     assert not dialog.isVisible()
     # Reopening via the gear reuses the same (hidden) dialog instance.
@@ -349,10 +380,12 @@ def test_close_triggers_pending_auto_install(qapp, window, monkeypatch):
     dialog = _open(window)
     mods_install = Mock()
     addons_install = Mock()
-    monkeypatch.setattr(hub.settings, "install_missing_essential_mods",
-                        mods_install)
-    monkeypatch.setattr(hub.settings, "install_missing_recommended_addons",
-                        addons_install)
+    monkeypatch.setattr(
+        hub.settings, "install_missing_essential_mods", mods_install
+    )
+    monkeypatch.setattr(
+        hub.settings, "install_missing_recommended_addons", addons_install
+    )
     hub.settings._pending_auto_mods = True
     hub.settings._pending_auto_addons = True
 
@@ -365,17 +398,24 @@ def test_close_triggers_pending_auto_install(qapp, window, monkeypatch):
 
 # ── catalog registries ───────────────────────────────────────────────────────
 
+
 def test_registry_section_widgets_present(qapp, window):
     dialog = _open(window)
-    for name in ("settingsAddonRegistryUrl", "settingsAddonRegistryApply",
-                 "settingsAddonRegistryReload", "settingsAddonRegistryReset",
-                 "settingsAddonRegistryOpenCustom",
-                 "settingsAddonRegistryClearCustom",
-                 "settingsModRegistryUrl", "settingsModRegistryApply",
-                 "settingsModRegistryReload", "settingsModRegistryReset",
-                 "settingsModRegistryOpenCustom",
-                 "settingsModRegistryClearCustom",
-                 "settingsRegistryStatus"):
+    for name in (
+        "settingsAddonRegistryUrl",
+        "settingsAddonRegistryApply",
+        "settingsAddonRegistryReload",
+        "settingsAddonRegistryReset",
+        "settingsAddonRegistryOpenCustom",
+        "settingsAddonRegistryClearCustom",
+        "settingsModRegistryUrl",
+        "settingsModRegistryApply",
+        "settingsModRegistryReload",
+        "settingsModRegistryReset",
+        "settingsModRegistryOpenCustom",
+        "settingsModRegistryClearCustom",
+        "settingsRegistryStatus",
+    ):
         assert dialog.findChild(QWidget, name) is not None, name
 
 
@@ -388,8 +428,7 @@ def test_registry_url_fields_prefilled(qapp, window):
     assert mod_edit.text() == hub.settings.mods_registry_url()
 
 
-def test_registry_apply_calls_set_and_clears_status(qapp, window,
-                                                    monkeypatch):
+def test_registry_apply_calls_set_and_clears_status(qapp, window, monkeypatch):
     hub = window._hub
     set_url = Mock(return_value=None)
     monkeypatch.setattr(hub.settings, "set_addons_registry_url", set_url)
@@ -398,9 +437,10 @@ def test_registry_apply_calls_set_and_clears_status(qapp, window,
     edit.setText("https://example.com/addons.json")
     QTest.mouseClick(
         dialog.findChild(QPushButton, "settingsAddonRegistryApply"),
-        Qt.LeftButton)
+        Qt.LeftButton,
+    )
     set_url.assert_called_once_with("https://example.com/addons.json")
-    assert (dialog.findChild(QLabel, "settingsRegistryStatus").text() == "")
+    assert dialog.findChild(QLabel, "settingsRegistryStatus").text() == ""
 
 
 def test_registry_apply_shows_error(qapp, window, monkeypatch):
@@ -410,9 +450,9 @@ def test_registry_apply_shows_error(qapp, window, monkeypatch):
     dialog = _open(window)
     QTest.mouseClick(
         dialog.findChild(QPushButton, "settingsAddonRegistryApply"),
-        Qt.LeftButton)
-    assert "https" in dialog.findChild(
-        QLabel, "settingsRegistryStatus").text()
+        Qt.LeftButton,
+    )
+    assert "https" in dialog.findChild(QLabel, "settingsRegistryStatus").text()
 
 
 def test_registry_reset_calls_reset_and_refills(qapp, window, monkeypatch):
@@ -420,15 +460,20 @@ def test_registry_reset_calls_reset_and_refills(qapp, window, monkeypatch):
     reset = Mock()
     monkeypatch.setattr(hub.settings, "reset_addons_registry_url", reset)
     monkeypatch.setattr(
-        hub.settings, "addons_registry_url",
-        lambda: "https://launcher.test/api/addons.json")
+        hub.settings,
+        "addons_registry_url",
+        lambda: "https://launcher.test/api/addons.json",
+    )
     dialog = _open(window)
     QTest.mouseClick(
         dialog.findChild(QToolButton, "settingsAddonRegistryReset"),
-        Qt.LeftButton)
+        Qt.LeftButton,
+    )
     reset.assert_called_once()
-    assert (dialog.findChild(QLineEdit, "settingsAddonRegistryUrl").text()
-            == "https://launcher.test/api/addons.json")
+    assert (
+        dialog.findChild(QLineEdit, "settingsAddonRegistryUrl").text()
+        == "https://launcher.test/api/addons.json"
+    )
 
 
 def test_registry_reload_calls_reload(qapp, window, monkeypatch):
@@ -438,7 +483,8 @@ def test_registry_reload_calls_reload(qapp, window, monkeypatch):
     dialog = _open(window)
     QTest.mouseClick(
         dialog.findChild(QToolButton, "settingsModRegistryReload"),
-        Qt.LeftButton)
+        Qt.LeftButton,
+    )
     reload.assert_called_once()
 
 
@@ -449,7 +495,8 @@ def test_registry_open_custom_calls_open(qapp, window, monkeypatch):
     dialog = _open(window)
     QTest.mouseClick(
         dialog.findChild(QWidget, "settingsAddonRegistryOpenCustom"),
-        Qt.LeftButton)
+        Qt.LeftButton,
+    )
     open_custom.assert_called_once()
 
 
@@ -460,11 +507,13 @@ def test_registry_clear_custom_calls_clear(qapp, window, monkeypatch):
     dialog = _open(window)
     QTest.mouseClick(
         dialog.findChild(QWidget, "settingsModRegistryClearCustom"),
-        Qt.LeftButton)
+        Qt.LeftButton,
+    )
     clear_custom.assert_called_once()
 
 
 # ── Linux umu-launcher section ───────────────────────────────────────────────
+
 
 def _linux_dialog(window, monkeypatch):
     monkeypatch.setattr(platform_support, "is_linux", lambda: True)
@@ -472,13 +521,20 @@ def _linux_dialog(window, monkeypatch):
 
 
 def test_linux_section_present_on_linux(qapp, window, monkeypatch):
-    monkeypatch.setattr(window._hub.settings, "resolve_umu_binary",
-                        lambda: "/usr/bin/umu-run")
+    monkeypatch.setattr(
+        window._hub.settings, "resolve_umu_binary", lambda: "/usr/bin/umu-run"
+    )
     dialog = _linux_dialog(window, monkeypatch)
-    for name in ("settingsLinuxTitle", "settingsProton",
-                 "settingsProtonApply", "settingsUmuGameId",
-                 "settingsUmuPath", "settingsUmuBrowse",
-                 "settingsUmuPathApply", "settingsUmuHint"):
+    for name in (
+        "settingsLinuxTitle",
+        "settingsProton",
+        "settingsProtonApply",
+        "settingsUmuGameId",
+        "settingsUmuPath",
+        "settingsUmuBrowse",
+        "settingsUmuPathApply",
+        "settingsUmuHint",
+    ):
         assert dialog.findChild(QWidget, name) is not None, name
 
 
@@ -489,8 +545,7 @@ def test_linux_section_absent_on_other_platforms(qapp, window, monkeypatch):
 
 
 def test_umu_hint_reports_missing_binary(qapp, window, monkeypatch):
-    monkeypatch.setattr(window._hub.settings, "resolve_umu_binary",
-                        lambda: "")
+    monkeypatch.setattr(window._hub.settings, "resolve_umu_binary", lambda: "")
     dialog = _linux_dialog(window, monkeypatch)
     assert "not found" in dialog.findChild(QLabel, "settingsUmuHint").text()
 
@@ -502,8 +557,9 @@ def test_umu_proton_apply_calls_setter(qapp, window, monkeypatch):
     dialog = _linux_dialog(window, monkeypatch)
     edit = dialog.findChild(QLineEdit, "settingsProton")
     edit.setText("GE-Proton9-4")
-    QTest.mouseClick(dialog.findChild(QPushButton, "settingsProtonApply"),
-                     Qt.LeftButton)
+    QTest.mouseClick(
+        dialog.findChild(QPushButton, "settingsProtonApply"), Qt.LeftButton
+    )
     set_proton.assert_called_once_with("GE-Proton9-4")
 
 
@@ -514,8 +570,9 @@ def test_umu_gameid_apply_calls_setter(qapp, window, monkeypatch):
     dialog = _linux_dialog(window, monkeypatch)
     edit = dialog.findChild(QLineEdit, "settingsUmuGameId")
     edit.setText("umu-custom")
-    QTest.mouseClick(dialog.findChild(QPushButton, "settingsUmuGameIdApply"),
-                     Qt.LeftButton)
+    QTest.mouseClick(
+        dialog.findChild(QPushButton, "settingsUmuGameIdApply"), Qt.LeftButton
+    )
     set_gameid.assert_called_once_with("umu-custom")
 
 
@@ -526,8 +583,9 @@ def test_umu_path_apply_calls_setter(qapp, window, monkeypatch):
     dialog = _linux_dialog(window, monkeypatch)
     edit = dialog.findChild(QLineEdit, "settingsUmuPath")
     edit.setText("/opt/umu-run")
-    QTest.mouseClick(dialog.findChild(QPushButton, "settingsUmuPathApply"),
-                     Qt.LeftButton)
+    QTest.mouseClick(
+        dialog.findChild(QPushButton, "settingsUmuPathApply"), Qt.LeftButton
+    )
     set_path.assert_called_once_with("/opt/umu-run")
 
 
@@ -536,9 +594,11 @@ def test_umu_browse_sets_binary_path(qapp, window, monkeypatch, tmp_path):
     set_path = Mock()
     monkeypatch.setattr(hub.settings, "set_umu_binary_path", set_path)
     chosen = str(tmp_path / "umu-run")
-    monkeypatch.setattr(QFileDialog, "getOpenFileName",
-                        lambda *a, **k: (chosen, ""))
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName", lambda *a, **k: (chosen, "")
+    )
     dialog = _linux_dialog(window, monkeypatch)
-    QTest.mouseClick(dialog.findChild(QPushButton, "settingsUmuBrowse"),
-                     Qt.LeftButton)
+    QTest.mouseClick(
+        dialog.findChild(QPushButton, "settingsUmuBrowse"), Qt.LeftButton
+    )
     set_path.assert_called_once_with(chosen)

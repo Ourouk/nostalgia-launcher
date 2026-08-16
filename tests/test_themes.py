@@ -1,8 +1,8 @@
 """Unit tests for the launcher theme resolution (core/themes)."""
 
 from vanilla_wow_launcher.core.themes import (
-    DEFAULT_COLORS,
     COLOR_KEYS,
+    DEFAULT_COLORS,
     resolve_colors,
     resolve_logo,
 )
@@ -52,10 +52,12 @@ def test_any_invalid_entry_poisons_the_whole_theme():
 
 
 def test_logo_key_does_not_poison_colors():
-    colors = resolve_colors({
-        "C_GOLD": "#d4a02f",
-        "logo": "https://cdn.example/logo.png",
-    })
+    colors = resolve_colors(
+        {
+            "C_GOLD": "#d4a02f",
+            "logo": "https://cdn.example/logo.png",
+        }
+    )
     assert colors["C_GOLD"] == "#d4a02f"
     assert colors["C_BG"] == DEFAULT_COLORS["C_BG"]
 
@@ -66,17 +68,30 @@ def test_logo_key_does_not_hide_bad_colors():
 
 
 def test_resolve_logo_accepts_https_url():
-    assert resolve_logo({"logo": " https://octowow.st/logo.png "}) == \
-        "https://octowow.st/logo.png"
+    assert (
+        resolve_logo({"logo": " https://octowow.st/logo.png "})
+        == "https://octowow.st/logo.png"
+    )
 
 
 def test_resolve_logo_rejects_missing_or_bad_values():
-    for spec in (None, "octowow", 42, [], {}, {"logo": None},
-                 {"logo": ""}, {"logo": 42}):
+    for spec in (
+        None,
+        "octowow",
+        42,
+        [],
+        {},
+        {"logo": None},
+        {"logo": ""},
+        {"logo": 42},
+    ):
         assert resolve_logo(spec) is None
 
 
 def test_resolve_logo_rejects_non_https_url():
-    for value in ("http://octowow.st/logo.png", "logo.png",
-                  "https://user:pass@octowow.st/logo.png"):
+    for value in (
+        "http://octowow.st/logo.png",
+        "logo.png",
+        "https://user:pass@octowow.st/logo.png",
+    ):
         assert resolve_logo({"logo": value}) is None

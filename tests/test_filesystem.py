@@ -3,22 +3,27 @@
 import os
 import stat
 
-import pytest
-
 import vanilla_wow_launcher.core.filesystem as filesystem
 
 
 def test_sha1_file(tmp_path):
     p = tmp_path / "f.bin"
     p.write_bytes(b"hello")
-    assert filesystem.sha1_file(str(p)) == "AAF4C61DDCC5E8A2DABEDE0F3B482CD9AEA9434D"
+    assert (
+        filesystem.sha1_file(str(p))
+        == "AAF4C61DDCC5E8A2DABEDE0F3B482CD9AEA9434D"
+    )
 
 
 def test_sha1_file_matches_hashlib(tmp_path):
     import hashlib
+
     p = tmp_path / "f.bin"
     p.write_bytes(b"the quick brown fox jumps over the lazy dog")
-    assert filesystem.sha1_file(str(p)) == hashlib.sha1(p.read_bytes()).hexdigest().upper()
+    assert (
+        filesystem.sha1_file(str(p))
+        == hashlib.sha1(p.read_bytes()).hexdigest().upper()
+    )
 
 
 def test_cached_sha1_populates_and_hits(tmp_path):
@@ -76,9 +81,9 @@ def test_get_client_version(tmp_path):
 
 def test_get_client_version_reads_offsets(tmp_path):
     exe = tmp_path / "WoW.exe"
-    data = bytearray(0x00437c10)
-    data[0x00437bfc:0x00437bfc + 4] = b"1.17"
-    data[0x00437c04:0x00437c04 + 6] = b"60000\x00"
+    data = bytearray(0x00437C10)
+    data[0x00437BFC : 0x00437BFC + 4] = b"1.17"
+    data[0x00437C04 : 0x00437C04 + 6] = b"60000\x00"
     exe.write_bytes(bytes(data))
     assert filesystem.get_client_version(str(tmp_path)) == "60000 (1.17)"
 

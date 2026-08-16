@@ -5,6 +5,8 @@ Install/Cancel buttons; on a valid URL it emits `addonRequested` with the
 record AddonsController.apply expects.
 """
 
+from urllib.parse import urlsplit
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
@@ -16,8 +18,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from urllib.parse import urlsplit
-
 from ...services import addons
 from .theme import Palette, theme_qss
 
@@ -26,6 +26,7 @@ class CustomAddonDialog(QDialog):
     """Asks for a git URL and emits the resulting addon record."""
 
     addonRequested = Signal(dict)
+
     def __init__(self, palette: Palette, parent=None):
         super().__init__(parent)
         self._palette = palette
@@ -34,7 +35,9 @@ class CustomAddonDialog(QDialog):
         self.setWindowTitle("ADD CUSTOM GIT ADDON")
         self.setMinimumWidth(520)
         self.setStyleSheet(
-            theme_qss(p) + f"\nQDialog {{ background-color: {p.panel.name()}; }}")
+            theme_qss(p)
+            + f"\nQDialog {{ background-color: {p.panel.name()}; }}"
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 16, 20, 16)
@@ -42,22 +45,26 @@ class CustomAddonDialog(QDialog):
 
         title = QLabel("ADD CUSTOM GIT ADDON", self)
         title.setStyleSheet(
-            f"color: {p.purple.name()}; font-weight: bold; font-size: 12pt;")
+            f"color: {p.purple.name()}; font-weight: bold; font-size: 12pt;"
+        )
         root.addWidget(title)
 
         url_label = QLabel("REPOSITORY URL", self)
         url_label.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 9pt;")
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 9pt;"
+        )
         root.addWidget(url_label)
 
         self._url = QLineEdit(self)
         self._url.setObjectName("customAddonUrl")
         self._url.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
         root.addWidget(self._url)
 
         self._hint = QLabel(
-            "Allowed hosts: " + ", ".join(addons.ADDON_GIT_HOSTS), self)
+            "Allowed hosts: " + ", ".join(addons.ADDON_GIT_HOSTS), self
+        )
         self._hint.setObjectName("customAddonHint")
         self._hint.setStyleSheet(f"color: {p.text_dim.name()};")
         root.addWidget(self._hint)
@@ -88,18 +95,24 @@ class CustomAddonDialog(QDialog):
             self._error.setText("URL must be https from an allowed host.")
             return
         folder = url.rsplit("/", 1)[-1]
-        if (not folder or folder in (".", "..") or "\\" in folder
-                or not urlsplit(url).path):
+        if (
+            not folder
+            or folder in (".", "..")
+            or "\\" in folder
+            or not urlsplit(url).path
+        ):
             self._error.setText("Could not derive addon folder name.")
             return
-        self.addonRequested.emit({
-            "folder": folder,
-            "status": "available",
-            "git": url,
-            "branch": None,
-            "ref": None,
-            "toc": {},
-            "description": None,
-            "error": None,
-        })
+        self.addonRequested.emit(
+            {
+                "folder": folder,
+                "status": "available",
+                "git": url,
+                "branch": None,
+                "ref": None,
+                "toc": {},
+                "description": None,
+                "error": None,
+            }
+        )
         self.accept()

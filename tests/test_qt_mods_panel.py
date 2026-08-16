@@ -21,12 +21,12 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QWidget
 
 import vanilla_wow_launcher.services.mods as mods_module
+from vanilla_wow_launcher.state.events import ModsLoaded
+from vanilla_wow_launcher.state.models import ModsState, ModState
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
 from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
 from vanilla_wow_launcher.ui.qt.main_window import MainWindow
 from vanilla_wow_launcher.ui.qt.mods_panel import ModsPanel
-from vanilla_wow_launcher.state.events import ModsLoaded
-from vanilla_wow_launcher.state.models import ModsState, ModState
 
 FAKE_REGISTRY = [
     {
@@ -68,10 +68,14 @@ def qapp():
 
 @pytest.fixture()
 def registry(monkeypatch):
-    monkeypatch.setattr(mods_module, "mods_registry",
-                        lambda *a, **k: FAKE_REGISTRY)
-    monkeypatch.setattr(mods_module, "fetch_mod_latest_version_cached",
-                        lambda mod, force=False: None)
+    monkeypatch.setattr(
+        mods_module, "mods_registry", lambda *a, **k: FAKE_REGISTRY
+    )
+    monkeypatch.setattr(
+        mods_module,
+        "fetch_mod_latest_version_cached",
+        lambda mod, force=False: None,
+    )
     return FAKE_REGISTRY
 
 
@@ -103,6 +107,7 @@ def _post(hub, state):
 
 # ── build ───────────────────────────────────────────────────────────────
 
+
 def test_panel_replaces_the_mods_placeholder(qapp, window):
     assert window._pages == {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
     panel = _panel(window)
@@ -124,11 +129,16 @@ def test_rerender_rebuilds_rows(qapp, window, hub):
 
 # ── rendering state ─────────────────────────────────────────────────────
 
+
 def test_installed_mod_name_is_green_and_essential_shows_star(
-        qapp, window, hub):
+    qapp, window, hub
+):
     state = ModsState(
-        records={"AlphaMod": ModState(enabled=True, installed_version="1.2",
-                                      present=True)},
+        records={
+            "AlphaMod": ModState(
+                enabled=True, installed_version="1.2", present=True
+            )
+        },
         latest_versions={"AlphaMod": "9.9"},
     )
     hub.mods.state = state
@@ -159,7 +169,8 @@ def test_untracked_mod_name_is_not_highlighted(qapp, window, hub):
 
 
 def test_unknown_mods_section_lists_detected_entries_and_removes(
-        qapp, window, hub, monkeypatch):
+    qapp, window, hub, monkeypatch
+):
     state = ModsState(unknown=["mystery.dll", "other.dll"])
     hub.mods.state = state
     _post(hub, state)
@@ -168,7 +179,9 @@ def test_unknown_mods_section_lists_detected_entries_and_removes(
     assert panel.findChild(QLabel, "modsUnknownHeader") is not None
     for name in ("mystery.dll", "other.dll"):
         assert panel.findChild(QWidget, f"modsUnknownRow_{name}") is not None
-        assert panel.findChild(QLabel, f"modsUnknownName_{name}").text() == name
+        assert (
+            panel.findChild(QLabel, f"modsUnknownName_{name}").text() == name
+        )
 
     remove_mock = Mock()
     monkeypatch.setattr(hub.mods, "remove_unknown", remove_mock)
@@ -179,8 +192,11 @@ def test_unknown_mods_section_lists_detected_entries_and_removes(
 def test_error_mod_shows_red_name_and_error_line(qapp, window, hub):
     window.switch_tab("MODS")
     state = ModsState(
-        records={"AlphaMod": ModState(enabled=True, installed_version="1.0",
-                                      error="boom")},
+        records={
+            "AlphaMod": ModState(
+                enabled=True, installed_version="1.0", error="boom"
+            )
+        },
         latest_versions={},
     )
     hub.mods.state = state
@@ -196,11 +212,13 @@ def test_error_mod_shows_red_name_and_error_line(qapp, window, hub):
 
 # ── action labels ───────────────────────────────────────────────────────
 
+
 def test_action_labels_follow_action_for(qapp, window, hub):
     state = ModsState(
         records={
-            "AlphaMod": ModState(enabled=True, installed_version="1.0",
-                                 error="boom"),
+            "AlphaMod": ModState(
+                enabled=True, installed_version="1.0", error="boom"
+            ),
             "BetaMod": ModState(enabled=True, installed_version="1.0"),
             "GammaMod": ModState(enabled=True, installed_version="2.0"),
         },
@@ -219,6 +237,7 @@ def test_action_labels_follow_action_for(qapp, window, hub):
 
 
 # ── checkbox interactivity ──────────────────────────────────────────────
+
 
 def test_enable_checkbox_forwards_toggle(qapp, window, hub):
     panel = _panel(window)
@@ -241,6 +260,7 @@ def test_ignore_checkbox_forwards_set_ignore(qapp, window, hub):
 
 # ── apply button ────────────────────────────────────────────────────────
 
+
 def test_apply_visibility_follows_pending_and_errors(qapp, window, hub):
     window.switch_tab("MODS")
     panel = _panel(window)
@@ -262,7 +282,8 @@ def test_apply_visible_when_mod_has_error(qapp, window, hub):
     window.switch_tab("MODS")
     panel = _panel(window)
     state = ModsState(
-        records={"AlphaMod": ModState(error="boom")}, latest_versions={})
+        records={"AlphaMod": ModState(error="boom")}, latest_versions={}
+    )
     hub.mods.state = state
     _post(hub, state)
     assert panel.findChild(QPushButton, "modsApply").isVisible()
@@ -282,12 +303,16 @@ def test_apply_button_calls_controller(qapp, window, hub, monkeypatch):
     assert apply_mock.call_args.args == ()
 
 
-def test_action_button_calls_apply_for_that_mod(qapp, window, hub,
-                                                monkeypatch):
+def test_action_button_calls_apply_for_that_mod(
+    qapp, window, hub, monkeypatch
+):
     window.switch_tab("MODS")
     state = ModsState(
-        records={"AlphaMod": ModState(enabled=True, installed_version="1.0",
-                                      error="boom")},
+        records={
+            "AlphaMod": ModState(
+                enabled=True, installed_version="1.0", error="boom"
+            )
+        },
         latest_versions={},
     )
     hub.mods.state = state
@@ -304,7 +329,8 @@ def test_action_button_calls_apply_for_that_mod(qapp, window, hub,
 
 
 def test_apply_button_disabled_while_running_then_reenabled(
-        qapp, window, hub, monkeypatch):
+    qapp, window, hub, monkeypatch
+):
     window.switch_tab("MODS")
     panel = _panel(window)
     monkeypatch.setattr(hub.mods, "apply", Mock())
@@ -320,6 +346,7 @@ def test_apply_button_disabled_while_running_then_reenabled(
 
 
 # ── nav badge ───────────────────────────────────────────────────────────
+
 
 def test_badge_shows_update_count_and_hides_at_zero(qapp, window, hub):
     badge = window.findChild(QLabel, "tabBadge_MODS")

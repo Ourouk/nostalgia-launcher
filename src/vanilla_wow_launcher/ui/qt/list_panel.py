@@ -57,6 +57,7 @@ class LinkLabel(ClickableLabel):
 
 # ── row chrome ──────────────────────────────────────────────────────────────
 
+
 def make_row_shell(parent):
     """→ (root, top, top_layout) with the standard list-row layout."""
     root = QVBoxLayout(parent)
@@ -108,8 +109,8 @@ def add_row_divider(root, p):
     divider = QFrame(root.parentWidget())
     divider.setFrameShape(QFrame.HLine)
     divider.setStyleSheet(
-        f"background-color: {p.divider.name()};"
-        f" border: none; max-height: 1px;")
+        f"background-color: {p.divider.name()}; border: none; max-height: 1px;"
+    )
     root.addWidget(divider)
     return divider
 
@@ -124,8 +125,15 @@ class ScrollListPanel(QWidget):
     implement `_render()` and the `_after_loaded` / `_after_operation` hooks.
     """
 
-    def __init__(self, prefix, loaded_signal, palette, bridge, on_badge=None,
-                 parent=None):
+    def __init__(
+        self,
+        prefix,
+        loaded_signal,
+        palette,
+        bridge,
+        on_badge=None,
+        parent=None,
+    ):
         super().__init__(parent)
         self._prefix = prefix
         self._palette = palette
@@ -138,7 +146,8 @@ class ScrollListPanel(QWidget):
             #{prefix}Panel {{ background-color: {p.panel.name()}; }}
             #{prefix}Content {{ background-color: {p.panel.name()}; }}
             #{prefix}Scroll {{ background-color: {p.panel.name()}; border: none; }}
-            """)
+            """
+        )
         self._root_layout = QVBoxLayout(self)
         self._root_layout.setContentsMargins(0, 0, 0, 0)
         self._root_layout.setSpacing(0)
@@ -156,7 +165,8 @@ class ScrollListPanel(QWidget):
         sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet(
             f"background-color: {p.divider.name()};"
-            f" border: none; max-height: 1px;")
+            f" border: none; max-height: 1px;"
+        )
         self._root_layout.addWidget(sep)
         return sep
 

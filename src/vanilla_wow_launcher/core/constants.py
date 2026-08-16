@@ -30,29 +30,30 @@ from .platform_support import (
     is_windows,
 )
 
-UPDATER_VERSION  = "1.3"
-UA               = f"VanillaWoWLauncher/{UPDATER_VERSION}"
-DOWNLOAD_RETRY   = 5
-DOWNLOAD_TIMEOUT = 10    # seconds without any data before a transfer aborts
+UPDATER_VERSION = "1.3.1"
+UA = f"VanillaWoWLauncher/{UPDATER_VERSION}"
+DOWNLOAD_RETRY = 5
+DOWNLOAD_TIMEOUT = 10  # seconds without any data before a transfer aborts
 
 GITHUB_API = "https://api.github.com"
-MOD_UA     = f"VanillaWoWLauncher/{UPDATER_VERSION}"
+MOD_UA = f"VanillaWoWLauncher/{UPDATER_VERSION}"
 
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
 else:
     # Running from source: the repo root (three levels up from
     # src/vanilla_wow_launcher/core/constants.py).
-    APP_DIR = os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__))))
+    APP_DIR = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
 
 CONFIG_FILE = os.path.join(config_dir(), "vanilla_wow_launcher_config.json")
-CACHE_FILE  = os.path.join(cache_dir(), "vanilla_wow_launcher_hash_cache.json")
+CACHE_FILE = os.path.join(cache_dir(), "vanilla_wow_launcher_hash_cache.json")
 
 # Legacy location: the config/cache used to live next to the executable
 # under the old "octo_updater" names. Migrated on first use.
 LEGACY_CONFIG_FILE = os.path.join(APP_DIR, "octo_updater_config.json")
-LEGACY_CACHE_FILE  = os.path.join(APP_DIR, "octo_updater_hash_cache.json")
+LEGACY_CACHE_FILE = os.path.join(APP_DIR, "octo_updater_hash_cache.json")
 
 
 def _legacy_user_config_dir() -> str:
@@ -62,9 +63,11 @@ def _legacy_user_config_dir() -> str:
     if is_macos():
         home = os.environ.get("HOME") or os.path.expanduser("~")
         return os.path.join(
-            home, "Library", "Application Support", "OctoUpdater")
-    base = os.environ.get("XDG_CONFIG_HOME") \
-        or os.path.join(os.path.expanduser("~"), ".config")
+            home, "Library", "Application Support", "OctoUpdater"
+        )
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config"
+    )
     return os.path.join(base, "octo-updater")
 
 
@@ -75,15 +78,18 @@ def _legacy_user_cache_dir() -> str:
     if is_macos():
         home = os.environ.get("HOME") or os.path.expanduser("~")
         return os.path.join(home, "Library", "Caches", "OctoUpdater")
-    base = os.environ.get("XDG_CACHE_HOME") \
-        or os.path.join(os.path.expanduser("~"), ".cache")
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache"
+    )
     return os.path.join(base, "octo-updater")
 
 
 LEGACY_USER_CONFIG_FILE = os.path.join(
-    _legacy_user_config_dir(), "octo_updater_config.json")
+    _legacy_user_config_dir(), "octo_updater_config.json"
+)
 LEGACY_USER_CACHE_FILE = os.path.join(
-    _legacy_user_cache_dir(), "octo_updater_hash_cache.json")
+    _legacy_user_cache_dir(), "octo_updater_hash_cache.json"
+)
 
 
 # Superseded current-version locations: where config/cache lived before the
@@ -97,17 +103,21 @@ def _legacy_app_cache_file() -> str:
 
 
 def _legacy_xdg_config_file() -> str:
-    base = os.environ.get("XDG_CONFIG_HOME") \
-        or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "vanilla-wow-launcher",
-                        "vanilla_wow_launcher_config.json")
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config"
+    )
+    return os.path.join(
+        base, "vanilla-wow-launcher", "vanilla_wow_launcher_config.json"
+    )
 
 
 def _legacy_xdg_cache_file() -> str:
-    base = os.environ.get("XDG_CACHE_HOME") \
-        or os.path.join(os.path.expanduser("~"), ".cache")
-    return os.path.join(base, "vanilla-wow-launcher",
-                        "vanilla_wow_launcher_hash_cache.json")
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache"
+    )
+    return os.path.join(
+        base, "vanilla-wow-launcher", "vanilla_wow_launcher_hash_cache.json"
+    )
 
 
 # Ordered migration candidates, most recent location first: the first file
@@ -134,8 +144,9 @@ def legacy_config_dir() -> str:
         return APP_DIR
     if is_macos():
         return ""
-    base = os.environ.get("XDG_CONFIG_HOME") \
-        or os.path.join(os.path.expanduser("~"), ".config")
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config"
+    )
     return os.path.join(base, "vanilla-wow-launcher")
 
 
@@ -148,14 +159,17 @@ def legacy_custom_pairs() -> tuple:
     pairs = []
     for kind in ("mods", "addons"):
         legacy = os.path.join(old, f"vanilla_wow_launcher_{kind}_custom.json")
-        new = os.path.join(config_dir(), f"vanilla_wow_launcher_{kind}_custom.json")
+        new = os.path.join(
+            config_dir(), f"vanilla_wow_launcher_{kind}_custom.json"
+        )
         if legacy != new:
             pairs.append((legacy, new))
     return tuple(pairs)
 
+
 # First-run default game folder — a user-writable location.
-DEFAULT_OUT_DIR  = default_out_dir()
+DEFAULT_OUT_DIR = default_out_dir()
 
 # News feed timings (endpoints come from the launcher configuration).
-NEWS_TIMEOUT   = 8
+NEWS_TIMEOUT = 8
 NEWS_CACHE_TTL = 300

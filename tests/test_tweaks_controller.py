@@ -11,8 +11,11 @@ import time
 import pytest
 
 import vanilla_wow_launcher.controllers.tweaks as tc
-from vanilla_wow_launcher.services.tweaks import TWEAKS_DEFAULTS, fov_default_for_display
 from vanilla_wow_launcher.controllers.tweaks import TweaksController
+from vanilla_wow_launcher.services.tweaks import (
+    TWEAKS_DEFAULTS,
+    fov_default_for_display,
+)
 from vanilla_wow_launcher.state.events import (
     EventDispatcher,
     LogMessage,
@@ -38,26 +41,36 @@ def backends(monkeypatch):
     state = {"out_dir": "/tmp/octo-game"}
     monkeypatch.setattr(tc.config_store, "load_config", lambda: state)
     monkeypatch.setattr(
-        tc.config_store, "update_config",
-        lambda mutator: (mutator(state), state)[1])
-    monkeypatch.setattr(tc.tweaks, "load_tweaks_config",
-                        lambda: state.get("tweaks")
-                        or {**TWEAKS_DEFAULTS,
-                            "fieldOfView": fov_default_for_display()})
-    monkeypatch.setattr(tc.tweaks, "update_config_wtf",
-                        lambda client_dir, tweaks: None)
-    monkeypatch.setattr(tc.tweaks, "save_tweaks_config",
-                        lambda values: state.__setitem__("tweaks", values))
-    monkeypatch.setattr(tc.platform_support, "can_patch_client",
-                        lambda: False)
+        tc.config_store,
+        "update_config",
+        lambda mutator: (mutator(state), state)[1],
+    )
+    monkeypatch.setattr(
+        tc.tweaks,
+        "load_tweaks_config",
+        lambda: (
+            state.get("tweaks")
+            or {**TWEAKS_DEFAULTS, "fieldOfView": fov_default_for_display()}
+        ),
+    )
+    monkeypatch.setattr(
+        tc.tweaks, "update_config_wtf", lambda client_dir, tweaks: None
+    )
+    monkeypatch.setattr(
+        tc.tweaks,
+        "save_tweaks_config",
+        lambda values: state.__setitem__("tweaks", values),
+    )
+    monkeypatch.setattr(tc.platform_support, "can_patch_client", lambda: False)
     monkeypatch.setattr(tc.client_update, "UpdateWorker", FakeUpdateWorker)
     return state
 
 
 @pytest.fixture
 def controller(backends):
-    return TweaksController(EventDispatcher(),
-                            get_out_dir=lambda: backends["out_dir"])
+    return TweaksController(
+        EventDispatcher(), get_out_dir=lambda: backends["out_dir"]
+    )
 
 
 def _drain_for(dispatcher, predicate, timeout=2.0):
@@ -76,6 +89,7 @@ def _drain_for(dispatcher, predicate, timeout=2.0):
 
 # ── values ─────────────────────────────────────────────────────────────
 
+
 def test_values_returns_saved_config(controller, backends):
     saved = dict(TWEAKS_DEFAULTS)
     saved["fieldOfView"] = 150
@@ -91,13 +105,16 @@ def test_default_get_out_dir_reads_config(backends):
 
 # ── validate_entries ────────────────────────────────────────────────────
 
+
 def test_validate_entries_clamps_out_of_range(controller):
-    any_bad, ui = controller.validate_entries({
-        "fieldOfView": "500",
-        "nameplateRange": "10",
-    })
+    any_bad, ui = controller.validate_entries(
+        {
+            "fieldOfView": "500",
+            "nameplateRange": "10",
+        }
+    )
     assert any_bad is True
-    assert ui["fieldOfView"] == 180   # clamped to max
+    assert ui["fieldOfView"] == 180  # clamped to max
     assert ui["nameplateRange"] == 10  # in range, untouched
 
 
@@ -114,25 +131,30 @@ def test_validate_entries_unparseable_falls_back_to_default(controller):
 
 
 def test_validate_entries_bools_normalized(controller):
-    any_bad, ui = controller.validate_entries({
-        "alwaysAutoLoot": "True",
-        "soundInBackground": 0,
-    })
+    any_bad, ui = controller.validate_entries(
+        {
+            "alwaysAutoLoot": "True",
+            "soundInBackground": 0,
+        }
+    )
     assert any_bad is False
     assert ui["alwaysAutoLoot"] is True
     assert ui["soundInBackground"] is False
 
 
 def test_validate_entries_clean_ui_is_not_bad(controller):
-    any_bad, ui = controller.validate_entries({
-        "fieldOfView": 110,
-        "nameplateRange": 41,
-    })
+    any_bad, ui = controller.validate_entries(
+        {
+            "fieldOfView": 110,
+            "nameplateRange": 41,
+        }
+    )
     assert any_bad is False
     assert ui == {"fieldOfView": 110, "nameplateRange": 41}
 
 
 # ── dirty_and_custom ───────────────────────────────────────────────────
+
 
 def test_dirty_and_custom_matches_saved_config(controller, backends):
     backends["tweaks"] = dict(TWEAKS_DEFAULTS)
@@ -150,18 +172,27 @@ def test_dirty_and_custom_detects_changes(controller, backends):
 
 
 def test_dirty_and_custom_out_of_range_is_dirty_even_if_clamped_equal(
-        controller, backends):
+    controller, backends
+):
     # saved = defaults (fov 110); typed 110 stays in range, so use the
     # out-of-range case from the Tk comment: saved 180, typed 192 clamps to
     # 180 — dirty must still be True because the entry is bad.
     backends["tweaks"] = {
-        "alwaysAutoLoot": True, "nameplateRange": 41, "fieldOfView": 180,
-        "farClip": 777, "frillDistance": 70, "cameraDistance": 50,
+        "alwaysAutoLoot": True,
+        "nameplateRange": 41,
+        "fieldOfView": 180,
+        "farClip": 777,
+        "frillDistance": 70,
+        "cameraDistance": 50,
         "soundInBackground": True,
     }
     ui = {
-        "alwaysAutoLoot": True, "nameplateRange": 41, "fieldOfView": "192",
-        "farClip": 777, "frillDistance": 70, "cameraDistance": 50,
+        "alwaysAutoLoot": True,
+        "nameplateRange": 41,
+        "fieldOfView": "192",
+        "farClip": 777,
+        "frillDistance": 70,
+        "cameraDistance": 50,
         "soundInBackground": True,
     }
     dirty, custom = controller.dirty_and_custom(ui)
@@ -171,28 +202,42 @@ def test_dirty_and_custom_out_of_range_is_dirty_even_if_clamped_equal(
 
 # ── apply ──────────────────────────────────────────────────────────────
 
+
 def test_apply_persists_clamped_and_posts_finished(controller, backends):
-    spawned = controller.apply({
-        "alwaysAutoLoot": True, "nameplateRange": 41, "fieldOfView": "500",
-        "farClip": 777, "frillDistance": 70, "cameraDistance": 50,
-        "soundInBackground": True,
-    })
+    spawned = controller.apply(
+        {
+            "alwaysAutoLoot": True,
+            "nameplateRange": 41,
+            "fieldOfView": "500",
+            "farClip": 777,
+            "frillDistance": 70,
+            "cameraDistance": 50,
+            "soundInBackground": True,
+        }
+    )
     assert spawned is True
     assert backends["tweaks"]["fieldOfView"] == 180  # clamped on save
 
     collected = _drain_for(
-        controller._dispatcher, lambda e: isinstance(e, OperationFinished))
+        controller._dispatcher, lambda e: isinstance(e, OperationFinished)
+    )
     assert OperationFinished("tweaks", True, "") in collected
     assert LogMessage("\nTweaks applied.\n", "ok") in collected
-    assert LogMessage(
-        "Binary WoW.exe tweaks are only applied on Windows; "
-        "writing Config.wtf only.\n", "dim") in collected
+    assert (
+        LogMessage(
+            "Binary WoW.exe tweaks are only applied on Windows; "
+            "writing Config.wtf only.\n",
+            "dim",
+        )
+        in collected
+    )
     assert any(isinstance(e, LogMessage) for e in collected)
     assert controller.running is False
 
 
-def test_apply_patches_exe_on_windows(controller, backends, monkeypatch,
-                                      tmp_path):
+def test_apply_patches_exe_on_windows(
+    controller, backends, monkeypatch, tmp_path
+):
     game = tmp_path / "game"
     game.mkdir()
     (game / "WoW.exe").write_bytes(b"MZ")
@@ -200,22 +245,24 @@ def test_apply_patches_exe_on_windows(controller, backends, monkeypatch,
     calls = []
     patched = FakeUpdateWorker()
     patched.patch_exe = lambda t: calls.append(t)
-    monkeypatch.setattr(tc.client_update, "UpdateWorker",
-                        lambda *a, **k: patched)
-    monkeypatch.setattr(tc.platform_support, "can_patch_client",
-                        lambda: True)
+    monkeypatch.setattr(
+        tc.client_update, "UpdateWorker", lambda *a, **k: patched
+    )
+    monkeypatch.setattr(tc.platform_support, "can_patch_client", lambda: True)
 
     values = dict(TWEAKS_DEFAULTS)
     values["fieldOfView"] = fov_default_for_display()
     spawned = controller.apply(values)
     assert spawned is True
-    _drain_for(controller._dispatcher,
-               lambda e: isinstance(e, OperationFinished))
+    _drain_for(
+        controller._dispatcher, lambda e: isinstance(e, OperationFinished)
+    )
     assert calls == [values]
 
 
 def test_apply_without_folder_posts_error_and_does_not_spawn(
-        controller, backends, monkeypatch):
+    controller, backends, monkeypatch
+):
     backends["out_dir"] = "   "
     spawned = controller.apply(dict(TWEAKS_DEFAULTS))
     assert spawned is False
@@ -224,15 +271,18 @@ def test_apply_without_folder_posts_error_and_does_not_spawn(
     assert not any(isinstance(e, OperationFinished) for e in events)
 
 
-def test_apply_posts_failure_events_on_error(controller, backends,
-                                             monkeypatch):
+def test_apply_posts_failure_events_on_error(
+    controller, backends, monkeypatch
+):
     def boom(client_dir, tweaks):
         raise RuntimeError("disk full")
+
     monkeypatch.setattr(tc.tweaks, "update_config_wtf", boom)
 
     controller.apply(dict(TWEAKS_DEFAULTS))
     collected = _drain_for(
-        controller._dispatcher, lambda e: isinstance(e, OperationFinished))
+        controller._dispatcher, lambda e: isinstance(e, OperationFinished)
+    )
     assert OperationFinished("tweaks", False, "disk full") in collected
     assert any(isinstance(e, tc.OperationFailed) for e in collected)
     assert controller.running is False
@@ -244,6 +294,7 @@ def test_apply_guards_reentry(controller, backends, monkeypatch):
     def slow_worker(client_dir, tweaks):
         started.append(client_dir)
         time.sleep(0.3)
+
     monkeypatch.setattr(controller, "_apply_worker", slow_worker)
 
     assert controller.apply(dict(TWEAKS_DEFAULTS)) is True
@@ -259,6 +310,7 @@ def test_apply_guards_reentry(controller, backends, monkeypatch):
 
 # ── reset ──────────────────────────────────────────────────────────────
 
+
 def test_reset_saves_defaults_and_spawns(controller, backends):
     defaults = dict(TWEAKS_DEFAULTS)
     defaults["fieldOfView"] = fov_default_for_display()
@@ -266,7 +318,8 @@ def test_reset_saves_defaults_and_spawns(controller, backends):
     assert spawned is True
     assert backends["tweaks"] == defaults
     collected = _drain_for(
-        controller._dispatcher, lambda e: isinstance(e, OperationFinished))
+        controller._dispatcher, lambda e: isinstance(e, OperationFinished)
+    )
     assert LogMessage("\nTweaks applied.\n", "ok") in collected
     assert controller.running is False
 
@@ -279,7 +332,6 @@ def test_reset_builds_defaults_when_omitted(controller, backends):
 
 def test_reset_without_folder_is_noop(controller, backends, monkeypatch):
     backends["out_dir"] = ""
-    monkeypatch.setattr(tc.platform_support, "can_patch_client",
-                        lambda: True)
+    monkeypatch.setattr(tc.platform_support, "can_patch_client", lambda: True)
     assert controller.reset() is False
     assert controller._dispatcher.drain() == []

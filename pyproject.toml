@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vanilla-wow-launcher"
-version = "1.3"
+version = "1.3.1"
 description = "Standalone updater and mod manager for the Vanilla WoW client"
 requires-python = ">=3.10"
 dependencies = [
@@ -21,9 +21,21 @@ packages = ["src/vanilla_wow_launcher"]
 dev = [
     "pytest>=8.0",
     "pyinstaller>=6.0",
+    "ruff>=0.15",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.ruff]
+# Match the codebase's existing pep8-style 79-column wrapping.
+line-length = 79
+target-version = "py310"
+exclude = ["dist", "build"]
+
+[tool.ruff.lint]
+# Core correctness (E4/E7/E9/F) plus import sorting, whitespace nits and the
+# low-risk modernisations (UP) / bugbear (B) rule families.
+select = ["E4", "E7", "E9", "F", "I", "W", "UP", "B"]

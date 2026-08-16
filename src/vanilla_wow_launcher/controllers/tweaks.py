@@ -13,12 +13,10 @@ import os
 import queue
 import threading
 
-from ..core import config_store
-from ..services import client_update
-from ..core import platform_support
-from ..services import tweaks
+from ..core import config_store, platform_support
 from ..core.constants import DEFAULT_OUT_DIR
 from ..core.filesystem import sha1_file
+from ..services import client_update, tweaks
 from ..services.tweaks import (
     TWEAKS_DEFAULTS,
     TWEAKS_LIMITS,
@@ -46,8 +44,12 @@ class TweaksController:
         self._dispatcher = dispatcher
         self._running = False
         if get_out_dir is None:
-            get_out_dir = lambda: config_store.load_config().get(
-                "out_dir", DEFAULT_OUT_DIR)
+
+            def get_out_dir():
+                return config_store.load_config().get(
+                    "out_dir", DEFAULT_OUT_DIR
+                )
+
         self._get_out_dir = get_out_dir
 
     # ── public API ──────────────────────────────────────────────────────────
@@ -82,8 +84,9 @@ class TweaksController:
                 v = TWEAKS_DEFAULTS.get(tid, lo or 0)
                 bad = True
             else:
-                bad = ((lo is not None and v < lo) or
-                       (hi is not None and v > hi))
+                bad = (lo is not None and v < lo) or (
+                    hi is not None and v > hi
+                )
             if lo is not None:
                 v = max(lo, v)
             if hi is not None:
@@ -105,10 +108,14 @@ class TweaksController:
         defaults["fieldOfView"] = fov_default_for_display()
 
         def norm(d):
-            return {k: (bool(d.get(k))
-                        if isinstance(TWEAKS_DEFAULTS.get(k), bool)
-                        else int(d.get(k, 0)))
-                    for k in clamped}
+            return {
+                k: (
+                    bool(d.get(k))
+                    if isinstance(TWEAKS_DEFAULTS.get(k), bool)
+                    else int(d.get(k, 0))
+                )
+                for k in clamped
+            }
 
         ui_n = norm(clamped)
         dirty = any_bad or ui_n != norm(saved)
@@ -134,11 +141,13 @@ class TweaksController:
         exe = os.path.join(out, "WoW.exe")
         if platform_support.can_patch_client() and not os.path.exists(exe):
             self._dispatcher.post(
-                LogMessage("WoW.exe not found — run Update first.\n", "err"))
+                LogMessage("WoW.exe not found — run Update first.\n", "err")
+            )
             return False
 
-        self._dispatcher.post(LogMessage("\nApplying tweaks to WoW.exe...\n",
-                                         "acct"))
+        self._dispatcher.post(
+            LogMessage("\nApplying tweaks to WoW.exe...\n", "acct")
+        )
         self._start_worker(clamped)
         return True
 
@@ -172,8 +181,11 @@ class TweaksController:
     def _start_worker(self, tweak_values: dict):
         client_dir = (self._get_out_dir() or "").strip()
         self._running = True
-        threading.Thread(target=self._run_apply_worker,
-                         args=(client_dir, tweak_values), daemon=True).start()
+        threading.Thread(
+            target=self._run_apply_worker,
+            args=(client_dir, tweak_values),
+            daemon=True,
+        ).start()
 
     def _run_apply_worker(self, client_dir: str, tweak_values: dict):
         """Thread wrapper that always clears the re-entry guard, even when a
@@ -196,8 +208,9 @@ class TweaksController:
             fresh_cfg = config_store.load_config()
             expected_patched = fresh_cfg.get("expected_patched_wow_hash", "")
             original_server = fresh_cfg.get("original_server_wow_hash", "")
-            local_before = (sha1_file(exe_path)
-                            if os.path.exists(exe_path) else "")
+            local_before = (
+                sha1_file(exe_path) if os.path.exists(exe_path) else ""
+            )
 
             if platform_support.can_patch_client():
                 worker.patch_exe(tweak_values)
@@ -206,14 +219,19 @@ class TweaksController:
             else:
                 # Binary tweaks target Windows offsets — on other platforms
                 # only the Config.wtf settings are applied.
-                self._dispatcher.post(LogMessage(
-                    "Binary WoW.exe tweaks are only applied on Windows; "
-                    "writing Config.wtf only.\n", "dim"))
+                self._dispatcher.post(
+                    LogMessage(
+                        "Binary WoW.exe tweaks are only applied on Windows; "
+                        "writing Config.wtf only.\n",
+                        "dim",
+                    )
+                )
 
             tweaks.update_config_wtf(client_dir, tweak_values)
 
-            local_after = (sha1_file(exe_path)
-                           if os.path.exists(exe_path) else "")
+            local_after = (
+                sha1_file(exe_path) if os.path.exists(exe_path) else ""
+            )
 
             def _set_hashes(c):
                 c["expected_patched_wow_hash"] = local_after
@@ -221,6 +239,7 @@ class TweaksController:
                     c["original_server_wow_hash"] = original_server
                 else:
                     c.pop("original_server_wow_hash", None)
+
             config_store.update_config(_set_hashes)
 
             self._dispatcher.post(LogMessage("\nTweaks applied.\n", "ok"))
@@ -228,10 +247,10 @@ class TweaksController:
         except Exception as e:
             self._drain_logs(log_q)
             self._dispatcher.post(
-                LogMessage(f"\n✗ Tweak patch failed: {e}\n", "err"))
+                LogMessage(f"\n✗ Tweak patch failed: {e}\n", "err")
+            )
             self._dispatcher.post(OperationFailed("tweaks", str(e)))
-            self._dispatcher.post(
-                OperationFinished("tweaks", False, str(e)))
+            self._dispatcher.post(OperationFinished("tweaks", False, str(e)))
 
     def _drain_logs(self, log_q: queue.Queue):
         """Forward the UpdateWorker's log lines to the dispatcher as
@@ -239,8 +258,9 @@ class TweaksController:
         try:
             while True:
                 msg, tag = log_q.get_nowait()
-                if msg not in ("__DONE__", "__ERROR__") and not \
-                        msg.startswith("__"):
+                if msg not in ("__DONE__", "__ERROR__") and not msg.startswith(
+                    "__"
+                ):
                     self._dispatcher.post(LogMessage(msg, tag))
         except queue.Empty:
             pass

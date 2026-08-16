@@ -21,20 +21,25 @@ from unittest.mock import Mock
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMessageBox
 
+from vanilla_wow_launcher.controllers.update import Readiness
+from vanilla_wow_launcher.core.constants import UPDATER_VERSION
+from vanilla_wow_launcher.state.events import (
+    OperationFailed,
+    OperationFinished,
+)
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
 from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
 from vanilla_wow_launcher.ui.qt.main_window import MainWindow
 from vanilla_wow_launcher.ui.qt.theme import Palette
-from vanilla_wow_launcher.state.events import OperationFailed, OperationFinished
-from vanilla_wow_launcher.controllers.update import Readiness
 
 _PLAY = Readiness("play", "PLAY", "Everything up to date!")
 _UPDATE = Readiness("update", "UPDATE", "Update available!")
 _CHECKING = Readiness("busy", "Checking…", "Verifying…")
 _INSTALLING = Readiness("busy", "Installing…", "Downloading addons…")
 _DISABLED = Readiness("disabled", "UPDATE", "Manifest unavailable")
-_TERMINATE = Readiness("terminate", "TERMINATE",
-                       "Running WoW.exe — click TERMINATE to quit")
+_TERMINATE = Readiness(
+    "terminate", "TERMINATE", "Running WoW.exe — click TERMINATE to quit"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -59,7 +64,9 @@ def window(qapp, monkeypatch):
     hub.updater.state.manifest_available = True
     monkeypatch.setattr(hub.updater, "start_verify", Mock())
     monkeypatch.setattr(hub.updater, "start_update", Mock())
-    monkeypatch.setattr(hub.updater, "launch_game", Mock(return_value=(True, False)))
+    monkeypatch.setattr(
+        hub.updater, "launch_game", Mock(return_value=(True, False))
+    )
     monkeypatch.setattr(hub.updater, "check_updater_update", Mock())
     monkeypatch.setattr(hub.news, "load", Mock())
     monkeypatch.setattr(hub.mods, "load_latest_versions", Mock())
@@ -80,16 +87,20 @@ def test_initial_button_shows_update_until_ready(qapp, window, monkeypatch):
     assert window._updateButton.text() == "UPDATE"
     assert window._updateButton.isEnabled()
 
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _PLAY)
+    monkeypatch.setattr(
+        hub.updater, "compute_readiness", lambda addons_installing=False: _PLAY
+    )
     window._refresh_ready_state()
     assert window._updateButton.text() == "PLAY"
     assert window._updateButton.isEnabled()
     assert palette.green_btn.name() in window._updateButton.styleSheet()
     assert window._statusLabel.text() == _PLAY.status
 
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _UPDATE)
+    monkeypatch.setattr(
+        hub.updater,
+        "compute_readiness",
+        lambda addons_installing=False: _UPDATE,
+    )
     window._refresh_ready_state()
     assert window._updateButton.text() == "UPDATE"
     assert palette.green_btn.name() not in window._updateButton.styleSheet()
@@ -98,14 +109,20 @@ def test_initial_button_shows_update_until_ready(qapp, window, monkeypatch):
 
 def test_busy_readiness_disables_button(qapp, window, monkeypatch):
     hub = window._hub
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _CHECKING)
+    monkeypatch.setattr(
+        hub.updater,
+        "compute_readiness",
+        lambda addons_installing=False: _CHECKING,
+    )
     window._refresh_ready_state()
     assert window._updateButton.text() == "Checking…"
     assert not window._updateButton.isEnabled()
 
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _INSTALLING)
+    monkeypatch.setattr(
+        hub.updater,
+        "compute_readiness",
+        lambda addons_installing=False: _INSTALLING,
+    )
     window._refresh_ready_state()
     assert window._updateButton.text() == "Installing…"
     assert not window._updateButton.isEnabled()
@@ -115,8 +132,11 @@ def test_disabled_readiness_grays_update_button(qapp, window, monkeypatch):
     """No manifest available → the button keeps the UPDATE label but is
     grayed out and unclickable."""
     hub = window._hub
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _DISABLED)
+    monkeypatch.setattr(
+        hub.updater,
+        "compute_readiness",
+        lambda addons_installing=False: _DISABLED,
+    )
     window._refresh_ready_state()
     assert window._updateButton.text() == "UPDATE"
     assert not window._updateButton.isEnabled()
@@ -132,8 +152,9 @@ def test_disabled_readiness_grays_update_button(qapp, window, monkeypatch):
 
 def test_click_play_launches_game(qapp, window, monkeypatch):
     hub = window._hub
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _PLAY)
+    monkeypatch.setattr(
+        hub.updater, "compute_readiness", lambda addons_installing=False: _PLAY
+    )
     window._refresh_ready_state()
 
     window._updateButton.click()
@@ -147,12 +168,16 @@ def test_click_play_launches_game(qapp, window, monkeypatch):
 
 def test_click_play_shows_dxvk_notice(qapp, window, monkeypatch):
     hub = window._hub
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _PLAY)
+    monkeypatch.setattr(
+        hub.updater, "compute_readiness", lambda addons_installing=False: _PLAY
+    )
     hub.updater.launch_game.return_value = (True, True)
     informed = []
-    monkeypatch.setattr(QMessageBox, "information",
-                        staticmethod(lambda *a, **k: informed.append(True)))
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        staticmethod(lambda *a, **k: informed.append(True)),
+    )
 
     window._updateButton.click()
 
@@ -162,8 +187,11 @@ def test_click_play_shows_dxvk_notice(qapp, window, monkeypatch):
 
 def test_click_update_starts_update(qapp, window, monkeypatch):
     hub = window._hub
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _UPDATE)
+    monkeypatch.setattr(
+        hub.updater,
+        "compute_readiness",
+        lambda addons_installing=False: _UPDATE,
+    )
     window._refresh_ready_state()
 
     window._updateButton.click()
@@ -176,8 +204,11 @@ def test_click_terminate_terminates_game(qapp, window, monkeypatch):
     hub = window._hub
     terminate = Mock(return_value=True)
     monkeypatch.setattr(hub.updater, "terminate_game", terminate)
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _TERMINATE)
+    monkeypatch.setattr(
+        hub.updater,
+        "compute_readiness",
+        lambda addons_installing=False: _TERMINATE,
+    )
     window._refresh_ready_state()
 
     assert window._updateButton.text() == "TERMINATE"
@@ -193,8 +224,11 @@ def test_click_terminate_terminates_game(qapp, window, monkeypatch):
 def test_click_ignored_while_running(qapp, window, monkeypatch):
     hub = window._hub
     hub.updater.state.running = True
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _CHECKING)
+    monkeypatch.setattr(
+        hub.updater,
+        "compute_readiness",
+        lambda addons_installing=False: _CHECKING,
+    )
     window._refresh_ready_state()
     assert not window._updateButton.isEnabled()
 
@@ -221,10 +255,13 @@ def test_progress_changed_drives_bar(qapp, window):
 # ── operation finished / failed ───────────────────────────────────────────
 
 
-def test_update_finished_updates_version_and_readiness(qapp, window, monkeypatch):
+def test_update_finished_updates_version_and_readiness(
+    qapp, window, monkeypatch
+):
     hub = window._hub
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _PLAY)
+    monkeypatch.setattr(
+        hub.updater, "compute_readiness", lambda addons_installing=False: _PLAY
+    )
     hub.updater.state.client_version = "1.14.3"
 
     hub.dispatcher.post(OperationFinished("update", True, ""))
@@ -237,8 +274,11 @@ def test_update_finished_updates_version_and_readiness(qapp, window, monkeypatch
 
 def test_mods_finished_rerenders_mods_panel(qapp, window, monkeypatch):
     hub = window._hub
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _UPDATE)
+    monkeypatch.setattr(
+        hub.updater,
+        "compute_readiness",
+        lambda addons_installing=False: _UPDATE,
+    )
     panel = window._stack.widget(window._pages["MODS"])
     panel._running = True
 
@@ -246,19 +286,23 @@ def test_mods_finished_rerenders_mods_panel(qapp, window, monkeypatch):
     QTest.qWait(200)
 
     assert panel._running is False
-    assert window._versionLabel.text() == "v1.3"
+    assert window._versionLabel.text() == f"v{UPDATER_VERSION}"
     assert window._updateButton.text() == "UPDATE"
 
 
 def test_operation_failed_refreshes_readiness(qapp, window, monkeypatch):
     hub = window._hub
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _PLAY)
+    monkeypatch.setattr(
+        hub.updater, "compute_readiness", lambda addons_installing=False: _PLAY
+    )
     window._refresh_ready_state()
     assert window._updateButton.text() == "PLAY"
 
-    monkeypatch.setattr(hub.updater, "compute_readiness",
-                        lambda addons_installing=False: _UPDATE)
+    monkeypatch.setattr(
+        hub.updater,
+        "compute_readiness",
+        lambda addons_installing=False: _UPDATE,
+    )
     hub.dispatcher.post(OperationFailed("update", "boom"))
     QTest.qWait(200)
     assert window._updateButton.text() == "UPDATE"

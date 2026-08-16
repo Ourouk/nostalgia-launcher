@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .theme import Palette
 from .list_panel import (
     ScrollListPanel,
     add_row_divider,
@@ -27,6 +26,7 @@ from .list_panel import (
     add_star,
     make_row_shell,
 )
+from .theme import Palette
 
 
 class ModRow(QWidget):
@@ -34,8 +34,9 @@ class ModRow(QWidget):
     repo link, retry/update action, word-wrapped description and an error
     line under the row."""
 
-    def __init__(self, mod, rec, pend, latest_versions, action, palette,
-                 parent=None):
+    def __init__(
+        self, mod, rec, pend, latest_versions, action, palette, parent=None
+    ):
         super().__init__(parent)
         self.mod_id = mod["id"]
         p = palette
@@ -45,12 +46,16 @@ class ModRow(QWidget):
         installed_version = rec.installed_version if rec else None
         has_error = rec.error if rec else None
         installed = rec.present if rec is not None else False
-        enabled = (pend.enabled
-                   if pend is not None and pend.enabled is not None
-                   else (rec.enabled if rec else False))
-        ignore = (pend.ignore_updates
-                  if pend is not None and pend.ignore_updates is not None
-                  else (rec.ignore_updates if rec else False))
+        enabled = (
+            pend.enabled
+            if pend is not None and pend.enabled is not None
+            else (rec.enabled if rec else False)
+        )
+        ignore = (
+            pend.ignore_updates
+            if pend is not None and pend.ignore_updates is not None
+            else (rec.ignore_updates if rec else False)
+        )
         essential = mod.get("essential", False)
 
         name_col = p.err if has_error else (p.mod_hl if installed else p.text)
@@ -60,13 +65,15 @@ class ModRow(QWidget):
         root, top, top_layout = make_row_shell(self)
 
         # Fixed-width slot keeps names aligned whether or not the star shows.
-        self.star_label = add_star(top_layout, f"modsStar_{mid}", essential,
-                                   "Essential mod", p)
+        self.star_label = add_star(
+            top_layout, f"modsStar_{mid}", essential, "Essential mod", p
+        )
 
         self.name_label = QLabel(mod["name"], top)
         self.name_label.setObjectName(f"modsName_{mid}")
         self.name_label.setStyleSheet(
-            f"color: {name_col.name()}; font-weight: bold;")
+            f"color: {name_col.name()}; font-weight: bold;"
+        )
         top_layout.addWidget(self.name_label, 0, Qt.AlignTop)
 
         self.version_label = QLabel(f"  {version}", top)
@@ -92,11 +99,13 @@ class ModRow(QWidget):
                 f" border: 1px solid {p.gold.name()}; border-radius: 4px;"
                 f" background-color: transparent; padding: 1px 10px; }}"
                 f"QPushButton:hover {{ background-color: {p.gold.name()};"
-                f" color: {p.hdr.name()}; }}")
+                f" color: {p.hdr.name()}; }}"
+            )
             top_layout.addWidget(self.action_button)
 
-        self.link_label = add_row_link(top_layout, f"modsLink_{mid}",
-                                       mod["repo_url"], p)
+        self.link_label = add_row_link(
+            top_layout, f"modsLink_{mid}", mod["repo_url"], p
+        )
 
         self.ignore_check = QCheckBox(top)
         self.ignore_check.setObjectName(f"modsIgnore_{mid}")
@@ -116,7 +125,9 @@ class ModRow(QWidget):
         self.desc_label.setStyleSheet(f"color: {desc_col.name()};")
         root.addWidget(self.desc_label)
 
-        self.error_label = add_row_error(root, f"modsError_{mid}", has_error, p)
+        self.error_label = add_row_error(
+            root, f"modsError_{mid}", has_error, p
+        )
 
         add_row_divider(root, p)
 
@@ -130,10 +141,12 @@ class ModsPanel(ScrollListPanel):
     snapshot so the shell can paint a nav-tab badge.
     """
 
-    def __init__(self, mods, bridge, palette: Palette, parent=None,
-                 on_badge=None):
-        super().__init__("mods", bridge.modsLoaded, palette, bridge, on_badge,
-                         parent)
+    def __init__(
+        self, mods, bridge, palette: Palette, parent=None, on_badge=None
+    ):
+        super().__init__(
+            "mods", bridge.modsLoaded, palette, bridge, on_badge, parent
+        )
         self._mods = mods
         self._op_kind = "mods"
         self._running = False
@@ -152,8 +165,11 @@ class ModsPanel(ScrollListPanel):
         banner_layout = QHBoxLayout(banner)
         banner_layout.setContentsMargins(16, 12, 16, 8)
         banner_layout.setSpacing(0)
-        for text, color in (("Mods marked with ", p.text_dim),
-                            ("★", p.gold), (" are essential", p.text_dim)):
+        for text, color in (
+            ("Mods marked with ", p.text_dim),
+            ("★", p.gold),
+            (" are essential", p.text_dim),
+        ):
             part = QLabel(text, banner)
             part.setStyleSheet(f"color: {color.name()};")
             banner_layout.addWidget(part)
@@ -176,7 +192,8 @@ class ModsPanel(ScrollListPanel):
             f" background-color: {p.panel_bdr.name()};"
             f" padding: 5px 26px; font-weight: bold; }}"
             f"QPushButton:hover {{ background-color: {p.gold.name()};"
-            f" color: {p.hdr.name()}; }}")
+            f" color: {p.hdr.name()}; }}"
+        )
         self._apply_button.clicked.connect(self._apply)
         self._apply_button.setVisible(False)
         footer_layout.addWidget(self._apply_button)
@@ -189,20 +206,29 @@ class ModsPanel(ScrollListPanel):
         if state is None:
             return
         self._clear_rows()
-        for mod in sorted(self._mods.registry,
-                          key=lambda m: m["name"].lower()):
+        for mod in sorted(
+            self._mods.registry, key=lambda m: m["name"].lower()
+        ):
             mid = mod["id"]
             row = ModRow(
-                mod, state.records.get(mid), state.pending.get(mid),
-                state.latest_versions, self._mods.action_for(mid),
-                self._palette, self._content)
+                mod,
+                state.records.get(mid),
+                state.pending.get(mid),
+                state.latest_versions,
+                self._mods.action_for(mid),
+                self._palette,
+                self._content,
+            )
             row.enabled_check.toggled.connect(
-                lambda checked, m=mid: self._on_enabled_toggled(m, checked))
+                lambda checked, m=mid: self._on_enabled_toggled(m, checked)
+            )
             row.ignore_check.toggled.connect(
-                lambda checked, m=mid: self._on_ignore_toggled(m, checked))
+                lambda checked, m=mid: self._on_ignore_toggled(m, checked)
+            )
             if row.action_button is not None:
                 row.action_button.clicked.connect(
-                    lambda checked=False, m=mid: self._on_action(m))
+                    lambda checked=False, m=mid: self._on_action(m)
+                )
             self._rows[mid] = row
             self._add_row(row)
         self._render_unknown(state)
@@ -239,9 +265,11 @@ class ModsPanel(ScrollListPanel):
                 f" background-color: {p.panel_bdr.name()};"
                 f" padding: 1px 12px; }}"
                 f"QPushButton:hover {{ background-color: {p.gold.name()};"
-                f" color: {p.hdr.name()}; }}")
+                f" color: {p.hdr.name()}; }}"
+            )
             remove.clicked.connect(
-                lambda checked=False, n=name: self._on_remove_unknown(n))
+                lambda checked=False, n=name: self._on_remove_unknown(n)
+            )
             top_layout.addWidget(remove, 0, Qt.AlignTop)
             root.addWidget(top)
             add_row_divider(root, p)
@@ -255,7 +283,8 @@ class ModsPanel(ScrollListPanel):
         checkbox changes, or a failed mod the user may want to retry."""
         st = self._mods.state
         self._apply_button.setVisible(
-            bool(st.has_pending_changes or st.has_errors))
+            bool(st.has_pending_changes or st.has_errors)
+        )
 
     # ── actions ─────────────────────────────────────────────────────────────
 

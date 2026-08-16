@@ -13,8 +13,9 @@ from ..core.security_http import secure_urlopen
 
 def fetch_news_items() -> list:
     """news.json → [{id, title, date, body, url?, author?}, …]"""
-    req = urllib.request.Request(launcher.news_url(),
-                                 headers={"User-Agent": UA})
+    req = urllib.request.Request(
+        launcher.news_url(), headers={"User-Agent": UA}
+    )
     with secure_urlopen(req, timeout=NEWS_TIMEOUT) as r:
         data = json.load(r)
     items = data.get("items", [])
@@ -26,8 +27,9 @@ def fetch_news_items() -> list:
 
 def fetch_featured_post() -> dict | None:
     """Latest announcements-forum post → {id, title, author?, date, url, html}"""
-    req = urllib.request.Request(launcher.featured_news_url(),
-                                 headers={"User-Agent": UA})
+    req = urllib.request.Request(
+        launcher.featured_news_url(), headers={"User-Agent": UA}
+    )
     with secure_urlopen(req, timeout=NEWS_TIMEOUT) as r:
         data = json.load(r)
     return data if isinstance(data, dict) and data.get("id") else None

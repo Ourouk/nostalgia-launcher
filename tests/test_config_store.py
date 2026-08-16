@@ -23,7 +23,9 @@ def test_load_config_missing_returns_empty():
 
 
 def test_save_and_load_roundtrip():
-    config_store.save_config({"out_dir": "/games/octo", "tweaks": {"farClip": 1}})
+    config_store.save_config(
+        {"out_dir": "/games/octo", "tweaks": {"farClip": 1}}
+    )
     cfg = config_store.load_config()
     assert cfg["out_dir"] == "/games/octo"
     assert cfg["tweaks"] == {"farClip": 1}
@@ -44,14 +46,18 @@ def test_load_config_corrupt_returns_empty(tmp_path):
 
 def test_update_config_applies_mutation_and_preserves_other_keys():
     config_store.save_config({"out_dir": "/x", "keep": 42})
-    result = config_store.update_config(lambda c: c.__setitem__("mods", {"a": 1}))
+    result = config_store.update_config(
+        lambda c: c.__setitem__("mods", {"a": 1})
+    )
     assert result["keep"] == 42
     assert result["mods"] == {"a": 1}
     assert config_store.load_config()["keep"] == 42
 
 
 def test_update_config_saves_to_disk():
-    config_store.update_config(lambda c: c.setdefault("addons", {}).__setitem__("pfUI", {}))
+    config_store.update_config(
+        lambda c: c.setdefault("addons", {}).__setitem__("pfUI", {})
+    )
     assert config_store.load_config()["addons"] == {"pfUI": {}}
 
 
@@ -79,9 +85,12 @@ def test_concurrent_update_config_no_key_loss():
     def worker(worker_id):
         for i in range(n_writes):
             config_store.update_config(
-                lambda c, k=f"key_{worker_id}_{i}": c.__setitem__(k, True))
+                lambda c, k=f"key_{worker_id}_{i}": c.__setitem__(k, True)
+            )
 
-    threads = [threading.Thread(target=worker, args=(w,)) for w in range(n_threads)]
+    threads = [
+        threading.Thread(target=worker, args=(w,)) for w in range(n_threads)
+    ]
     for t in threads:
         t.start()
     for t in threads:
@@ -89,8 +98,11 @@ def test_concurrent_update_config_no_key_loss():
 
     cfg = config_store.load_config()
     assert len(cfg) == n_threads * n_writes
-    assert all(cfg[f"key_{w}_{i}"] is True
-               for w in range(n_threads) for i in range(n_writes))
+    assert all(
+        cfg[f"key_{w}_{i}"] is True
+        for w in range(n_threads)
+        for i in range(n_writes)
+    )
 
 
 def test_configure_migrates_legacy_config(tmp_path):
@@ -119,8 +131,9 @@ def test_configure_does_not_migrate_when_new_exists(tmp_path):
     legacy = tmp_path / "legacy.json"
     legacy.write_text('{"keep": false}')
 
-    config_store.configure(str(new), str(tmp_path / "cache.json"),
-                           str(legacy), "")
+    config_store.configure(
+        str(new), str(tmp_path / "cache.json"), str(legacy), ""
+    )
     assert config_store.load_config() == {"keep": True}
     config_store.configure("", "")
 
@@ -142,8 +155,9 @@ def test_configure_migrates_legacy_cache(tmp_path):
     legacy.write_text('{"/f": ["a"]}')
 
     new = tmp_path / "new" / "hash_cache.json"
-    config_store.configure(str(tmp_path / "config.json"), str(new),
-                           "", str(legacy))
+    config_store.configure(
+        str(tmp_path / "config.json"), str(new), "", str(legacy)
+    )
     assert config_store.load_cache() == {"/f": ["a"]}
     assert new.exists()
     assert new.parent.is_dir()
@@ -157,8 +171,9 @@ def test_configure_does_not_migrate_cache_when_new_exists(tmp_path):
     legacy = tmp_path / "legacy_cache.json"
     legacy.write_text('{"old": true}')
 
-    config_store.configure(str(tmp_path / "config.json"), str(new),
-                           "", str(legacy))
+    config_store.configure(
+        str(tmp_path / "config.json"), str(new), "", str(legacy)
+    )
     assert config_store.load_cache() == {"new": True}
     config_store.configure("", "")
 
@@ -169,8 +184,9 @@ def test_configure_migrates_and_creates_destination_parent(tmp_path):
     legacy.write_text('{"out_dir": "/x"}')
 
     new = tmp_path / "a" / "b" / "c" / "config.json"
-    config_store.configure(str(new), str(tmp_path / "cache.json"),
-                           str(legacy), "")
+    config_store.configure(
+        str(new), str(tmp_path / "cache.json"), str(legacy), ""
+    )
     assert new.parent.is_dir()
     assert config_store.load_config() == {"out_dir": "/x"}
     config_store.configure("", "")
@@ -184,15 +200,16 @@ def test_configure_migrates_to_bare_filename(monkeypatch, tmp_path):
     legacy = tmp_path / "legacy_config.json"
     legacy.write_text('{"out_dir": "/x"}')
 
-    config_store.configure("octo_config.json", str(tmp_path / "cache.json"),
-                           str(legacy), "")
+    config_store.configure(
+        "octo_config.json", str(tmp_path / "cache.json"), str(legacy), ""
+    )
     assert config_store.load_config() == {"out_dir": "/x"}
     config_store.configure("", "")
 
 
-def test_configure_migrate_copy_failure_warns_and_continues(tmp_path,
-                                                           monkeypatch,
-                                                           capsys):
+def test_configure_migrate_copy_failure_warns_and_continues(
+    tmp_path, monkeypatch, capsys
+):
     """A failed copy (unreadable legacy, etc.) writes a stderr note instead
     of crashing, and the app keeps running with no migrated file."""
     legacy = tmp_path / "legacy_config.json"
@@ -203,8 +220,9 @@ def test_configure_migrate_copy_failure_warns_and_continues(tmp_path,
         raise OSError("permission denied")
 
     monkeypatch.setattr(config_store.shutil, "copyfile", _broken_copy)
-    config_store.configure(str(new), str(tmp_path / "cache.json"),
-                           str(legacy), "")
+    config_store.configure(
+        str(new), str(tmp_path / "cache.json"), str(legacy), ""
+    )
     assert "migration" in capsys.readouterr().err
     assert not new.exists()
     assert config_store.load_config() == {}
@@ -218,8 +236,9 @@ def test_configure_legacy_new_same_path_is_noop(tmp_path):
     cfg = tmp_path / "config.json"
     cfg.write_text('{"keep": true}')
 
-    config_store.configure(str(cfg), str(tmp_path / "cache.json"),
-                           str(cfg), "")
+    config_store.configure(
+        str(cfg), str(tmp_path / "cache.json"), str(cfg), ""
+    )
     assert config_store.load_config() == {"keep": True}
     assert cfg.read_text() == '{"keep": true}'
     config_store.configure("", "")
@@ -230,8 +249,9 @@ def test_configure_legacy_new_same_path_missing_is_noop(tmp_path):
     file onto itself."""
     cfg = tmp_path / "config.json"
 
-    config_store.configure(str(cfg), str(tmp_path / "cache.json"),
-                           str(cfg), "")
+    config_store.configure(
+        str(cfg), str(tmp_path / "cache.json"), str(cfg), ""
+    )
     assert config_store.load_config() == {}
     assert not cfg.exists()
     config_store.configure("", "")
@@ -246,8 +266,10 @@ def test_configure_migrates_legacy_pairs(tmp_path):
     new = tmp_path / "new" / "vanilla_wow_launcher_mods_custom.json"
 
     config_store.configure(
-        str(tmp_path / "config.json"), str(tmp_path / "cache.json"),
-        legacy_pairs=[(str(legacy), str(new))])
+        str(tmp_path / "config.json"),
+        str(tmp_path / "cache.json"),
+        legacy_pairs=[(str(legacy), str(new))],
+    )
     assert new.exists()
     assert new.read_text() == "[]"
     assert not new.parent.joinpath("cache.json").exists()
@@ -259,7 +281,10 @@ def test_configure_legacy_pairs_same_path_is_noop(tmp_path):
     cfg = tmp_path / "config.json"
     cfg.write_text('{"keep": true}')
 
-    config_store.configure(str(cfg), str(tmp_path / "cache.json"),
-                           legacy_pairs=[(str(cfg), str(cfg))])
+    config_store.configure(
+        str(cfg),
+        str(tmp_path / "cache.json"),
+        legacy_pairs=[(str(cfg), str(cfg))],
+    )
     assert cfg.read_text() == '{"keep": true}'
     config_store.configure("", "")

@@ -12,7 +12,11 @@ import pytest
 
 import vanilla_wow_launcher.controllers.news as nc
 from vanilla_wow_launcher.controllers.news import NewsController
-from vanilla_wow_launcher.state.events import EventDispatcher, LogMessage, NewsLoaded
+from vanilla_wow_launcher.state.events import (
+    EventDispatcher,
+    LogMessage,
+    NewsLoaded,
+)
 
 
 class FakeFeed:
@@ -23,7 +27,12 @@ class FakeFeed:
     """
 
     calls = {"featured": 0, "items": 0}
-    featured = {"id": 1, "title": "Post", "html": "<p>hi</p>", "date": "2026-01-01"}
+    featured = {
+        "id": 1,
+        "title": "Post",
+        "html": "<p>hi</p>",
+        "date": "2026-01-01",
+    }
     items = [{"id": 1, "title": "Item", "date": "2026-01-01T00:00:00+01:00"}]
     fail = False
     gate = threading.Event()
@@ -59,7 +68,9 @@ def controller(feed):
     return NewsController(EventDispatcher())
 
 
-def _collect(controller, kinds=("featured", "items"), timeout=2.0, release=True):
+def _collect(
+    controller, kinds=("featured", "items"), timeout=2.0, release=True
+):
     """Release the fetch gate (unless release=False), then drain until a
     non-loading NewsLoaded has arrived for every `kind`. Returns every event
     collected along the way (loading + results)."""
@@ -69,13 +80,15 @@ def _collect(controller, kinds=("featured", "items"), timeout=2.0, release=True)
     deadline = time.monotonic() + timeout
     while True:
         collected.extend(controller._dispatcher.drain())
-        got = {e.kind for e in collected
-               if isinstance(e, NewsLoaded) and not e.data.loading}
+        got = {
+            e.kind
+            for e in collected
+            if isinstance(e, NewsLoaded) and not e.data.loading
+        }
         if all(k in got for k in kinds):
             return collected
         if time.monotonic() > deadline:
-            raise AssertionError(
-                f"news fetches never completed; got {got!r}")
+            raise AssertionError(f"news fetches never completed; got {got!r}")
         time.sleep(0.005)
 
 
@@ -88,11 +101,15 @@ def _wait_len(dispatcher, n, timeout=2.0):
 
 
 def _results(collected):
-    return {e.kind: e.data for e in collected
-            if isinstance(e, NewsLoaded) and not e.data.loading}
+    return {
+        e.kind: e.data
+        for e in collected
+        if isinstance(e, NewsLoaded) and not e.data.loading
+    }
 
 
 # ── load flow ───────────────────────────────────────────────────────────
+
 
 def test_load_posts_loading_events_first(controller, feed):
     controller.load()
@@ -118,6 +135,7 @@ def test_load_posts_result_events_and_state(controller, feed):
 
 
 # ── TTL caching ─────────────────────────────────────────────────────────
+
 
 def test_refresh_within_ttl_uses_cache(controller, feed):
     controller.load()
@@ -162,6 +180,7 @@ def test_invalidate_resets_ttl(controller, feed):
 
 # ── error path / offline behavior ───────────────────────────────────────
 
+
 def test_error_sets_failure_state(controller, feed):
     feed.fail = True
     controller.load()
@@ -197,6 +216,7 @@ def test_none_result_is_not_loading(controller, feed):
 
 # ── event delivery ──────────────────────────────────────────────────────
 
+
 def test_events_delivered_to_subscribers(controller, feed):
     got = []
     controller._dispatcher.subscribe(got.append)
@@ -204,7 +224,9 @@ def test_events_delivered_to_subscribers(controller, feed):
     feed.gate.set()
     _wait_len(controller._dispatcher, 2)
     controller._dispatcher.dispatch_all()
-    featured = [e for e in got if isinstance(e, NewsLoaded) and e.kind == "featured"]
+    featured = [
+        e for e in got if isinstance(e, NewsLoaded) and e.kind == "featured"
+    ]
     assert len(featured) == 2
     assert featured[0].data.loading is True
     assert featured[1].data.loading is False

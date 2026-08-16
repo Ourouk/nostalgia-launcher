@@ -24,19 +24,23 @@ from .core.constants import (
 
 _QT_UNAVAILABLE = (
     "Vanilla WoW Launcher needs PySide6 (Qt) to run. "
-    "Install it with `uv sync` or `pip install PySide6`.\n")
+    "Install it with `uv sync` or `pip install PySide6`.\n"
+)
 
 
 def _parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="vanilla-wow-launcher",
         description="Vanilla WoW Launcher — updater and mod manager for the Vanilla "
-                    "WoW client.")
+        "WoW client.",
+    )
     parser.add_argument(
-        "--launcher-config", metavar="PATH",
+        "--launcher-config",
+        metavar="PATH",
         help="Path to the vanilla_wow_launcher.json file that configures "
-             "the server, endpoints and mirrors (auto-discovered next to "
-             "the executable / in the repo root when omitted).")
+        "the server, endpoints and mirrors (auto-discovered next to "
+        "the executable / in the repo root when omitted).",
+    )
     return parser.parse_args(argv)
 
 
@@ -52,6 +56,7 @@ def resolve_backend(name=None) -> type | None:
         name = os.environ.get("VANILLA_WOW_UI_BACKEND", "qt")
     if name in ("qt", "pyside6"):
         from .ui.qt.app import QtVanillaWoWLauncherApp
+
         return QtVanillaWoWLauncherApp
     return None
 
@@ -86,7 +91,8 @@ def _first_launch() -> int:
     if chosen is None:
         sys.stderr.write(
             "No launcher configuration selected. A vanilla_wow_launcher.json "
-            "is required — launch again with --launcher-config.\n")
+            "is required — launch again with --launcher-config.\n"
+        )
         return 1
     _cfg, err = launcher.configure(chosen)
     if err:
@@ -107,8 +113,10 @@ def _first_launch() -> int:
 def _pick_launcher_config() -> str | None:
     """Modal first-launch config picker; returns the chosen path or None."""
     from PySide6.QtWidgets import QDialog
+
     from .ui.qt.app import create_qt_app
     from .ui.qt.launcher_config_dialog import LauncherConfigDialog
+
     create_qt_app()
     dlg = LauncherConfigDialog(initial_path=launcher.discover_path())
     if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -119,10 +127,12 @@ def _pick_launcher_config() -> str | None:
 def _run_backend() -> int:
     """Config-store setup + Qt backend resolution/construction/run."""
     config_store.configure(
-        CONFIG_FILE, CACHE_FILE,
+        CONFIG_FILE,
+        CACHE_FILE,
         legacy_config=LEGACY_CONFIG_FILES,
         legacy_cache=LEGACY_CACHE_FILES,
-        legacy_pairs=legacy_custom_pairs())
+        legacy_pairs=legacy_custom_pairs(),
+    )
     backend = os.environ.get("VANILLA_WOW_UI_BACKEND", "qt")
     try:
         app_cls = resolve_backend(backend)
@@ -137,7 +147,8 @@ def _run_backend() -> int:
     except Exception as e:
         sys.stderr.write(
             f"Vanilla WoW Launcher could not start: {e}\n"
-            "A graphical display (X11/Wayland) is required.\n")
+            "A graphical display (X11/Wayland) is required.\n"
+        )
         return 1
     app.show()
     return app.run()

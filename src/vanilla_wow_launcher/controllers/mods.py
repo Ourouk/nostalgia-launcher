@@ -11,9 +11,9 @@ import os
 import threading
 
 from ..core import config_store
-from ..services import mods
 from ..core.constants import DEFAULT_OUT_DIR
 from ..core.errors import describe_install_error
+from ..services import mods
 from ..state.events import (
     EventDispatcher,
     LogMessage,
@@ -40,8 +40,12 @@ class ModsController:
         self._default_mods_install_started = False
         self._busy = False
         if get_out_dir is None:
-            get_out_dir = lambda: config_store.load_config().get(
-                "out_dir", DEFAULT_OUT_DIR)
+
+            def get_out_dir():
+                return config_store.load_config().get(
+                    "out_dir", DEFAULT_OUT_DIR
+                )
+
         self._get_out_dir = get_out_dir
         self.state.records, self.state.unknown = self._load_records()
 
@@ -75,8 +79,9 @@ class ModsController:
 
         def worker():
             latest = {}
-            if (config_store.load_config().get("mods_catalog_cache") or {}).get(
-                    "catalog") is None:
+            if (
+                config_store.load_config().get("mods_catalog_cache") or {}
+            ).get("catalog") is None:
                 # Never cached: fetch once so the tab isn't empty.
                 try:
                     registry = mods.mods_registry(force=True)
@@ -102,7 +107,8 @@ class ModsController:
 
     def set_ignore(self, mod_id: str, ignore_updates: bool):
         self.state.pending.setdefault(
-            mod_id, ModPending()).ignore_updates = ignore_updates
+            mod_id, ModPending()
+        ).ignore_updates = ignore_updates
 
     def action_for(self, mod_id: str) -> str | None:
         """'retry' when the mod is in an error state, 'update' when a newer
@@ -110,11 +116,15 @@ class ModsController:
         rec = self.state.records.get(mod_id)
         if rec is not None and rec.error:
             return "retry"
-        mod = next((m for m in mods.mods_registry() if m["id"] == mod_id), None)
+        mod = next(
+            (m for m in mods.mods_registry() if m["id"] == mod_id), None
+        )
         if mod is None:
             return None
         live = {"latest_version": self.state.latest_versions.get(mod_id)}
-        if mods.mod_update_available(mod, self._state_dict(mod_id) or {}, live):
+        if mods.mod_update_available(
+            mod, self._state_dict(mod_id) or {}, live
+        ):
             return "update"
         return None
 
@@ -125,8 +135,9 @@ class ModsController:
         if not out:
             return False
         self._busy = True
-        threading.Thread(target=self._apply_worker, args=(out, only_mod_id),
-                         daemon=True).start()
+        threading.Thread(
+            target=self._apply_worker, args=(out, only_mod_id), daemon=True
+        ).start()
         return True
 
     def maybe_install_essential_mods(self) -> bool:
@@ -153,10 +164,12 @@ class ModsController:
         for mod in mods.mods_registry():
             if mod.get("essential", False) and auto_mods:
                 self.state.pending.setdefault(
-                    mod["id"], ModPending()).enabled = True
+                    mod["id"], ModPending()
+                ).enabled = True
 
-        self._dispatcher.post(LogMessage("\nInstalling essential mods...\n",
-                                         "acct"))
+        self._dispatcher.post(
+            LogMessage("\nInstalling essential mods...\n", "acct")
+        )
         self.apply()
         return True
 
@@ -214,29 +227,42 @@ class ModsController:
         by_id = {m["id"]: m for m in registry}
         for mid, rec in records.items():
             mod = by_id.get(mid)
-            rec.present = (mods.mod_installed_files_present(mod, out)
-                           if mod is not None else
-                           bool(rec.installed_files) and all(
-                               os.path.exists(os.path.join(out, f))
-                               for f in rec.installed_files))
+            rec.present = (
+                mods.mod_installed_files_present(mod, out)
+                if mod is not None
+                else bool(rec.installed_files)
+                and all(
+                    os.path.exists(os.path.join(out, f))
+                    for f in rec.installed_files
+                )
+            )
         adopted = {}
         for mod in registry:
             mid = mod["id"]
-            if mid in records or not mods.mod_installed_files_present(mod, out):
+            if mid in records or not mods.mod_installed_files_present(
+                mod, out
+            ):
                 continue
-            declared = (list(mod.get("installed_files") or [])
-                        or ([mod["register_dll"]] if mod.get("register_dll")
-                            else []))
-            records[mid] = ModState(enabled=True, installed_version=None,
-                                    installed_files=declared, present=True)
+            declared = list(mod.get("installed_files") or []) or (
+                [mod["register_dll"]] if mod.get("register_dll") else []
+            )
+            records[mid] = ModState(
+                enabled=True,
+                installed_version=None,
+                installed_files=declared,
+                present=True,
+            )
             adopted[mid] = {
-                "enabled": True, "installed_version": None,
-                "installed_files": declared, "ignore_updates": False,
+                "enabled": True,
+                "installed_version": None,
+                "installed_files": declared,
+                "ignore_updates": False,
                 "error": None,
             }
         if adopted:
             config_store.update_config(
-                lambda c: c.setdefault("mods", {}).update(adopted))
+                lambda c: c.setdefault("mods", {}).update(adopted)
+            )
         unknown = mods.scan_unknown_mods(out, registry)
         return records, unknown
 
@@ -264,7 +290,9 @@ class ModsController:
             state = self._state_dict(mod["id"])
             if state is None or state.get("error"):
                 continue
-            live = {"latest_version": self.state.latest_versions.get(mod["id"])}
+            live = {
+                "latest_version": self.state.latest_versions.get(mod["id"])
+            }
             if mods.mod_update_available(mod, state, live):
                 count += 1
         self.state.updates_count = count
@@ -298,13 +326,16 @@ class ModsController:
                 # only ever "enabled" because the user (or the one-time
                 # default-mods seed) explicitly said so.
                 pend = pending.get(mid)
-                enabled = (pend.enabled
-                           if pend is not None and pend.enabled is not None
-                           else state.get("enabled", False))
-                ignore_upd = (pend.ignore_updates
-                              if pend is not None
-                              and pend.ignore_updates is not None
-                              else state.get("ignore_updates", False))
+                enabled = (
+                    pend.enabled
+                    if pend is not None and pend.enabled is not None
+                    else state.get("enabled", False)
+                )
+                ignore_upd = (
+                    pend.ignore_updates
+                    if pend is not None and pend.ignore_updates is not None
+                    else state.get("ignore_updates", False)
+                )
 
                 # A targeted single-mod update/retry always means "install this
                 # mod". Without this, retrying a failed install is a no-op: the
@@ -314,40 +345,53 @@ class ModsController:
                     enabled = True
 
                 installed_ver = state.get("installed_version")
-                is_installed = mods.mod_installed_files_present(mod,
-                                                                client_dir)
+                is_installed = mods.mod_installed_files_present(
+                    mod, client_dir
+                )
 
-                needs_install   = enabled and not is_installed
+                needs_install = enabled and not is_installed
                 needs_uninstall = not enabled and is_installed
 
                 needs_version_lookup = needs_install or (
-                    enabled and is_installed and not ignore_upd)
-                latest_ver  = None
+                    enabled and is_installed and not ignore_upd
+                )
+                latest_ver = None
                 mod_release = None
                 if needs_version_lookup:
                     try:
-                        if mod["source"]["kind"] in ("github_release",
-                                                     "codeberg_release"):
+                        if mod["source"]["kind"] in (
+                            "github_release",
+                            "codeberg_release",
+                        ):
                             mod_release = mods._fetch_release_cached(mod)
-                            latest_ver = (mods._release_version(mod, mod_release)
-                                          if mod_release else None)
+                            latest_ver = (
+                                mods._release_version(mod, mod_release)
+                                if mod_release
+                                else None
+                            )
                         else:
-                            latest_ver = mods.fetch_mod_latest_version_cached(mod)
+                            latest_ver = mods.fetch_mod_latest_version_cached(
+                                mod
+                            )
                     except Exception:
                         pass
 
-                update_avail = (is_installed and
-                                latest_ver is not None and
-                                latest_ver != installed_ver and
-                                not ignore_upd)
+                update_avail = (
+                    is_installed
+                    and latest_ver is not None
+                    and latest_ver != installed_ver
+                    and not ignore_upd
+                )
                 needs_update = enabled and update_avail
 
                 if not (needs_install or needs_uninstall or needs_update):
                     if mid in pending:
-                        mods_cfg.setdefault(mid, {}).update({
-                            "enabled":        enabled,
-                            "ignore_updates": ignore_upd,
-                        })
+                        mods_cfg.setdefault(mid, {}).update(
+                            {
+                                "enabled": enabled,
+                                "ignore_updates": ignore_upd,
+                            }
+                        )
                     # A previously failed mod that the user leaves disabled on
                     # a later Apply counts as dismissed — clear the error so it
                     # stops blocking the PLAY button.
@@ -355,87 +399,110 @@ class ModsController:
                         mods_cfg.setdefault(mid, {})["error"] = None
                     continue
 
-                action = ("Installing" if needs_install else
-                          "Updating" if needs_update else "Removing")
+                action = (
+                    "Installing"
+                    if needs_install
+                    else "Updating"
+                    if needs_update
+                    else "Removing"
+                )
                 self._dispatcher.post(
-                    StatusChanged(f"{action} {mod['name']}…"))
+                    StatusChanged(f"{action} {mod['name']}…")
+                )
 
                 try:
                     if needs_install:
-                        self._dispatcher.post(LogMessage(
-                            f"\nInstalling {mod['name']} {latest_ver}..."))
+                        self._dispatcher.post(
+                            LogMessage(
+                                f"\nInstalling {mod['name']} {latest_ver}..."
+                            )
+                        )
                         written = mods.install_mod(
-                            mod, client_dir, release=mod_release)
+                            mod, client_dir, release=mod_release
+                        )
                         if mod.get("register_dll"):
                             mods.add_dll(client_dir, mod["register_dll"])
-                        resolved_ver = (mod.pop("_resolved_version", None)
-                                        or latest_ver or "unknown")
+                        resolved_ver = (
+                            mod.pop("_resolved_version", None)
+                            or latest_ver
+                            or "unknown"
+                        )
                         mods_cfg[mid] = {
-                            "enabled":           True,
+                            "enabled": True,
                             "installed_version": resolved_ver,
-                            "installed_files":   written,
-                            "ignore_updates":    ignore_upd,
-                            "error":             None,
+                            "installed_files": written,
+                            "ignore_updates": ignore_upd,
+                            "error": None,
                         }
                         if mid == "dxvk":
                             set_dxvk_notice = True
-                        self._dispatcher.post(LogMessage(
-                            f"  \u2713 {mod['name']} installed."))
+                        self._dispatcher.post(
+                            LogMessage(f"  \u2713 {mod['name']} installed.")
+                        )
 
                     elif needs_uninstall:
-                        self._dispatcher.post(LogMessage(
-                            f"\nUninstalling {mod['name']}..."))
+                        self._dispatcher.post(
+                            LogMessage(f"\nUninstalling {mod['name']}...")
+                        )
                         mods.uninstall_mod(mod, client_dir)
                         if mod.get("register_dll"):
                             mods.remove_dll(client_dir, mod["register_dll"])
                         mods_cfg[mid] = {
-                            "enabled":           False,
+                            "enabled": False,
                             "installed_version": None,
-                            "installed_files":   [],
-                            "ignore_updates":    ignore_upd,
-                            "error":             None,
+                            "installed_files": [],
+                            "ignore_updates": ignore_upd,
+                            "error": None,
                         }
-                        self._dispatcher.post(LogMessage(
-                            f"  \u2713 {mod['name']} uninstalled."))
+                        self._dispatcher.post(
+                            LogMessage(f"  \u2713 {mod['name']} uninstalled.")
+                        )
 
                     elif needs_update:
-                        self._dispatcher.post(LogMessage(
-                            f"\nUpdating {mod['name']} "
-                            f"{installed_ver} \u2192 {latest_ver}..."))
+                        self._dispatcher.post(
+                            LogMessage(
+                                f"\nUpdating {mod['name']} "
+                                f"{installed_ver} \u2192 {latest_ver}..."
+                            )
+                        )
                         mods.uninstall_mod(mod, client_dir)
                         written = mods.install_mod(
-                            mod, client_dir, release=mod_release)
+                            mod, client_dir, release=mod_release
+                        )
                         if mod.get("register_dll"):
                             mods.add_dll(client_dir, mod["register_dll"])
                         mods_cfg[mid] = {
-                            "enabled":           True,
+                            "enabled": True,
                             "installed_version": latest_ver,
-                            "installed_files":   written,
-                            "ignore_updates":    ignore_upd,
-                            "error":             None,
+                            "installed_files": written,
+                            "ignore_updates": ignore_upd,
+                            "error": None,
                         }
                         if mid == "dxvk":
                             set_dxvk_notice = True
-                        self._dispatcher.post(LogMessage(
-                            f"  \u2713 {mod['name']} updated."))
+                        self._dispatcher.post(
+                            LogMessage(f"  \u2713 {mod['name']} updated.")
+                        )
 
                 except Exception as e:
                     err = describe_install_error(e)
-                    self._dispatcher.post(LogMessage(
-                        f"  \u2717 {mod['name']}: {err}"))
+                    self._dispatcher.post(
+                        LogMessage(f"  \u2717 {mod['name']}: {err}")
+                    )
                     mods_cfg[mid] = {
-                        "enabled":           False,
+                        "enabled": False,
                         "installed_version": None,
-                        "installed_files":   [],
-                        "ignore_updates":    ignore_upd,
-                        "error":             err,
+                        "installed_files": [],
+                        "ignore_updates": ignore_upd,
+                        "error": err,
                     }
 
             # Merge just the "mods" key into the current on-disk config (which
             # other threads may have written to during this long install),
             # rather than saving our stale whole-config snapshot.
-            sorted_mods = dict(sorted(mods_cfg.items(),
-                                      key=lambda kv: kv[0].lower()))
+            sorted_mods = dict(
+                sorted(mods_cfg.items(), key=lambda kv: kv[0].lower())
+            )
 
             def _merge(c):
                 c["mods"] = sorted_mods

@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...controllers.update import Readiness
 from ...core import launcher
 from ...core.constants import UPDATER_VERSION
 from ...core.log_sink import _LOG_Q, log
@@ -91,8 +92,9 @@ class MainWindow(QMainWindow):
         self._oneShotTimers: list = []
         self.setStyleSheet(theme_qss(self._palette))
         self.setWindowTitle("Vanilla WoW Launcher")
-        self.setMinimumSize(clamp(BASE_W // 2, 560, 800),
-                            clamp(BASE_H // 2, 420, 600))
+        self.setMinimumSize(
+            clamp(BASE_W // 2, 560, 800), clamp(BASE_H // 2, 420, 600)
+        )
 
         central = QWidget(self)
         root = QVBoxLayout(central)
@@ -145,8 +147,9 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(24, 12, 24, 12)
         layout.setSpacing(16)
 
-        self._wordmark = QLabel(launcher.server_name() or "Vanilla WoW Launcher",
-                                header)
+        self._wordmark = QLabel(
+            launcher.server_name() or "Vanilla WoW Launcher", header
+        )
         font = self._wordmark.font()
         font.setPointSize(17)
         font.setBold(True)
@@ -161,7 +164,8 @@ class MainWindow(QMainWindow):
         wmLayout.addWidget(self._wordmark)
         self._updateAvailableLabel = QLabel("Update available!", wordmarkBox)
         self._updateAvailableLabel.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 8pt;")
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 8pt;"
+        )
         self._updateAvailableLabel.hide()
         wmLayout.addWidget(self._updateAvailableLabel)
         self._updateAvailableShown = False
@@ -205,19 +209,22 @@ class MainWindow(QMainWindow):
             badge.setStyleSheet(
                 f"background-color: {p.gold.name()}; color: {p.hdr.name()};"
                 f" border-radius: 8px; font-size: 8pt; font-weight: bold;"
-                f" padding: 0 4px;")
+                f" padding: 0 4px;"
+            )
             badge.hide()
             grid.addWidget(badge, 0, 0, Qt.AlignTop | Qt.AlignRight)
             self._tabBadges[name] = badge
             navLayout.addWidget(holder)
             button.clicked.connect(
-                lambda checked=False, tab=name: self.switch_tab(tab))
+                lambda checked=False, tab=name: self.switch_tab(tab)
+            )
         navRow.setStyleSheet(
             f"QPushButton {{ color: {p.text.name()}; background: transparent;"
             " border: none;"
             " padding: 6px 12px; font-size: 10pt; font-weight: bold; }"
             f"QPushButton:hover {{ color: {p.gold.name()}; }}"
-            f"QPushButton:checked {{ color: {p.gold_lt.name()}; }}")
+            f"QPushButton:checked {{ color: {p.gold_lt.name()}; }}"
+        )
         layout.addWidget(navRow)
 
         layout.addStretch(1)
@@ -231,9 +238,11 @@ class MainWindow(QMainWindow):
             self._discordButton.setCursor(Qt.PointingHandCursor)
             self._discordButton.setStyleSheet(
                 f"QToolButton {{ color: {p.text_dim.name()}; font-weight: bold; }}"
-                f"QToolButton:hover {{ color: {p.gold.name()}; }}")
+                f"QToolButton:hover {{ color: {p.gold.name()}; }}"
+            )
             self._discordButton.clicked.connect(
-                lambda: webbrowser.open(discord_url))
+                lambda: webbrowser.open(discord_url)
+            )
             layout.addWidget(self._discordButton)
 
         self._gearButton = QToolButton(header)
@@ -242,7 +251,8 @@ class MainWindow(QMainWindow):
         self._gearButton.setCursor(Qt.PointingHandCursor)
         self._gearButton.setStyleSheet(
             f"QToolButton {{ color: {p.text_dim.name()}; font-size: 14pt; }}"
-            f"QToolButton:hover {{ color: {p.gold.name()}; }}")
+            f"QToolButton:hover {{ color: {p.gold.name()}; }}"
+        )
         self._gearButton.clicked.connect(self._open_settings_dialog)
         layout.addWidget(self._gearButton)
 
@@ -265,8 +275,12 @@ class MainWindow(QMainWindow):
             return
         scaled = pixmap.scaledToHeight(_LOGO_HEIGHT, Qt.SmoothTransformation)
         if scaled.width() > _LOGO_MAX_WIDTH:
-            scaled = scaled.scaled(_LOGO_MAX_WIDTH, _LOGO_HEIGHT,
-                                   Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            scaled = scaled.scaled(
+                _LOGO_MAX_WIDTH,
+                _LOGO_HEIGHT,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
         self._wordmark.setPixmap(scaled)
 
     def _build_central(self) -> QStackedWidget:
@@ -274,23 +288,38 @@ class MainWindow(QMainWindow):
         self._pages: dict[str, int] = {}
         for i, name in enumerate(self.TABS):
             if name == "NEWS":
-                page = NewsPanel(self._hub.news, self._hub.bridge,
-                                 self._palette, self._stack)
+                page = NewsPanel(
+                    self._hub.news,
+                    self._hub.bridge,
+                    self._palette,
+                    self._stack,
+                )
             elif name == "TWEAKS":
-                page = TweaksPanel(self._hub.tweaks, self._hub.bridge,
-                                   self._palette, self._stack)
+                page = TweaksPanel(
+                    self._hub.tweaks,
+                    self._hub.bridge,
+                    self._palette,
+                    self._stack,
+                )
             elif name == "ADDONS":
                 page = AddonsPanel(
-                    self._hub.addons, self._hub.bridge,
-                    self._palette, self._stack,
-                    on_badge=lambda n: self.set_tab_badge("ADDONS", n))
+                    self._hub.addons,
+                    self._hub.bridge,
+                    self._palette,
+                    self._stack,
+                    on_badge=lambda n: self.set_tab_badge("ADDONS", n),
+                )
                 page.customAddonRequested.connect(
-                    self._on_custom_addon_requested)
+                    self._on_custom_addon_requested
+                )
             elif name == "MODS":
                 page = ModsPanel(
-                    self._hub.mods, self._hub.bridge,
-                    self._palette, self._stack,
-                    on_badge=lambda n: self.set_tab_badge("MODS", n))
+                    self._hub.mods,
+                    self._hub.bridge,
+                    self._palette,
+                    self._stack,
+                    on_badge=lambda n: self.set_tab_badge("MODS", n),
+                )
             else:
                 page = QLabel(f"{name} panel (C{i + 16})", self._stack)
                 page.setAlignment(Qt.AlignCenter)
@@ -323,26 +352,30 @@ class MainWindow(QMainWindow):
                 f" {p.gold_lt.name()}; border-radius: 6px;"
                 " padding: 8px 26px; font-weight: bold; }"
                 f"QPushButton:hover {{ background-color:"
-                f" {p.gold_lt.name()}; }}"),
+                f" {p.gold_lt.name()}; }}"
+            ),
             "play": (
                 f"QPushButton {{ background-color: {p.green_btn.name()};"
                 " color: #ffffff; border: 1px solid"
                 f" {p.green_hov.name()}; border-radius: 6px;"
                 " padding: 8px 26px; font-weight: bold; }"
                 f"QPushButton:hover {{ background-color:"
-                f" {p.green_hov.name()}; }}"),
+                f" {p.green_hov.name()}; }}"
+            ),
             "terminate": (
                 f"QPushButton {{ background-color: {p.err.name()};"
                 " color: #ffffff; border: 1px solid"
                 f" {p.err.name()}; border-radius: 6px;"
                 " padding: 8px 26px; font-weight: bold; }"
                 f"QPushButton:hover {{ background-color:"
-                f" {p.err.name()}; }}"),
+                f" {p.err.name()}; }}"
+            ),
             "busy": (
                 f"QPushButton {{ background-color: {p.panel.name()};"
                 f" color: {p.text_dim.name()}; border: 1px solid"
                 f" {p.panel_bdr.name()}; border-radius: 6px;"
-                " padding: 8px 26px; font-weight: bold; }"),
+                " padding: 8px 26px; font-weight: bold; }"
+            ),
         }
         self._updateButton = QPushButton("UPDATE", left)
         self._updateButton.setObjectName("updateButton")
@@ -371,9 +404,10 @@ class MainWindow(QMainWindow):
         self._progressBar.setStyleSheet(
             f"QProgressBar {{ background-color: {p.hdr.name()};"
             " border: 1px solid"
-            f" {p.panel_bdr.name()}; border-radius: 3px; height: 8px; }"
+            f" {p.panel_bdr.name()}; border-radius: 3px; height: 8px; }}"
             f"QProgressBar::chunk {{ background-color: {p.gold.name()};"
-            " border-radius: 3px; }")
+            " border-radius: 3px; }"
+        )
         rightLayout.addWidget(self._progressBar)
 
         self._progressLabel = QLabel("", right)
@@ -450,7 +484,8 @@ class MainWindow(QMainWindow):
         """
         if self._settingsDialog is None:
             dialog = SettingsDialog(
-                self._hub.settings, self._hub.bridge, self._palette, self)
+                self._hub.settings, self._hub.bridge, self._palette, self
+            )
             dialog.showLogsRequested.connect(self._on_show_logs_requested)
             dialog.finished.connect(self._on_settings_finished)
             self._settingsDialog = dialog
@@ -462,21 +497,25 @@ class MainWindow(QMainWindow):
         """First-run close: run the deferred verification against the chosen
         folder, recommend the Defender exclusion once, then mark the prompt
         done so closing Settings again never re-asks."""
-        if (self._hub.settings.client_update_enabled
-                and self._hub.settings.state.first_run_verify_pending):
+        if (
+            self._hub.settings.client_update_enabled
+            and self._hub.settings.state.first_run_verify_pending
+        ):
             self._hub.settings.state.first_run_verify_pending = False
             self._after(100, lambda: self._start_verify(overwrite_config=True))
         if not self._hub.settings.state.first_run_av_pending:
             return
         if self._hub.settings.should_prompt_av():
             ret = QMessageBox.question(
-                self, "Game folder changed",
+                self,
+                "Game folder changed",
                 "It is highly recommended to add the game folder to your "
                 "antivirus exclusions. Antivirus software may incorrectly "
                 "detect some mods as threats and prevent them from being "
                 "downloaded or installed properly.\n\n"
                 "Do you want to add the game folder to Defender exclusions?",
-                QMessageBox.Yes | QMessageBox.No)
+                QMessageBox.Yes | QMessageBox.No,
+            )
             if ret == QMessageBox.Yes:
                 self._hub.settings.allow_through_antivirus()
         self._hub.settings.av_prompt_dismissed()
@@ -529,11 +568,19 @@ class MainWindow(QMainWindow):
         line = msg if msg.endswith("\n") else msg + "\n"
         if not tag:
             ml = line.lower()
-            if "✓" in line or "success" in ml or "complete" in ml \
-                    or "up to date" in ml:
+            if (
+                "✓" in line
+                or "success" in ml
+                or "complete" in ml
+                or "up to date" in ml
+            ):
                 tag = "ok"
-            elif "✗" in line or "error" in ml or "fail" in ml \
-                    or "mismatch" in ml:
+            elif (
+                "✗" in line
+                or "error" in ml
+                or "fail" in ml
+                or "mismatch" in ml
+            ):
                 tag = "err"
             elif line.strip().startswith("["):
                 tag = "acct"
@@ -595,7 +642,8 @@ class MainWindow(QMainWindow):
         if updater.running or self._hub.full_update.running:
             return
         ready = updater.compute_readiness(
-            addons_installing=self._hub.addons.installing)
+            addons_installing=self._hub.addons.installing
+        )
         if ready.mode == "play":
             self._launch_game()
         elif ready.mode == "update":
@@ -609,7 +657,8 @@ class MainWindow(QMainWindow):
             return
         if not (self._hub.settings.state.path or "").strip():
             self._hub.dispatcher.post(
-                LogMessage("✗  Please set the game folder first.\n", "err"))
+                LogMessage("✗  Please set the game folder first.\n", "err")
+            )
             return
         self._hub.full_update.start()
         self._refresh_ready_state()
@@ -649,12 +698,14 @@ class MainWindow(QMainWindow):
 
     def _show_dxvk_notice(self):
         QMessageBox.information(
-            self, "DXVK mod first launch",
+            self,
+            "DXVK mod first launch",
             "Initial shader compilation may cause temporary in-game "
             "stuttering during the first launch. This is a normal process "
             "while the game builds its shader cache.\n\n"
             "Users with AMD GPUs experiencing stability issues can switch "
-            "to DXVK 2.5.3")
+            "to DXVK 2.5.3",
+        )
 
     def _refresh_ready_state(self):
         """Recompute the footer status/button from the controller's
@@ -667,7 +718,8 @@ class MainWindow(QMainWindow):
         if self._hub.full_update.running:
             return Readiness("busy", "Updating…", "Updating game…")
         return self._hub.updater.compute_readiness(
-            addons_installing=self._hub.addons.installing)
+            addons_installing=self._hub.addons.installing
+        )
 
     def _apply_readiness(self, r, update_status: bool = True):
         if r.mode == "play":
@@ -689,7 +741,8 @@ class MainWindow(QMainWindow):
         """Gold UPDATE ↔ green PLAY flip; the button stays clickable."""
         self._updateButton.setText("PLAY" if ready else "UPDATE")
         self._updateButton.setStyleSheet(
-            self._buttonStyles["play" if ready else "update"])
+            self._buttonStyles["play" if ready else "update"]
+        )
         self._updateButton.setEnabled(True)
 
     def _set_button_terminate(self):
@@ -710,8 +763,10 @@ class MainWindow(QMainWindow):
         the self-update check, all cancelled on close. On first run the
         settings dialog defers verification to its close."""
         hub = self._hub
-        if (hub.settings.client_update_enabled
-                and not hub.settings.state.first_run_verify_pending):
+        if (
+            hub.settings.client_update_enabled
+            and not hub.settings.state.first_run_verify_pending
+        ):
             self._after(300, self._start_verify)
         self._after(600, hub.news.load)
         self._after(900, hub.mods.load_latest_versions)

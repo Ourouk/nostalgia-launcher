@@ -62,10 +62,12 @@ def test_construction_sets_title_and_default_tab(qapp, window):
 
 
 def test_discord_button_opens_configured_url(qapp, monkeypatch):
-    launcher.configure_from_dict({
-        "server": {"base_url": "https://launcher.test"},
-        "discord_url": "https://discord.gg/example",
-    })
+    launcher.configure_from_dict(
+        {
+            "server": {"base_url": "https://launcher.test"},
+            "discord_url": "https://discord.gg/example",
+        }
+    )
     hub = ControllerHub()
     win = MainWindow(hub)
     win.show()
@@ -73,7 +75,8 @@ def test_discord_button_opens_configured_url(qapp, monkeypatch):
         opened = []
         monkeypatch.setattr(
             "vanilla_wow_launcher.ui.qt.main_window.webbrowser.open",
-            opened.append)
+            opened.append,
+        )
         assert win._discordButton is not None
         assert win._discordButton.text() == "DISCORD"
         win._discordButton.click()
@@ -128,6 +131,7 @@ def test_operation_events_flip_button_state(qapp, window, monkeypatch):
     hub = window._hub
     # Launch available + no manifest yet → PLAY (the folder may be ready).
     import vanilla_wow_launcher.controllers.update as update_controller
+
     monkeypatch.setattr(update_controller, "can_launch_client", lambda: True)
     assert window._updateButton.text() == "PLAY"
 
@@ -147,17 +151,22 @@ def test_operation_events_flip_button_state(qapp, window, monkeypatch):
     assert window._updateButton.text() == "UPDATE"
 
 
-def test_terminate_readiness_shows_red_enabled_button(qapp, window,
-                                                      monkeypatch):
+def test_terminate_readiness_shows_red_enabled_button(
+    qapp, window, monkeypatch
+):
     import vanilla_wow_launcher.controllers.update as update_controller
     from vanilla_wow_launcher.controllers.update import Readiness
+
+    monkeypatch.setattr(update_controller, "can_launch_client", lambda: True)
     monkeypatch.setattr(
-        update_controller, "can_launch_client", lambda: True)
-    monkeypatch.setattr(
-        window._hub.updater, "compute_readiness",
+        window._hub.updater,
+        "compute_readiness",
         lambda addons_installing=False: Readiness(
-            "terminate", "TERMINATE",
-            "Running WoW.exe — click TERMINATE to quit"))
+            "terminate",
+            "TERMINATE",
+            "Running WoW.exe — click TERMINATE to quit",
+        ),
+    )
     window._refresh_ready_state()
 
     assert window._updateButton.text() == "TERMINATE"
@@ -165,9 +174,11 @@ def test_terminate_readiness_shows_red_enabled_button(qapp, window,
     assert "#bf6969" in window._updateButton.styleSheet()
 
 
-def test_game_events_flip_footer_between_play_and_terminate(qapp, window,
-                                                            monkeypatch):
+def test_game_events_flip_footer_between_play_and_terminate(
+    qapp, window, monkeypatch
+):
     import vanilla_wow_launcher.controllers.update as update_controller
+
     monkeypatch.setattr(update_controller, "can_launch_client", lambda: True)
     hub = window._hub
     hub.updater.state.client_ready = True
@@ -175,8 +186,9 @@ def test_game_events_flip_footer_between_play_and_terminate(qapp, window,
 
     # Game starts → footer offers TERMINATE.
     hub.updater.state.game_running = True
-    hub.dispatcher.post(StatusChanged(
-        "Running WoW.exe — click TERMINATE to quit"))
+    hub.dispatcher.post(
+        StatusChanged("Running WoW.exe — click TERMINATE to quit")
+    )
     QTest.qWait(200)
     assert window._updateButton.text() == "TERMINATE"
     assert window._updateButton.isEnabled()
@@ -199,8 +211,9 @@ def test_close_stops_bridge(qapp, window):
     assert window._statusLabel.text() != "after close"
 
 
-def test_startup_tasks_schedule_addons_verify_on_first_run(qapp, window,
-                                                           monkeypatch):
+def test_startup_tasks_schedule_addons_verify_on_first_run(
+    qapp, window, monkeypatch
+):
     """The ADDONS verify runs unconditionally, so a first-launch user with an
     uninitialized config still sees the catalog list (the old code skipped it
     when the config had no 'addons' key yet)."""
@@ -222,21 +235,25 @@ def test_startup_tasks_schedule_addons_verify_on_first_run(qapp, window,
 
 # ── header wordmark ─────────────────────────────────────────────────────────
 
+
 def test_wordmark_shows_server_name_without_logo(qapp, window):
     assert window._wordmark.text() == "Test Server"
 
 
 def test_wordmark_shows_themed_logo_pixmap(qapp, tmp_path, monkeypatch):
-    launcher.configure_from_dict({
-        "server": {"name": "OctoWoW", "base_url": "https://octowow.st"},
-        "theme": {"logo": "https://octowow.st/logo.png"},
-    })
+    launcher.configure_from_dict(
+        {
+            "server": {"name": "OctoWoW", "base_url": "https://octowow.st"},
+            "theme": {"logo": "https://octowow.st/logo.png"},
+        }
+    )
     png = tmp_path / "logo.png"
     img = QImage(64, 32, QImage.Format_RGB32)
     img.fill(QColor(255, 0, 0))
     assert img.save(str(png), "PNG")
     monkeypatch.setattr(
-        "vanilla_wow_launcher.services.logo.fetch_logo", lambda url: str(png))
+        "vanilla_wow_launcher.services.logo.fetch_logo", lambda url: str(png)
+    )
 
     hub = ControllerHub()
     win = MainWindow(hub)
@@ -250,14 +267,18 @@ def test_wordmark_shows_themed_logo_pixmap(qapp, tmp_path, monkeypatch):
         win.close()
 
 
-def test_wordmark_keeps_server_name_when_logo_fails(qapp, tmp_path,
-                                                    monkeypatch):
-    launcher.configure_from_dict({
-        "server": {"name": "OctoWoW", "base_url": "https://octowow.st"},
-        "theme": {"logo": "https://octowow.st/logo.png"},
-    })
+def test_wordmark_keeps_server_name_when_logo_fails(
+    qapp, tmp_path, monkeypatch
+):
+    launcher.configure_from_dict(
+        {
+            "server": {"name": "OctoWoW", "base_url": "https://octowow.st"},
+            "theme": {"logo": "https://octowow.st/logo.png"},
+        }
+    )
     monkeypatch.setattr(
-        "vanilla_wow_launcher.services.logo.fetch_logo", lambda url: None)
+        "vanilla_wow_launcher.services.logo.fetch_logo", lambda url: None
+    )
 
     hub = ControllerHub()
     win = MainWindow(hub)

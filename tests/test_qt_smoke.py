@@ -25,17 +25,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel, QWidget
 
-import vanilla_wow_launcher.services.addons as addons_module
-import vanilla_wow_launcher.core.config_store as config_store
-import vanilla_wow_launcher.core.constants as constants
-import vanilla_wow_launcher.services.mods as mods_module
-import vanilla_wow_launcher.services.news as news_module
 import vanilla_wow_launcher.controllers.news as news_controller
-import vanilla_wow_launcher.core.platform_support as platform_support
 import vanilla_wow_launcher.controllers.settings as settings_controller
 import vanilla_wow_launcher.controllers.update as update_controller
-from vanilla_wow_launcher.ui.qt.app import QtVanillaWoWLauncherApp, create_qt_app
-from vanilla_wow_launcher.ui.qt.settings_dialog import SettingsDialog
+import vanilla_wow_launcher.core.config_store as config_store
+import vanilla_wow_launcher.core.constants as constants
+import vanilla_wow_launcher.core.platform_support as platform_support
+import vanilla_wow_launcher.services.addons as addons_module
+import vanilla_wow_launcher.services.mods as mods_module
+import vanilla_wow_launcher.services.news as news_module
 from vanilla_wow_launcher.state.events import (
     AddonsLoaded,
     ModsLoaded,
@@ -43,7 +41,16 @@ from vanilla_wow_launcher.state.events import (
     ProgressChanged,
     StatusChanged,
 )
-from vanilla_wow_launcher.state.models import AddonsState, AddonState, ModsState
+from vanilla_wow_launcher.state.models import (
+    AddonsState,
+    AddonState,
+    ModsState,
+)
+from vanilla_wow_launcher.ui.qt.app import (
+    QtVanillaWoWLauncherApp,
+    create_qt_app,
+)
+from vanilla_wow_launcher.ui.qt.settings_dialog import SettingsDialog
 
 
 @pytest.fixture(autouse=True)
@@ -75,47 +82,94 @@ def qt_env(monkeypatch, tmp_path):
     monkeypatch.setattr(settings_controller, "CONFIG_FILE", str(cfg))
     monkeypatch.setattr(settings_controller, "CACHE_FILE", str(cache))
 
-    featured = {"title": "1.16.2 is live", "author": "Staff",
-                "date": "2026-08-13", "html": "<p>Patch is out.</p>",
-                "url": "https://example.invalid/news/1"}
-    items = [{"title": "Patch notes", "date": "2026-08-13",
-              "author": "Staff", "body": "Full notes here",
-              "url": "https://example.invalid/news/2"}]
+    featured = {
+        "title": "1.16.2 is live",
+        "author": "Staff",
+        "date": "2026-08-13",
+        "html": "<p>Patch is out.</p>",
+        "url": "https://example.invalid/news/1",
+    }
+    items = [
+        {
+            "title": "Patch notes",
+            "date": "2026-08-13",
+            "author": "Staff",
+            "body": "Full notes here",
+            "url": "https://example.invalid/news/2",
+        }
+    ]
 
     monkeypatch.setattr(news_module, "fetch_featured_post", lambda: featured)
     monkeypatch.setattr(news_module, "fetch_news_items", lambda: items)
-    monkeypatch.setattr(news_controller, "fetch_featured_post",
-                        lambda: featured)
+    monkeypatch.setattr(
+        news_controller, "fetch_featured_post", lambda: featured
+    )
     monkeypatch.setattr(news_controller, "fetch_news_items", lambda: items)
 
-    monkeypatch.setattr(mods_module, "fetch_mod_latest_version_cached",
-                        lambda mod, force=False: "1.2.3")
-    monkeypatch.setattr(mods_module, "mods_registry", lambda *a, **k: [
-        {"id": "VanillaFixes", "name": "VanillaFixes", "essential": True,
-         "description": "Fixes stutter", "repo_url": "https://example.invalid/vf",
-         "source": {"kind": "github_release", "owner": "o", "repo": "r",
-                    "asset_pattern": "*.zip", "prefer_no": None,
-                    "extract_map": None}}])
+    monkeypatch.setattr(
+        mods_module,
+        "fetch_mod_latest_version_cached",
+        lambda mod, force=False: "1.2.3",
+    )
+    monkeypatch.setattr(
+        mods_module,
+        "mods_registry",
+        lambda *a, **k: [
+            {
+                "id": "VanillaFixes",
+                "name": "VanillaFixes",
+                "essential": True,
+                "description": "Fixes stutter",
+                "repo_url": "https://example.invalid/vf",
+                "source": {
+                    "kind": "github_release",
+                    "owner": "o",
+                    "repo": "r",
+                    "asset_pattern": "*.zip",
+                    "prefer_no": None,
+                    "extract_map": None,
+                },
+            }
+        ],
+    )
 
-    catalog = [{"name": "pfUI", "git": "https://github.com/brues-code/pfUI",
-                "branch": "master", "ref": "HEAD", "toc": {},
-                "description": "Everything you need"}]
-    monkeypatch.setattr(addons_module, "fetch_addons_catalog",
-                        lambda force=False: catalog)
-    monkeypatch.setattr(addons_module, "addon_remote_sha",
-                        lambda git_url, branch=None, ref=None, force=False,
-                        raise_errors=False: "deadbeef")
-    monkeypatch.setattr(addons_module, "addon_cached_sha",
-                        lambda git_url, branch=None, ref=None: "deadbeef")
+    catalog = [
+        {
+            "name": "pfUI",
+            "git": "https://github.com/brues-code/pfUI",
+            "branch": "master",
+            "ref": "HEAD",
+            "toc": {},
+            "description": "Everything you need",
+        }
+    ]
+    monkeypatch.setattr(
+        addons_module, "fetch_addons_catalog", lambda force=False: catalog
+    )
+    monkeypatch.setattr(
+        addons_module,
+        "addon_remote_sha",
+        lambda git_url, branch=None, ref=None, force=False, raise_errors=False: (
+            "deadbeef"
+        ),
+    )
+    monkeypatch.setattr(
+        addons_module,
+        "addon_cached_sha",
+        lambda git_url, branch=None, ref=None: "deadbeef",
+    )
 
-    monkeypatch.setattr(update_controller, "fetch_updater_latest_tag",
-                        Mock(return_value="1.2"))
-    monkeypatch.setattr(update_controller, "updater_update_available",
-                        lambda tag: False)
+    monkeypatch.setattr(
+        update_controller, "fetch_updater_latest_tag", Mock(return_value="1.2")
+    )
+    monkeypatch.setattr(
+        update_controller, "updater_update_available", lambda tag: False
+    )
     monkeypatch.setattr(update_controller, "can_launch_client", lambda: True)
     monkeypatch.setattr(platform_support, "can_launch_client", lambda: True)
-    monkeypatch.setattr(platform_support, "can_manage_antivirus",
-                        lambda: False)
+    monkeypatch.setattr(
+        platform_support, "can_manage_antivirus", lambda: False
+    )
 
     yield cfg
     config_store.configure("", "")
@@ -130,26 +184,32 @@ def build_app(qapp, monkeypatch, qt_env):
     runs. When first_run=True the config file is left absent so Settings
     auto-opens and verification is deferred, exactly like a real first run.
     """
+
     def _build(*, startup=True, first_run=False):
         cfg = qt_env
         if not first_run:
-            config_store.save_config({
-                "out_dir": str(cfg.parent / "game"),
-                "mod_release_cache": {"VanillaFixes":
-                                      {"timestamp": 0, "release": {}}},
-                "addons": {},
-            })
+            config_store.save_config(
+                {
+                    "out_dir": str(cfg.parent / "game"),
+                    "mod_release_cache": {
+                        "VanillaFixes": {"timestamp": 0, "release": {}}
+                    },
+                    "addons": {},
+                }
+            )
         app = QtVanillaWoWLauncherApp()
         app._window.show()
         hub = app._hub
         monkeypatch.setattr(hub.updater, "start_verify", Mock())
         monkeypatch.setattr(hub.updater, "start_update", Mock())
         monkeypatch.setattr(hub.updater, "check_updater_update", Mock())
-        monkeypatch.setattr(hub.updater, "launch_game",
-                            Mock(return_value=(True, False)))
+        monkeypatch.setattr(
+            hub.updater, "launch_game", Mock(return_value=(True, False))
+        )
         if not startup:
             app._window._stop_timers()
         return app
+
     return _build
 
 
@@ -200,8 +260,12 @@ def test_construction_builds_full_app(qapp, app):
     assert win._statusLabel.text() == "Manifest unavailable"
     assert win._progressBar is not None
 
-    for name, obj in (("NEWS", "newsPanel"), ("TWEAKS", "tweaksPanel"),
-                      ("ADDONS", "addonsPanel"), ("MODS", "modsPanel")):
+    for name, obj in (
+        ("NEWS", "newsPanel"),
+        ("TWEAKS", "tweaksPanel"),
+        ("ADDONS", "addonsPanel"),
+        ("MODS", "modsPanel"),
+    ):
         assert win._stack.widget(win._pages[name]).objectName() == obj
 
 
@@ -235,8 +299,14 @@ def test_startup_schedule_runs_the_full_launch_chain(qapp, app):
     # 600 ms → news load: loading state is replaced by the fetched post.
     _wait_until(lambda: hub.news.state.featured is not None)
     assert hub.news.state.items == [
-        {"title": "Patch notes", "date": "2026-08-13", "author": "Staff",
-         "body": "Full notes here", "url": "https://example.invalid/news/2"}]
+        {
+            "title": "Patch notes",
+            "date": "2026-08-13",
+            "author": "Staff",
+            "body": "Full notes here",
+            "url": "https://example.invalid/news/2",
+        }
+    ]
     assert "Patch is out." in news_panel.featured_panel.body.toPlainText()
     assert not news_panel.featured_panel.status_label.isVisible()
     assert news_panel.announcements_panel.scroll.isVisible()
@@ -280,10 +350,12 @@ def test_first_run_defers_verify_until_settings_close(qapp, build_app):
 
 def test_nav_buttons_switch_tabs_and_expose_panels(qapp, app_no_startup):
     win = app_no_startup._window
-    for name, index, obj in (("NEWS", 0, "newsPanel"),
-                             ("TWEAKS", 1, "tweaksPanel"),
-                             ("ADDONS", 2, "addonsPanel"),
-                             ("MODS", 3, "modsPanel")):
+    for name, index, obj in (
+        ("NEWS", 0, "newsPanel"),
+        ("TWEAKS", 1, "tweaksPanel"),
+        ("ADDONS", 2, "addonsPanel"),
+        ("MODS", 3, "modsPanel"),
+    ):
         QTest.mouseClick(win._navButtons[name], Qt.LeftButton)
         assert win._stack.currentIndex() == index
         assert win._navButtons[name].isChecked()
@@ -353,8 +425,7 @@ def test_mods_loaded_renders_rows_and_updates_badge(qapp, app_no_startup):
     hub = app_no_startup._hub
     panel = win._stack.widget(win._pages["MODS"])
 
-    state = ModsState(latest_versions={"VanillaFixes": "2.0"},
-                      updates_count=3)
+    state = ModsState(latest_versions={"VanillaFixes": "2.0"}, updates_count=3)
     hub.mods.state = state
     hub.dispatcher.post(ModsLoaded(state))
     QTest.qWait(200)
@@ -372,12 +443,19 @@ def test_addons_loaded_renders_rows_and_updates_badge(qapp, app_no_startup):
     panel = win._stack.widget(win._pages["ADDONS"])
 
     state = AddonsState(
-        addons={"SellValue": AddonState.from_dict(
-            {"folder": "SellValue", "status": "outOfDate",
-             "git": "https://github.com/octo/SellValue",
-             "toc": {"Title": "Sell Value", "Interface": "11200"}})},
+        addons={
+            "SellValue": AddonState.from_dict(
+                {
+                    "folder": "SellValue",
+                    "status": "outOfDate",
+                    "git": "https://github.com/octo/SellValue",
+                    "toc": {"Title": "Sell Value", "Interface": "11200"},
+                }
+            )
+        },
         available=[],
-        updates_count=1)
+        updates_count=1,
+    )
     hub.addons.state = state
     hub.dispatcher.post(AddonsLoaded(state))
     QTest.qWait(200)

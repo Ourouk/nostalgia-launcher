@@ -10,11 +10,13 @@ from dataclasses import dataclass, field
 
 # ── update / verification flow ────────────────────────────────────────────────
 
+
 @dataclass
 class UpdateState:
     """Footer state: status text, progress, and the verify/update lifecycle
     flags (_status_var / _pb_val / _prog_label_var / _running /
     _client_ready / _diff_nodes / _client_ver_var)."""
+
     status: str = "Ready to update"
     progress: float = 0.0
     progress_label: str = ""
@@ -27,17 +29,22 @@ class UpdateState:
     game_pid: int | None = None
     game_pgid: int | None = None
 
+
 # ── news ──────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class NewsState:
     """Cached news feed (_featured, _news_items, _feat_ts, _news_ts)."""
+
     featured: dict | None = None
     items: list | None = None
     feat_ts: float = 0.0
     news_ts: float = 0.0
 
+
 # ── mods ──────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class ModState:
@@ -47,6 +54,7 @@ class ModState:
     ``present`` is the session-computed filesystem-truth flag (files on disk +
     dlls.txt registration); it is not a config key.
     """
+
     enabled: bool = False
     installed_version: str | None = None
     installed_files: list = field(default_factory=list)
@@ -62,6 +70,7 @@ class ModState:
 @dataclass
 class ModPending:
     """One not-yet-applied checkbox change from _mod_pending_state."""
+
     enabled: bool | None = None
     ignore_updates: bool | None = None
 
@@ -71,6 +80,7 @@ class ModsState:
     """MODS panel state: config records, fetched latest versions
     (_mods_state), pending checkbox changes, the nav-badge count, and
     filesystem-detected mods no catalog claims (``unknown``)."""
+
     records: dict[str, ModState] = field(default_factory=dict)
     latest_versions: dict[str, str] = field(default_factory=dict)
     pending: dict[str, ModPending] = field(default_factory=dict)
@@ -88,13 +98,16 @@ class ModsState:
     def has_pending_changes(self) -> bool:
         return bool(self.pending)
 
+
 # ── addons ────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class AddonState:
     """One addon record — the shape stored in the config's "addons" key
     ({"folder", "status", "git", "branch", "ref", "toc", "description",
     "error"})."""
+
     folder: str
     status: str = "available"
     git: str | None = None
@@ -106,16 +119,21 @@ class AddonState:
 
     @classmethod
     def from_dict(cls, rec: dict) -> "AddonState":
-        return cls(**{name: rec.get(name) for name in cls.__dataclass_fields__})
+        return cls(
+            **{name: rec.get(name) for name in cls.__dataclass_fields__}
+        )
 
     def to_dict(self) -> dict:
-        return {name: getattr(self, name) for name in self.__dataclass_fields__}
+        return {
+            name: getattr(self, name) for name in self.__dataclass_fields__
+        }
 
 
 @dataclass
 class AddonError:
     """Session install/update failure carried across rescans
     (_addon_errors: {folder: {"error", "git"}})."""
+
     error: str
     git: str | None = None
 
@@ -125,6 +143,7 @@ class AddonsState:
     """ADDONS panel state, mirroring _addons_status, _addons_busy,
     _addons_installing, _addons_verified_ts, _addon_errors,
     _addon_sections_open and _addon_updates_count."""
+
     state: str = "idle"
     addons: dict[str, AddonState] = field(default_factory=dict)
     available: list[AddonState] = field(default_factory=list)
@@ -133,7 +152,8 @@ class AddonsState:
     verified_ts: float = 0.0
     errors: dict[str, AddonError] = field(default_factory=dict)
     sections_open: dict[str, bool] = field(
-        default_factory=lambda: {"INSTALLED": True, "AVAILABLE": True})
+        default_factory=lambda: {"INSTALLED": True, "AVAILABLE": True}
+    )
     updates_count: int = 0
 
     @classmethod
@@ -141,31 +161,40 @@ class AddonsState:
         """Build from an app._addons_status dict ({state, addons, available})."""
         return cls(
             state=status.get("state", "idle"),
-            addons={folder: AddonState.from_dict(rec)
-                    for folder, rec in status.get("addons", {}).items()},
-            available=[AddonState.from_dict(rec)
-                       for rec in status.get("available", [])],
+            addons={
+                folder: AddonState.from_dict(rec)
+                for folder, rec in status.get("addons", {}).items()
+            },
+            available=[
+                AddonState.from_dict(rec)
+                for rec in status.get("available", [])
+            ],
         )
 
     def to_status_dict(self) -> dict:
         """The app._addons_status dict shape ({state, addons, available})."""
         return {
             "state": self.state,
-            "addons": {folder: rec.to_dict()
-                       for folder, rec in self.addons.items()},
+            "addons": {
+                folder: rec.to_dict() for folder, rec in self.addons.items()
+            },
             "available": [rec.to_dict() for rec in self.available],
         }
 
     def out_of_date_count(self) -> int:
-        return sum(1 for rec in self.addons.values()
-                   if rec.status == "outOfDate")
+        return sum(
+            1 for rec in self.addons.values() if rec.status == "outOfDate"
+        )
+
 
 # ── settings / path ───────────────────────────────────────────────────────────
+
 
 @dataclass
 class SettingsState:
     """Game-folder path (_path_var), the loaded config dict (_cfg) and the
     first-run flags."""
+
     path: str = ""
     config: dict = field(default_factory=dict)
     first_run: bool = False
@@ -176,8 +205,9 @@ class SettingsState:
 @dataclass
 class LaunchSettings:
     """Linux umu-launcher launch settings (the "launch" config key)."""
-    umu_proton: str = "GE-Proton"      # PROTONPATH value (codename or path)
-    umu_binary_path: str = ""          # "" = auto-detect umu-run on PATH
+
+    umu_proton: str = "GE-Proton"  # PROTONPATH value (codename or path)
+    umu_binary_path: str = ""  # "" = auto-detect umu-run on PATH
     umu_game_id: str = "umu-vanilla-wow"
 
     @classmethod
@@ -189,19 +219,25 @@ class LaunchSettings:
             umu_game_id=data.get("umu_game_id", "umu-vanilla-wow"),
         )
 
+
 # ── log ───────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class LogEntry:
     """One session-log line (the _log_buffer (text, tag) pairs)."""
+
     text: str
     tag: str = ""
 
+
 # ── app container ─────────────────────────────────────────────────────────────
+
 
 @dataclass
 class AppState:
     """Everything the interface needs, in one object the controllers share."""
+
     update: UpdateState = field(default_factory=UpdateState)
     news: NewsState = field(default_factory=NewsState)
     mods: ModsState = field(default_factory=ModsState)

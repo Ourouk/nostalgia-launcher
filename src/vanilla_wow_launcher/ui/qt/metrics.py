@@ -15,7 +15,7 @@ applies the display scale factor internally.
 # Logical design size and chrome heights (in "100%" pixels).
 BASE_W = 1000
 BASE_H = 700
-HDR_H  = 108
+HDR_H = 108
 FOOT_H = 130
 PANEL_PAD = 40
 
@@ -24,7 +24,9 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
-def initial_window_size(sw: int, sh: int, factor: float = 1.0) -> tuple[int, int]:
+def initial_window_size(
+    sw: int, sh: int, factor: float = 1.0
+) -> tuple[int, int]:
     """Window size for a fresh start: the design size × `factor`, capped at
     ~90% of the screen so it never overflows on small displays."""
     w = BASE_W * factor

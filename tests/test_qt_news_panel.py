@@ -17,13 +17,13 @@ pytest.importorskip("PySide6")
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel
 
-from vanilla_wow_launcher.core.helpers import format_news_date
 from vanilla_wow_launcher.controllers.news import NewsResult
+from vanilla_wow_launcher.core.helpers import format_news_date
+from vanilla_wow_launcher.state.events import NewsLoaded
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
 from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
 from vanilla_wow_launcher.ui.qt.main_window import MainWindow
 from vanilla_wow_launcher.ui.qt.news_panel import NewsPanel
-from vanilla_wow_launcher.state.events import NewsLoaded
 
 SAMPLE_POST = {
     "id": 1,
@@ -92,6 +92,7 @@ def _news_panel(window):
 
 # ── integration ────────────────────────────────────────────────────────────
 
+
 def test_news_panel_replaces_the_news_placeholder(qapp, window):
     assert window._stack.count() == 4
     assert window._pages == {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
@@ -112,16 +113,19 @@ def test_tab_switching_still_works_and_keeps_panel(qapp, window):
 
 # ── featured ───────────────────────────────────────────────────────────────
 
+
 def test_featured_renders_title_byline_and_body(qapp, window, hub):
     _news_panel(window)
-    _post(hub, "featured",
-          NewsResult(data=SAMPLE_POST, loading=False, error=""))
+    _post(
+        hub, "featured", NewsResult(data=SAMPLE_POST, loading=False, error="")
+    )
 
     panel = _news_panel(window)
     feat = panel.featured_panel
     assert feat.title_label.text() == "PATCH 1.17 LANDS"
     assert feat.byline_label.text() == (
-        f"by Octo Team · {format_news_date(SAMPLE_POST['date'])}")
+        f"by Octo Team · {format_news_date(SAMPLE_POST['date'])}"
+    )
     body = feat.body.toPlainText()
     assert "Welcome to the new patch." in body
     assert "Enjoy the fresh content." in body
@@ -135,8 +139,9 @@ def test_featured_loading_then_data(qapp, window, hub):
     assert feat.status_label.text() == "Loading…"
     assert not feat.body.isVisible()
 
-    _post(hub, "featured",
-          NewsResult(data=SAMPLE_POST, loading=False, error=""))
+    _post(
+        hub, "featured", NewsResult(data=SAMPLE_POST, loading=False, error="")
+    )
     feat = _news_panel(window).featured_panel
     assert not feat.status_label.isVisible()
     assert feat.body.isVisible()
@@ -145,9 +150,13 @@ def test_featured_loading_then_data(qapp, window, hub):
 
 def test_featured_error_state(qapp, window, hub):
     _news_panel(window)
-    _post(hub, "featured",
-          NewsResult(data=None, loading=False,
-                     error="Couldn't reach the news feed."))
+    _post(
+        hub,
+        "featured",
+        NewsResult(
+            data=None, loading=False, error="Couldn't reach the news feed."
+        ),
+    )
     feat = _news_panel(window).featured_panel
     assert feat.status_label.isVisible()
     assert feat.status_label.text() == "Couldn't reach the news feed."
@@ -162,7 +171,10 @@ def test_featured_empty_state(qapp, window, hub):
 
 # ── announcements ──────────────────────────────────────────────────────────
 
-def test_announcements_render_titles_dates_authors_and_links(qapp, window, hub):
+
+def test_announcements_render_titles_dates_authors_and_links(
+    qapp, window, hub
+):
     _news_panel(window)
     _post(hub, "items", NewsResult(data=SAMPLE_ITEMS, loading=False, error=""))
 
@@ -172,9 +184,11 @@ def test_announcements_render_titles_dates_authors_and_links(qapp, window, hub):
     assert title0.text() == "Server maintenance tonight"
     assert title1.text() == "New rewards event"
     assert ann.findChild(QLabel, "announcement_0_date").text() == (
-        format_news_date(SAMPLE_ITEMS[0]["date"]))
-    assert ann.findChild(QLabel,
-                         "announcement_0_author").text() == "by GM Willow"
+        format_news_date(SAMPLE_ITEMS[0]["date"])
+    )
+    assert (
+        ann.findChild(QLabel, "announcement_0_author").text() == "by GM Willow"
+    )
     assert ann.findChild(QLabel, "announcement_0_link").text() == "⧉ Read more"
     assert ann.scroll.isVisible()
     assert not ann.status_label.isVisible()
@@ -204,9 +218,13 @@ def test_announcements_loading_state(qapp, window, hub):
 
 def test_announcements_error_state(qapp, window, hub):
     _news_panel(window)
-    _post(hub, "items",
-          NewsResult(data=None, loading=False,
-                     error="Couldn't reach the news feed."))
+    _post(
+        hub,
+        "items",
+        NewsResult(
+            data=None, loading=False, error="Couldn't reach the news feed."
+        ),
+    )
     ann = _news_panel(window).announcements_panel
     assert ann.status_label.isVisible()
     assert ann.status_label.text() == "Couldn't reach the news feed."
@@ -222,25 +240,36 @@ def test_announcements_empty_state(qapp, window, hub):
 def test_rerender_replaces_previous_announcements(qapp, window, hub):
     _news_panel(window)
     _post(hub, "items", NewsResult(data=SAMPLE_ITEMS, loading=False, error=""))
-    _post(hub, "items",
-          NewsResult(data=[SAMPLE_ITEMS[0]], loading=False, error=""))
+    _post(
+        hub,
+        "items",
+        NewsResult(data=[SAMPLE_ITEMS[0]], loading=False, error=""),
+    )
 
     ann = _news_panel(window).announcements_panel
     assert ann.findChild(QLabel, "announcement_0_title").text() == (
-        "Server maintenance tonight")
+        "Server maintenance tonight"
+    )
     assert ann.findChild(QLabel, "announcement_1_title") is None
 
 
 # ── refresh buttons ────────────────────────────────────────────────────────
 
+
 def test_refresh_buttons_call_the_controller(qapp, window, hub, monkeypatch):
     panel = _news_panel(window)
     feat_spy = []
     ann_spy = []
-    monkeypatch.setattr(hub.news, "refresh_featured",
-                        lambda force=False: feat_spy.append(force))
-    monkeypatch.setattr(hub.news, "refresh_announcements",
-                        lambda force=False: ann_spy.append(force))
+    monkeypatch.setattr(
+        hub.news,
+        "refresh_featured",
+        lambda force=False: feat_spy.append(force),
+    )
+    monkeypatch.setattr(
+        hub.news,
+        "refresh_announcements",
+        lambda force=False: ann_spy.append(force),
+    )
 
     panel.featured_panel.refresh_button.click()
     panel.announcements_panel.refresh_button.click()
@@ -250,15 +279,21 @@ def test_refresh_buttons_call_the_controller(qapp, window, hub, monkeypatch):
 
 # ── persistence ────────────────────────────────────────────────────────────
 
+
 def test_content_survives_tab_switch(qapp, window, hub):
     _news_panel(window)
-    _post(hub, "featured",
-          NewsResult(data=SAMPLE_POST, loading=False, error=""))
+    _post(
+        hub, "featured", NewsResult(data=SAMPLE_POST, loading=False, error="")
+    )
     _post(hub, "items", NewsResult(data=SAMPLE_ITEMS, loading=False, error=""))
 
     window.switch_tab("MODS")
     window.switch_tab("NEWS")
     panel = _news_panel(window)
     assert panel.featured_panel.title_label.text() == "PATCH 1.17 LANDS"
-    assert panel.announcements_panel.findChild(
-        QLabel, "announcement_0_title").text() == "Server maintenance tonight"
+    assert (
+        panel.announcements_panel.findChild(
+            QLabel, "announcement_0_title"
+        ).text()
+        == "Server maintenance tonight"
+    )

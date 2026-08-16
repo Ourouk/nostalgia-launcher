@@ -85,9 +85,11 @@ def resolve_proton(name: str) -> str:
         exact = os.path.join(root, name)
         if os.path.isdir(exact):
             return exact
-        candidates = [d for d in os.listdir(root)
-                      if d.startswith(name) and
-                      os.path.isdir(os.path.join(root, d))]
+        candidates = [
+            d
+            for d in os.listdir(root)
+            if d.startswith(name) and os.path.isdir(os.path.join(root, d))
+        ]
         if candidates:
             best = max(candidates, key=_version_key)
             log(f"Proton {name} → {best}", "dim")
@@ -118,9 +120,15 @@ def build_env(proton: str, game_id: str, store: str = DEFAULT_STORE) -> dict:
     return env
 
 
-def launch(out_dir: str, exe: str, *, proton: str = DEFAULT_PROTON,
-           game_id: str = DEFAULT_GAME_ID, store: str = DEFAULT_STORE,
-           umu_binary: str = "") -> tuple:
+def launch(
+    out_dir: str,
+    exe: str,
+    *,
+    proton: str = DEFAULT_PROTON,
+    game_id: str = DEFAULT_GAME_ID,
+    store: str = DEFAULT_STORE,
+    umu_binary: str = "",
+) -> tuple:
     """Launch `exe` (an absolute path to the client binary) via umu-run.
 
     Spawns umu detached (its own session, no controlling terminal) with the
@@ -133,7 +141,8 @@ def launch(out_dir: str, exe: str, *, proton: str = DEFAULT_PROTON,
     if not binary:
         raise RuntimeError(
             "umu-run not found — install umu-launcher (e.g. `pacman -S "
-            "umu-launcher` or `apt install umu-launcher`) to play on Linux.")
+            "umu-launcher` or `apt install umu-launcher`) to play on Linux."
+        )
     exe = os.path.abspath(exe)
     proc = subprocess.Popen(
         [binary, exe],

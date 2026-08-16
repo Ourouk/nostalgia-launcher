@@ -14,8 +14,16 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from vanilla_wow_launcher.ui.qt.app import QtVanillaWoWLauncherApp, create_qt_app
-from vanilla_wow_launcher.ui.qt.theme import HEX, Palette, palette_for_config, theme_qss
+from vanilla_wow_launcher.ui.qt.app import (
+    QtVanillaWoWLauncherApp,
+    create_qt_app,
+)
+from vanilla_wow_launcher.ui.qt.theme import (
+    HEX,
+    Palette,
+    palette_for_config,
+    theme_qss,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -57,8 +65,14 @@ def test_palette_convenience_attributes():
 def test_theme_qss_is_non_empty_string_with_selectors():
     qss = theme_qss(Palette())
     assert isinstance(qss, str) and qss.strip()
-    for selector in ("QMainWindow", "QPushButton", "QLineEdit",
-                     "QListWidget", "QScrollBar", "QTabBar"):
+    for selector in (
+        "QMainWindow",
+        "QPushButton",
+        "QLineEdit",
+        "QListWidget",
+        "QScrollBar",
+        "QTabBar",
+    ):
         assert selector in qss
 
 

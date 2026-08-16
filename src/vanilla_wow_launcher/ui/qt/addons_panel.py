@@ -40,9 +40,18 @@ class AddonRow(QWidget):
     """One addon row: star badge, colored title, description, repo link,
     status text and an install/update/remove action."""
 
-    def __init__(self, rec, installed, recommended, installed_names,
-                 palette: Palette, on_install, on_remove, on_retry=None,
-                 parent=None):
+    def __init__(
+        self,
+        rec,
+        installed,
+        recommended,
+        installed_names,
+        palette: Palette,
+        on_install,
+        on_remove,
+        on_retry=None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.setObjectName(f"addonsRow_{rec.folder}")
         p = palette
@@ -54,9 +63,13 @@ class AddonRow(QWidget):
         # pfUI bundles its own modules, so its .toc dependencies aren't real
         # missing addons — never warn about them.
         if installed and rec.folder != "pfUI":
-            deps = [d.strip() for d in
-                    (toc.get("Dependencies") or "").replace(";", ",").split(",")
-                    if d.strip()]
+            deps = [
+                d.strip()
+                for d in (toc.get("Dependencies") or "")
+                .replace(";", ",")
+                .split(",")
+                if d.strip()
+            ]
             missing = [d for d in deps if d not in installed_names]
             if missing:
                 warnings.append("Missing deps: " + ", ".join(missing))
@@ -64,8 +77,13 @@ class AddonRow(QWidget):
         root, top, top_layout = make_row_shell(self)
 
         # Fixed-width slot keeps titles aligned whether or not the star shows.
-        self.star_label = add_star(top_layout, f"addonsStar_{rec.folder}",
-                                   recommended, "Recommended addon", p)
+        self.star_label = add_star(
+            top_layout,
+            f"addonsStar_{rec.folder}",
+            recommended,
+            "Recommended addon",
+            p,
+        )
 
         # Title honouring WoW colour escapes — one label per colour segment.
         title = toc.get("Title") or rec.folder
@@ -78,7 +96,8 @@ class AddonRow(QWidget):
             if i == 0:
                 seg_label.setObjectName(f"addonsName_{rec.folder}")
             seg_label.setStyleSheet(
-                f"color: {col or p.text.name()}; font-weight: bold;")
+                f"color: {col or p.text.name()}; font-weight: bold;"
+            )
             title_layout.addWidget(seg_label)
         top_layout.addWidget(title_box, 0, Qt.AlignTop)
 
@@ -94,10 +113,12 @@ class AddonRow(QWidget):
                 # an error (the log holds the actual cause).
                 status = ClickableLabel("⟳ Couldn't check", top)
                 status.setStyleSheet(
-                    f"color: {p.warn.name()}; font-weight: bold;")
+                    f"color: {p.warn.name()}; font-weight: bold;"
+                )
                 status.setToolTip(
                     "Couldn't reach the remote to check for updates — "
-                    "click to retry")
+                    "click to retry"
+                )
                 if on_retry is not None:
                     status.clicked.connect(lambda: on_retry(rec))
             else:
@@ -108,14 +129,14 @@ class AddonRow(QWidget):
                 status.setToolTip(
                     "This addon isn't in the launcher's catalog and wasn't "
                     "installed by the launcher — it isn't tracked for "
-                    "updates.")
+                    "updates."
+                )
         elif rec.status == "invalid" or rec.error:
             status = QLabel("⛔ Addon error", top)
             status.setStyleSheet(f"color: {p.err.name()};")
         elif rec.status == "outOfDate" and installed:
             status = ClickableLabel("Update", top)
-            status.setStyleSheet(
-                f"color: {p.gold.name()}; font-weight: bold;")
+            status.setStyleSheet(f"color: {p.gold.name()}; font-weight: bold;")
             status.clicked.connect(lambda: on_install(rec))
         elif warnings:
             status = QLabel(f"⚠ {warnings[0]}", top)
@@ -130,11 +151,10 @@ class AddonRow(QWidget):
         top_layout.addWidget(status, 0, Qt.AlignTop)
 
         if rec.git:
-            repo_url = (rec.git[:-4] if rec.git.endswith(".git")
-                        else rec.git)
-            self.link_label = add_row_link(top_layout,
-                                           f"addonsLink_{rec.folder}",
-                                           repo_url, p)
+            repo_url = rec.git[:-4] if rec.git.endswith(".git") else rec.git
+            self.link_label = add_row_link(
+                top_layout, f"addonsLink_{rec.folder}", repo_url, p
+            )
 
         if installed:
             action = QPushButton("🗑", top)
@@ -143,7 +163,8 @@ class AddonRow(QWidget):
                 f"QPushButton {{ color: {p.err.name()};"
                 f" border: 1px solid {p.panel_bdr.name()}; border-radius: 4px;"
                 f" background-color: {p.hdr.name()}; padding: 2px 8px; }}"
-                f"QPushButton:hover {{ border-color: {p.err.name()}; }}")
+                f"QPushButton:hover {{ border-color: {p.err.name()}; }}"
+            )
             action.clicked.connect(lambda: on_remove(rec.folder))
         else:
             action = QPushButton("⬇", top)
@@ -152,7 +173,8 @@ class AddonRow(QWidget):
                 f"QPushButton {{ color: {p.ok.name()};"
                 f" border: 1px solid {p.panel_bdr.name()}; border-radius: 4px;"
                 f" background-color: {p.hdr.name()}; padding: 2px 8px; }}"
-                f"QPushButton:hover {{ border-color: {p.ok.name()}; }}")
+                f"QPushButton:hover {{ border-color: {p.ok.name()}; }}"
+            )
             action.clicked.connect(lambda: on_install(rec))
         action.setObjectName(f"addonsAction_{rec.folder}")
         action.setCursor(Qt.PointingHandCursor)
@@ -168,8 +190,11 @@ class AddonRow(QWidget):
         root.addWidget(self.desc_label)
 
         self.error_label = add_row_error(
-            root, f"addonsError_{rec.folder}",
-            None if rec.status == "unknown" else rec.error, p)
+            root,
+            f"addonsError_{rec.folder}",
+            None if rec.status == "unknown" else rec.error,
+            p,
+        )
 
         add_row_divider(root, p)
 
@@ -186,10 +211,12 @@ class AddonsPanel(ScrollListPanel):
 
     customAddonRequested = Signal()
 
-    def __init__(self, addons, bridge, palette: Palette, parent=None,
-                 on_badge=None):
-        super().__init__("addons", bridge.addonsLoaded, palette, bridge,
-                         on_badge, parent)
+    def __init__(
+        self, addons, bridge, palette: Palette, parent=None, on_badge=None
+    ):
+        super().__init__(
+            "addons", bridge.addonsLoaded, palette, bridge, on_badge, parent
+        )
         self._addons = addons
         self._op_kind = "addons"
         self._build_header()
@@ -210,8 +237,11 @@ class AddonsPanel(ScrollListPanel):
         legend_layout = QHBoxLayout(legend)
         legend_layout.setContentsMargins(0, 0, 0, 0)
         legend_layout.setSpacing(0)
-        for text, color in (("Addons marked with ", p.text_dim),
-                            ("★", p.gold), (" are recommended", p.text_dim)):
+        for text, color in (
+            ("Addons marked with ", p.text_dim),
+            ("★", p.gold),
+            (" are recommended", p.text_dim),
+        ):
             part = QLabel(text, legend)
             part.setStyleSheet(f"color: {color.name()};")
             legend_layout.addWidget(part)
@@ -228,8 +258,7 @@ class AddonsPanel(ScrollListPanel):
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(250)
         self._debounce.timeout.connect(self._render)
-        self._filter.textChanged.connect(
-            lambda *_: self._debounce.start())
+        self._filter.textChanged.connect(lambda *_: self._debounce.start())
         top_layout.addWidget(self._filter)
         self._root_layout.addWidget(top)
         self._add_hsep()
@@ -280,19 +309,28 @@ class AddonsPanel(ScrollListPanel):
         state = state or self._addons.state
         self._clear_rows()
 
-        installed = [r for r in state.addons.values()
-                     if self._matches(r.to_dict())]
+        installed = [
+            r for r in state.addons.values() if self._matches(r.to_dict())
+        ]
         installed.sort(key=lambda r: r.folder.lower())
-        available = [a for a in state.available
-                     if a.folder not in state.addons
-                     and self._matches(a.to_dict())]
+        available = [
+            a
+            for a in state.available
+            if a.folder not in state.addons and self._matches(a.to_dict())
+        ]
         # Recommended addons sort first, then by folder name.
-        available.sort(key=lambda a: (a.folder not in self._addons.recommended,
-                                      a.folder.lower()))
+        available.sort(
+            key=lambda a: (
+                a.folder not in self._addons.recommended,
+                a.folder.lower(),
+            )
+        )
 
         installed_names = set(state.addons)
-        for title, rows in (("INSTALLED", installed),
-                            ("AVAILABLE", available)):
+        for title, rows in (
+            ("INSTALLED", installed),
+            ("AVAILABLE", available),
+        ):
             self._add_section_header(title, rows, state)
             if state.sections_open.get(title, True):
                 for rec in rows:
@@ -305,7 +343,8 @@ class AddonsPanel(ScrollListPanel):
                         on_install=self._on_install,
                         on_remove=self._on_remove,
                         on_retry=self._on_retry,
-                        parent=self._content)
+                        parent=self._content,
+                    )
                     self._rows[rec.folder] = row
                     self._add_row(row)
 
@@ -330,7 +369,8 @@ class AddonsPanel(ScrollListPanel):
 
         label = ClickableLabel(title, hdr)
         label.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 11pt;")
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 11pt;"
+        )
         label.clicked.connect(lambda: self._toggle_section(title))
         layout.addWidget(label)
 
@@ -342,15 +382,17 @@ class AddonsPanel(ScrollListPanel):
         self._rows_layout.addWidget(hdr)
 
         if is_open and not rows:
-            msg = ("Verifying…" if state.state == "verifying"
-                   else "Nothing here.")
+            msg = (
+                "Verifying…" if state.state == "verifying" else "Nothing here."
+            )
             empty = QLabel(msg, self._content)
             empty.setStyleSheet(f"color: {p.text_dim.name()};")
             self._rows_layout.addWidget(empty)
 
     def _toggle_section(self, title: str):
-        self._addons.state.sections_open[title] = \
-            not self._addons.state.sections_open.get(title, True)
+        self._addons.state.sections_open[
+            title
+        ] = not self._addons.state.sections_open.get(title, True)
         self._render()
 
     # ── actions ─────────────────────────────────────────────────────────────
@@ -361,7 +403,8 @@ class AddonsPanel(ScrollListPanel):
 
     def _on_remove(self, folder: str):
         ret = QMessageBox.question(
-            self, "Remove addon", f"Delete {folder} and all of its files?")
+            self, "Remove addon", f"Delete {folder} and all of its files?"
+        )
         if ret != QMessageBox.Yes:
             return
         self._addons.remove(folder)
@@ -388,7 +431,8 @@ class AddonsPanel(ScrollListPanel):
         clickable = cursor == "hand2"
         self._footer_label.setEnabled(clickable)
         self._footer_label.setCursor(
-            Qt.PointingHandCursor if clickable else Qt.ArrowCursor)
+            Qt.PointingHandCursor if clickable else Qt.ArrowCursor
+        )
 
     # ── event hooks ────────────────────────────────────────────────────────
 

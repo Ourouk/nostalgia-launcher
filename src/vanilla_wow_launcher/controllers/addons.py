@@ -53,9 +53,12 @@ class AddonsController:
         self._recommended = set(addons.RECOMMENDED_ADDONS)
         self._default_addons_install_started = False
         if get_out_dir is None:
+
             def get_out_dir():
                 return config_store.load_config().get(
-                    "out_dir", DEFAULT_OUT_DIR)
+                    "out_dir", DEFAULT_OUT_DIR
+                )
+
         self._get_out_dir = get_out_dir
 
     # ── public API ──────────────────────────────────────────────────────────
@@ -92,9 +95,12 @@ class AddonsController:
             return False
         # A recent verify result is already rendered — plain tab switches
         # within the TTL don't need a rescan or a rebuild at all.
-        if (not force and self.state.state == "done"
-                and (time.time() - self.state.verified_ts)
-                < addons.ADDONS_VERIFY_TTL):
+        if (
+            not force
+            and self.state.state == "done"
+            and (time.time() - self.state.verified_ts)
+            < addons.ADDONS_VERIFY_TTL
+        ):
             return False
         client = (self._get_out_dir() or "").strip()
         self.state.busy = True
@@ -123,10 +129,16 @@ class AddonsController:
                     recommended.add(name)
                 if name in blocked:
                     continue
-                rec = {"folder": name, "status": "available",
-                       "git": a.get("git"), "branch": a.get("branch"),
-                       "ref": a.get("ref"), "toc": a.get("toc") or {},
-                       "description": a.get("description"), "error": None}
+                rec = {
+                    "folder": name,
+                    "status": "available",
+                    "git": a.get("git"),
+                    "branch": a.get("branch"),
+                    "ref": a.get("ref"),
+                    "toc": a.get("toc") or {},
+                    "description": a.get("description"),
+                    "error": None,
+                }
                 available.append(rec)
                 by_name[name] = rec
 
@@ -138,9 +150,17 @@ class AddonsController:
                 rec = by_name.get(name)
                 if rec is None:
                     available.append(
-                        {"folder": name, "status": "available",
-                         "git": override, "branch": None, "ref": None,
-                         "toc": {}, "description": None, "error": None})
+                        {
+                            "folder": name,
+                            "status": "available",
+                            "git": override,
+                            "branch": None,
+                            "ref": None,
+                            "toc": {},
+                            "description": None,
+                            "error": None,
+                        }
+                    )
                 elif not same_git_repo(rec.get("git"), override):
                     rec.update(git=override, branch=None, ref=None)
             self._recommended = recommended
@@ -155,28 +175,43 @@ class AddonsController:
                     dirp = os.path.join(ap, name)
                     if not os.path.isdir(dirp):
                         continue
-                    rec = {"folder": name, "status": "unknown", "git": None,
-                           "branch": None, "ref": None, "toc": {},
-                           "description": None, "error": None}
+                    rec = {
+                        "folder": name,
+                        "status": "unknown",
+                        "git": None,
+                        "branch": None,
+                        "ref": None,
+                        "toc": {},
+                        "description": None,
+                        "error": None,
+                    }
                     toc_path = os.path.join(dirp, f"{name}.toc")
                     if not os.path.exists(toc_path):
-                        rec.update(status="invalid",
-                                   error="Missing .toc file")
+                        rec.update(status="invalid", error="Missing .toc file")
                         installed[name] = rec
                         continue
                     rec["toc"] = addons.read_toc_file(toc_path)
-                    avail = next((a for a in available
-                                  if a["folder"] == name), None)
+                    avail = next(
+                        (a for a in available if a["folder"] == name), None
+                    )
                     if avail:
                         rec["description"] = avail["description"]
                     saved = records.get(name)
                     override = addons.RECOMMENDED_ADDONS.get(name)
-                    if (saved and saved.get("git") and override
-                            and not same_git_repo(saved["git"], override)):
+                    if (
+                        saved
+                        and saved.get("git")
+                        and override
+                        and not same_git_repo(saved["git"], override)
+                    ):
                         # Installed from a different repo than the curated
                         # fork — offer an update that migrates to the fork.
-                        rec.update(git=override, branch=None, ref=None,
-                                   status="outOfDate")
+                        rec.update(
+                            git=override,
+                            branch=None,
+                            ref=None,
+                            status="outOfDate",
+                        )
                     elif saved and saved.get("git") and avail:
                         # The launcher catalog is authoritative for the addon's
                         # source. A saved repo that differs means the addon was
@@ -185,25 +220,37 @@ class AddonsController:
                         # match, verify against the catalog's branch/ref (the
                         # saved record may predate a catalog branch change).
                         if not same_git_repo(saved["git"], avail["git"]):
-                            rec.update(git=avail["git"], branch=avail["branch"],
-                                       ref=avail["ref"], status="outOfDate")
+                            rec.update(
+                                git=avail["git"],
+                                branch=avail["branch"],
+                                ref=avail["ref"],
+                                status="outOfDate",
+                            )
                         else:
-                            rec.update(git=avail["git"], branch=avail["branch"],
-                                       ref=avail["ref"])
+                            rec.update(
+                                git=avail["git"],
+                                branch=avail["branch"],
+                                ref=avail["ref"],
+                            )
                             if remote_checks:
                                 remote = addons.addon_remote_sha(
-                                    rec["git"], rec["branch"], rec["ref"],
-                                    force=force)
+                                    rec["git"],
+                                    rec["branch"],
+                                    rec["ref"],
+                                    force=force,
+                                )
                             else:
                                 remote = addons.addon_cached_sha(
-                                    rec["git"], rec["branch"], rec["ref"])
+                                    rec["git"], rec["branch"], rec["ref"]
+                                )
                                 if remote is None:
                                     # no cached answer — assume current rather
                                     # than hitting the network
                                     remote = saved.get("sha")
                             if remote is None:
-                                rec.update(status="unknown",
-                                           error=C_COULD_NOT_CHECK)
+                                rec.update(
+                                    status="unknown", error=C_COULD_NOT_CHECK
+                                )
                             elif remote == saved.get("sha"):
                                 rec["status"] = "upToDate"
                             else:
@@ -211,23 +258,30 @@ class AddonsController:
                     elif saved and saved.get("git"):
                         # Installed addon not in the catalog (a custom entry) —
                         # keep tracking the saved source.
-                        rec.update(git=saved.get("git"),
-                                   branch=saved.get("branch"),
-                                   ref=saved.get("ref"))
+                        rec.update(
+                            git=saved.get("git"),
+                            branch=saved.get("branch"),
+                            ref=saved.get("ref"),
+                        )
                         if remote_checks:
                             remote = addons.addon_remote_sha(
-                                rec["git"], rec["branch"], rec["ref"],
-                                force=force)
+                                rec["git"],
+                                rec["branch"],
+                                rec["ref"],
+                                force=force,
+                            )
                         else:
                             remote = addons.addon_cached_sha(
-                                rec["git"], rec["branch"], rec["ref"])
+                                rec["git"], rec["branch"], rec["ref"]
+                            )
                             if remote is None:
                                 # no cached answer — assume current rather
                                 # than hitting the network
                                 remote = saved.get("sha")
                         if remote is None:
-                            rec.update(status="unknown",
-                                       error=C_COULD_NOT_CHECK)
+                            rec.update(
+                                status="unknown", error=C_COULD_NOT_CHECK
+                            )
                         elif remote == saved.get("sha"):
                             rec["status"] = "upToDate"
                         else:
@@ -243,24 +297,39 @@ class AddonsController:
                         # resolution leaves it retryable, never "out of date".
                         if remote_checks:
                             remote = addons.addon_remote_sha(
-                                avail["git"], avail["branch"], avail["ref"],
-                                force=force)
+                                avail["git"],
+                                avail["branch"],
+                                avail["ref"],
+                                force=force,
+                            )
                         else:
                             remote = addons.addon_cached_sha(
-                                avail["git"], avail["branch"], avail["ref"])
-                        rec.update(git=avail["git"], branch=avail["branch"],
-                                   ref=avail["ref"])
+                                avail["git"], avail["branch"], avail["ref"]
+                            )
+                        rec.update(
+                            git=avail["git"],
+                            branch=avail["branch"],
+                            ref=avail["ref"],
+                        )
                         if remote:
                             rec["status"] = "upToDate"
                             config_store.update_config(
-                                lambda c, f=name, g=avail["git"],
-                                b=avail["branch"], r=avail["ref"], s=remote:
-                                c.setdefault("addons", {}).__setitem__(
-                                    f, {"git": g, "branch": b,
-                                        "ref": r, "sha": s}))
+                                lambda c, f=name, g=avail["git"], b=avail["branch"], r=avail["ref"], s=remote: (
+                                    c.setdefault("addons", {}).__setitem__(
+                                        f,
+                                        {
+                                            "git": g,
+                                            "branch": b,
+                                            "ref": r,
+                                            "sha": s,
+                                        },
+                                    )
+                                )
+                            )
                         else:
-                            rec.update(status="unknown",
-                                       error=C_COULD_NOT_CHECK)
+                            rec.update(
+                                status="unknown", error=C_COULD_NOT_CHECK
+                            )
                     installed[name] = rec
 
             # Overlay install failures from this session: the rescan drops
@@ -274,10 +343,16 @@ class AddonsController:
             for folder, info in self.state.errors.items():
                 rec = by_name.get(folder)
                 if rec is None:
-                    rec = {"folder": folder, "status": "available",
-                           "git": info.git, "branch": None,
-                           "ref": None, "toc": {}, "description": None,
-                           "error": None}
+                    rec = {
+                        "folder": folder,
+                        "status": "available",
+                        "git": info.git,
+                        "branch": None,
+                        "ref": None,
+                        "toc": {},
+                        "description": None,
+                        "error": None,
+                    }
                     available.append(rec)
                 rec["error"] = info.error
 
@@ -307,14 +382,18 @@ class AddonsController:
                 rec_state.status = "downloading"
                 rec_state.error = None
         self._dispatcher.post(StatusChanged("Downloading addons…"))
-        threading.Thread(target=self._apply_worker,
-                         args=(client, list(recs)), daemon=True).start()
+        threading.Thread(
+            target=self._apply_worker, args=(client, list(recs)), daemon=True
+        ).start()
         return True
 
     def update_all(self) -> list:
         """The out-of-date installed addons as record dicts, for apply()."""
-        return [rec.to_dict() for rec in self.state.addons.values()
-                if rec.status == "outOfDate"]
+        return [
+            rec.to_dict()
+            for rec in self.state.addons.values()
+            if rec.status == "outOfDate"
+        ]
 
     def remove(self, folder: str):
         """Delete an installed addon folder and drop its config record (the
@@ -327,17 +406,22 @@ class AddonsController:
             if os.path.isdir(dirp):
                 shutil.rmtree(dirp)
             config_store.update_config(
-                lambda c: c.get("addons", {}).pop(folder, None))
-            self._dispatcher.post(LogMessage(f"Removed addon {folder}\n",
-                                             "dim"))
+                lambda c: c.get("addons", {}).pop(folder, None)
+            )
+            self._dispatcher.post(
+                LogMessage(f"Removed addon {folder}\n", "dim")
+            )
         except Exception as e:
-            self._dispatcher.post(LogMessage(
-                f"Failed to remove addon {folder}: {e}\n", "err"))
+            self._dispatcher.post(
+                LogMessage(f"Failed to remove addon {folder}: {e}\n", "err")
+            )
         self.state.addons.pop(folder, None)
         self.state.errors.pop(folder, None)
         self.state.updates_count = sum(
-            1 for rec in self.state.addons.values()
-            if rec.status == "outOfDate")
+            1
+            for rec in self.state.addons.values()
+            if rec.status == "outOfDate"
+        )
         self._dispatcher.post(AddonsLoaded(self.state))
         self._dispatcher.post(OperationFinished("addons_verify", True, ""))
 
@@ -367,19 +451,29 @@ class AddonsController:
             return True
 
         ap = addons.addons_path(out)
-        recs = [{"folder": name, "status": "available", "git": url,
-                 "branch": None, "ref": None, "toc": {},
-                 "description": None, "error": None}
-                for name, url in addons.RECOMMENDED_ADDONS.items()
-                if not os.path.isdir(os.path.join(ap, name))]
+        recs = [
+            {
+                "folder": name,
+                "status": "available",
+                "git": url,
+                "branch": None,
+                "ref": None,
+                "toc": {},
+                "description": None,
+                "error": None,
+            }
+            for name, url in addons.RECOMMENDED_ADDONS.items()
+            if not os.path.isdir(os.path.join(ap, name))
+        ]
         if not recs:
             # Nothing to install (e.g. a folder that already has the addons)
             # — still run a verify so the ADDONS tab badge shows any
             # available updates without the user opening the tab.
             self.verify()
             return True
-        self._dispatcher.post(LogMessage(
-            "\nInstalling recommended addons...\n", "acct"))
+        self._dispatcher.post(
+            LogMessage("\nInstalling recommended addons...\n", "acct")
+        )
         self.apply(recs)
         return True
 
@@ -406,8 +500,9 @@ class AddonsController:
         """The ADDONS footer label as (text, fg, cursor)."""
         if self.state.state == "verifying" or self.state.busy:
             return "Checking…", C_TEXT_DIM, "arrow"
-        if any(rec.status == "outOfDate"
-               for rec in self.state.addons.values()):
+        if any(
+            rec.status == "outOfDate" for rec in self.state.addons.values()
+        ):
             return "Update all", C_OK, "hand2"
         return "Everything up to date", C_TEXT_DIM, "arrow"
 
@@ -415,40 +510,56 @@ class AddonsController:
 
     def _finish_verify(self, installed: dict, available: list):
         self.state.state = "done"
-        self.state.addons = {folder: AddonState.from_dict(rec)
-                             for folder, rec in installed.items()}
+        self.state.addons = {
+            folder: AddonState.from_dict(rec)
+            for folder, rec in installed.items()
+        }
         self.state.available = [AddonState.from_dict(rec) for rec in available]
         self.state.verified_ts = time.time()
         self.state.busy = False
         self.state.updates_count = sum(
-            1 for rec in installed.values()
-            if rec["status"] == "outOfDate")
+            1 for rec in installed.values() if rec["status"] == "outOfDate"
+        )
         self._dispatcher.post(AddonsLoaded(self.state))
 
     def _apply_worker(self, client: str, recs: list):
         failed = []
         for rec in recs:
             self._dispatcher.post(
-                StatusChanged(f"Installing {rec['folder']}…"))
+                StatusChanged(f"Installing {rec['folder']}…")
+            )
             try:
                 if not rec.get("git") or not addons.is_allowed_git_url(
-                        rec["git"]):
+                    rec["git"]
+                ):
                     raise RuntimeError(
-                        "Addon URL is not from an allowed git host")
+                        "Addon URL is not from an allowed git host"
+                    )
                 sha = addons.addon_remote_sha(
-                    rec["git"], rec.get("branch"), rec.get("ref"),
-                    force=True, raise_errors=True)
+                    rec["git"],
+                    rec.get("branch"),
+                    rec.get("ref"),
+                    force=True,
+                    raise_errors=True,
+                )
                 if not sha:
                     raise RuntimeError("Could not resolve remote commit")
-                addons.install_addon_files(client, rec["folder"],
-                                           rec["git"], sha)
+                addons.install_addon_files(
+                    client, rec["folder"], rec["git"], sha
+                )
                 if rec["folder"] == "pfUI":
                     addons.patch_pfui_default_profile(client)
-                record = {"git": rec["git"], "branch": rec.get("branch"),
-                          "ref": rec.get("ref"), "sha": sha}
+                record = {
+                    "git": rec["git"],
+                    "branch": rec.get("branch"),
+                    "ref": rec.get("ref"),
+                    "sha": sha,
+                }
                 config_store.update_config(
-                    lambda c, f=rec["folder"], r=record:
-                    c.setdefault("addons", {}).__setitem__(f, r))
+                    lambda c, f=rec["folder"], r=record: c.setdefault(
+                        "addons", {}
+                    ).__setitem__(f, r)
+                )
                 self.state.errors.pop(rec["folder"], None)
                 st_rec = self.state.addons.get(rec["folder"])
                 if st_rec is not None:
@@ -459,25 +570,32 @@ class AddonsController:
                     st_rec.error = None
                 self._dispatcher.post(AddonsLoaded(self.state))
                 self._dispatcher.post(
-                    LogMessage(f"  ✓ Addon {rec['folder']} installed."))
+                    LogMessage(f"  ✓ Addon {rec['folder']} installed.")
+                )
             except Exception as e:
                 err = describe_install_error(e)
                 self._dispatcher.post(
-                    LogMessage(f"  ✗ Addon {rec['folder']}: {err}"))
+                    LogMessage(f"  ✗ Addon {rec['folder']}: {err}")
+                )
                 st_rec = self.state.addons.get(rec["folder"])
                 if st_rec is not None:
                     st_rec.status = "invalid"
                     st_rec.error = err
                 self.state.errors[rec["folder"]] = AddonError(
-                    err, rec.get("git"))
+                    err, rec.get("git")
+                )
                 failed.append(rec["folder"])
 
         self.state.busy = False
         self.state.installing = False
-        self.state.verified_ts = 0.0   # make the re-verify run
-        self._dispatcher.post(OperationFinished(
-            "addons", not failed,
-            "" if not failed else f"Failed addons: {', '.join(failed)}"))
+        self.state.verified_ts = 0.0  # make the re-verify run
+        self._dispatcher.post(
+            OperationFinished(
+                "addons",
+                not failed,
+                "" if not failed else f"Failed addons: {', '.join(failed)}",
+            )
+        )
         if failed:
             # Only rescan when something failed — the overlay attaches the
             # install error to the matching AVAILABLE row. On full success

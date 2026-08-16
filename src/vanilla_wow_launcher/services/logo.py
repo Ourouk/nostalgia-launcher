@@ -52,7 +52,9 @@ def fetch_logo(url: str) -> str | None:
         host = None
     try:
         req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with secure_urlopen(req, timeout=10, allowed_hosts=frozenset(hosts)) as r:
+        with secure_urlopen(
+            req, timeout=10, allowed_hosts=frozenset(hosts)
+        ) as r:
             data = r.read()
         if not data:
             raise RuntimeError("empty logo response")
@@ -61,7 +63,7 @@ def fetch_logo(url: str) -> str | None:
         with open(tmp, "wb") as f:
             f.write(data)
         os.replace(tmp, dest)
-        log(f"  Downloaded launcher logo ({len(data)//1024} KB).")
+        log(f"  Downloaded launcher logo ({len(data) // 1024} KB).")
         return dest
     except Exception as e:
         log(f"  Launcher logo unavailable: {e}", "err")

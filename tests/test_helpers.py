@@ -14,34 +14,43 @@ from vanilla_wow_launcher.core.helpers import (
 )
 
 
-@pytest.mark.parametrize("num,expected", [
-    (0, "0 KB"),
-    (1024, "1 KB"),
-    (1024 * 1024, "1.0 MB"),
-    (5 * 1024 * 1024, "5.0 MB"),
-])
+@pytest.mark.parametrize(
+    "num,expected",
+    [
+        (0, "0 KB"),
+        (1024, "1 KB"),
+        (1024 * 1024, "1.0 MB"),
+        (5 * 1024 * 1024, "5.0 MB"),
+    ],
+)
 def test_fmt_size(num, expected):
     assert fmt_size(num) == expected
 
 
-@pytest.mark.parametrize("bps,expected", [
-    (0, "0 KB/s"),
-    (1024 * 512, "512 KB/s"),
-    (2 * 1024 * 1024, "2.0 MB/s"),
-])
+@pytest.mark.parametrize(
+    "bps,expected",
+    [
+        (0, "0 KB/s"),
+        (1024 * 512, "512 KB/s"),
+        (2 * 1024 * 1024, "2.0 MB/s"),
+    ],
+)
 def test_fmt_speed(bps, expected):
     assert fmt_speed(bps) == expected
 
 
-@pytest.mark.parametrize("v,expected", [
-    ("v1.2.0", (1, 2, 0)),
-    ("1.2.0", (1, 2, 0)),
-    ("2.2", (2, 2)),
-    ("v3", (3,)),
-    ("", (0,)),
-    (None, (0,)),
-    ("1.0-beta", (1, 0)),
-])
+@pytest.mark.parametrize(
+    "v,expected",
+    [
+        ("v1.2.0", (1, 2, 0)),
+        ("1.2.0", (1, 2, 0)),
+        ("2.2", (2, 2)),
+        ("v3", (3,)),
+        ("", (0,)),
+        (None, (0,)),
+        ("1.0-beta", (1, 0)),
+    ],
+)
 def test_parse_version(v, expected):
     assert parse_version(v) == expected
 
@@ -59,24 +68,31 @@ def test_parse_wow_colored_empty():
 
 
 def test_strip_wow_colors():
-    assert strip_wow_colors("|cff00ff00green|r and |cff0000ffblue|r") == \
-        "green and blue"
+    assert (
+        strip_wow_colors("|cff00ff00green|r and |cff0000ffblue|r")
+        == "green and blue"
+    )
 
 
 def test_same_git_repo():
     assert same_git_repo("https://github.com/a/b", "https://github.com/a/b")
-    assert same_git_repo("https://github.com/a/b.git",
-                         "https://github.com/A/B/")
+    assert same_git_repo(
+        "https://github.com/a/b.git", "https://github.com/A/B/"
+    )
     assert same_git_repo(None, None)
-    assert not same_git_repo("https://github.com/a/b",
-                             "https://github.com/a/c")
-    assert not same_git_repo("https://github.com/a/b",
-                             "https://gitlab.com/a/b")
+    assert not same_git_repo(
+        "https://github.com/a/b", "https://github.com/a/c"
+    )
+    assert not same_git_repo(
+        "https://github.com/a/b", "https://gitlab.com/a/b"
+    )
 
 
 def test_strip_html_removes_tags_and_scripts():
-    raw = ("<p>Hello <b>world</b></p><br>"
-           "<script>alert(1)</script><style>body{}</style>")
+    raw = (
+        "<p>Hello <b>world</b></p><br>"
+        "<script>alert(1)</script><style>body{}</style>"
+    )
     out = strip_html(raw)
     assert "<" not in out
     assert "Hello world" in out

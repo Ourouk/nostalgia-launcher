@@ -2,8 +2,8 @@
 
 from vanilla_wow_launcher.ui.qt.metrics import initial_window_size
 
-
 # ── layout math ─────────────────────────────────────────────────────────────
+
 
 def test_initial_window_size_default_factor():
     w, h = initial_window_size(2560, 1440)

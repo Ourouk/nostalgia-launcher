@@ -10,16 +10,23 @@ is PySide6.
 uv sync                          # installs the package editable + PySide6
 uv run vanilla-wow-launcher      # run the app
 uv run python -m vanilla_wow_launcher # equivalent
-uv run pytest                    # full suite (508 pass, 3 display-only skips)
+uv run pytest                    # full suite (696 pass, 3 display-only skips)
+uv run ruff format .             # pep8-style 79-col wrapping ([tool.ruff])
+uv run ruff check .              # lint gate: E4/E7/E9/F/I/W/UP/B — run after edits
 ```
 
 - Qt widget tests set `QT_QPA_PLATFORM=offscreen` themselves; no display needed.
+- **Ruff is the only lint/format gate — there is no type checker** (no mypy/
+  pyright in the toolchain). `ruff check` selects E4/E7/E9/F/I/W/UP/B with
+  `line-length = 79` and `target-version = "py310"` (see `pyproject.toml`).
 - Real-display checks are opt-in and skipped by default:
   `QT_QPA_PLATFORM=xcb RUN_QT_DISPLAY_TESTS=1 uv run pytest tests/test_qt_display.py -k display`
 - Windows build: `uv run pyinstaller --noconfirm --clean VanillaWoWLauncher.spec`
 - Linux AppImage: `./packaging/linux/build-appimage.sh` → `dist/VanillaWoWLauncher-$(uname -m).AppImage`
 - macOS DMG (universal2, build on macOS): `./packaging/macos/build-dmg.sh` → `dist/VanillaWoWLauncher-universal2.dmg`
-- CI/CD (GitHub Actions): `ci.yml` = pytest on push/PR; `release.yml` = on `v*` tag push, builds Windows/Linux/macOS and creates a GitHub Release
+- CI/CD (GitHub Actions): `ci.yml` = pytest on push/PR (no ruff step — the
+  lint/format gate is local-only); `release.yml` = on `v*` tag push, builds
+  Windows/Linux/macOS and creates a GitHub Release
 - Manual run against a real server config (the only example in the repo):
   `uv run vanilla-wow-launcher --launcher-config examples/octowow.json`
 
@@ -35,6 +42,9 @@ src/vanilla_wow_launcher/
   ui/qt/          # app, main_window, bridge, theme, panels, dialogs
 ```
 
+- `context/` holds third-party reference sources (e.g. the OctoLauncher repo)
+  — not part of the package, not packaged or executed. Leave it alone; don't
+  lint/format/refactor anything under it.
 - Inside the package use **relative** imports; tests import via
   `vanilla_wow_launcher.*` absolute paths (e.g.
   `from vanilla_wow_launcher.services.mods import ...`).
@@ -145,3 +155,11 @@ Keep them in sync when bumping.
 - Tests redirect config to `tmp_path` via `config_store.configure(...)` and
   monkeypatch `CONFIG_FILE`/`CACHE_FILE` on both `core.constants` and
   `controllers.settings` (that module imports them by name).
+
+## Code style gotchas
+
+- The QSS in `ui/qt/main_window.py` is built from **f-strings that mix CSS
+  braces with `{p.*.name()}` interpolations**: an opening `{` must be `{{` and
+  a literal closing `}` must be `}}`. A single unescaped `}` is a hard
+  `SyntaxError` at import time that takes down every Qt test — it survives
+  `ruff format` too (which aborts on the unparseable file).

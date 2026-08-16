@@ -80,6 +80,7 @@ _error: str = ""
 @dataclass
 class Mirror:
     """One configured download mirror."""
+
     name: str
     base_url: str
     manifest_url: str
@@ -89,6 +90,7 @@ class Mirror:
 @dataclass
 class LauncherConfig:
     """Validated launcher configuration with every endpoint resolved."""
+
     server_name: str
     server_url: str
     manifest_url: str
@@ -160,8 +162,10 @@ def _derive(data: dict) -> LauncherConfig:
         raise ValueError("launcher config is missing the 'server' object")
     base = _https_url(server.get("base_url"))
     if base is None:
-        raise ValueError("launcher config 'server.base_url' must be an "
-                         "https URL and is required")
+        raise ValueError(
+            "launcher config 'server.base_url' must be an "
+            "https URL and is required"
+        )
 
     host = urlsplit(base).hostname or ""
 
@@ -171,7 +175,9 @@ def _derive(data: dict) -> LauncherConfig:
     elif isinstance(raw_discord_url, str) and raw_discord_url.strip():
         discord_url = _https_url(raw_discord_url)
         if discord_url is None:
-            raise ValueError("launcher config 'discord_url' must be an https URL")
+            raise ValueError(
+                "launcher config 'discord_url' must be an https URL"
+            )
     elif isinstance(raw_discord_url, str):
         discord_url = None
     else:
@@ -191,17 +197,20 @@ def _derive(data: dict) -> LauncherConfig:
         if mb is None:
             continue
         mhost = urlsplit(mb).hostname or ""
-        mirrors.append(Mirror(
-            name=(m.get("name") or mhost).strip(),
-            base_url=mb,
-            manifest_url=_https_url(m.get("manifest_url"))
-            or _default_manifest(mb),
-            client_url=_https_url(m.get("client_url"))
-            or _default_client(mb),
-        ))
+        mirrors.append(
+            Mirror(
+                name=(m.get("name") or mhost).strip(),
+                base_url=mb,
+                manifest_url=_https_url(m.get("manifest_url"))
+                or _default_manifest(mb),
+                client_url=_https_url(m.get("client_url"))
+                or _default_client(mb),
+            )
+        )
 
-    manifest_url = _https_url(server.get("manifest_url")) \
-        or _default_manifest(base)
+    manifest_url = _https_url(server.get("manifest_url")) or _default_manifest(
+        base
+    )
     client_url = _https_url(server.get("client_url")) or _default_client(base)
 
     addons_registry_url = _url("addons_registry_url", "/api/addons.json")
@@ -223,10 +232,12 @@ def _derive(data: dict) -> LauncherConfig:
         server_url=base,
         manifest_url=manifest_url,
         client_url=client_url,
-        news_url=_url("news_url",
-                      "/forum/octonews.php?mode=list&forum=2&limit=8"),
+        news_url=_url(
+            "news_url", "/forum/octonews.php?mode=list&forum=2&limit=8"
+        ),
         featured_news_url=_url(
-            "featured_news_url", "/forum/octonews.php?forum=35&mode=full"),
+            "featured_news_url", "/forum/octonews.php?forum=35&mode=full"
+        ),
         mods_registry_url=_url("mods_registry_url", "/api/mods.json"),
         addons_registry_url=addons_registry_url,
         addons_registry_urls=addons_registry_urls,
@@ -247,12 +258,21 @@ def discover_path() -> str:
         roots = [os.path.dirname(os.path.abspath(sys.executable))]
         if is_macos():
             # <bundle>.app/Contents/MacOS/<exe> → <bundle>.app → parent dir
-            roots.append(os.path.dirname(os.path.dirname(
-                os.path.dirname(os.path.dirname(
-                    os.path.abspath(sys.executable))))))
+            roots.append(
+                os.path.dirname(
+                    os.path.dirname(
+                        os.path.dirname(
+                            os.path.dirname(os.path.abspath(sys.executable))
+                        )
+                    )
+                )
+            )
     else:
-        roots = [os.path.dirname(os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))))]
+        roots = [
+            os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
+        ]
     roots.append(os.getcwd())
     for root in roots:
         candidate = os.path.join(root, LAUNCHER_FILE)
@@ -322,17 +342,25 @@ def configure(path: str | None = None) -> tuple["LauncherConfig | None", str]:
     with _LOCK:
         path = path or _auto_path()
         if not path:
-            _config, _path, _error = None, "", (
-                f"No {LAUNCHER_FILE} found. A launcher configuration is "
-                "required — create one or pass --launcher-config.")
+            _config, _path, _error = (
+                None,
+                "",
+                (
+                    f"No {LAUNCHER_FILE} found. A launcher configuration is "
+                    "required — create one or pass --launcher-config."
+                ),
+            )
             return None, _error
         try:
             with open(path, encoding="utf-8") as f:
                 raw = json.load(f)
             config = _derive(raw)
         except Exception as e:
-            _config, _path, _error = None, path, (
-                f"Invalid launcher configuration ({path}): {e}")
+            _config, _path, _error = (
+                None,
+                path,
+                (f"Invalid launcher configuration ({path}): {e}"),
+            )
             return None, _error
         _config, _path, _error = config, path, ""
         log(f"Launcher configuration loaded: {config.server_url}")

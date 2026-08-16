@@ -1,5 +1,8 @@
 from vanilla_wow_launcher.controllers.full_update import FullUpdateController
-from vanilla_wow_launcher.state.events import EventDispatcher, OperationFinished
+from vanilla_wow_launcher.state.events import (
+    EventDispatcher,
+    OperationFinished,
+)
 
 
 class FakeController:

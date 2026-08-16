@@ -12,10 +12,9 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from . import metrics as ui_metrics
-from .metrics import initial_window_size
-
 from .bridge import ControllerHub
 from .main_window import MainWindow
+from .metrics import initial_window_size
 
 
 def create_qt_app():
@@ -30,7 +29,8 @@ def create_qt_app():
     if app is not None:
         return app
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
-        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
     return QApplication([])
 
 

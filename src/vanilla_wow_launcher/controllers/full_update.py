@@ -41,8 +41,9 @@ class FullUpdateController:
         if self._phase == "mods":
             return self._start_mods()
         result = start()
-        if result is False or (result is None and not getattr(
-                self._updater, "running", True)):
+        if result is False or (
+            result is None and not getattr(self._updater, "running", True)
+        ):
             self._fail("client update could not start")
             return False
         return True
@@ -130,4 +131,6 @@ class FullUpdateController:
             if self._phase is None:
                 return
             self._phase = None
-        self._dispatcher.post(OperationFinished("full_update", False, message or ""))
+        self._dispatcher.post(
+            OperationFinished("full_update", False, message or "")
+        )

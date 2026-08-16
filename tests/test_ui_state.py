@@ -14,8 +14,8 @@ from vanilla_wow_launcher.state.models import (
     UpdateState,
 )
 
-
 # ── defaults ──────────────────────────────────────────────────────────────
+
 
 def test_update_state_defaults():
     s = UpdateState()
@@ -83,11 +83,17 @@ def test_app_state_defaults():
 
 # ── update flow ───────────────────────────────────────────────────────────
 
+
 def test_update_state_construction():
-    s = UpdateState(status="Downloading…", progress=0.42,
-                    progress_label="WoW.exe", running=True,
-                    client_ready=False, diff_nodes=[],
-                    client_version="1.16.1")
+    s = UpdateState(
+        status="Downloading…",
+        progress=0.42,
+        progress_label="WoW.exe",
+        running=True,
+        client_ready=False,
+        diff_nodes=[],
+        client_version="1.16.1",
+    )
     assert s.status == "Downloading…"
     assert s.progress == 0.42
     assert s.progress_label == "WoW.exe"
@@ -99,12 +105,25 @@ def test_update_state_construction():
 
 # ── news ─────────────────────────────────────────────────────────────────
 
+
 def test_news_state_with_sample_data():
-    featured = {"id": 42, "title": "1.16.2 is live", "author": "Staff",
-                "date": "2026-08-01T00:00:00+00:00", "url": "…",
-                "html": "<p>…</p>"}
-    items = [{"id": 7, "title": "Patch notes", "date": "2026-08-02T00:00:00+00:00",
-              "body": "…", "author": "Staff"}]
+    featured = {
+        "id": 42,
+        "title": "1.16.2 is live",
+        "author": "Staff",
+        "date": "2026-08-01T00:00:00+00:00",
+        "url": "…",
+        "html": "<p>…</p>",
+    }
+    items = [
+        {
+            "id": 7,
+            "title": "Patch notes",
+            "date": "2026-08-02T00:00:00+00:00",
+            "body": "…",
+            "author": "Staff",
+        }
+    ]
     n = NewsState(featured=featured, items=items, feat_ts=100.0, news_ts=200.0)
     assert n.featured["id"] == 42
     assert n.featured["title"] == "1.16.2 is live"
@@ -115,10 +134,15 @@ def test_news_state_with_sample_data():
 
 # ── mods ─────────────────────────────────────────────────────────────────
 
+
 def test_mod_state_record():
-    rec = ModState(enabled=True, installed_version="2.0.1",
-                   installed_files=["d3d9.dll"], ignore_updates=False,
-                   error=None)
+    rec = ModState(
+        enabled=True,
+        installed_version="2.0.1",
+        installed_files=["d3d9.dll"],
+        ignore_updates=False,
+        error=None,
+    )
     assert rec.enabled is True
     assert rec.installed_version == "2.0.1"
     assert rec.installed_files == ["d3d9.dll"]
@@ -148,8 +172,12 @@ def test_mods_state_construction():
     }
     latest = {"VanillaFixes": "2.0", "dxvk": "1.10.5", "ClassicAPI": "1.3"}
     pending = {"dxvk": ModPending(enabled=True)}
-    m = ModsState(records=records, latest_versions=latest,
-                  pending=pending, updates_count=2)
+    m = ModsState(
+        records=records,
+        latest_versions=latest,
+        pending=pending,
+        updates_count=2,
+    )
     assert m.updates_count == 2
     assert m.latest_version("ClassicAPI") == "1.3"
     assert m.latest_version("nope") is None
@@ -166,11 +194,14 @@ def test_mods_state_no_errors_or_pending():
 # ── addons ───────────────────────────────────────────────────────────────
 
 ADDON_REC = {
-    "folder": "pfUI", "status": "upToDate",
+    "folder": "pfUI",
+    "status": "upToDate",
     "git": "https://github.com/brues-code/pfUI",
-    "branch": "master", "ref": "abc123",
+    "branch": "master",
+    "ref": "abc123",
     "toc": {"Title": "pfUI", "Interface": "11200"},
-    "description": "Full interface", "error": None,
+    "description": "Full interface",
+    "error": None,
 }
 
 
@@ -189,8 +220,10 @@ def test_addon_state_round_trips_dict():
 def test_addons_state_from_and_to_status_dict():
     status = {
         "state": "done",
-        "addons": {"pfUI": dict(ADDON_REC, status="outOfDate"),
-                   "ShaguDPS": dict(ADDON_REC, folder="ShaguDPS")},
+        "addons": {
+            "pfUI": dict(ADDON_REC, status="outOfDate"),
+            "ShaguDPS": dict(ADDON_REC, folder="ShaguDPS"),
+        },
         "available": [dict(ADDON_REC, folder="AtlasLoot", status="available")],
     }
     st = AddonsState.from_status_dict(status)
@@ -204,29 +237,42 @@ def test_addons_state_from_and_to_status_dict():
 
 
 def test_addons_state_out_of_date_count():
-    st = AddonsState(addons={
-        "pfUI": AddonState.from_dict(dict(ADDON_REC, status="outOfDate")),
-        "ShaguDPS": AddonState.from_dict(dict(ADDON_REC, folder="ShaguDPS")),
-    })
+    st = AddonsState(
+        addons={
+            "pfUI": AddonState.from_dict(dict(ADDON_REC, status="outOfDate")),
+            "ShaguDPS": AddonState.from_dict(
+                dict(ADDON_REC, folder="ShaguDPS")
+            ),
+        }
+    )
     assert st.out_of_date_count() == 1
     assert AddonsState().out_of_date_count() == 0
 
 
 def test_addons_state_errors():
-    st = AddonsState(errors={
-        "pfUI": AddonError(error="Connection reset",
-                           git="https://github.com/brues-code/pfUI")})
+    st = AddonsState(
+        errors={
+            "pfUI": AddonError(
+                error="Connection reset",
+                git="https://github.com/brues-code/pfUI",
+            )
+        }
+    )
     assert st.errors["pfUI"].error == "Connection reset"
     assert st.errors["pfUI"].git == "https://github.com/brues-code/pfUI"
 
 
 # ── settings / log ───────────────────────────────────────────────────────
 
+
 def test_settings_state_with_sample_data():
-    s = SettingsState(path="C:/Games/WoW",
-                      config={"out_dir": "C:/Games/WoW"},
-                      first_run=True, first_run_av_pending=True,
-                      first_run_verify_pending=True)
+    s = SettingsState(
+        path="C:/Games/WoW",
+        config={"out_dir": "C:/Games/WoW"},
+        first_run=True,
+        first_run_av_pending=True,
+        first_run_verify_pending=True,
+    )
     assert s.path == "C:/Games/WoW"
     assert s.config["out_dir"] == "C:/Games/WoW"
     assert s.first_run is True

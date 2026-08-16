@@ -16,7 +16,6 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton
 
-from vanilla_wow_launcher.core import launcher
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
 from vanilla_wow_launcher.ui.qt.launcher_config_dialog import (
     LauncherConfigDialog,
@@ -34,8 +33,10 @@ def qapp():
 
 
 def _write_config(path):
-    path.write_text(json.dumps(
-        {"server": {"base_url": "https://launcher.test"}}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"server": {"base_url": "https://launcher.test"}}),
+        encoding="utf-8",
+    )
     return str(path)
 
 
@@ -49,12 +50,15 @@ def test_dialog_widgets_present(qapp, tmp_path):
         path_edit = dlg.findChild(QLineEdit, "launcherConfigPath")
         assert path_edit.isReadOnly()
         assert path_edit.text() == str(path)
-        assert isinstance(dlg.findChild(QPushButton, "launcherConfigBrowse"),
-                          QPushButton)
-        assert isinstance(dlg.findChild(QPushButton, "launcherConfigOk"),
-                          QPushButton)
-        assert isinstance(dlg.findChild(QPushButton, "launcherConfigCancel"),
-                          QPushButton)
+        assert isinstance(
+            dlg.findChild(QPushButton, "launcherConfigBrowse"), QPushButton
+        )
+        assert isinstance(
+            dlg.findChild(QPushButton, "launcherConfigOk"), QPushButton
+        )
+        assert isinstance(
+            dlg.findChild(QPushButton, "launcherConfigCancel"), QPushButton
+        )
         assert not dlg.findChild(QLabel, "launcherConfigError").isVisible()
     finally:
         dlg.close()
@@ -78,7 +82,8 @@ def test_ok_with_valid_config_accepts(qapp, tmp_path):
     dlg = LauncherConfigDialog()
     try:
         dlg.findChild(QLineEdit, "launcherConfigPath").setText(
-            _write_config(path))
+            _write_config(path)
+        )
         dlg.findChild(QPushButton, "launcherConfigOk").click()
         assert dlg.result() == QDialog.DialogCode.Accepted
         assert dlg.selected_path() == str(path)
@@ -104,11 +109,16 @@ def test_ok_with_invalid_config_shows_error(qapp, tmp_path):
 
 def test_browse_updates_path_and_validates(qapp, tmp_path, monkeypatch):
     import vanilla_wow_launcher.ui.qt.launcher_config_dialog as dialog_module
+
     path = tmp_path / "vanilla_wow_launcher.json"
     valid = _write_config(path)
     monkeypatch.setattr(
-        dialog_module.QFileDialog, "getOpenFileName",
-        staticmethod(lambda *a, **k: (valid, "Launcher configuration (*.json)")))
+        dialog_module.QFileDialog,
+        "getOpenFileName",
+        staticmethod(
+            lambda *a, **k: (valid, "Launcher configuration (*.json)")
+        ),
+    )
     dlg = LauncherConfigDialog()
     try:
         dlg.findChild(QPushButton, "launcherConfigBrowse").click()

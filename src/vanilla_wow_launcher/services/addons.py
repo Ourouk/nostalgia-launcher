@@ -29,9 +29,9 @@ from ..core.log_sink import log
 from ..core.security_http import secure_urlopen
 from . import catalog
 
-ADDONS_CATALOG_TTL  = 86400   # 1 day, persisted in the config file
+ADDONS_CATALOG_TTL = 86400  # 1 day, persisted in the config file
 ADDON_SHA_CACHE_TTL = 3600
-ADDONS_VERIFY_TTL   = 300     # skip re-verify on tab switches within this
+ADDONS_VERIFY_TTL = 300  # skip re-verify on tab switches within this
 
 # The per-user custom addon file (a JSON list, one entry per addon). Written
 # empty on first use via Settings → Catalog registries.
@@ -47,11 +47,22 @@ RECOMMENDED_ADDONS: dict = {}
 BLOCKED_ADDONS = set()
 
 
-ADDON_GIT_HOSTS = ("github.com", "gitlab.com", "gitea.com", "codeberg.org",
-                   "octowow.st")
+ADDON_GIT_HOSTS = (
+    "github.com",
+    "gitlab.com",
+    "gitea.com",
+    "codeberg.org",
+    "octowow.st",
+)
 
-ADDON_ZIP_HOSTS = {"github.com", "codeload.github.com", "gitlab.com",
-                   "gitea.com", "codeberg.org", "octowow.st"}
+ADDON_ZIP_HOSTS = {
+    "github.com",
+    "codeload.github.com",
+    "gitlab.com",
+    "gitea.com",
+    "codeberg.org",
+    "octowow.st",
+}
 
 
 def addons_path(client_dir: str) -> str:
@@ -96,8 +107,10 @@ def fetch_addons_catalog(force=False) -> list:
         # Legacy single-URL cache shape → re-key it under the first
         # configured URL so the per-URL lookup keeps working.
         update_config(
-            lambda c, u=urls[0]: c.setdefault("addons_catalog_cache", {})
-            .__setitem__(u, c["addons_catalog_cache"]))
+            lambda c, u=urls[0]: c.setdefault(
+                "addons_catalog_cache", {}
+            ).__setitem__(u, c["addons_catalog_cache"])
+        )
     merged = []
     for url in urls:
         part = _fetch_url_catalog(url, force, now)
@@ -121,8 +134,11 @@ def _cache_entry(url: str) -> dict:
 def _fetch_url_catalog(url: str, force: bool, now: float) -> list:
     """Fetch and cache one catalog URL; on failure serve its cached copy."""
     entry = _cache_entry(url)
-    if not force and entry.get("catalog") is not None \
-            and (now - entry.get("timestamp", 0)) < ADDONS_CATALOG_TTL:
+    if (
+        not force
+        and entry.get("catalog") is not None
+        and (now - entry.get("timestamp", 0)) < ADDONS_CATALOG_TTL
+    ):
         return entry["catalog"]
     try:
         req = urllib.request.Request(url, headers={"User-Agent": UA})
@@ -139,9 +155,11 @@ def _fetch_url_catalog(url: str, force: bool, now: float) -> list:
         if cleaned is None:
             continue
         catalog_list.append(cleaned)
-    update_config(lambda c, u=url, o=catalog_list, t=now:
-                  c.setdefault("addons_catalog_cache", {})
-                  .__setitem__(u, {"timestamp": t, "catalog": o}))
+    update_config(
+        lambda c, u=url, o=catalog_list, t=now: c.setdefault(
+            "addons_catalog_cache", {}
+        ).__setitem__(u, {"timestamp": t, "catalog": o})
+    )
     return catalog_list
 
 
@@ -151,7 +169,8 @@ def addons_catalog(force=False) -> list:
     file (custom entries override by folder name)."""
     remote = fetch_addons_catalog(force=force)
     return catalog.merge_addons(
-        remote, catalog.load_custom("addons", _custom_validator))
+        remote, catalog.load_custom("addons", _custom_validator)
+    )
 
 
 def catalog_from_cache() -> list:
@@ -171,7 +190,8 @@ def catalog_from_cache() -> list:
     for part in parts:
         merged = catalog.merge_addons(merged, part)
     return catalog.merge_addons(
-        merged, catalog.load_custom("addons", _custom_validator))
+        merged, catalog.load_custom("addons", _custom_validator)
+    )
 
 
 def registry_url() -> str:
@@ -204,6 +224,7 @@ def addons_registry_default_urls() -> list[str]:
     """The launcher-configured addon catalog URLs, in override order ('' list
     when not configured)."""
     from ..core import launcher
+
     return launcher.addons_registry_urls()
 
 
@@ -241,7 +262,7 @@ def read_toc_file(path: str) -> dict:
             content = f.read()
     except OSError:
         return toc
-    if content.startswith("\ufeff"):   # strip UTF-8 BOM
+    if content.startswith("\ufeff"):  # strip UTF-8 BOM
         content = content[1:]
     for line in content.splitlines():
         if not line.startswith("## "):
@@ -256,15 +277,15 @@ def _git_parts(git_url: str):
     """→ (kind, repo_url, owner, repo, api_base); kind ∈ github/gitlab/gitea.
     Handles path prefixes like <host>/git/<owner>/<repo>."""
     parts = urlsplit(git_url)
-    host  = (parts.hostname or "").lower()
-    segs  = [s for s in parts.path.split("/") if s]
+    host = (parts.hostname or "").lower()
+    segs = [s for s in parts.path.split("/") if s]
     if len(segs) < 2:
         raise ValueError(f"Unsupported git URL: {git_url}")
     owner, repo = segs[-2], segs[-1]
     if repo.endswith(".git"):
         repo = repo[:-4]
-    prefix   = "/".join(segs[:-2])
-    origin   = f"https://{parts.netloc}"
+    prefix = "/".join(segs[:-2])
+    origin = f"https://{parts.netloc}"
     repo_url = origin + (f"/{prefix}" if prefix else "") + f"/{owner}/{repo}"
     if host == "github.com" or host.endswith(".github.com"):
         return "github", repo_url, owner, repo, GITHUB_API
@@ -280,8 +301,9 @@ def _api_json(url: str, timeout=10):
         return json.load(r)
 
 
-def addon_remote_sha(git_url: str, branch=None, ref=None,
-                     force=False, raise_errors=False) -> str | None:
+def addon_remote_sha(
+    git_url: str, branch=None, ref=None, force=False, raise_errors=False
+) -> str | None:
     """Latest commit sha of a repo's branch (or pinned ref), cached in the
     config file so repeated verifies don't burn API quota. Returns None on
     failure — or raises with a readable cause when raise_errors is set.
@@ -301,27 +323,31 @@ def addon_remote_sha(git_url: str, branch=None, ref=None,
             return entry.get("sha")
 
     kind, _repo_url, owner, repo, api = _git_parts(git_url)
-    pin = ref or branch          # explicit branch/ref when the caller has one
+    pin = ref or branch  # explicit branch/ref when the caller has one
     sha = None
     api_error = None
     try:
         if kind == "github":
             if pin:
                 sha = _api_json(
-                    f"{api}/repos/{owner}/{repo}/commits/{pin}").get("sha")
+                    f"{api}/repos/{owner}/{repo}/commits/{pin}"
+                ).get("sha")
             else:
                 lst = _api_json(
-                    f"{api}/repos/{owner}/{repo}/commits?per_page=1")
+                    f"{api}/repos/{owner}/{repo}/commits?per_page=1"
+                )
                 sha = lst[0].get("sha") if lst else None
         elif kind == "gitlab":
             proj = quote(f"{owner}/{repo}", safe="")
             if pin:
                 sha = _api_json(
                     f"{api}/projects/{proj}/repository/commits/"
-                    f"{quote(pin, safe='')}").get("id")
+                    f"{quote(pin, safe='')}"
+                ).get("id")
             else:
                 lst = _api_json(
-                    f"{api}/projects/{proj}/repository/commits?per_page=1")
+                    f"{api}/projects/{proj}/repository/commits?per_page=1"
+                )
                 sha = lst[0].get("id") if lst else None
         else:  # gitea / codeberg
             q = f"?sha={pin}&limit=1" if pin else "?limit=1"
@@ -338,20 +364,30 @@ def addon_remote_sha(git_url: str, branch=None, ref=None,
 
     if sha is None and raise_errors:
         cause = api_error or RuntimeError(
-            f"could not resolve remote commit for {git_url}")
+            f"could not resolve remote commit for {git_url}"
+        )
         raise RuntimeError(describe_net_error(cause)) from cause
 
     if sha is None and not raise_errors:
         # Not an error for the caller (returns None), but worth a diagnostic
         # line so a wall of "Failed to verify" isn't a silent mystery.
-        api_cause = describe_net_error(api_error) if api_error \
+        api_cause = (
+            describe_net_error(api_error)
+            if api_error
             else "API returned no commits"
-        log(f"  Could not resolve remote commit for {git_url} — {api_cause}; "
-            f"git ls-remote fallback also failed.", "dim")
+        )
+        log(
+            f"  Could not resolve remote commit for {git_url} — {api_cause}; "
+            f"git ls-remote fallback also failed.",
+            "dim",
+        )
 
     if sha:
-        update_config(lambda c: c.setdefault("addon_sha_cache", {}).__setitem__(
-            key, {"timestamp": now, "sha": sha}))
+        update_config(
+            lambda c: c.setdefault("addon_sha_cache", {}).__setitem__(
+                key, {"timestamp": now, "sha": sha}
+            )
+        )
     return sha
 
 
@@ -368,16 +404,20 @@ def _git_ls_remote_sha(git_url: str, pin: str | None) -> str | None:
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
     try:
-        proc = subprocess.run(args, capture_output=True, text=True,
-                              timeout=15, env=env)
+        proc = subprocess.run(
+            args, capture_output=True, text=True, timeout=15, env=env
+        )
     except (FileNotFoundError, subprocess.SubprocessError, OSError):
         return None
     if proc.returncode != 0:
         return None
     lines = [line.partition("\t") for line in proc.stdout.splitlines()]
     if pin:
-        exact = [sha for sha, _, ref in lines
-                 if ref in (f"refs/heads/{pin}", f"refs/tags/{pin}")]
+        exact = [
+            sha
+            for sha, _, ref in lines
+            if ref in (f"refs/heads/{pin}", f"refs/tags/{pin}")
+        ]
         if exact:
             return exact[0]
         # Loose match (e.g. a short branch/ref name resolving via remotes).
@@ -409,13 +449,12 @@ def install_addon_files(client_dir: str, folder: str, git_url: str, sha: str):
     url = addon_zip_url(git_url, sha)
     log(f"  Downloading {folder} @ {sha[:10]}…")
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with secure_urlopen(req, timeout=120,
-                        allowed_hosts=ADDON_ZIP_HOSTS) as r:
+    with secure_urlopen(req, timeout=120, allowed_hosts=ADDON_ZIP_HOSTS) as r:
         data = r.read()
 
     dest_root = os.path.join(addons_path(client_dir), folder)
-    tmp_root  = dest_root + ".tmp_install"
-    tmp_abs   = os.path.abspath(tmp_root)
+    tmp_root = dest_root + ".tmp_install"
+    tmp_abs = os.path.abspath(tmp_root)
     if os.path.isdir(tmp_root):
         rmtree_force(tmp_root)
     try:
@@ -425,8 +464,11 @@ def install_addon_files(client_dir: str, folder: str, git_url: str, sha: str):
                     continue
                 # Strip the archive's top-level "<repo>-<sha>/" directory and
                 # normalise separators (a zip entry may use "/" or "\").
-                parts = [p for p in info.filename.replace("\\", "/").split("/")[1:]
-                         if p not in ("", ".")]
+                parts = [
+                    p
+                    for p in info.filename.replace("\\", "/").split("/")[1:]
+                    if p not in ("", ".")
+                ]
                 if not parts or ".." in parts:
                     continue
                 target = os.path.join(tmp_root, *parts)
@@ -459,17 +501,19 @@ def install_addon_files(client_dir: str, folder: str, git_url: str, sha: str):
 
 # The curated profile (JSON captured from a configured pfUI, profile renamed to
 # "Default"). Loaded as a Python dict and emitted as a Lua table at patch time.
-PFUI_DEFAULT_PROFILE = json.loads(r'''
+PFUI_DEFAULT_PROFILE = json.loads(r"""
 {"appearance":{"border":{"default":"-1"},"castbar":{"castbarcolor":"1,0.796,0.251,0.8"},"cd":{"debuffs":"1","font":"Interface\\AddOns\\pfUI\\fonts\\Myriad-Pro.ttf","milliseconds":"0"},"infight":{"health":"0"},"minimap":{"arrowscale":"2"}},"buffs":{"hidelist":"","showoverflow":"1","showspillover":"1"},"castbar":{"focus":{"showicon":"1","showtimer":"0"},"player":{"hide_blizz":"0","hide_pfui":"1","showtimer":"0"},"target":{"showicon":"1","showtimer":"0"}},"character":{"inventory":{"durability":"0"},"reputation":{"repRequired":"0"}},"disabled":{"actionbar":"1","addonbuttons":"0","addoncompat":"0","addons":"0","afkcam":"0","autoshift":"0","autovendor":"0","bags":"1","bgscore":"0","bubbles":"1","buff":"1","buffwatch":"0","castbar":"0","chat":"1","chatcopy":"0","combopoints":"0","cooldown":"0","custom":"0","easteregg":"0","energytick":"0","eqcompare":"0","equipmentmanager":"0","farmmode":"0","feigndeath":"0","firstrun":"0","focus":"0","gm":"0","group":"0","gryphons":"0","hdgraphic":"0","hoverbind":"0","hunterbar":"0","infight":"0","innervatecall":"0","itemclick":"0","itemcount":"1","loot":"1","macrotweak":"0","map":"0","mapcolors":"0","mapreveal":"0","marktracking":"0","minimap":"0","mirrortimers":"0","mouseover":"0","nameplates":"0","nampower":"0","panel":"0","pet":"0","pettarget":"0","pixelperfect":"0","player":"0","questitem":"0","raid":"0","roll":"1","screenshot":"0","sellvalue":"0","share":"0","skin":"0","skin_Auctionhouse":"0","skin_Barbershop":"0","skin_Battlefield":"0","skin_Battlefield Minimap":"0","skin_Battlefield Score":"0","skin_Books":"0","skin_Character":"0","skin_Coin Pickup":"0","skin_Color Picker":"0","skin_Dress Up Frame":"0","skin_Everlook Broadcasting":"0","skin_Flightmaster":"1","skin_Friends":"1","skin_GM Survey":"0","skin_Game Menu":"0","skin_Gossip and Quest":"1","skin_Guild Registrar":"0","skin_Guild Tabard":"0","skin_Help":"0","skin_Inspect":"0","skin_KeyBindings":"0","skin_Macro":"0","skin_Mailbox":"1","skin_Merchant":"1","skin_Opacity":"0","skin_Outline":"0","skin_Player":"1","skin_Quest":"1","skin_Quest Tracker":"0","skin_Reputation":"1","skin_Social":"0","skin_TradeSkill":"1","skin_Trainer":"1","skin_Tutorials":"0","skin_Unitframe":"1","timerbar":"0","tooltip":"0","tracker":"0","unitframes":"0"},"equipment":{"durability":"0"},"nameplates":{"clickthrough":"0","hidelist":"","showonlyname":"0"},"panels":{"fpsloc":"Right","hidelist":"","lootannounce":"0","mouseover":"0"},"reputation":{"repRequired":"0"},"skins":{"dark":"1","font":"Interface\\AddOns\\pfUI\\fonts\\Myriad-Pro.ttf","fontscale":"1"},"tooltips":{"hideincombat":"0","hidelist":"","mousefollow":"0"},"unitframes":{"clickthrough":"0","hidelist":"","petbars":"1","showstagger":"0"}}
-''')
+""")
 
 
 def _lua_value(v, indent: int = 0) -> str:
     """Serialize a JSON-derived value to a pfUI-style Lua literal."""
     if isinstance(v, dict):
         pad, cpad = " " * (indent + 2), " " * indent
-        items = "".join(f'{pad}["{k}"] = {_lua_value(val, indent + 2)},\n'
-                        for k, val in v.items())
+        items = "".join(
+            f'{pad}["{k}"] = {_lua_value(val, indent + 2)},\n'
+            for k, val in v.items()
+        )
         return "{\n" + items + cpad + "}"
     if isinstance(v, bool):
         return "true" if v else "false"
@@ -480,12 +524,14 @@ def _lua_value(v, indent: int = 0) -> str:
 
 
 _PFUI_MARK_BEGIN = "-- OCTO_UPDATER_DEFAULT_PROFILE_BEGIN"
-_PFUI_MARK_END   = "-- OCTO_UPDATER_DEFAULT_PROFILE_END"
+_PFUI_MARK_END = "-- OCTO_UPDATER_DEFAULT_PROFILE_END"
 _PFUI_CHAT_BEGIN = "-- OCTO_UPDATER_CHAT_SKIP_BEGIN"
-_PFUI_CHAT_END   = "-- OCTO_UPDATER_CHAT_SKIP_END"
+_PFUI_CHAT_END = "-- OCTO_UPDATER_CHAT_SKIP_END"
 
 # Strips any Vanilla WoW Launcher injected block, regardless of which marker pair.
-_PFUI_STRIP_RE = r"[ \t]*-- OCTO_UPDATER_[A-Z_]+?_BEGIN.*?-- OCTO_UPDATER_[A-Z_]+?_END\n?"
+_PFUI_STRIP_RE = (
+    r"[ \t]*-- OCTO_UPDATER_[A-Z_]+?_BEGIN.*?-- OCTO_UPDATER_[A-Z_]+?_END\n?"
+)
 
 
 def patch_pfui_default_profile(client_dir: str):
@@ -501,15 +547,24 @@ def patch_pfui_default_profile(client_dir: str):
         return
 
     # 1) profiles.lua — append (or replace) a marked block defining Default.
-    block = (f"{_PFUI_MARK_BEGIN}\n"
-             f"local octo_default = {_lua_value(PFUI_DEFAULT_PROFILE)}\n"
-             f'pfUI_profiles["Default"] = octo_default\n'
-             f"{_PFUI_MARK_END}\n")
+    block = (
+        f"{_PFUI_MARK_BEGIN}\n"
+        f"local octo_default = {_lua_value(PFUI_DEFAULT_PROFILE)}\n"
+        f'pfUI_profiles["Default"] = octo_default\n'
+        f"{_PFUI_MARK_END}\n"
+    )
     try:
         with open(profiles_lua, encoding="utf-8", errors="replace") as f:
             txt = f.read()
-        txt = re.sub(re.escape(_PFUI_MARK_BEGIN) + r".*?"
-                     + re.escape(_PFUI_MARK_END) + r"\n?", "", txt, flags=re.S)
+        txt = re.sub(
+            re.escape(_PFUI_MARK_BEGIN)
+            + r".*?"
+            + re.escape(_PFUI_MARK_END)
+            + r"\n?",
+            "",
+            txt,
+            flags=re.S,
+        )
         with open(profiles_lua, "w", encoding="utf-8") as f:
             f.write(txt.rstrip() + "\n\n" + block)
         log("  pfUI: 'Default' profile installed.")
@@ -527,7 +582,8 @@ def patch_pfui_default_profile(client_dir: str):
             old = 'CopyTable(pfUI_profiles["Modern"]) or {}'
             if old in pf:
                 pf = pf.replace(
-                    old, 'CopyTable(pfUI_profiles["Default"]) or {}', 1)
+                    old, 'CopyTable(pfUI_profiles["Default"]) or {}', 1
+                )
                 with open(pfui_lua, "w", encoding="utf-8") as f:
                     f.write(pf)
                 log("  pfUI: 'Default' set as the fresh-install profile.")
@@ -557,7 +613,8 @@ def patch_pfui_default_profile(client_dir: str):
             '    pfUI_init["chat_position"] = true\n'
             '    pfUI_init["chat_channels"] = true\n'
             "  end\n"
-            f"  {_PFUI_CHAT_END}\n")
+            f"  {_PFUI_CHAT_END}\n"
+        )
         chat_anchor = "  pfUI.firstrun.steps = {}\n"
         if chat_anchor in fr:
             fr = fr.replace(chat_anchor, chat_anchor + chat_skip, 1)
@@ -571,21 +628,24 @@ def patch_pfui_default_profile(client_dir: str):
             '    f.Default:SetPoint("BOTTOM", 0, 125)\n'
             "    f.Default:SetTextColor(1,1,1)\n"
             '    f.Default:SetText("Default (recommended)")\n'
-            "    f.Default:SetScript(\"OnClick\", function()\n"
+            '    f.Default:SetScript("OnClick", function()\n'
             '      _G["pfUI_config"] = CopyTable(pfUI_profiles["Default"])\n'
             '      pfUI_init.selected_profile = "Default"\n'
             "      pfUI:LoadConfig()\n"
             "      ReloadUI()\n"
             "    end)\n"
             "    SkinButton(f.Default)\n"
-            f"    {_PFUI_MARK_END}\n\n")
+            f"    {_PFUI_MARK_END}\n\n"
+        )
         anchor = '    f.Modern = CreateFrame("Button"'
         if anchor in fr:
             fr = fr.replace(anchor, button + anchor, 1)
 
         # Make Default the profile used when the user doesn't pick one.
-        fr = fr.replace('pfUI_init.selected_profile or "Modern"',
-                        'pfUI_init.selected_profile or "Default"')
+        fr = fr.replace(
+            'pfUI_init.selected_profile or "Modern"',
+            'pfUI_init.selected_profile or "Default"',
+        )
 
         with open(firstrun_lua, "w", encoding="utf-8") as f:
             f.write(fr)

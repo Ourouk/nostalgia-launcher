@@ -18,12 +18,14 @@ class Event:
 @dataclass
 class StatusChanged(Event):
     """The footer status line shown in the main window."""
+
     text: str
 
 
 @dataclass
 class LogMessage(Event):
     """One session-log line (text, tag)."""
+
     text: str
     tag: str = ""
 
@@ -31,6 +33,7 @@ class LogMessage(Event):
 @dataclass
 class ProgressChanged(Event):
     """Progress-bar value in 0..1 plus the label shown above it."""
+
     value: float
     label: str = ""
 
@@ -38,6 +41,7 @@ class ProgressChanged(Event):
 @dataclass
 class NewsLoaded(Event):
     """News-feed snapshot. kind is "featured" or "items"."""
+
     kind: str
     data: object | None = None
 
@@ -45,18 +49,21 @@ class NewsLoaded(Event):
 @dataclass
 class ModsLoaded(Event):
     """MODS panel snapshot (ui_state.ModsState)."""
+
     state: object | None = None
 
 
 @dataclass
 class AddonsLoaded(Event):
     """ADDONS panel snapshot (ui_state.AddonsState)."""
+
     state: object | None = None
 
 
 @dataclass
 class MirrorStatusChanged(Event):
     """Download-mirror reachability result (Settings modal label)."""
+
     ok: bool
     text: str
 
@@ -64,6 +71,7 @@ class MirrorStatusChanged(Event):
 @dataclass
 class OperationFinished(Event):
     """A worker operation completed successfully."""
+
     kind: str
     ok: bool
     message: str = ""
@@ -72,6 +80,7 @@ class OperationFinished(Event):
 @dataclass
 class OperationFailed(Event):
     """A worker operation raised before it could report success."""
+
     kind: str
     message: str = ""
 
@@ -79,6 +88,7 @@ class OperationFailed(Event):
 @dataclass
 class GameLaunched(Event):
     """A game process was started by the launcher (umu on Linux)."""
+
     pid: int
     pgid: int
 
@@ -86,6 +96,7 @@ class GameLaunched(Event):
 @dataclass
 class GameExited(Event):
     """A game process launched by the launcher has ended."""
+
     pid: int
     exit_code: int | None = None
 

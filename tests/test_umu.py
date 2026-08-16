@@ -2,7 +2,6 @@
 
 import os
 import signal
-import subprocess
 import unittest.mock as mock
 
 import pytest
@@ -15,18 +14,20 @@ from vanilla_wow_launcher.core import platform_support
 def _umu_env(monkeypatch, tmp_path):
     """Pin the data dir and the Steam compatibility-tools root per test, so
     nothing touches the real user's filesystem."""
-    monkeypatch.setattr(platform_support, "data_dir",
-                        lambda: str(tmp_path / "data"))
-    monkeypatch.setattr(umu, "_COMPAT_TOOLS_DIRS",
-                        (str(tmp_path / "compat-tools"),))
+    monkeypatch.setattr(
+        platform_support, "data_dir", lambda: str(tmp_path / "data")
+    )
+    monkeypatch.setattr(
+        umu, "_COMPAT_TOOLS_DIRS", (str(tmp_path / "compat-tools"),)
+    )
     (tmp_path / "compat-tools").mkdir(parents=True, exist_ok=True)
 
 
 # ── find_umu ────────────────────────────────────────────────────────────
 
+
 def test_find_umu_on_path(monkeypatch):
-    monkeypatch.setattr(umu.shutil, "which",
-                        lambda name: "/usr/bin/umu-run")
+    monkeypatch.setattr(umu.shutil, "which", lambda name: "/usr/bin/umu-run")
     assert umu.find_umu() == "/usr/bin/umu-run"
 
 
@@ -56,6 +57,7 @@ def test_umu_available_reflects_find(monkeypatch):
 
 # ── resolve_proton ──────────────────────────────────────────────────────
 
+
 def test_resolve_proton_passes_through_paths():
     assert umu.resolve_proton("~/GE-Proton9-4") == "~/GE-Proton9-4"
     assert umu.resolve_proton("/opt/Proton") == "/opt/Proton"
@@ -84,6 +86,7 @@ def test_resolve_proton_exact_match_wins(monkeypatch, tmp_path):
 
 # ── compute_wine_prefix ─────────────────────────────────────────────────
 
+
 def test_compute_wine_prefix_under_data_dir(tmp_path):
     prefix = umu.compute_wine_prefix()
     assert prefix == str(tmp_path / "data" / "wineprefix")
@@ -91,6 +94,7 @@ def test_compute_wine_prefix_under_data_dir(tmp_path):
 
 
 # ── build_env ───────────────────────────────────────────────────────────
+
 
 def test_build_env_sets_umu_contract(monkeypatch, tmp_path):
     prefix = umu.compute_wine_prefix()
@@ -111,6 +115,7 @@ def test_build_env_resolves_proton_codename(monkeypatch, tmp_path):
 
 # ── launch ──────────────────────────────────────────────────────────────
 
+
 def test_launch_spawns_umu_detached(monkeypatch, tmp_path):
     game = tmp_path / "game"
     game.mkdir()
@@ -122,8 +127,9 @@ def test_launch_spawns_umu_detached(monkeypatch, tmp_path):
     monkeypatch.setattr(umu.os, "getpgid", lambda pid: 9999)
     monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
 
-    pid, pgid, proc = umu.launch(str(game), str(exe), proton="GE-Proton9-4",
-                                 game_id="umu-vanilla-wow")
+    pid, pgid, proc = umu.launch(
+        str(game), str(exe), proton="GE-Proton9-4", game_id="umu-vanilla-wow"
+    )
 
     assert pid == 4242
     assert pgid == 9999
@@ -137,8 +143,7 @@ def test_launch_spawns_umu_detached(monkeypatch, tmp_path):
     assert kwargs["env"]["GAMEID"] == "umu-vanilla-wow"
 
 
-def test_launch_falls_back_to_pid_when_pgid_unavailable(monkeypatch,
-                                                        tmp_path):
+def test_launch_falls_back_to_pid_when_pgid_unavailable(monkeypatch, tmp_path):
     game = tmp_path / "game"
     game.mkdir()
     exe = game / "WoW.exe"
@@ -146,8 +151,9 @@ def test_launch_falls_back_to_pid_when_pgid_unavailable(monkeypatch,
     popen = mock.Mock()
     popen.return_value.pid = 4242
     monkeypatch.setattr(umu.subprocess, "Popen", popen)
-    monkeypatch.setattr(umu.os, "getpgid",
-                        mock.Mock(side_effect=OSError("no such process")))
+    monkeypatch.setattr(
+        umu.os, "getpgid", mock.Mock(side_effect=OSError("no such process"))
+    )
     monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
 
     pid, pgid, _ = umu.launch(str(game), str(exe))
@@ -183,48 +189,51 @@ def test_launch_raises_when_umu_missing(monkeypatch, tmp_path):
 
 # ── kill_game ───────────────────────────────────────────────────────────
 
+
 def test_kill_game_escalates_to_sigkill(monkeypatch):
     kills = []
-    monkeypatch.setattr(umu.os, "killpg",
-                        lambda pgid, sig: kills.append(("pg", pgid, sig)))
-    monkeypatch.setattr(umu.os, "kill",
-                        lambda pid, sig: kills.append(("p", pid, sig)))
+    monkeypatch.setattr(
+        umu.os, "killpg", lambda pgid, sig: kills.append(("pg", pgid, sig))
+    )
+    monkeypatch.setattr(
+        umu.os, "kill", lambda pid, sig: kills.append(("p", pid, sig))
+    )
     monkeypatch.setattr(umu.time, "sleep", lambda s: None)
 
     umu.kill_game(4242, 9999, grace=0.01)
 
     assert ("pg", 9999, signal.SIGTERM) in kills
-    assert ("p", 4242, 0) in kills          # liveness probe
+    assert ("p", 4242, 0) in kills  # liveness probe
     assert ("pg", 9999, signal.SIGKILL) in kills
 
 
 def test_kill_game_noop_when_process_already_gone(monkeypatch):
     kills = []
-    monkeypatch.setattr(umu.os, "killpg",
-                        mock.Mock(side_effect=ProcessLookupError))
+    monkeypatch.setattr(
+        umu.os, "killpg", mock.Mock(side_effect=ProcessLookupError)
+    )
     monkeypatch.setattr(umu.os, "kill", lambda pid, sig: kills.append(sig))
 
     umu.kill_game(4242, 9999)
 
-    assert kills == []                       # never probed after SIGTERM missed
+    assert kills == []  # never probed after SIGTERM missed
 
 
 def test_kill_game_returns_early_when_process_exits_on_sigterm(monkeypatch):
-    monkeypatch.setattr(umu.os, "killpg",
-                        lambda pgid, sig: None)
+    monkeypatch.setattr(umu.os, "killpg", lambda pgid, sig: None)
     # Process dies right after SIGTERM: the first liveness probe raises.
-    monkeypatch.setattr(umu.os, "kill",
-                        mock.Mock(side_effect=ProcessLookupError))
+    monkeypatch.setattr(
+        umu.os, "kill", mock.Mock(side_effect=ProcessLookupError)
+    )
     monkeypatch.setattr(umu.time, "sleep", lambda s: None)
 
-    umu.kill_game(4242, 9999, grace=5.0)     # no SIGKILL despite long grace
+    umu.kill_game(4242, 9999, grace=5.0)  # no SIGKILL despite long grace
 
 
 def test_kill_game_noop_off_linux(monkeypatch):
     monkeypatch.setattr(platform_support, "is_linux", lambda: False)
     killed = []
-    monkeypatch.setattr(umu.os, "killpg",
-                        lambda pgid, sig: killed.append(sig))
+    monkeypatch.setattr(umu.os, "killpg", lambda pgid, sig: killed.append(sig))
     monkeypatch.setattr(umu.os, "kill", lambda pid, sig: killed.append(sig))
 
     umu.kill_game(4242, 9999)

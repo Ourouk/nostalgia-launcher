@@ -54,30 +54,37 @@ from unittest.mock import Mock
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
-import vanilla_wow_launcher.services.addons as addons_module
-import vanilla_wow_launcher.core.config_store as config_store
-import vanilla_wow_launcher.core.constants as constants
-import vanilla_wow_launcher.services.mods as mods_module
-import vanilla_wow_launcher.services.news as news_module
 import vanilla_wow_launcher.controllers.news as news_controller
-import vanilla_wow_launcher.core.platform_support as platform_support
 import vanilla_wow_launcher.controllers.settings as settings_controller
 import vanilla_wow_launcher.controllers.update as update_controller
-from vanilla_wow_launcher.ui.qt.app import QtVanillaWoWLauncherApp, create_qt_app
-from vanilla_wow_launcher.ui.qt.settings_dialog import SettingsDialog
+import vanilla_wow_launcher.core.config_store as config_store
+import vanilla_wow_launcher.core.constants as constants
+import vanilla_wow_launcher.core.platform_support as platform_support
+import vanilla_wow_launcher.services.addons as addons_module
+import vanilla_wow_launcher.services.mods as mods_module
+import vanilla_wow_launcher.services.news as news_module
+from vanilla_wow_launcher.ui.qt.app import (
+    QtVanillaWoWLauncherApp,
+    create_qt_app,
+)
 from vanilla_wow_launcher.ui.qt.metrics import BASE_H, BASE_W, clamp
+from vanilla_wow_launcher.ui.qt.settings_dialog import SettingsDialog
 
 DISPLAY_REQUESTED = (
     os.environ.get("QT_QPA_PLATFORM") != "offscreen"
-    and os.environ.get("RUN_QT_DISPLAY_TESTS") == "1")
+    and os.environ.get("RUN_QT_DISPLAY_TESTS") == "1"
+)
 
 # Gating guard for the real-display tests: skipped by default so a normal
 # `uv run pytest` never runs (or fails) them.
 display = pytest.mark.skipif(
     not DISPLAY_REQUESTED,
-    reason=("real-display integration check: needs a non-offscreen session "
-            "(e.g. QT_QPA_PLATFORM=xcb) plus RUN_QT_DISPLAY_TESTS=1 "
-            "(see the module docstring)"))
+    reason=(
+        "real-display integration check: needs a non-offscreen session "
+        "(e.g. QT_QPA_PLATFORM=xcb) plus RUN_QT_DISPLAY_TESTS=1 "
+        "(see the module docstring)"
+    ),
+)
 
 
 @pytest.fixture(scope="session")
@@ -98,41 +105,73 @@ def qt_env(monkeypatch, tmp_path):
     monkeypatch.setattr(settings_controller, "CONFIG_FILE", str(cfg))
     monkeypatch.setattr(settings_controller, "CACHE_FILE", str(cache))
 
-    featured = {"title": "1.16.2 is live", "author": "Staff",
-                "date": "2026-08-13", "html": "<p>Patch is out.</p>",
-                "url": "https://example.invalid/news/1"}
-    items = [{"title": "Patch notes", "date": "2026-08-13",
-              "author": "Staff", "body": "Full notes here",
-              "url": "https://example.invalid/news/2"}]
+    featured = {
+        "title": "1.16.2 is live",
+        "author": "Staff",
+        "date": "2026-08-13",
+        "html": "<p>Patch is out.</p>",
+        "url": "https://example.invalid/news/1",
+    }
+    items = [
+        {
+            "title": "Patch notes",
+            "date": "2026-08-13",
+            "author": "Staff",
+            "body": "Full notes here",
+            "url": "https://example.invalid/news/2",
+        }
+    ]
 
     monkeypatch.setattr(news_module, "fetch_featured_post", lambda: featured)
     monkeypatch.setattr(news_module, "fetch_news_items", lambda: items)
-    monkeypatch.setattr(news_controller, "fetch_featured_post",
-                        lambda: featured)
+    monkeypatch.setattr(
+        news_controller, "fetch_featured_post", lambda: featured
+    )
     monkeypatch.setattr(news_controller, "fetch_news_items", lambda: items)
 
-    monkeypatch.setattr(mods_module, "fetch_mod_latest_version_cached",
-                        lambda mod, force=False: "1.2.3")
+    monkeypatch.setattr(
+        mods_module,
+        "fetch_mod_latest_version_cached",
+        lambda mod, force=False: "1.2.3",
+    )
 
-    catalog = [{"name": "pfUI", "git": "https://github.com/brues-code/pfUI",
-                "branch": "master", "ref": "HEAD", "toc": {},
-                "description": "Everything you need"}]
-    monkeypatch.setattr(addons_module, "fetch_addons_catalog",
-                        lambda force=False: catalog)
-    monkeypatch.setattr(addons_module, "addon_remote_sha",
-                        lambda git_url, branch=None, ref=None, force=False,
-                        raise_errors=False: "deadbeef")
-    monkeypatch.setattr(addons_module, "addon_cached_sha",
-                        lambda git_url, branch=None, ref=None: "deadbeef")
+    catalog = [
+        {
+            "name": "pfUI",
+            "git": "https://github.com/brues-code/pfUI",
+            "branch": "master",
+            "ref": "HEAD",
+            "toc": {},
+            "description": "Everything you need",
+        }
+    ]
+    monkeypatch.setattr(
+        addons_module, "fetch_addons_catalog", lambda force=False: catalog
+    )
+    monkeypatch.setattr(
+        addons_module,
+        "addon_remote_sha",
+        lambda git_url, branch=None, ref=None, force=False, raise_errors=False: (
+            "deadbeef"
+        ),
+    )
+    monkeypatch.setattr(
+        addons_module,
+        "addon_cached_sha",
+        lambda git_url, branch=None, ref=None: "deadbeef",
+    )
 
-    monkeypatch.setattr(update_controller, "fetch_updater_latest_tag",
-                        Mock(return_value="1.2"))
-    monkeypatch.setattr(update_controller, "updater_update_available",
-                        lambda tag: False)
+    monkeypatch.setattr(
+        update_controller, "fetch_updater_latest_tag", Mock(return_value="1.2")
+    )
+    monkeypatch.setattr(
+        update_controller, "updater_update_available", lambda tag: False
+    )
     monkeypatch.setattr(update_controller, "can_launch_client", lambda: True)
     monkeypatch.setattr(platform_support, "can_launch_client", lambda: True)
-    monkeypatch.setattr(platform_support, "can_manage_antivirus",
-                        lambda: False)
+    monkeypatch.setattr(
+        platform_support, "can_manage_antivirus", lambda: False
+    )
 
     yield cfg
     config_store.configure("", "")
@@ -142,26 +181,32 @@ def qt_env(monkeypatch, tmp_path):
 def build_app(qapp, monkeypatch, qt_env):
     """Factory for full QtVanillaWoWLauncherApp instances with safe backends (same
     shape as test_qt_smoke.py's)."""
+
     def _build(*, startup=True, first_run=False):
         cfg = qt_env
         if not first_run:
-            config_store.save_config({
-                "out_dir": str(cfg.parent / "game"),
-                "mod_release_cache": {"VanillaFixes":
-                                      {"timestamp": 0, "release": {}}},
-                "addons": {},
-            })
+            config_store.save_config(
+                {
+                    "out_dir": str(cfg.parent / "game"),
+                    "mod_release_cache": {
+                        "VanillaFixes": {"timestamp": 0, "release": {}}
+                    },
+                    "addons": {},
+                }
+            )
         app = QtVanillaWoWLauncherApp()
         app._window.show()
         hub = app._hub
         monkeypatch.setattr(hub.updater, "start_verify", Mock())
         monkeypatch.setattr(hub.updater, "start_update", Mock())
         monkeypatch.setattr(hub.updater, "check_updater_update", Mock())
-        monkeypatch.setattr(hub.updater, "launch_game",
-                            Mock(return_value=(True, False)))
+        monkeypatch.setattr(
+            hub.updater, "launch_game", Mock(return_value=(True, False))
+        )
         if not startup:
             app._window._stop_timers()
         return app
+
     return _build
 
 
@@ -189,7 +234,9 @@ def _qwait(app, ms=50):
 # ── Part A: offscreen scale / resize checks (run on any host) ─────────────
 
 
-def test_window_resizes_across_range_without_losing_pages(qapp, app_no_startup):
+def test_window_resizes_across_range_without_losing_pages(
+    qapp, app_no_startup
+):
     win = app_no_startup._window
     pages = {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
     for wsize, hsize in ((800, 600), (1400, 900)):
@@ -231,7 +278,8 @@ def test_high_dpi_policy_attributes_and_screen_dpr(qapp, app_no_startup):
     # create_qt_app() configures the high-DPI rounding policy before the
     # instance exists; scaling itself is native to Qt 6.
     assert qapp.highDpiScaleFactorRoundingPolicy() == (
-        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
     # The screen's device-pixel ratio is always readable (positive float);
     # QTest cannot set a DPR offscreen, so its magnitude vs the OS setting is
     # asserted on a real display in Part B.
@@ -268,8 +316,12 @@ def test_real_display_shows_and_is_resizable(qapp, app):
 @display
 def test_real_display_tabs_switch_and_settings_open(qapp, app_no_startup):
     win = app_no_startup._window
-    for name, obj in (("NEWS", "newsPanel"), ("TWEAKS", "tweaksPanel"),
-                      ("ADDONS", "addonsPanel"), ("MODS", "modsPanel")):
+    for name, obj in (
+        ("NEWS", "newsPanel"),
+        ("TWEAKS", "tweaksPanel"),
+        ("ADDONS", "addonsPanel"),
+        ("MODS", "modsPanel"),
+    ):
         QTest.mouseClick(win._navButtons[name], Qt.LeftButton)
         _qwait(app_no_startup._app, 30)
         assert win._stack.currentIndex() == win._pages[name]

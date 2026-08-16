@@ -12,13 +12,20 @@ import queue
 import threading
 from dataclasses import dataclass
 
-from ..services.client_update import UpdateWorker, VerifyWorker
 from ..core.config_store import load_config, update_config
 from ..core.constants import DEFAULT_OUT_DIR
-from ..core.filesystem import get_client_version, pick_game_executable, remove_wdb
+from ..core.filesystem import (
+    get_client_version,
+    pick_game_executable,
+    remove_wdb,
+)
 from ..core.log_sink import debug_emit
 from ..core.platform_support import can_launch_client, is_linux
-from ..services.self_update import fetch_updater_latest_tag, updater_update_available
+from ..services.client_update import UpdateWorker, VerifyWorker
+from ..services.self_update import (
+    fetch_updater_latest_tag,
+    updater_update_available,
+)
 from ..state.events import (
     EventDispatcher,
     GameExited,
@@ -40,6 +47,7 @@ class Readiness:
     button text used in busy mode; status is the footer status line the UI
     should show.
     """
+
     mode: str
     label: str
     status: str
@@ -66,7 +74,10 @@ class UpdateController:
         # the header "Update available!" label should be shown.
         self.updater_update_available = False
         if get_out_dir is None:
-            get_out_dir = lambda: load_config().get("out_dir", DEFAULT_OUT_DIR)
+
+            def get_out_dir():
+                return load_config().get("out_dir", DEFAULT_OUT_DIR)
+
         self._get_out_dir = get_out_dir
 
     # ── public API ──────────────────────────────────────────────────────────
@@ -100,15 +111,18 @@ class UpdateController:
         self.state.running = True
         self._op = "verify"
         self.state.status = "Verifying…"
-        self.state.manifest_available = False   # a fresh verify re-fetches it
+        self.state.manifest_available = False  # a fresh verify re-fetches it
         self._log_q = queue.Queue()
         self._prog_q = queue.Queue()
         cfg = load_config()
         worker = VerifyWorker(
-            out, self._log_q, self._prog_q,
+            out,
+            self._log_q,
+            self._prog_q,
             cfg.get("expected_patched_wow_hash", ""),
             cfg.get("original_server_wow_hash", ""),
-            overwrite_config=overwrite_config)
+            overwrite_config=overwrite_config,
+        )
         self._verify_worker = worker
         threading.Thread(target=worker.run, daemon=True).start()
         self._dispatcher.post(StatusChanged("Verifying…"))
@@ -120,7 +134,8 @@ class UpdateController:
         out = (self._get_out_dir() or "").strip()
         if not out:
             self._dispatcher.post(
-                LogMessage("✗  Please set the game folder first.\n", "err"))
+                LogMessage("✗  Please set the game folder first.\n", "err")
+            )
             return
         update_config(lambda c: c.__setitem__("out_dir", out))
         self._dispatcher.post(LogMessage(f"\nGame folder: {out}\n", "dim"))
@@ -130,9 +145,15 @@ class UpdateController:
         self._log_q = queue.Queue()
         self._prog_q = queue.Queue()
         cfg = load_config()
-        worker = UpdateWorker(out, self._log_q, self._prog_q,
-                              cfg.get("expected_patched_wow_hash", ""))
-        worker.original_server_wow_hash = cfg.get("original_server_wow_hash", "")
+        worker = UpdateWorker(
+            out,
+            self._log_q,
+            self._prog_q,
+            cfg.get("expected_patched_wow_hash", ""),
+        )
+        worker.original_server_wow_hash = cfg.get(
+            "original_server_wow_hash", ""
+        )
         self._worker = worker
         diff = self.state.diff_nodes
         self.state.diff_nodes = None
@@ -157,7 +178,8 @@ class UpdateController:
         """The client version straight from disk, cached on state (footer
         label at startup, before any worker has run)."""
         self.state.client_version = get_client_version(
-            (self._get_out_dir() or "").strip())
+            (self._get_out_dir() or "").strip()
+        )
         return self.state.client_version
 
     def check_updater_update(self):
@@ -170,8 +192,7 @@ class UpdateController:
                 tag = fetch_updater_latest_tag()
             except Exception:
                 tag = None
-            self.updater_update_available = bool(
-                updater_update_available(tag))
+            self.updater_update_available = bool(updater_update_available(tag))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -187,15 +208,23 @@ class UpdateController:
         time — a second launch is refused while one is running.
         """
         if not can_launch_client():
-            self._dispatcher.post(LogMessage(
-                "Game launch is not available on this platform — on Linux, "
-                "umu-run must be installed (the client is a Windows "
-                "binary).\n", "err"))
+            self._dispatcher.post(
+                LogMessage(
+                    "Game launch is not available on this platform — on Linux, "
+                    "umu-run must be installed (the client is a Windows "
+                    "binary).\n",
+                    "err",
+                )
+            )
             return False, False
         if self.state.game_running:
-            self._dispatcher.post(LogMessage(
-                "A game is already running — use TERMINATE to end it "
-                "first.\n", "err"))
+            self._dispatcher.post(
+                LogMessage(
+                    "A game is already running — use TERMINATE to end it "
+                    "first.\n",
+                    "err",
+                )
+            )
             return False, False
         client_dir = (self._get_out_dir() or "").strip()
         cfg = load_config()
@@ -207,12 +236,14 @@ class UpdateController:
         """Windows direct launch: prefer the loader mod's executable, then
         WoW.exe, spawned detached from the caller's job object."""
         import subprocess
+
         # Prefer the loader mod's executable when it's present on disk
         # (whatever the catalog called it).
         exe, exe_lbl = pick_game_executable(client_dir)
         if not os.path.exists(exe):
-            self._dispatcher.post(LogMessage(
-                f"{exe_lbl} not found at: {exe}\n", "err"))
+            self._dispatcher.post(
+                LogMessage(f"{exe_lbl} not found at: {exe}\n", "err")
+            )
             return False, False
 
         dxvk_notice = False
@@ -223,21 +254,25 @@ class UpdateController:
             remove_wdb(client_dir)
 
         try:
-            flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
-                     | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0))
+            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
+                subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0
+            )
             try:
-                subprocess.Popen([exe], cwd=client_dir,
-                                 creationflags=flags, close_fds=True)
+                subprocess.Popen(
+                    [exe], cwd=client_dir, creationflags=flags, close_fds=True
+                )
             except OSError:
                 # The job object doesn't permit breakaway — retry without it.
                 flags &= ~getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
-                subprocess.Popen([exe], cwd=client_dir,
-                                 creationflags=flags, close_fds=True)
+                subprocess.Popen(
+                    [exe], cwd=client_dir, creationflags=flags, close_fds=True
+                )
             self._dispatcher.post(LogMessage(f"Launched {exe_lbl}!\n", "ok"))
             return True, dxvk_notice
         except Exception as e:
-            self._dispatcher.post(LogMessage(
-                f"Failed to launch {exe_lbl}: {e}\n", "err"))
+            self._dispatcher.post(
+                LogMessage(f"Failed to launch {exe_lbl}: {e}\n", "err")
+            )
             return False, dxvk_notice
 
     def _launch_game_via_umu(self, client_dir: str, cfg: dict) -> tuple:
@@ -246,10 +281,12 @@ class UpdateController:
         Windows. No DXVK notice (shader-cache stutter is a Windows/DXVK-mod
         concern). Records the running game and watches its exit."""
         from ..services import umu
+
         exe, exe_lbl = pick_game_executable(client_dir)
         if not os.path.exists(exe):
-            self._dispatcher.post(LogMessage(
-                f"{exe_lbl} not found at: {exe}\n", "err"))
+            self._dispatcher.post(
+                LogMessage(f"{exe_lbl} not found at: {exe}\n", "err")
+            )
             return False, False
         if cfg.get("clear_wdb_on_launch", False):
             remove_wdb(client_dir)
@@ -257,29 +294,38 @@ class UpdateController:
         launch_cfg = cfg.get("launch") or {}
         try:
             pid, pgid, proc = umu.launch(
-                client_dir, exe,
+                client_dir,
+                exe,
                 proton=launch_cfg.get("umu_proton", "GE-Proton"),
                 game_id=launch_cfg.get("umu_game_id", "umu-vanilla-wow"),
-                umu_binary=launch_cfg.get("umu_binary_path", ""))
+                umu_binary=launch_cfg.get("umu_binary_path", ""),
+            )
             self.state.game_running = True
             self.state.game_pid = pid
             self.state.game_pgid = pgid
             self._dispatcher.post(GameLaunched(pid, pgid))
-            threading.Thread(target=self._watch_game, args=(proc, pid),
-                             daemon=True).start()
+            threading.Thread(
+                target=self._watch_game, args=(proc, pid), daemon=True
+            ).start()
             prefix = umu.compute_wine_prefix()
-            self._dispatcher.post(LogMessage(
-                f"Launched {exe_lbl} via umu (PID {pid}, WINEPREFIX "
-                f"{prefix}).\n", "ok"))
-            self._dispatcher.post(StatusChanged(
-                "Running WoW.exe — click TERMINATE to quit"))
+            self._dispatcher.post(
+                LogMessage(
+                    f"Launched {exe_lbl} via umu (PID {pid}, WINEPREFIX "
+                    f"{prefix}).\n",
+                    "ok",
+                )
+            )
+            self._dispatcher.post(
+                StatusChanged("Running WoW.exe — click TERMINATE to quit")
+            )
             return True, False
         except Exception as e:
             self.state.game_running = False
             self.state.game_pid = None
             self.state.game_pgid = None
-            self._dispatcher.post(LogMessage(
-                f"Failed to launch {exe_lbl} via umu: {e}\n", "err"))
+            self._dispatcher.post(
+                LogMessage(f"Failed to launch {exe_lbl} via umu: {e}\n", "err")
+            )
             return False, False
 
     def _watch_game(self, proc, pid: int):
@@ -306,14 +352,17 @@ class UpdateController:
             return False
         pid = self.state.game_pid
         pgid = self.state.game_pgid
-        self._dispatcher.post(LogMessage(
-            f"Terminating game (PID {pid})…\n", "acct"))
+        self._dispatcher.post(
+            LogMessage(f"Terminating game (PID {pid})…\n", "acct")
+        )
         from ..services import umu
+
         try:
             umu.kill_game(pid, pgid)
         except Exception as e:
-            self._dispatcher.post(LogMessage(
-                f"Failed to terminate game: {e}\n", "err"))
+            self._dispatcher.post(
+                LogMessage(f"Failed to terminate game: {e}\n", "err")
+            )
         return True
 
     def poll(self):
@@ -345,8 +394,11 @@ class UpdateController:
         exactly like the mods flow.
         """
         if self.state.game_running:
-            return Readiness("terminate", "TERMINATE",
-                             "Running WoW.exe — click TERMINATE to quit")
+            return Readiness(
+                "terminate",
+                "TERMINATE",
+                "Running WoW.exe — click TERMINATE to quit",
+            )
         if addons_installing:
             return Readiness("busy", "Installing…", "Downloading addons…")
         if self.state.running:
@@ -422,17 +474,23 @@ class UpdateController:
         elif msg == "__DIFF_TREE__":
             self.state.diff_nodes = tag
         elif msg.startswith("__ORIGINAL_HASH__"):
-            h = msg[len("__ORIGINAL_HASH__"):]
-            update_config(lambda c: c.__setitem__("original_server_wow_hash", h))
+            h = msg[len("__ORIGINAL_HASH__") :]
+            update_config(
+                lambda c: c.__setitem__("original_server_wow_hash", h)
+            )
         elif msg.startswith("__PATCHED_HASH__"):
-            h = msg[len("__PATCHED_HASH__"):]
-            update_config(lambda c: c.__setitem__("expected_patched_wow_hash", h))
+            h = msg[len("__PATCHED_HASH__") :]
+            update_config(
+                lambda c: c.__setitem__("expected_patched_wow_hash", h)
+            )
         elif msg.startswith("__VERSION__"):
-            self.state.client_version = msg[len("__VERSION__"):]
+            self.state.client_version = msg[len("__VERSION__") :]
         else:
             debug_emit(msg)
             self._dispatcher.post(LogMessage(msg, tag))
 
     def _mods_have_errors(self) -> bool:
-        return any(bool(s.get("error"))
-                   for s in load_config().get("mods", {}).values())
+        return any(
+            bool(s.get("error"))
+            for s in load_config().get("mods", {}).values()
+        )

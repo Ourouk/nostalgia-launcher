@@ -19,8 +19,13 @@ config_file: str = ""
 cache_file: str = ""
 
 
-def configure(cfg_file: str, cache: str,
-              legacy_config=(), legacy_cache=(), legacy_pairs=()):
+def configure(
+    cfg_file: str,
+    cache: str,
+    legacy_config=(),
+    legacy_cache=(),
+    legacy_pairs=(),
+):
     """Point the store at the on-disk config and hash-cache files.
 
     `legacy_config`/`legacy_cache` accept a single path string or an

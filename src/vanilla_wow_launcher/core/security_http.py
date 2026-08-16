@@ -24,6 +24,7 @@ SSL_CTX.verify_mode = ssl.CERT_REQUIRED
 # If certifi isn't bundled, fall back to the system store alone.
 try:
     import certifi
+
     SSL_CTX.load_verify_locations(certifi.where())
 except Exception:
     pass
@@ -65,7 +66,9 @@ def _check_url(url: str, allowed_hosts):
     if allowed_hosts is not None:
         host = (parts.hostname or "").lower()
         if host not in allowed_hosts:
-            raise RuntimeError(f"Refusing download from unexpected host: {host}")
+            raise RuntimeError(
+                f"Refusing download from unexpected host: {host}"
+            )
 
 
 class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -75,16 +78,17 @@ class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
     to its CDN (e.g. the server→its dl host, github.com→codeload) — and TLS
     protects wherever it lands. The allowlist's job is to vet the *initial*
     URL (against a tampered API response), which secure_urlopen still does."""
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        _check_url(newurl, None)   # HTTPS-only, no host check
+        _check_url(newurl, None)  # HTTPS-only, no host check
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 # Shared opener with the hardened TLS context and the HTTPS-only redirect
 # guard, built once.
 _SECURE_OPENER = urllib.request.build_opener(
-    urllib.request.HTTPSHandler(context=SSL_CTX),
-    _HttpsOnlyRedirectHandler())
+    urllib.request.HTTPSHandler(context=SSL_CTX), _HttpsOnlyRedirectHandler()
+)
 
 
 def secure_urlopen(req, timeout, allowed_hosts=None):

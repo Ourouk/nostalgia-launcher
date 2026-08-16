@@ -15,8 +15,8 @@ from vanilla_wow_launcher.state.events import (
     StatusChanged,
 )
 
-
 # ── post / drain ─────────────────────────────────────────────────────────
+
 
 def test_drain_empty_when_nothing_posted():
     d = EventDispatcher()
@@ -65,6 +65,7 @@ def test_typed_events_carry_payloads():
 
 # ── thread safety ─────────────────────────────────────────────────────────
 
+
 def test_post_from_many_threads_then_drain_sees_all():
     d = EventDispatcher()
 
@@ -72,8 +73,9 @@ def test_post_from_many_threads_then_drain_sees_all():
         for i in range(n):
             d.post(LogMessage(f"line {i}"))
 
-    threads = [threading.Thread(target=post_batch, args=(100,))
-               for _ in range(8)]
+    threads = [
+        threading.Thread(target=post_batch, args=(100,)) for _ in range(8)
+    ]
     for t in threads:
         t.start()
     for t in threads:
@@ -136,6 +138,7 @@ def test_concurrent_post_and_drain_no_deadlock():
 
 # ── subscribe / unsubscribe ──────────────────────────────────────────────
 
+
 def test_subscribe_and_dispatch_all():
     d = EventDispatcher()
     got = []
@@ -150,7 +153,10 @@ def test_subscribe_and_dispatch_all():
 def test_subscribe_twice_dispatches_once():
     d = EventDispatcher()
     got = []
-    handler = lambda e: got.append(e)
+
+    def handler(e):
+        got.append(e)
+
     d.subscribe(handler)
     d.subscribe(handler)
     d.post(StatusChanged("a"))
@@ -161,7 +167,10 @@ def test_subscribe_twice_dispatches_once():
 def test_unsubscribe_stops_delivery():
     d = EventDispatcher()
     got = []
-    handler = lambda e: got.append(e)
+
+    def handler(e):
+        got.append(e)
+
     d.subscribe(handler)
     d.post(StatusChanged("a"))
     d.dispatch_all()
@@ -170,7 +179,7 @@ def test_unsubscribe_stops_delivery():
     d.post(StatusChanged("b"))
     d.dispatch_all()
     assert got == [StatusChanged("a")]
-    d.unsubscribe(handler)   # unknown handler is a no-op
+    d.unsubscribe(handler)  # unknown handler is a no-op
 
 
 def test_dispatch_all_with_explicit_handler_ignores_subscribers():

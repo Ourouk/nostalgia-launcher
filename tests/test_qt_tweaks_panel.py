@@ -16,16 +16,15 @@ pytest.importorskip("PySide6")
 
 from unittest.mock import Mock
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QLineEdit
 
-import vanilla_wow_launcher.services.tweaks as tweaks
 import vanilla_wow_launcher.controllers.tweaks as tc
+import vanilla_wow_launcher.services.tweaks as tweaks
+from vanilla_wow_launcher.services.tweaks import TWEAKS_DEFAULTS
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
 from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
 from vanilla_wow_launcher.ui.qt.main_window import MainWindow
 from vanilla_wow_launcher.ui.qt.tweaks_panel import TweaksPanel
-from vanilla_wow_launcher.services.tweaks import TWEAKS_DEFAULTS
 
 
 @pytest.fixture(autouse=True)
@@ -45,8 +44,9 @@ def tweak_backend(monkeypatch):
     saved = dict(TWEAKS_DEFAULTS)
     saved["fieldOfView"] = 110
     monkeypatch.setattr(tweaks, "load_tweaks_config", lambda: dict(saved))
-    monkeypatch.setattr(tweaks, "save_tweaks_config",
-                        lambda values: saved.update(values))
+    monkeypatch.setattr(
+        tweaks, "save_tweaks_config", lambda values: saved.update(values)
+    )
     monkeypatch.setattr(tc, "fov_default_for_display", lambda: 110)
     return saved
 
@@ -82,6 +82,7 @@ def _entry(panel, tid) -> QLineEdit:
 
 # ── build ───────────────────────────────────────────────────────────────
 
+
 def test_panel_replaces_the_tweaks_placeholder(qapp, window):
     assert window._pages == {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
     panel = _panel(window)
@@ -89,7 +90,9 @@ def test_panel_replaces_the_tweaks_placeholder(qapp, window):
     # A checkbox row and a number row exist for known tweak ids.
     assert _check(panel, "alwaysAutoLoot") is not None
     assert _entry(panel, "fieldOfView") is not None
-    assert panel.findChild(QCheckBox, "tweaksCheck_soundInBackground") is not None
+    assert (
+        panel.findChild(QCheckBox, "tweaksCheck_soundInBackground") is not None
+    )
     assert _entry(panel, "cameraDistance") is not None
 
 
@@ -110,6 +113,7 @@ def test_tab_switch_shows_the_tweaks_panel(qapp, window):
 
 
 # ── clamping + red paint ────────────────────────────────────────────────
+
 
 def test_out_of_range_entry_clamps_on_editing_finished(qapp, window):
     panel = _panel(window)
@@ -150,8 +154,8 @@ def test_empty_entry_falls_back_to_default_on_clamp(qapp, window):
 
 # ── dirty / custom button rules ─────────────────────────────────────────
 
-def test_checkbox_change_makes_apply_visible_and_revert_hides_it(
-        qapp, window):
+
+def test_checkbox_change_makes_apply_visible_and_revert_hides_it(qapp, window):
     window.switch_tab("TWEAKS")
     panel = _panel(window)
     assert not panel._apply_button.isVisible()
@@ -180,8 +184,8 @@ def test_number_edit_makes_apply_visible(qapp, window):
 
 # ── apply / reset ───────────────────────────────────────────────────────
 
-def test_apply_calls_controller_with_clamped_values(qapp, window,
-                                                    monkeypatch):
+
+def test_apply_calls_controller_with_clamped_values(qapp, window, monkeypatch):
     window.switch_tab("TWEAKS")
     panel = _panel(window)
     apply_mock = Mock(return_value=False)
@@ -201,8 +205,7 @@ def test_apply_calls_controller_with_clamped_values(qapp, window,
     assert values["soundInBackground"] is True
 
 
-def test_reset_calls_controller_and_refreshes_form(qapp, window,
-                                                   monkeypatch):
+def test_reset_calls_controller_and_refreshes_form(qapp, window, monkeypatch):
     window.switch_tab("TWEAKS")
     panel = _panel(window)
     reset_mock = Mock(return_value=False)
@@ -222,7 +225,8 @@ def test_reset_calls_controller_and_refreshes_form(qapp, window,
 
 
 def test_operation_finished_refreshes_values_and_enables_buttons(
-        qapp, window, tweak_backend):
+    qapp, window, tweak_backend
+):
     panel = _panel(window)
     panel._set_running(True)
     assert not panel._apply_button.isEnabled()

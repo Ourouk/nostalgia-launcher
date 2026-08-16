@@ -18,27 +18,28 @@ import urllib.request
 from typing import NamedTuple
 from urllib.error import HTTPError
 
+from ..core.config_store import load_cache, save_cache
 from ..core.constants import (
-    UA,
     DOWNLOAD_RETRY,
     DOWNLOAD_TIMEOUT,
+    UA,
 )
-from ..core.config_store import load_cache, save_cache
 from ..core.filesystem import (
-    sha1_file,
-    cached_sha1,
     already_updated,
-    remove_wdb,
+    cached_sha1,
     get_client_version,
+    remove_wdb,
+    sha1_file,
 )
 from ..core.helpers import fmt_size, fmt_speed
 from ..core.platform_support import can_patch_client
-from ..core.security_http import secure_urlopen, allowed_download_hosts
+from ..core.security_http import allowed_download_hosts, secure_urlopen
 from .tweaks import build_tweaks, write_config_wtf
 
 
 class DownloadSource(NamedTuple):
     """The resolved endpoints of the active download source."""
+
     manifest_url: str
     client_url: str
 
@@ -64,27 +65,33 @@ def _download_source() -> "DownloadSource | None":
     server is the fallback. Returns None when the launcher configuration is
     missing."""
     from ..core import launcher
+
     cfg = launcher.config()
     server = cfg.server_url if cfg else ""
     if not server:
         return None
-    for mirror in (cfg.mirrors if cfg else []):
+    for mirror in cfg.mirrors if cfg else []:
         if _source_reachable(mirror.client_url):
             return DownloadSource(mirror.manifest_url, mirror.client_url)
     return DownloadSource(cfg.manifest_url, cfg.client_url)
 
 
 class VerifyWorker:
-    def __init__(self, out_dir: str, log_q: queue.Queue, prog_q: queue.Queue,
-                 expected_patched_wow_hash: str = "",
-                 original_server_wow_hash: str = "",
-                 overwrite_config: bool = False):
+    def __init__(
+        self,
+        out_dir: str,
+        log_q: queue.Queue,
+        prog_q: queue.Queue,
+        expected_patched_wow_hash: str = "",
+        original_server_wow_hash: str = "",
+        overwrite_config: bool = False,
+    ):
         self.out_dir = out_dir
-        self.log_q   = log_q
-        self.prog_q  = prog_q
+        self.log_q = log_q
+        self.prog_q = prog_q
         self._cancel = False
         self.expected_patched_wow_hash = expected_patched_wow_hash
-        self.original_server_wow_hash  = original_server_wow_hash
+        self.original_server_wow_hash = original_server_wow_hash
         self.overwrite_config = overwrite_config
         self._cache: dict = load_cache()
 
@@ -104,20 +111,25 @@ class VerifyWorker:
         if local_hash == server_hash:
             return True
         if name == "WoW.exe" and self.expected_patched_wow_hash:
-            return (local_hash == self.expected_patched_wow_hash
-                    and server_hash == self.original_server_wow_hash)
+            return (
+                local_hash == self.expected_patched_wow_hash
+                and server_hash == self.original_server_wow_hash
+            )
         return False
 
     def _traverse(self, node, path_parts):
         if self._cancel:
             return None
-        t    = node["type"]
+        t = node["type"]
         name = node["name"]
-        cur  = path_parts + [name]
+        cur = path_parts + [name]
 
         if t == "dir":
-            stale = [c for child in node.get("files", [])
-                     if (c := self._traverse(child, cur)) is not None]
+            stale = [
+                c
+                for child in node.get("files", [])
+                if (c := self._traverse(child, cur)) is not None
+            ]
             return {**node, "files": stale} if stale else None
 
         dest = os.path.join(self.out_dir, os.path.join(*cur))
@@ -129,8 +141,14 @@ class VerifyWorker:
             return None if self._file_ok(dest, node["hash"], name) else node
 
         if t == "mpq":
-            mpq_dest = os.path.join(self.out_dir, os.path.join(*(path_parts + [name + ".mpq"])))
-            return None if self._file_ok(mpq_dest, node["hash"], name + ".mpq") else node
+            mpq_dest = os.path.join(
+                self.out_dir, os.path.join(*(path_parts + [name + ".mpq"]))
+            )
+            return (
+                None
+                if self._file_ok(mpq_dest, node["hash"], name + ".mpq")
+                else node
+            )
 
         return None
 
@@ -143,15 +161,19 @@ class VerifyWorker:
             if src is None:
                 raise RuntimeError("No download source configured.")
             req = urllib.request.Request(
-                src.manifest_url, headers={"User-Agent": UA})
+                src.manifest_url, headers={"User-Agent": UA}
+            )
             with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
                 manifest = json.load(r)
             manifest_ok = True
             self.log_q.put(("__MANIFEST_AVAILABLE__", ""))
             self.progress(0.5, "Checking...")
 
-            stale_nodes = [c for child in manifest["root"].get("files", [])
-                           if (c := self._traverse(child, [])) is not None]
+            stale_nodes = [
+                c
+                for child in manifest["root"].get("files", [])
+                if (c := self._traverse(child, [])) is not None
+            ]
 
             self.progress(1.0, "")
             save_cache(self._cache)
@@ -176,21 +198,32 @@ class VerifyWorker:
             # the controller uses __MANIFEST_UNAVAILABLE__ to gray out the
             # update button. Failures *after* the manifest parsed are a
             # genuine "update needed" verdict.
-            self.log_q.put(("__MANIFEST_UNAVAILABLE__" if not manifest_ok
-                            else "__UPDATE_NEEDED__", ""))
+            self.log_q.put(
+                (
+                    "__MANIFEST_UNAVAILABLE__"
+                    if not manifest_ok
+                    else "__UPDATE_NEEDED__",
+                    "",
+                )
+            )
             self.log_q.put(("__DIFF_TREE__", None))
 
 
 class UpdateWorker:
-    def __init__(self, out_dir: str, log_q: queue.Queue, prog_q: queue.Queue,
-                 expected_patched_wow_hash: str = ""):
+    def __init__(
+        self,
+        out_dir: str,
+        log_q: queue.Queue,
+        prog_q: queue.Queue,
+        expected_patched_wow_hash: str = "",
+    ):
         self.out_dir = out_dir
-        self.log_q   = log_q
-        self.prog_q  = prog_q
+        self.log_q = log_q
+        self.prog_q = prog_q
         self._cancel = False
         self._cache: dict = load_cache()
         self.expected_patched_wow_hash = expected_patched_wow_hash
-        self.original_server_wow_hash  = ""
+        self.original_server_wow_hash = ""
         self._source: DownloadSource | None = None
 
     def cancel(self):
@@ -204,7 +237,7 @@ class UpdateWorker:
 
     def download(self, url, dest, size, name=""):
         os.makedirs(os.path.dirname(dest), exist_ok=True)
-        tmp  = dest + ".tmp"
+        tmp = dest + ".tmp"
         name = name or os.path.basename(dest)
         total_str = fmt_size(size) if size else "?"
 
@@ -215,11 +248,11 @@ class UpdateWorker:
                 # Resume a previous partial download when one is present.
                 got = os.path.getsize(tmp) if os.path.exists(tmp) else 0
                 if size and got >= size:
-                    os.remove(tmp)   # oversized/stale leftover — start clean
+                    os.remove(tmp)  # oversized/stale leftover — start clean
                     got = 0
 
                 headers = {"User-Agent": UA}
-                mode    = "wb"
+                mode = "wb"
                 if got:
                     headers["Range"] = f"bytes={got}-"
                     mode = "ab"
@@ -237,8 +270,11 @@ class UpdateWorker:
                 t0 = time.monotonic()
                 bytes_at_t0 = downloaded
                 speed_str = ""
-                with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT,
-                                    allowed_hosts=allowed_download_hosts()) as r:
+                with secure_urlopen(
+                    req,
+                    timeout=DOWNLOAD_TIMEOUT,
+                    allowed_hosts=allowed_download_hosts(),
+                ) as r:
                     status = getattr(r, "status", None) or r.getcode()
                     if got and status != 206:
                         # Server ignored the Range header — start over.
@@ -257,22 +293,26 @@ class UpdateWorker:
                                 hasher.update(chunk)
                             downloaded += len(chunk)
                             now = time.monotonic()
-                            dt  = now - t0
+                            dt = now - t0
                             if dt >= 0.5:
                                 speed_str = "   •   " + fmt_speed(
-                                    (downloaded - bytes_at_t0) / dt)
+                                    (downloaded - bytes_at_t0) / dt
+                                )
                                 t0, bytes_at_t0 = now, downloaded
                             if size:
                                 self.progress(
                                     downloaded / size,
                                     f"{name}   •   {fmt_size(downloaded)}"
-                                    f" / {total_str}{speed_str}")
+                                    f" / {total_str}{speed_str}",
+                                )
 
                 # A dropped connection looks like a clean EOF — never accept
                 # a short file as a finished download.
                 if size and downloaded != size:
-                    raise IOError("connection lost at "
-                                  f"{fmt_size(downloaded)} / {total_str}")
+                    raise OSError(
+                        "connection lost at "
+                        f"{fmt_size(downloaded)} / {total_str}"
+                    )
 
                 shutil.move(tmp, dest)
                 if hasher is not None:
@@ -288,19 +328,22 @@ class UpdateWorker:
                 return None
             except Exception as e:
                 if self._cancel:
-                    raise RuntimeError("Cancelled")
+                    raise RuntimeError("Cancelled") from None
                 # Keep tmp — the next attempt resumes from where this one
                 # stopped instead of redownloading from zero.
                 self.log(f"  Attempt {attempt} failed: {e}", "err")
                 if attempt < DOWNLOAD_RETRY:
-                    wait = min(2 ** attempt, 10)
+                    wait = min(2**attempt, 10)
                     part = os.path.getsize(tmp) if os.path.exists(tmp) else 0
                     self.progress(
                         (part / size) if size else 0.0,
-                        f"{name} — retrying ({attempt}/{DOWNLOAD_RETRY})…")
+                        f"{name} — retrying ({attempt}/{DOWNLOAD_RETRY})…",
+                    )
                     self.log(f"  Retrying in {wait} s…", "dim")
                     time.sleep(wait)
-        raise RuntimeError(f"Download failed after {DOWNLOAD_RETRY} attempts: {url}")
+        raise RuntimeError(
+            f"Download failed after {DOWNLOAD_RETRY} attempts: {url}"
+        )
 
     def traverse(self, node, path_parts):
         if self._cancel:
@@ -310,11 +353,11 @@ class UpdateWorker:
         src = self._source
         if src is None:
             raise RuntimeError("No download source configured.")
-        t    = node["type"]
+        t = node["type"]
         name = node["name"]
-        cur  = path_parts + [name]
+        cur = path_parts + [name]
 
-        rel  = os.path.join(*cur)
+        rel = os.path.join(*cur)
         dest = os.path.join(self.out_dir, rel)
 
         if t == "dir":
@@ -346,14 +389,16 @@ class UpdateWorker:
                 os.remove(dest)
                 got_hash = self.download(url, dest, node["size"], rel)
                 if (got_hash or sha1_file(dest)) != node["hash"]:
-                    raise RuntimeError(f"Hash mismatch after redownload: {rel}")
+                    raise RuntimeError(
+                        f"Hash mismatch after redownload: {rel}"
+                    )
 
         elif t == "mpq":
             mpq_name = name + ".mpq"
-            cur_mpq  = path_parts + [mpq_name]
-            rel      = os.path.join(*cur_mpq)
-            dest     = os.path.join(self.out_dir, rel)
-            url      = f"{src.client_url}/{'/'.join(cur_mpq)}"
+            cur_mpq = path_parts + [mpq_name]
+            rel = os.path.join(*cur_mpq)
+            dest = os.path.join(self.out_dir, rel)
+            url = f"{src.client_url}/{'/'.join(cur_mpq)}"
             self.log(f"[mpq]  {rel}", "acct")
             if already_updated(dest, node["hash"]):
                 self.log("  Already up to date.", "dim")
@@ -364,7 +409,9 @@ class UpdateWorker:
                 os.remove(dest)
                 got_hash = self.download(url, dest, node["size"], rel)
                 if (got_hash or sha1_file(dest)) != node["hash"]:
-                    raise RuntimeError(f"Hash mismatch after redownload: {rel}")
+                    raise RuntimeError(
+                        f"Hash mismatch after redownload: {rel}"
+                    )
 
         elif t == "del":
             self.log(f"[del]  {rel}", "dim")
@@ -383,14 +430,14 @@ class UpdateWorker:
         for label, kind, offset, value in build_tweaks(buf, tweaks):
             self.log(f"  {label}", "dim")
             if kind == "float":
-                struct.pack_into("<f",  buf, offset, value)
+                struct.pack_into("<f", buf, offset, value)
             elif kind == "int8":
-                struct.pack_into("<b",  buf, offset, value)
+                struct.pack_into("<b", buf, offset, value)
             elif kind == "uint16":
-                struct.pack_into("<H",  buf, offset, value)
+                struct.pack_into("<H", buf, offset, value)
             elif kind == "bytes":
                 for off, data in value:
-                    buf[off: off + len(data)] = data
+                    buf[off : off + len(data)] = data
         with open(exe, "wb") as f:
             f.write(buf)
         self.log("WoW.exe patched.", "ok")
@@ -424,7 +471,8 @@ class UpdateWorker:
                 if self._source is None:
                     raise RuntimeError("No download source configured.")
                 req = urllib.request.Request(
-                    self._source.manifest_url, headers={"User-Agent": UA})
+                    self._source.manifest_url, headers={"User-Agent": UA}
+                )
                 with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
                     manifest = json.load(r)
                 self.log_q.put(("__MANIFEST_AVAILABLE__", ""))
