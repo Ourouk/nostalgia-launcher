@@ -12,6 +12,8 @@ server list.
 
 - Updates the game client and downloads only changed files.
 - Verifies downloaded files and retries interrupted downloads.
+- Optionally bulk-downloads changed files over BitTorrent, falling back to
+  HTTP when the torrent backend is unavailable or the manifest can't be read.
 - Installs and updates registered client mods.
 - Installs addons from supported Git hosting services without requiring Git.
 - Applies common graphics, camera, sound, and gameplay preferences.
@@ -109,6 +111,24 @@ After selecting a configuration:
 The launcher compares the files in your game folder with the configured server
 manifest. Only missing or changed files are downloaded. Downloads can resume
 after an interruption, and files are checked again after downloading.
+
+When the active server or mirror advertises a `torrent_url` in the launcher
+configuration, changed files are first bulk-downloaded over BitTorrent
+(libtorrent) before the per-file HTTP pass. The torrent is fetched over the
+same allowlisted HTTPS transport, the launcher never seeds (uploads are
+disabled), and every file is still re-verified against the manifest's SHA-1
+afterwards — anything the torrent missed is resumed over HTTP. This is
+transparent: you just click **UPDATE**. If libtorrent is unavailable (e.g. a
+Python version with no wheel), downloads simply fall back to plain HTTP.
+
+If the manifest itself cannot be fetched but a `torrent_url` is available, the
+launcher offers a **recovery download**: it installs the whole client from the
+torrent, verified against the torrent's embedded piece hashes (the `.torrent`
+arrived over TLS). A failed update/verify shows an enabled **UPDATE** button
+("Recovery download via BitTorrent") for this case. Because there is no
+manifest in that mode, the recovery install relies on the torrent's piece
+hashes rather than per-file SHA-1s, and the next verify still re-checks
+everything.
 
 The **UPDATE** button runs updates in this order:
 
