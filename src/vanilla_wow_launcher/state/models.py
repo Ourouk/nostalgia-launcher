@@ -42,12 +42,17 @@ class NewsState:
 @dataclass
 class ModState:
     """One per-mod config record ("mods" key): enabled, installed_version,
-    installed_files, ignore_updates, error."""
+    installed_files, ignore_updates, error.
+
+    ``present`` is the session-computed filesystem-truth flag (files on disk +
+    dlls.txt registration); it is not a config key.
+    """
     enabled: bool = False
     installed_version: str | None = None
     installed_files: list = field(default_factory=list)
     ignore_updates: bool = False
     error: str | None = None
+    present: bool = False
 
     @property
     def has_error(self) -> bool:
@@ -64,11 +69,13 @@ class ModPending:
 @dataclass
 class ModsState:
     """MODS panel state: config records, fetched latest versions
-    (_mods_state), pending checkbox changes, and the nav-badge count."""
+    (_mods_state), pending checkbox changes, the nav-badge count, and
+    filesystem-detected mods no catalog claims (``unknown``)."""
     records: dict[str, ModState] = field(default_factory=dict)
     latest_versions: dict[str, str] = field(default_factory=dict)
     pending: dict[str, ModPending] = field(default_factory=dict)
     updates_count: int = 0
+    unknown: list = field(default_factory=list)
 
     def latest_version(self, mod_id: str) -> str | None:
         return self.latest_versions.get(mod_id)

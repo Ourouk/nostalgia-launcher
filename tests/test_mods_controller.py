@@ -161,7 +161,7 @@ def test_updates_count_matches_apply_semantics(controller, versions, cfg):
         "BetaMod": {"enabled": True, "installed_version": "1.0",
                     "ignore_updates": False, "error": "download blocked"},
     }
-    controller.state.records = controller._load_records()
+    controller.state.records, controller.state.unknown = controller._load_records()
     versions["AlphaMod"] = "2.0"
     versions["BetaMod"] = "2.0"
     controller.load_latest_versions()
@@ -176,7 +176,7 @@ def test_updates_count_uses_mod_update_available(controller, versions, cfg,
         "AlphaMod": {"enabled": True, "installed_version": "1.0"},
         "BetaMod": {"enabled": True, "installed_version": "1.0"},
     }
-    controller.state.records = controller._load_records()
+    controller.state.records, controller.state.unknown = controller._load_records()
     versions["AlphaMod"] = "2.0"
     versions["BetaMod"] = "2.0"
     calls = []
@@ -213,7 +213,7 @@ def test_action_for_returns_retry_update_none(controller, versions, cfg):
         "BetaMod": {"enabled": True, "installed_version": "1.0",
                     "error": "oops"},
     }
-    controller.state.records = controller._load_records()
+    controller.state.records, controller.state.unknown = controller._load_records()
     versions["AlphaMod"] = "2.0"
     controller.load_latest_versions()
     _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
@@ -223,7 +223,7 @@ def test_action_for_returns_retry_update_none(controller, versions, cfg):
 
 def test_action_for_none_when_up_to_date(controller, versions, cfg):
     cfg["mods"] = {"AlphaMod": {"enabled": True, "installed_version": "1.0"}}
-    controller.state.records = controller._load_records()
+    controller.state.records, controller.state.unknown = controller._load_records()
     versions["AlphaMod"] = "1.0"
     controller.load_latest_versions()
     _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
@@ -237,14 +237,18 @@ def test_action_for_unknown_mod_is_none(controller):
 # ── apply ──────────────────────────────────────────────────────────────
 
 @pytest.fixture
-def apply_backends(monkeypatch):
+def apply_backends(monkeypatch, cfg):
     monkeypatch.setattr(mc.mods, "install_mod",
                         lambda mod, cd, release=None: ["new.dll"])
     monkeypatch.setattr(mc.mods, "uninstall_mod", lambda mod, cd: None)
     monkeypatch.setattr(mc.mods, "add_dll", lambda cd, name: None)
     monkeypatch.setattr(mc.mods, "remove_dll", lambda cd, name: None)
+    # Filesystem-truth check limited to recorded mods so unrecorded registry
+    # entries stay untouched by a full Apply.
     monkeypatch.setattr(mc.mods, "mod_installed_files_present",
-                        lambda mod, cd: True)
+                        lambda mod, cd: bool(
+                            cfg["mods"].get(mod["id"], {}).get(
+                                "installed_version")))
     monkeypatch.setattr(mc.mods, "_fetch_release_cached",
                         lambda mod: {"tag_name": "2.0"})
     monkeypatch.setattr(mc.mods, "_release_version",
@@ -258,7 +262,7 @@ def test_apply_installs_and_posts_finished(controller, cfg, apply_backends):
         "AlphaMod": {"enabled": True, "installed_version": "0.5",
                      "installed_files": ["old.dll"]},
     }
-    controller.state.records = controller._load_records()
+    controller.state.records, controller.state.unknown = controller._load_records()
     controller.state.pending["AlphaMod"] = ModPending(enabled=True)
 
     controller.apply()
@@ -285,7 +289,7 @@ def test_apply_records_per_mod_error_on_failure(controller, cfg, monkeypatch,
         "AlphaMod": {"enabled": True, "installed_version": "0.5",
                      "installed_files": ["old.dll"]},
     }
-    controller.state.records = controller._load_records()
+    controller.state.records, controller.state.unknown = controller._load_records()
     controller.state.pending["AlphaMod"] = ModPending(enabled=True)
 
     controller.apply()
@@ -306,7 +310,7 @@ def test_apply_skips_mods_without_changes(controller, cfg, apply_backends):
         "AlphaMod": {"enabled": True, "installed_version": "2.0",
                      "installed_files": ["new.dll"], "ignore_updates": True},
     }
-    controller.state.records = controller._load_records()
+    controller.state.records, controller.state.unknown = controller._load_records()
 
     controller.apply()
 
@@ -328,7 +332,7 @@ def test_apply_targeted_mod_keeps_pending(controller, cfg, apply_backends):
         "BetaMod": {"enabled": True, "installed_version": "0.5",
                     "installed_files": ["old.dll"]},
     }
-    controller.state.records = controller._load_records()
+    controller.state.records, controller.state.unknown = controller._load_records()
     controller.state.pending["BetaMod"] = ModPending(enabled=True)
 
     controller.apply(only_mod_id="AlphaMod")
@@ -358,7 +362,7 @@ def test_apply_ignores_concurrent_apply(controller, cfg, apply_backends,
         "AlphaMod": {"enabled": True, "installed_version": "0.5",
                      "installed_files": ["old.dll"]},
     }
-    controller.state.records = controller._load_records()
+    controller.state.records, controller.state.unknown = controller._load_records()
     controller.state.pending["AlphaMod"] = ModPending(enabled=True)
 
     assert controller.apply() is True
@@ -447,3 +451,91 @@ def test_invalidate_drops_latest_versions(controller, versions):
     assert controller.state.latest_versions
     controller.invalidate()
     assert controller.state.latest_versions == {}
+
+
+# ── filesystem-first detection ───────────────────────────────────────────
+
+def test_load_records_adopts_present_untracked_mod(controller, cfg,
+                                                   tmp_path, monkeypatch):
+    out = tmp_path / "game"
+    out.mkdir()
+    (out / "new.dll").write_bytes(b"MZ")
+    (out / "dlls.txt").write_text("new.dll\n")
+    cfg["out_dir"] = str(out)
+    mod = {"id": "NewMod", "name": "NewMod", "essential": True,
+           "installed_files": ["new.dll"], "register_dll": "new.dll",
+           "source": {"kind": "github_release"}}
+    monkeypatch.setattr(mc.mods, "mods_registry", lambda *a, **k: [mod])
+
+    controller.state.records, controller.state.unknown = \
+        controller._load_records()
+
+    rec = controller.state.records["NewMod"]
+    assert rec.enabled is True
+    assert rec.present is True
+    assert rec.installed_files == ["new.dll"]
+    assert rec.installed_version is None
+    assert cfg["mods"]["NewMod"]["enabled"] is True
+    assert controller.state.unknown == []
+
+
+def test_load_records_surfaces_unknown_dlls(controller, cfg, tmp_path):
+    out = tmp_path / "game"
+    out.mkdir()
+    (out / "dlls.txt").write_text("mystery.dll\n")
+    cfg["out_dir"] = str(out)
+
+    controller.state.records, controller.state.unknown = \
+        controller._load_records()
+
+    assert controller.state.unknown == ["mystery.dll"]
+    assert controller.state.records == {}
+
+
+def test_remove_unknown_deletes_from_filesystem(controller, cfg, tmp_path):
+    out = tmp_path / "game"
+    out.mkdir()
+    (out / "dlls.txt").write_text("mystery.dll\n")
+    (out / "mystery.dll").write_bytes(b"MZ")
+    cfg["out_dir"] = str(out)
+
+    controller.remove_unknown("mystery.dll")
+
+    assert not (out / "dlls.txt").exists()
+    assert not (out / "mystery.dll").exists()
+    assert controller.state.unknown == []
+    collected = controller._dispatcher.drain()
+    assert any(isinstance(e, ModsLoaded) for e in collected)
+
+
+def test_apply_uninstalls_adopted_mod_when_disabled(controller, cfg,
+                                                    tmp_path, monkeypatch):
+    out = tmp_path / "game"
+    out.mkdir()
+    (out / "new.dll").write_bytes(b"MZ")
+    (out / "dlls.txt").write_text("new.dll\n")
+    cfg["out_dir"] = str(out)
+    mod = {"id": "NewMod", "name": "NewMod",
+           "installed_files": ["new.dll"], "register_dll": "new.dll",
+           "source": {"kind": "github_release"}}
+    monkeypatch.setattr(mc.mods, "mods_registry", lambda *a, **k: [mod])
+    uninstalled = []
+    monkeypatch.setattr(mc.mods, "install_mod",
+                        lambda mod, cd, release=None: ["new.dll"])
+    monkeypatch.setattr(mc.mods, "uninstall_mod",
+                        lambda mod, cd: uninstalled.append(mod["id"]))
+    monkeypatch.setattr(mc.mods, "add_dll", lambda cd, name: None)
+    monkeypatch.setattr(mc.mods, "remove_dll", lambda cd, name: None)
+
+    controller.state.records, controller.state.unknown = \
+        controller._load_records()
+    assert "NewMod" in controller.state.records
+
+    controller.toggle("NewMod", False)
+    controller.apply()
+
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, OperationFinished))
+    assert "NewMod" in uninstalled
+    rec = cfg["mods"]["NewMod"]
+    assert rec["enabled"] is False
+    assert rec["installed_version"] is None

@@ -127,7 +127,8 @@ def test_rerender_rebuilds_rows(qapp, window, hub):
 def test_installed_mod_name_is_green_and_essential_shows_star(
         qapp, window, hub):
     state = ModsState(
-        records={"AlphaMod": ModState(enabled=True, installed_version="1.2")},
+        records={"AlphaMod": ModState(enabled=True, installed_version="1.2",
+                                      present=True)},
         latest_versions={"AlphaMod": "9.9"},
     )
     hub.mods.state = state
@@ -141,6 +142,38 @@ def test_installed_mod_name_is_green_and_essential_shows_star(
     # Essential mods carry the gold star; others keep a blank slot.
     assert panel.findChild(QLabel, "modsStar_AlphaMod").text() == "★"
     assert panel.findChild(QLabel, "modsStar_BetaMod").text() == ""
+
+
+def test_untracked_mod_name_is_not_highlighted(qapp, window, hub):
+    state = ModsState(
+        records={"AlphaMod": ModState(enabled=True, installed_version="1.2")},
+        latest_versions={},
+    )
+    hub.mods.state = state
+    _post(hub, state)
+
+    panel = _panel(window)
+    name = panel.findChild(QLabel, "modsName_AlphaMod")
+    # Filesystem-truth absent → shown as not installed, no version highlight.
+    assert panel._palette.mod_hl.name() not in name.styleSheet()
+
+
+def test_unknown_mods_section_lists_detected_entries_and_removes(
+        qapp, window, hub, monkeypatch):
+    state = ModsState(unknown=["mystery.dll", "other.dll"])
+    hub.mods.state = state
+    _post(hub, state)
+
+    panel = _panel(window)
+    assert panel.findChild(QLabel, "modsUnknownHeader") is not None
+    for name in ("mystery.dll", "other.dll"):
+        assert panel.findChild(QWidget, f"modsUnknownRow_{name}") is not None
+        assert panel.findChild(QLabel, f"modsUnknownName_{name}").text() == name
+
+    remove_mock = Mock()
+    monkeypatch.setattr(hub.mods, "remove_unknown", remove_mock)
+    panel.findChild(QPushButton, "modsUnknownRemove_mystery.dll").click()
+    remove_mock.assert_called_once_with("mystery.dll")
 
 
 def test_error_mod_shows_red_name_and_error_line(qapp, window, hub):

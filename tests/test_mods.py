@@ -133,6 +133,74 @@ def test_remove_dll(tmp_path):
     assert not (client / "dlls.txt").exists()
 
 
+# ── filesystem detection (source of truth) ───────────────────────────────
+
+def test_read_dlls_entries_lowercases_strips(tmp_path):
+    client = tmp_path / "client"
+    client.mkdir()
+    assert mods.read_dlls_entries(str(client)) == set()
+    (client / "dlls.txt").write_text("VfPatcher.dll\n  dxvk  \n\n")
+    assert mods.read_dlls_entries(str(client)) == {"vfpatcher.dll", "dxvk"}
+
+
+def test_mod_installed_files_present_requires_files_and_dlls_entry(
+        tmp_path, monkeypatch):
+    client = tmp_path / "client"
+    client.mkdir()
+    monkeypatch.setattr(mods, "load_config", lambda: {})
+    mod = {"id": "m", "installed_files": ["a.dll"], "register_dll": "a.dll"}
+    # dlls.txt missing → not loaded.
+    assert not mods.mod_installed_files_present(mod, str(client))
+    # File present but not registered in dlls.txt → not loaded.
+    (client / "a.dll").write_bytes(b"MZ")
+    assert not mods.mod_installed_files_present(mod, str(client))
+    # Registered + present → loaded.
+    (client / "dlls.txt").write_text("a.dll\n")
+    assert mods.mod_installed_files_present(mod, str(client))
+    # File gone while registration remains → not loaded.
+    (client / "a.dll").unlink()
+    assert not mods.mod_installed_files_present(mod, str(client))
+
+
+def test_mod_installed_files_present_uses_record_files(tmp_path, monkeypatch):
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "data.patch").write_bytes(b"x")
+    (client / "dlls.txt").write_text("m.dll\n")
+    monkeypatch.setattr(mods, "load_config",
+                        lambda: {"mods": {"m": {
+                            "installed_files": ["data.patch"]}}})
+    mod = {"id": "m", "register_dll": "m.dll"}
+    assert mods.mod_installed_files_present(mod, str(client))
+
+
+def test_mod_installed_files_present_falls_back_to_record(tmp_path,
+                                                          monkeypatch):
+    client = tmp_path / "client"
+    client.mkdir()
+    monkeypatch.setattr(mods, "load_config",
+                        lambda: {"mods": {"m": {"installed_version": "1.0"}}})
+    assert mods.mod_installed_files_present({"id": "m"}, str(client))
+
+
+def test_scan_unknown_mods_lists_unclaimed_dlls(tmp_path):
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "dlls.txt").write_text("Tracked.dll\nmystery.dll\n")
+    registry = [{"id": "t", "register_dll": "Tracked.dll"}]
+    assert mods.scan_unknown_mods(str(client), registry) == ["mystery.dll"]
+
+
+def test_remove_unknown_mod_removes_line_and_file(tmp_path):
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "dlls.txt").write_text("Keep.dll\nmystery.dll\n")
+    (client / "mystery.dll").write_bytes(b"MZ")
+    mods.remove_unknown_mod(str(client), "mystery.dll")
+    assert (client / "dlls.txt").read_text().splitlines() == ["Keep.dll"]
+    assert not (client / "mystery.dll").exists()
+
+
 # ── update detection ─────────────────────────────────────────────────────────
 
 def test_mod_supports_update_check():

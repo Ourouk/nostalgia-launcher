@@ -44,7 +44,7 @@ class ModRow(QWidget):
 
         installed_version = rec.installed_version if rec else None
         has_error = rec.error if rec else None
-        installed = bool(installed_version)
+        installed = rec.present if rec is not None else False
         enabled = (pend.enabled
                    if pend is not None and pend.enabled is not None
                    else (rec.enabled if rec else False))
@@ -205,6 +205,50 @@ class ModsPanel(ScrollListPanel):
                     lambda checked=False, m=mid: self._on_action(m))
             self._rows[mid] = row
             self._add_row(row)
+        self._render_unknown(state)
+
+    def _render_unknown(self, state):
+        """Rows for dlls.txt entries no catalog mod claims — mods the client
+        loads that the launcher doesn't track — each with a filesystem-first
+        Remove button."""
+        unknown = getattr(state, "unknown", None)
+        if not unknown:
+            return
+        p = self._palette
+        head = QLabel("Detected (not in catalog)", self._content)
+        head.setObjectName("modsUnknownHeader")
+        head.setStyleSheet(f"color: {p.text_dim.name()}; font-weight: bold;")
+        head.setContentsMargins(0, 10, 0, 2)
+        self._add_row(head)
+        for name in unknown:
+            shell = QWidget(self._content)
+            shell.setObjectName(f"modsUnknownRow_{name}")
+            root, top, top_layout = make_row_shell(shell)
+            label = QLabel(name, shell)
+            label.setObjectName(f"modsUnknownName_{name}")
+            label.setStyleSheet(f"color: {p.text_dim.name()};")
+            top_layout.addWidget(label, 0, Qt.AlignTop)
+            top_layout.addStretch(1)
+            remove = QPushButton("Remove", shell)
+            remove.setObjectName(f"modsUnknownRemove_{name}")
+            remove.setCursor(Qt.PointingHandCursor)
+            remove.setStyleSheet(
+                f"QPushButton {{ color: {p.text.name()};"
+                f" border: 1px solid {p.panel_bdr.name()};"
+                f" border-radius: 4px;"
+                f" background-color: {p.panel_bdr.name()};"
+                f" padding: 1px 12px; }}"
+                f"QPushButton:hover {{ background-color: {p.gold.name()};"
+                f" color: {p.hdr.name()}; }}")
+            remove.clicked.connect(
+                lambda checked=False, n=name: self._on_remove_unknown(n))
+            top_layout.addWidget(remove, 0, Qt.AlignTop)
+            root.addWidget(top)
+            add_row_divider(root, p)
+            self._add_row(shell)
+
+    def _on_remove_unknown(self, name):
+        self._mods.remove_unknown(name)
 
     def _refresh_apply_visibility(self):
         """Apply is offered only when there is something to apply: pending

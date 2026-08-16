@@ -37,13 +37,13 @@ class ModsController:
     def __init__(self, dispatcher: EventDispatcher, get_out_dir=None):
         self._dispatcher = dispatcher
         self.state = ModsState()
-        self.state.records = self._load_records()
         self._default_mods_install_started = False
         self._busy = False
         if get_out_dir is None:
             get_out_dir = lambda: config_store.load_config().get(
                 "out_dir", DEFAULT_OUT_DIR)
         self._get_out_dir = get_out_dir
+        self.state.records, self.state.unknown = self._load_records()
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -164,6 +164,16 @@ class ModsController:
         """Drop the cached latest versions; the next load refetches."""
         self.state.latest_versions = {}
 
+    def remove_unknown(self, name: str):
+        """Uninstall a detected-but-untracked mod (a dlls.txt entry no catalog
+        mod claims) straight from the filesystem, then republish the panel."""
+        out = (self._get_out_dir() or "").strip()
+        if not out:
+            return
+        mods.remove_unknown_mod(out, name)
+        self.state.records, self.state.unknown = self._load_records()
+        self._dispatcher.post(ModsLoaded(self.state))
+
     def reset(self):
         """Clear pending changes, drop cached versions and re-arm the one-shot
         auto-install (called when the game folder changes)."""
@@ -171,11 +181,20 @@ class ModsController:
         self.state.latest_versions = {}
         self.state.updates_count = 0
         self._default_mods_install_started = False
-        self.state.records = self._load_records()
+        self.state.records, self.state.unknown = self._load_records()
 
     # ── internals ───────────────────────────────────────────────────────────
 
-    def _load_records(self) -> dict[str, ModState]:
+    def _load_records(self):
+        """Config "mods" records reconciled against the filesystem.
+
+        The filesystem is the source of truth for what the client loads: a
+        catalog mod whose declared files are present (and whose DLL
+        registration exists in dlls.txt) is adopted as installed even when no
+        config record exists yet, so toggling it off actually removes the
+        on-disk files. dlls.txt entries no catalog mod claims are surfaced as
+        ``unknown``. Returns (records, unknown).
+        """
         records = {}
         for mid, rec in config_store.load_config().get("mods", {}).items():
             records[mid] = ModState(
@@ -185,7 +204,41 @@ class ModsController:
                 ignore_updates=rec.get("ignore_updates", False),
                 error=rec.get("error"),
             )
-        return records
+        out = (self._get_out_dir() or "").strip()
+        if not out:
+            return records, []
+        try:
+            registry = mods.mods_registry()
+        except Exception:
+            registry = []
+        by_id = {m["id"]: m for m in registry}
+        for mid, rec in records.items():
+            mod = by_id.get(mid)
+            rec.present = (mods.mod_installed_files_present(mod, out)
+                           if mod is not None else
+                           bool(rec.installed_files) and all(
+                               os.path.exists(os.path.join(out, f))
+                               for f in rec.installed_files))
+        adopted = {}
+        for mod in registry:
+            mid = mod["id"]
+            if mid in records or not mods.mod_installed_files_present(mod, out):
+                continue
+            declared = (list(mod.get("installed_files") or [])
+                        or ([mod["register_dll"]] if mod.get("register_dll")
+                            else []))
+            records[mid] = ModState(enabled=True, installed_version=None,
+                                    installed_files=declared, present=True)
+            adopted[mid] = {
+                "enabled": True, "installed_version": None,
+                "installed_files": declared, "ignore_updates": False,
+                "error": None,
+            }
+        if adopted:
+            config_store.update_config(
+                lambda c: c.setdefault("mods", {}).update(adopted))
+        unknown = mods.scan_unknown_mods(out, registry)
+        return records, unknown
 
     def _state_dict(self, mid: str) -> dict | None:
         """The config-record dict shape mod_update_available expects, from the
@@ -261,9 +314,8 @@ class ModsController:
                     enabled = True
 
                 installed_ver = state.get("installed_version")
-                is_installed = (bool(installed_ver) and
-                                mods.mod_installed_files_present(mod,
-                                                                 client_dir))
+                is_installed = mods.mod_installed_files_present(mod,
+                                                                client_dir)
 
                 needs_install   = enabled and not is_installed
                 needs_uninstall = not enabled and is_installed
@@ -395,7 +447,7 @@ class ModsController:
             # they were never applied and would be lost otherwise.
             if only_mod_id is None:
                 self.state.pending = {}
-            self.state.records = self._load_records()
+            self.state.records, self.state.unknown = self._load_records()
             self._refresh_updates_count()
 
             self._dispatcher.post(ProgressChanged(1.0, ""))

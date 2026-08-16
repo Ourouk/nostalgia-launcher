@@ -497,6 +497,45 @@ def _dlls_txt_path(client_dir: str) -> str:
     return os.path.join(client_dir, "dlls.txt")
 
 
+def read_dlls_entries(client_dir: str) -> set:
+    """The lowercase, stripped names registered in dlls.txt — the entries the
+    client actually loads. Empty when the file is absent or unreadable."""
+    try:
+        with open(_dlls_txt_path(client_dir), encoding="utf-8") as f:
+            return {line.strip().lower() for line in f if line.strip()}
+    except OSError:
+        return set()
+
+
+def scan_unknown_mods(client_dir: str, registry: list) -> list:
+    """dlls.txt entries no catalog mod claims (by register_dll, case-
+    insensitive) — mods the client loads that the launcher doesn't track."""
+    known = {mod.get("register_dll", "").strip().lower()
+             for mod in registry if mod.get("register_dll")}
+    return sorted(n for n in read_dlls_entries(client_dir) if n not in known)
+
+
+def remove_unknown_mod(client_dir: str, name: str):
+    """Uninstall an untracked mod straight from the filesystem: drop its
+    dlls.txt line and delete the matching file when one exists."""
+    name = name.strip()
+    if not name:
+        return
+    path = _dlls_txt_path(client_dir)
+    if os.path.exists(path):
+        lines = [l for l in open(path).read().splitlines()
+                 if l.strip().lower() != name.lower()]
+        if lines:
+            with open(path, "w") as f:
+                f.write("\n".join(lines) + "\n")
+        else:
+            os.remove(path)
+    full = os.path.join(client_dir, name)
+    if os.path.exists(full):
+        os.remove(full)
+        log(f"  Removed {name}")
+
+
 def add_dll(client_dir: str, name: str):
     path  = _dlls_txt_path(client_dir)
     lines = open(path).read().splitlines() if os.path.exists(path) else []
@@ -521,11 +560,29 @@ def remove_dll(client_dir: str, name: str):
 
 
 def mod_installed_files_present(mod: dict, client_dir: str) -> bool:
-    cfg   = load_config()
-    state = cfg.get("mods", {}).get(mod["id"], {})
-    files = state.get("installed_files", [])
-    return bool(files) and all(
-        os.path.exists(os.path.join(client_dir, f)) for f in files)
+    """Filesystem-truth installed check for a catalog mod.
+
+    The filesystem — not the config record — is the source of truth for what
+    the client loads: a mod is installed when every file it declares (catalog
+    ``installed_files`` first, then the config record) exists on disk, and a
+    mod that registers a DLL is actually listed in dlls.txt. Falls back to the
+    recorded version when nothing is verifiable on disk.
+    """
+    files = mod.get("installed_files")
+    if not files:
+        files = load_config().get("mods", {}).get(
+            mod["id"], {}).get("installed_files", [])
+    if files:
+        if not all(os.path.exists(os.path.join(client_dir, f)) for f in files):
+            return False
+        reg = mod.get("register_dll")
+        return (reg.lower() in read_dlls_entries(client_dir)) if reg else True
+    reg = mod.get("register_dll")
+    if reg and (reg.lower() in read_dlls_entries(client_dir)
+                and os.path.exists(os.path.join(client_dir, reg))):
+        return True
+    return bool(load_config().get("mods", {}).get(
+        mod["id"], {}).get("installed_version"))
 
 
 def mod_supports_update_check(mod: dict) -> bool:
