@@ -209,6 +209,21 @@ def test_manifest_unavailable_disables_and_posts_finished(
     assert controller.state.running is False
 
 
+def test_torrent_recovery_done_marks_client_ready(
+    controller, worker_cls, config
+):
+    """A successful manifest-less torrent recovery: client ready but the
+    manifest flag stays False (nothing was ever fetched)."""
+    worker_cls.script = [("__TORRENT_RECOVERY_DONE__", "")]
+    controller.start_update()
+    _wait_and_poll(controller, worker_cls)
+    events = controller._dispatcher.drain()
+    assert OperationFinished("update", True) in events
+    assert controller.state.client_ready is True
+    assert controller.state.manifest_available is False
+    assert controller.state.running is False
+
+
 def test_start_verify_and_invalidate_reset_manifest_available(
     controller, worker_cls, config
 ):
@@ -220,15 +235,11 @@ def test_start_verify_and_invalidate_reset_manifest_available(
     assert controller.state.manifest_available is False
 
 
-def test_verify_passes_overwrite_and_config_hashes(
-    controller, worker_cls, config
-):
-    config["expected_patched_wow_hash"] = "exp"
-    config["original_server_wow_hash"] = "orig"
+def test_verify_passes_overwrite(controller, worker_cls, config):
     controller.start_verify(overwrite_config=True)
     w = worker_cls.instances[0]
     assert w.overwrite_config is True
-    assert w.args == ("exp", "orig")
+    assert w.args == ()
     assert w.out_dir == config["out_dir"]
 
 
@@ -339,18 +350,6 @@ def test_progress_posts_latest(controller, worker_cls, config):
     assert controller.state.progress_label == "b.mpq"
 
 
-def test_patch_hashes_written_to_config(controller, worker_cls, config):
-    worker_cls.script = [
-        ("__ORIGINAL_HASH__abc", ""),
-        ("__PATCHED_HASH__def", ""),
-    ]
-    controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
-    controller._dispatcher.drain()
-    assert config["original_server_wow_hash"] == "abc"
-    assert config["expected_patched_wow_hash"] == "def"
-
-
 def test_cancel_stops_live_workers(controller, worker_cls, config):
     controller.start_verify()
     w = worker_cls.instances[0]
@@ -393,6 +392,29 @@ def test_readiness_disabled_without_manifest_when_cannot_launch(
     assert r.mode == "disabled"
     assert r.label == "UPDATE"
     assert r.status == "Manifest unavailable"
+
+
+def test_readiness_recovery_update_when_manifest_down(
+    controller, worker_cls, config, monkeypatch
+):
+    """No manifest + client not ready + torrent recovery possible → enabled
+    UPDATE offering a full BitTorrent re-download."""
+    monkeypatch.setattr(uc, "torrent_recovery_available", lambda: True)
+    monkeypatch.setattr(uc, "can_launch_client", lambda: False)
+    r = controller.compute_readiness()
+    assert r.mode == "update"
+    assert r.label == "UPDATE"
+    assert r.status == "Recovery download via BitTorrent"
+
+
+def test_readiness_no_recovery_without_torrent(
+    controller, worker_cls, config, monkeypatch
+):
+    """No manifest + no torrent source → stays grayed UPDATE."""
+    monkeypatch.setattr(uc, "torrent_recovery_available", lambda: False)
+    monkeypatch.setattr(uc, "can_launch_client", lambda: False)
+    r = controller.compute_readiness()
+    assert r.mode == "disabled"
 
 
 def test_readiness_play_without_manifest_when_can_launch(

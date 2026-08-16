@@ -98,8 +98,6 @@ def test_gear_opens_settings_dialog(qapp, window):
         "settingsKoFi",
         "settingsBmc",
         "settingsClose",
-        "settingsAutoMods",
-        "settingsAutoAddons",
         "settingsClientUpdate",
     ):
         assert dialog.findChild(QWidget, name) is not None
@@ -286,18 +284,12 @@ def test_support_links_call_open_url(qapp, window, monkeypatch):
 def test_checkboxes_reflect_config(qapp, window, monkeypatch):
     hub = window._hub
     hub.settings.state.config = {
-        "auto_install_mods": True,
-        "auto_install_addons": False,
         "clear_wdb_on_launch": True,
         "close_on_launch": False,
     }
     monkeypatch.setattr(platform_support, "can_launch_client", lambda: True)
     dialog = _open(window)
 
-    assert dialog.findChild(QCheckBox, "settingsAutoMods").isChecked() is True
-    assert (
-        dialog.findChild(QCheckBox, "settingsAutoAddons").isChecked() is False
-    )
     assert dialog.findChild(QCheckBox, "settingsClearWdb").isChecked() is True
     assert (
         dialog.findChild(QCheckBox, "settingsCloseOnLaunch").isChecked()
@@ -312,31 +304,6 @@ def test_launch_checkboxes_absent_when_cannot_launch_client(
     dialog = _open(window)
     assert dialog.findChild(QCheckBox, "settingsClearWdb") is None
     assert dialog.findChild(QCheckBox, "settingsCloseOnLaunch") is None
-    assert dialog.findChild(QCheckBox, "settingsAutoMods") is not None
-
-
-def test_toggle_auto_mods_calls_set_auto_mods(qapp, window, monkeypatch):
-    hub = window._hub
-    hub.settings.state.config = {"auto_install_mods": True}
-    set_mods = Mock()
-    monkeypatch.setattr(hub.settings, "set_auto_mods", set_mods)
-    dialog = _open(window)
-    check = dialog.findChild(QCheckBox, "settingsAutoMods")
-    assert check.isChecked() is True
-    check.setChecked(False)
-    set_mods.assert_called_once_with(False)
-
-
-def test_toggle_auto_addons_calls_set_auto_addons(qapp, window, monkeypatch):
-    hub = window._hub
-    hub.settings.state.config = {"auto_install_addons": True}
-    set_addons = Mock()
-    monkeypatch.setattr(hub.settings, "set_auto_addons", set_addons)
-    dialog = _open(window)
-    check = dialog.findChild(QCheckBox, "settingsAutoAddons")
-    assert check.isChecked() is True
-    check.setChecked(False)
-    set_addons.assert_called_once_with(False)
 
 
 def test_client_update_checkbox_reflects_and_persists_setting(
@@ -379,27 +346,6 @@ def test_close_works_headlessly(qapp, window):
     assert dialog.isVisible()
     dialog.close()
     QTest.qWait(20)
-    assert not dialog.isVisible()
-
-
-def test_close_triggers_pending_auto_install(qapp, window, monkeypatch):
-    hub = window._hub
-    dialog = _open(window)
-    mods_install = Mock()
-    addons_install = Mock()
-    monkeypatch.setattr(
-        hub.settings, "install_missing_essential_mods", mods_install
-    )
-    monkeypatch.setattr(
-        hub.settings, "install_missing_recommended_addons", addons_install
-    )
-    hub.settings._pending_auto_mods = True
-    hub.settings._pending_auto_addons = True
-
-    dialog.close()
-    QTest.qWait(20)
-    mods_install.assert_called_once()
-    addons_install.assert_called_once()
     assert not dialog.isVisible()
 
 

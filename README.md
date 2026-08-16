@@ -61,8 +61,7 @@ release checksum.
 3. Run the AppImage and select your game folder.
 
 The AppImage includes the launcher's Qt libraries. Your desktop environment
-must still provide a working graphical session. Patching the Windows `WoW.exe`
-binary is not available on Linux, and game launching requires
+must still provide a working graphical session, and game launching requires
 [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher)
 (see [Linux](#linux-1)).
 
@@ -74,8 +73,7 @@ binary is not available on Linux, and game launching requires
 
 The macOS package supports both Apple Silicon and Intel Macs. It is unsigned
 by default, so macOS may require confirmation in Privacy & Security before the
-first launch. Game launching and patching the Windows `WoW.exe` binary are not
-available on macOS.
+first launch. Game launching is not available on macOS.
 
 ## First Launch
 
@@ -99,8 +97,7 @@ After selecting a configuration:
 1. Open **Settings** and select the game folder if it was not detected.
 2. Review the configured server and mirror information.
 3. On first run, choose whether to install the server's essential mods and
-   recommended addons when prompted. You can change this later in
-   **Settings → General**.
+   recommended addons when prompted.
 4. Click **UPDATE** to run the complete update sequence: client, mods, then
    addons.
 5. Use **PLAY** when the client is ready on supported platforms.
@@ -155,14 +152,12 @@ The **TWEAKS** tab provides common settings such as:
 - Nameplate range
 - Camera distance
 - Ground clutter distance
-- Auto-loot
 - Background sounds
 
 Invalid values are rejected or limited to safe ranges. Use **Apply** to save
-changes and **Reset** to restore the available defaults.
-
-Some Windows-only changes require access to the client executable and are
-disabled automatically on other platforms.
+changes and **Reset** to restore the available defaults. Tweaks are written to
+`Config.wtf`; runtime client fixes are left to the VanillaFixes loader mod
+where installed, and the launcher never modifies `WoW.exe`.
 
 ### News
 
@@ -224,7 +219,6 @@ appears when `umu-run` is detected; otherwise the log suggests installing it.
 | News and configuration | Yes | Yes | Yes |
 | `Config.wtf` tweaks | Yes | Yes | Yes |
 | Launch the Windows game client | Yes | Yes (via umu-launcher) | No |
-| Patch the Windows `WoW.exe` binary | Yes | No | No |
 | Windows Defender exclusions | Yes | No | No |
 
 ## Security and Privacy

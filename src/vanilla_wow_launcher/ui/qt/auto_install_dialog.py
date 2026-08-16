@@ -2,8 +2,9 @@
 
 A QDialog shown once after the first-run Settings window closes: two
 pre-checked checkboxes ("Install essential mods" / "Install recommended
-addons") plus Install/Skip buttons. The choice is persisted by the settings
-controller; this dialog only collects it.
+addons") plus Install/Skip buttons. This is a one-shot, first-run-only choice
+— there is no Settings entry for it afterwards; the checked installs run
+directly from here.
 """
 
 from PySide6.QtCore import Qt
@@ -47,8 +48,7 @@ class AutoInstallDialog(QDialog):
 
         hint = QLabel(
             "Your server provides essential mods and recommended addons for "
-            "its client. Choose what to install now; you can change this "
-            "later in Settings.",
+            "its client. Choose what to install now.",
             self,
         )
         hint.setWordWrap(True)

@@ -88,6 +88,17 @@ src/vanilla_wow_launcher/
   re-verifies every file and HTTP-resumes anything the torrent missed. Tests
   inject a fake `libtorrent` into `sys.modules`; libtorrent is never needed
   to run the suite.
+- When the manifest itself can't be fetched, the update falls back to a
+  manifest-less **BitTorrent recovery**: if the active source advertises a
+  `torrent_url` and libtorrent is importable, `UpdateWorker._recovery_download()`
+  downloads the *whole* torrent (`TorrentDownloader.download(url, None)`), whose
+  piece hashes (the `.torrent` arrived over TLS) stand in for the manifest's
+  per-file SHA-1. It posts `__TORRENT_RECOVERY_DONE__` (controller keeps
+  `manifest_available=False`); a failed verify offers this via an enabled
+  UPDATE button when `torrent_recovery_available()` (`LauncherConfig.has_torrent()`
+  + libtorrent present, network-free) and the client isn't known-ready.
+- The launcher never binary-patches `WoW.exe` — runtime client fixes are left
+  to the VanillaFixes loader mod. The only tweak channel is `Config.wtf`.
 - Tests get a launcher config from the autouse `_launcher_env` fixture in
   `tests/conftest.py` (server `https://launcher.test` + a "Backup" mirror) —
   never rely on real network in tests. Launcher state is **process-global**:

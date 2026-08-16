@@ -808,90 +808,10 @@ def test_footer_state_and_updates_count(controller):
     assert controller.updates_count == 1
 
 
-# ── maybe_install_default_addons ────────────────────────────────────────
-
-
-def test_maybe_install_default_addons_one_shot(
-    controller, cfg, tmp_path, monkeypatch
-):
-    (tmp_path / "WoW.exe").write_bytes(b"MZ")
-    cfg.pop("addons", None)
-    monkeypatch.setattr(
-        ac.addons, "RECOMMENDED_ADDONS", {"pfUI": "https://github.com/x/pfUI"}
-    )
-    started = []
-    monkeypatch.setattr(
-        controller, "apply", lambda recs: started.append(recs) or True
-    )
-
-    assert controller.maybe_install_default_addons() is True
-    assert controller.maybe_install_default_addons() is False
-
-    assert len(started) == 1
-    folders = {r["folder"] for r in started[0]}
-    assert folders == set(ac.addons.RECOMMENDED_ADDONS)
-    assert cfg.get("addons") == {}  # marked initialized for this folder
-
-
-def test_maybe_install_default_addons_auto_off_verifies_only(
-    controller, cfg, tmp_path, monkeypatch
-):
-    (tmp_path / "WoW.exe").write_bytes(b"MZ")
-    cfg.pop("addons", None)
-    cfg["auto_install_addons"] = False
-    calls = []
-    monkeypatch.setattr(
-        controller, "verify", lambda *a, **k: calls.append(("verify",)) or True
-    )
-    monkeypatch.setattr(
-        controller, "apply", lambda *a, **k: calls.append(("apply",))
-    )
-
-    assert controller.maybe_install_default_addons() is True
-    assert calls == [("verify",)]
-    assert cfg.get("addons") == {}
-
-
-def test_maybe_install_default_addons_skips_when_initialized(controller, cfg):
-    cfg["addons"] = {"Foo": {"git": "u", "sha": "s"}}
-    assert controller.maybe_install_default_addons() is False
-
-
-def test_maybe_install_default_addons_skips_without_client(
-    controller, cfg, tmp_path
-):
-    cfg["out_dir"] = str(tmp_path)  # no WoW.exe in the folder
-    cfg.pop("addons", None)
-    assert controller.maybe_install_default_addons() is False
-
-
-def test_maybe_install_default_addons_verifies_when_all_installed(
-    controller, cfg, tmp_path, monkeypatch
-):
-    (tmp_path / "WoW.exe").write_bytes(b"MZ")
-    cfg.pop("addons", None)
-    # Every recommended addon already exists on disk — nothing to install.
-    ap = os.path.join(str(tmp_path), "Interface", "AddOns")
-    for name in ac.addons.RECOMMENDED_ADDONS:
-        os.makedirs(os.path.join(ap, name))
-    calls = []
-    monkeypatch.setattr(
-        controller, "verify", lambda *a, **k: calls.append(("verify",)) or True
-    )
-    monkeypatch.setattr(
-        controller, "apply", lambda *a, **k: calls.append(("apply",))
-    )
-
-    assert controller.maybe_install_default_addons() is True
-    assert calls == [("verify",)]
-
-
 # ── reset ───────────────────────────────────────────────────────────────
 
 
-def test_reset_clears_state_and_rearms_one_shot(
-    controller, cfg, tmp_path, monkeypatch
-):
+def test_reset_clears_state(controller, cfg):
     controller.state.verified_ts = 123.0
     controller.state.state = "done"
     controller.state.addons["A"] = AddonState(folder="A", status="outOfDate")
@@ -899,7 +819,6 @@ def test_reset_clears_state_and_rearms_one_shot(
     controller.state.errors["A"] = AddonError("oops")
     controller.state.updates_count = 3
     controller.state.sections_open["INSTALLED"] = False
-    controller._default_addons_install_started = True
 
     controller.reset()
 
@@ -911,9 +830,3 @@ def test_reset_clears_state_and_rearms_one_shot(
     assert controller.state.updates_count == 0
     # Section open/closed state survives a folder change.
     assert controller.state.sections_open["INSTALLED"] is False
-
-    # The one-shot auto-install is re-armed for the new folder.
-    (tmp_path / "WoW.exe").write_bytes(b"MZ")
-    cfg.pop("addons", None)
-    monkeypatch.setattr(controller, "apply", lambda recs: True)
-    assert controller.maybe_install_default_addons() is True

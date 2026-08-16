@@ -399,8 +399,6 @@ def test_first_run_prompt_accept_installs_checked(
         win._on_settings_finished()
         assert _FakeAutoInstallDialog.created == 1
         assert hub.settings.state.first_run_auto_install_pending is False
-        assert hub.settings.state.config["auto_install_mods"] is True
-        assert hub.settings.state.config["auto_install_addons"] is True
         install_mods.assert_called_once_with()
         install_addons.assert_called_once_with()
     finally:
@@ -433,8 +431,6 @@ def test_first_run_prompt_accept_partial_install(
     win.show()
     try:
         win._on_settings_finished()
-        assert hub.settings.state.config["auto_install_mods"] is True
-        assert hub.settings.state.config["auto_install_addons"] is False
         install_mods.assert_called_once_with()
         install_addons.assert_not_called()
     finally:
@@ -467,8 +463,6 @@ def test_first_run_prompt_skip_disables_both(
         win._on_settings_finished()
         assert _FakeAutoInstallDialog.created == 1
         assert hub.settings.state.first_run_auto_install_pending is False
-        assert hub.settings.state.config["auto_install_mods"] is False
-        assert hub.settings.state.config["auto_install_addons"] is False
         install_mods.assert_not_called()
         install_addons.assert_not_called()
     finally:

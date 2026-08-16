@@ -288,6 +288,19 @@ def test_download_completes_and_sets_file_priorities(tmp_path, monkeypatch):
     assert len(ses.removed) == 1  # never seeded — removed after completion
 
 
+def test_download_whole_torrent_when_wanted_none(tmp_path, monkeypatch):
+    client = _mk_client(tmp_path)
+    fake = _install_fake_lt(monkeypatch)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    d = td.TorrentDownloader(str(client), log_q, prog_q)
+    d.download("https://srv.example/client.torrent", None)
+
+    ses = fake.last_session
+    assert ses.atp.save_path == str(client)
+    # wanted=None → every file at max priority (recovery download).
+    assert ses.atp.file_priorities == [7, 7, 7]
+
+
 def test_download_fetches_torrent_over_allowlisted_https(
     monkeypatch, tmp_path
 ):
@@ -346,7 +359,7 @@ def _recording_downloader(monkeypatch):
 
     def fake_download(self, torrent_url, wanted):
         calls.append((torrent_url, wanted))
-        return sorted(wanted)
+        return []
 
     monkeypatch.setattr(td.TorrentDownloader, "download", fake_download)
     return calls
@@ -480,3 +493,107 @@ def test_run_invokes_torrent_then_skips_covered_files(tmp_path, monkeypatch):
     msgs = [m[0] for m in log_q.queue]
     assert "__DONE__" in msgs
     assert "__ERROR__" not in msgs
+
+
+# ── manifest-less recovery ───────────────────────────────────────────────────
+
+
+def test_run_recovers_full_torrent_when_manifest_down(tmp_path, monkeypatch):
+    """Manifest fetch fails but the source advertises a torrent → the whole
+    torrent (wanted=None) is downloaded and the recovery marker posted."""
+    client = _mk_client(tmp_path)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = UpdateWorker(str(client), log_q, prog_q)
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: DownloadSource(
+            "https://srv/manifest.json",
+            "https://srv/client",
+            "https://srv/client.torrent",
+        ),
+    )
+    monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
+    monkeypatch.setattr(client_update, "load_cache", lambda: {})
+    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
+    calls = _recording_downloader(monkeypatch)
+
+    def down(*a, **k):
+        raise ConnectionError("manifest down")
+
+    monkeypatch.setattr(client_update, "secure_urlopen", down)
+
+    worker.run()
+
+    assert calls == [("https://srv/client.torrent", None)]
+    msgs = [m[0] for m in log_q.queue]
+    assert "__TORRENT_RECOVERY_DONE__" in msgs
+    assert "__MANIFEST_AVAILABLE__" not in msgs
+    assert "__ERROR__" not in msgs
+    assert any("Manifest unavailable" in m for m in msgs)
+    # A fresh recovery install seeds a missing Config.wtf.
+    assert (client / "WTF" / "Config.wtf").exists()
+
+
+def test_run_errors_when_manifest_down_without_torrent(tmp_path, monkeypatch):
+    """Manifest fetch fails and no torrent is advertised → hard error, no
+    recovery."""
+    client = _mk_client(tmp_path)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = UpdateWorker(str(client), log_q, prog_q)
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: DownloadSource(
+            "https://srv/manifest.json", "https://srv/client"
+        ),
+    )
+    monkeypatch.setattr(client_update, "load_cache", lambda: {})
+    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
+    calls = _recording_downloader(monkeypatch)
+
+    def down(*a, **k):
+        raise ConnectionError("manifest down")
+
+    monkeypatch.setattr(client_update, "secure_urlopen", down)
+
+    worker.run()
+
+    assert calls == []
+    msgs = [m[0] for m in log_q.queue]
+    assert "__ERROR__" in msgs
+    assert "__TORRENT_RECOVERY_DONE__" not in msgs
+
+
+def test_run_errors_when_manifest_down_without_libtorrent(
+    tmp_path, monkeypatch
+):
+    """Manifest fetch fails, a torrent is advertised, but libtorrent is
+    missing → no recovery, hard error."""
+    client = _mk_client(tmp_path)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = UpdateWorker(str(client), log_q, prog_q)
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: DownloadSource(
+            "https://srv/manifest.json",
+            "https://srv/client",
+            "https://srv/client.torrent",
+        ),
+    )
+    monkeypatch.setattr(client_update, "_torrent_available", lambda: False)
+    monkeypatch.setattr(client_update, "load_cache", lambda: {})
+    calls = _recording_downloader(monkeypatch)
+
+    def down(*a, **k):
+        raise ConnectionError("manifest down")
+
+    monkeypatch.setattr(client_update, "secure_urlopen", down)
+
+    worker.run()
+
+    assert calls == []
+    msgs = [m[0] for m in log_q.queue]
+    assert "__ERROR__" in msgs
+    assert "__TORRENT_RECOVERY_DONE__" not in msgs

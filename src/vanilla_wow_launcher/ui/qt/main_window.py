@@ -526,22 +526,18 @@ class MainWindow(QMainWindow):
     def _maybe_prompt_auto_install(self):
         """First-run prompt: ask once whether to install the server's
         essential mods and recommended addons for the chosen game folder.
-        Accepting persists the choice and starts the checked installs
-        (no-ops until the client is actually present); skipping disables
-        both."""
+        Accepting starts the checked installs (no-ops until the client is
+        actually present); skipping does nothing. There's no later Settings
+        entry for this — it's a one-shot, first-run-only choice."""
         if not self._hub.settings.state.first_run_auto_install_pending:
             return
         self._hub.settings.state.first_run_auto_install_pending = False
         dlg = AutoInstallDialog(self._palette, self)
         if dlg.exec() != QDialog.Accepted:
-            self._hub.settings.set_auto_installs(False, False)
             return
-        mods = dlg.mods_checked
-        addons = dlg.addons_checked
-        self._hub.settings.set_auto_installs(mods, addons)
-        if mods:
+        if dlg.mods_checked:
             self._hub.settings.install_missing_essential_mods()
-        if addons:
+        if dlg.addons_checked:
             self._hub.settings.install_missing_recommended_addons()
 
     def _on_show_logs_requested(self):

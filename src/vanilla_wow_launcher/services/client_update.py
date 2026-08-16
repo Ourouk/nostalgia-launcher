@@ -2,9 +2,12 @@
 
 `VerifyWorker` fetches the manifest from the selected download source and
 reports which files differ. `UpdateWorker` downloads (resumably) the changed
-files, verifies SHA-1s, patches WoW.exe, and clears the WDB cache. Both speak
-to the GUI exclusively through the log/progress queues using the documented
-message protocol.
+files, verifies SHA-1s, and clears the WDB cache. When the manifest cannot be
+fetched but the active source advertises a ``torrent_url`` (and libtorrent is
+available) the update falls back to a full BitTorrent recovery download of the
+client files, verified against the torrent's piece hashes. Both speak to the
+GUI exclusively through the log/progress queues using the documented message
+protocol.
 """
 
 import hashlib
@@ -12,7 +15,6 @@ import json
 import os
 import queue
 import shutil
-import struct
 import time
 import urllib.request
 from typing import NamedTuple
@@ -32,9 +34,8 @@ from ..core.filesystem import (
     sha1_file,
 )
 from ..core.helpers import fmt_size, fmt_speed
-from ..core.platform_support import can_patch_client
 from ..core.security_http import allowed_download_hosts, secure_urlopen
-from .tweaks import build_tweaks, write_config_wtf
+from .tweaks import write_config_wtf
 
 
 class DownloadSource(NamedTuple):
@@ -89,22 +90,29 @@ def _torrent_available() -> bool:
         return False
 
 
+def torrent_recovery_available() -> bool:
+    """Whether a manifest-less full re-download via BitTorrent is possible:
+    some configured source advertises a ``torrent_url`` and libtorrent is
+    importable. Network-free (no mirror probing) so it's safe to call from
+    the readiness path."""
+    from ..core import launcher
+
+    cfg = launcher.config()
+    return bool(cfg and cfg.has_torrent() and _torrent_available())
+
+
 class VerifyWorker:
     def __init__(
         self,
         out_dir: str,
         log_q: queue.Queue,
         prog_q: queue.Queue,
-        expected_patched_wow_hash: str = "",
-        original_server_wow_hash: str = "",
         overwrite_config: bool = False,
     ):
         self.out_dir = out_dir
         self.log_q = log_q
         self.prog_q = prog_q
         self._cancel = False
-        self.expected_patched_wow_hash = expected_patched_wow_hash
-        self.original_server_wow_hash = original_server_wow_hash
         self.overwrite_config = overwrite_config
         self._cache: dict = load_cache()
 
@@ -117,17 +125,12 @@ class VerifyWorker:
     def progress(self, value, label=""):
         self.prog_q.put((value, label))
 
-    def _file_ok(self, dest, server_hash, name):
+    def _file_ok(self, dest, server_hash):
         if not os.path.exists(dest):
             return False
         local_hash = cached_sha1(dest, self._cache)
         if local_hash == server_hash:
             return True
-        if name == "WoW.exe" and self.expected_patched_wow_hash:
-            return (
-                local_hash == self.expected_patched_wow_hash
-                and server_hash == self.original_server_wow_hash
-            )
         return False
 
     def _traverse(self, node, path_parts):
@@ -151,17 +154,13 @@ class VerifyWorker:
             return node if os.path.exists(dest) else None
 
         if t == "file":
-            return None if self._file_ok(dest, node["hash"], name) else node
+            return None if self._file_ok(dest, node["hash"]) else node
 
         if t == "mpq":
             mpq_dest = os.path.join(
                 self.out_dir, os.path.join(*(path_parts + [name + ".mpq"]))
             )
-            return (
-                None
-                if self._file_ok(mpq_dest, node["hash"], name + ".mpq")
-                else node
-            )
+            return None if self._file_ok(mpq_dest, node["hash"]) else node
 
         return None
 
@@ -207,6 +206,12 @@ class VerifyWorker:
                 self.log_q.put(("__UP_TO_DATE__", ""))
         except Exception as e:
             self.log(f"Verification failed: {e}", "err")
+            if not manifest_ok and torrent_recovery_available():
+                self.log(
+                    "Manifest unavailable — a full re-download via "
+                    "BitTorrent is available (UPDATE).",
+                    "dim",
+                )
             # A failed manifest fetch must not masquerade as "update needed":
             # the controller uses __MANIFEST_UNAVAILABLE__ to gray out the
             # update button. Failures *after* the manifest parsed are a
@@ -228,15 +233,12 @@ class UpdateWorker:
         out_dir: str,
         log_q: queue.Queue,
         prog_q: queue.Queue,
-        expected_patched_wow_hash: str = "",
     ):
         self.out_dir = out_dir
         self.log_q = log_q
         self.prog_q = prog_q
         self._cancel = False
         self._cache: dict = load_cache()
-        self.expected_patched_wow_hash = expected_patched_wow_hash
-        self.original_server_wow_hash = ""
         self._source: DownloadSource | None = None
 
     def cancel(self):
@@ -360,15 +362,7 @@ class UpdateWorker:
 
     def _skip_download(self, node, dest, name) -> bool:
         """Whether a file node can be skipped because the local copy already
-        matches the manifest (or is the expected patched WoW.exe)."""
-        if name == "WoW.exe" and self.expected_patched_wow_hash:
-            server_hash = node["hash"]
-            original_server_hash = self.original_server_wow_hash
-            local_hash = sha1_file(dest) if os.path.exists(dest) else ""
-            return (
-                local_hash == self.expected_patched_wow_hash
-                and server_hash == original_server_hash
-            )
+        matches the manifest."""
         return already_updated(dest, node["hash"])
 
     def _torrent_download(self, nodes) -> bool:
@@ -490,47 +484,49 @@ class UpdateWorker:
             if os.path.exists(dest):
                 os.remove(dest)
 
-    def patch_exe(self, tweaks: dict | None = None):
-        exe = os.path.join(self.out_dir, "WoW.exe")
-        if not os.path.exists(exe):
-            raise RuntimeError(f"WoW.exe not found in {self.out_dir}")
-        self.log("\nApplying binary tweaks to WoW.exe…")
-        original_hash = sha1_file(exe)
-        self.log_q.put((f"__ORIGINAL_HASH__{original_hash}", ""))
-        with open(exe, "rb") as f:
-            buf = bytearray(f.read())
-        for label, kind, offset, value in build_tweaks(buf, tweaks):
-            self.log(f"  {label}", "dim")
-            if kind == "float":
-                struct.pack_into("<f", buf, offset, value)
-            elif kind == "int8":
-                struct.pack_into("<b", buf, offset, value)
-            elif kind == "uint16":
-                struct.pack_into("<H", buf, offset, value)
-            elif kind == "bytes":
-                for off, data in value:
-                    buf[off : off + len(data)] = data
-        with open(exe, "wb") as f:
-            f.write(buf)
-        self.log("WoW.exe patched.", "ok")
+    def _recovery_download(self):
+        """Manifest-less recovery: download the whole client via BitTorrent.
 
-        patched_hash = sha1_file(exe)
-        self.log_q.put((f"__PATCHED_HASH__{patched_hash}", ""))
+        The files are verified against the torrent's embedded piece hashes
+        (the ``.torrent`` itself arrived over TLS); there is no per-file
+        manifest SHA-1 to check against in this degraded path. Raises on
+        failure/cancellation, which the caller's except block turns into an
+        ``__ERROR__``."""
+        from .torrent_download import TorrentDownloader
 
-    @staticmethod
-    def _nodes_contain_wow_exe(nodes) -> bool:
-        if nodes is None:
-            return True
-        for node in nodes:
-            if node.get("type") == "file" and node.get("name") == "WoW.exe":
-                return True
-            if node.get("type") == "dir":
-                if UpdateWorker._nodes_contain_wow_exe(node.get("files", [])):
-                    return True
-        return False
+        dl = TorrentDownloader(self.out_dir, self.log_q, self.prog_q)
+        dl.download(self._source.torrent_url, None)
+        if self._cancel:
+            self.log("\nUpdate cancelled.", "err")
+            self.progress(0.0, "Cancelled")
+            self.log_q.put(("__ERROR__", ""))
+            return
+        self.log("  BitTorrent recovery download complete.", "ok")
+        remove_wdb(self.out_dir)
+        # A fresh recovery install has no Config.wtf — create it (a regular
+        # update never touches user config, but this path has no verify step
+        # to seed it).
+        cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
+        if not os.path.exists(cfg_wtf):
+            write_config_wtf(self.out_dir)
+        self.progress(1.0, "")
+        save_cache(self._cache)
+        self.log(
+            "\n✓  Client installed via BitTorrent (no manifest — files "
+            "verified against the torrent's piece hashes).",
+            "ok",
+        )
+        client_ver = get_client_version(self.out_dir)
+        if client_ver:
+            self.log(f"Client version: {client_ver}", "dim")
+            self.log_q.put((f"__VERSION__{client_ver}", ""))
+        else:
+            self.log("Could not read client version from WoW.exe", "dim")
+        self.log_q.put(("__TORRENT_RECOVERY_DONE__", ""))
 
     def run(self, diff_nodes=None):
         try:
+            torrent_recovery = False
             if diff_nodes is not None:
                 self.log("\nStarting client update…\n")
                 self.progress(0.05, "Downloading…")
@@ -541,16 +537,35 @@ class UpdateWorker:
                 self._source = _download_source()
                 if self._source is None:
                     raise RuntimeError("No download source configured.")
-                req = urllib.request.Request(
-                    self._source.manifest_url, headers={"User-Agent": UA}
-                )
-                with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
-                    manifest = json.load(r)
-                self.log_q.put(("__MANIFEST_AVAILABLE__", ""))
-                self.log("Manifest received.", "ok")
-                self.progress(0.05, "Downloading…")
-                self.log("\nStarting client update…\n")
-                nodes = manifest["root"].get("files", [])
+                try:
+                    req = urllib.request.Request(
+                        self._source.manifest_url,
+                        headers={"User-Agent": UA},
+                    )
+                    with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
+                        manifest = json.load(r)
+                except Exception:
+                    # Manifest unavailable — fall back to a full BitTorrent
+                    # recovery download instead of failing outright.
+                    if self._source.torrent_url and _torrent_available():
+                        self.log(
+                            "\nManifest unavailable — downloading the full "
+                            "client via BitTorrent…",
+                            "acct",
+                        )
+                        torrent_recovery = True
+                    else:
+                        raise
+                if not torrent_recovery:
+                    self.log_q.put(("__MANIFEST_AVAILABLE__", ""))
+                    self.log("Manifest received.", "ok")
+                    self.progress(0.05, "Downloading…")
+                    self.log("\nStarting client update…\n")
+                    nodes = manifest["root"].get("files", [])
+
+            if torrent_recovery:
+                self._recovery_download()
+                return
 
             if self._source is None:
                 self._source = _download_source()
@@ -569,20 +584,6 @@ class UpdateWorker:
             self.log("\nDownload complete.", "ok")
             remove_wdb(self.out_dir)
 
-            wow_exe_updated = self._nodes_contain_wow_exe(diff_nodes)
-            if wow_exe_updated and can_patch_client():
-                self.progress(0.92, "Patching…")
-                self.patch_exe()
-            elif wow_exe_updated:
-                self.log("\nWoW.exe patching skipped (Windows-only).", "dim")
-                self.progress(0.95, "")
-            else:
-                self.log("\nWoW.exe unchanged — skipping patch.", "dim")
-                self.progress(0.95, "")
-
-            # Config.wtf is user config — never written here. It's created when
-            # missing during verification and overwritten only on a folder
-            # change; a regular update must never touch it.
             self.progress(1.0, "")
             save_cache(self._cache)
             self.log("\n✓  Everything is up to date!", "ok")

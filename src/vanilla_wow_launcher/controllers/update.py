@@ -21,7 +21,11 @@ from ..core.filesystem import (
 )
 from ..core.log_sink import debug_emit
 from ..core.platform_support import can_launch_client, is_linux
-from ..services.client_update import UpdateWorker, VerifyWorker
+from ..services.client_update import (
+    UpdateWorker,
+    VerifyWorker,
+    torrent_recovery_available,
+)
 from ..services.self_update import (
     fetch_updater_latest_tag,
     updater_update_available,
@@ -114,13 +118,10 @@ class UpdateController:
         self.state.manifest_available = False  # a fresh verify re-fetches it
         self._log_q = queue.Queue()
         self._prog_q = queue.Queue()
-        cfg = load_config()
         worker = VerifyWorker(
             out,
             self._log_q,
             self._prog_q,
-            cfg.get("expected_patched_wow_hash", ""),
-            cfg.get("original_server_wow_hash", ""),
             overwrite_config=overwrite_config,
         )
         self._verify_worker = worker
@@ -144,15 +145,10 @@ class UpdateController:
         self.state.status = "Updating…"
         self._log_q = queue.Queue()
         self._prog_q = queue.Queue()
-        cfg = load_config()
         worker = UpdateWorker(
             out,
             self._log_q,
             self._prog_q,
-            cfg.get("expected_patched_wow_hash", ""),
-        )
-        worker.original_server_wow_hash = cfg.get(
-            "original_server_wow_hash", ""
         )
         self._worker = worker
         diff = self.state.diff_nodes
@@ -412,8 +408,14 @@ class UpdateController:
             return Readiness("play", "PLAY", "Client updates disabled")
         if not self.state.manifest_available:
             # No manifest → can't verify updates, but the game folder may
-            # still be ready to play. Offer PLAY when launch is possible;
-            # gray UPDATE otherwise so we never start a blind update.
+            # still be ready to play. When the client isn't known to be
+            # installed and a BitTorrent recovery is possible, offer an
+            # enabled UPDATE for a full re-download; otherwise PLAY when
+            # launchable, gray UPDATE so we never start a blind update.
+            if not self.state.client_ready and torrent_recovery_available():
+                return Readiness(
+                    "update", "UPDATE", "Recovery download via BitTorrent"
+                )
             if not can_launch_client():
                 return Readiness("disabled", "UPDATE", "Manifest unavailable")
             return Readiness("play", "PLAY", "Manifest unavailable")
@@ -473,16 +475,17 @@ class UpdateController:
             self._dispatcher.post(OperationFinished("verify", False))
         elif msg == "__DIFF_TREE__":
             self.state.diff_nodes = tag
-        elif msg.startswith("__ORIGINAL_HASH__"):
-            h = msg[len("__ORIGINAL_HASH__") :]
-            update_config(
-                lambda c: c.__setitem__("original_server_wow_hash", h)
-            )
-        elif msg.startswith("__PATCHED_HASH__"):
-            h = msg[len("__PATCHED_HASH__") :]
-            update_config(
-                lambda c: c.__setitem__("expected_patched_wow_hash", h)
-            )
+        elif msg == "__TORRENT_RECOVERY_DONE__":
+            # A manifest-less BitTorrent recovery install finished: the client
+            # files are present and piece-hash verified, but no manifest was
+            # ever fetched — keep manifest_available False so the next verify
+            # still re-checks everything.
+            self.state.running = False
+            self.state.client_ready = True
+            self.state.manifest_available = False
+            self._op = None
+            self._dispatcher.post(ProgressChanged(1.0, ""))
+            self._dispatcher.post(OperationFinished("update", True))
         elif msg.startswith("__VERSION__"):
             self.state.client_version = msg[len("__VERSION__") :]
         else:

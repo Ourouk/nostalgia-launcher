@@ -68,9 +68,11 @@ class TorrentDownloader:
             return [p[len(root) + 1 :] for p in paths]
         return paths
 
-    def _priorities(self, ti, wanted: set[str]) -> list[int]:
+    def _priorities(self, ti, wanted: set[str] | None) -> list[int]:
         """Per-file priorities: stale files at max priority, everything else
-        skipped (0) so only the pieces covering the stale files download."""
+        skipped (0) so only the pieces covering the stale files download.
+        ``wanted=None`` means the whole torrent (every file at max priority)
+        — used by the no-manifest recovery path."""
         files = ti.files()
         paths = self._strip_root(
             [
@@ -78,15 +80,16 @@ class TorrentDownloader:
                 for i in range(files.num_files())
             ]
         )
-        return [7 if p in wanted else 0 for p in paths]
+        return [7 if wanted is None or p in wanted else 0 for p in paths]
 
-    def download(self, torrent_url: str, wanted: set[str]) -> list[str]:
+    def download(self, torrent_url: str, wanted: set[str] | None) -> list[str]:
         """Download the wanted files from the torrent at ``torrent_url`` into
-        ``out_dir``. Returns the sorted wanted paths on success and raises
-        RuntimeError on failure or cancellation."""
+        ``out_dir``. ``wanted=None`` downloads the whole torrent. Returns the
+        sorted wanted paths on success and raises RuntimeError on failure or
+        cancellation."""
         import libtorrent as lt
 
-        if not wanted:
+        if wanted is not None and not wanted:
             return []
         self.log(f"  Fetching torrent: {torrent_url}", "dim")
         req = urllib.request.Request(torrent_url, headers={"User-Agent": UA})

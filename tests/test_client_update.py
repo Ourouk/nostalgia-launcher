@@ -141,28 +141,6 @@ def test_verify_worker_config_wtf_created_when_missing(tmp_path, monkeypatch):
     assert (client / "WTF" / "Config.wtf").exists()
 
 
-def test_nodes_contain_wow_exe():
-    assert UpdateWorker._nodes_contain_wow_exe(None) is True
-    assert (
-        UpdateWorker._nodes_contain_wow_exe(
-            [{"type": "file", "name": "WoW.exe"}]
-        )
-        is True
-    )
-    assert (
-        UpdateWorker._nodes_contain_wow_exe(
-            [{"type": "dir", "files": [{"type": "file", "name": "WoW.exe"}]}]
-        )
-        is True
-    )
-    assert (
-        UpdateWorker._nodes_contain_wow_exe(
-            [{"type": "file", "name": "data.bin"}]
-        )
-        is False
-    )
-
-
 def test_update_worker_downloads_and_verifies(tmp_path, monkeypatch):
     client = _mk_client(tmp_path)
     payload = b"hello world"

@@ -72,7 +72,8 @@ class SettingsController:
         )
         # On first run ask once whether to install the server's essential
         # mods and recommended addons (the Qt layer shows the prompt when the
-        # first-run Settings dialog closes).
+        # first-run Settings dialog closes). There is no later Settings entry
+        # for this — it's a one-shot, first-run-only choice.
         self.state.first_run_auto_install_pending = self.state.first_run
 
         # Download-mirror reachability, as reported by the last check_mirror()
@@ -80,12 +81,6 @@ class SettingsController:
         # SettingsState — it's transient session state the Settings modal
         # renders.
         self.mirror_statuses: dict[str, str] = {}
-
-        # Close-time auto-install flags, armed by the Settings toggles and
-        # consumed when the Settings modal closes (a no-op when the option
-        # was just toggled back off).
-        self._pending_auto_mods = False
-        self._pending_auto_addons = False
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -99,7 +94,7 @@ class SettingsController:
 
         Normalizes the value and — when it actually differs from the current
         folder — deletes the hash cache, wipes folder-scoped config
-        (patched-exe hashes + mods/addons install records), resets every
+        (mods/addons install records), resets every
         session controller and re-verifies the new folder (overwriting
         Config.wtf, which also supersedes the first-run settings-close
         verify). Returns True when a change was applied, so the UI can skip
@@ -132,18 +127,11 @@ class SettingsController:
         if os.path.exists(os.path.join(new_val, "WoW.exe")):
             filesystem.remove_wdb(new_val)
 
-        # Wipe folder-scoped config (patched-exe hashes + mods/addons install
-        # records) and set the new path — one atomic merge into the live
-        # config. This also re-arms the default-mods and recommended-addons
-        # auto-install for the new folder.
+        # Wipe folder-scoped config (mods/addons install records) and set the
+        # new path — one atomic merge into the live config.
         def _reset_for_new_folder(c):
             c["out_dir"] = new_val
-            for k in (
-                "expected_patched_wow_hash",
-                "original_server_wow_hash",
-                "mods",
-                "addons",
-            ):
+            for k in ("mods", "addons"):
                 c.pop(k, None)
 
         self.state.config = config_store.update_config(_reset_for_new_folder)
@@ -247,10 +235,9 @@ class SettingsController:
         return [cfg.server_name] + [m.name for m in cfg.mirrors]
 
     def verify_files(self):
-        """Full re-verification: drop the hash cache and the patched-exe
-        bookkeeping so every file is re-hashed against the manifest and
-        WoW.exe gets re-downloaded and re-patched (tweaks reapplied). Unlike
-        a game-folder change, installed mods are left alone."""
+        """Full re-verification: drop the hash cache so every file is
+        re-hashed against the manifest. Unlike a game-folder change, installed
+        mods are left alone."""
         if self._updater.running or not self.client_update_enabled:
             return
         try:
@@ -259,11 +246,6 @@ class SettingsController:
         except Exception:
             pass
 
-        def _drop_hashes(c):
-            c.pop("expected_patched_wow_hash", None)
-            c.pop("original_server_wow_hash", None)
-
-        self.state.config = config_store.update_config(_drop_hashes)
         self._updater.invalidate()
         self._dispatcher.post(
             LogMessage(
@@ -349,48 +331,6 @@ class SettingsController:
         )
         return self.state.config
 
-    def set_auto_mods(self, enabled: bool) -> dict:
-        self._pending_auto_mods = enabled
-        self.state.config = config_store.update_config(
-            lambda c: c.__setitem__("auto_install_mods", enabled)
-        )
-        return self.state.config
-
-    def set_auto_addons(self, enabled: bool) -> dict:
-        self._pending_auto_addons = enabled
-        self.state.config = config_store.update_config(
-            lambda c: c.__setitem__("auto_install_addons", enabled)
-        )
-        return self.state.config
-
-    def set_auto_installs(
-        self, mods_enabled: bool, addons_enabled: bool
-    ) -> dict:
-        """Persist both first-run auto-install choices in one atomic config
-        write. Unlike set_auto_mods/set_auto_addons this does NOT arm the
-        close-time installs — the first-run prompt runs them itself."""
-        self.state.config = config_store.update_config(
-            lambda c: c.update(
-                {
-                    "auto_install_mods": bool(mods_enabled),
-                    "auto_install_addons": bool(addons_enabled),
-                }
-            )
-        )
-        return self.state.config
-
-    def take_pending_auto_mods(self) -> bool:
-        """Whether a close-time essential-mods install was armed (consume it)."""
-        pending = self._pending_auto_mods
-        self._pending_auto_mods = False
-        return pending
-
-    def take_pending_auto_addons(self) -> bool:
-        """Whether a close-time recommended-addons install was armed (consume)."""
-        pending = self._pending_auto_addons
-        self._pending_auto_addons = False
-        return pending
-
     def prune_folder_records(self) -> dict:
         """Drop stale mods/addons install records when the configured game
         folder no longer exists (a folder that was deleted or never created)."""
@@ -401,11 +341,6 @@ class SettingsController:
 
         self.state.config = config_store.update_config(_wipe)
         return self.state.config
-
-    def mods_initialized(self) -> bool:
-        """Whether any mod install record exists for this folder — gates the
-        post-update recommended-addons chain."""
-        return bool(config_store.load_config().get("mods"))
 
     def install_missing_essential_mods(self) -> bool:
         """Install every essential mod not already present. Used when the user

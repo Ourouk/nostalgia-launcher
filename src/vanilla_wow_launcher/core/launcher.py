@@ -130,6 +130,13 @@ class LauncherConfig:
                 hosts.add(host)
         return hosts
 
+    def has_torrent(self) -> bool:
+        """Whether any configured source (server or mirror) advertises a
+        ``torrent_url``. Static — no network probing."""
+        if self.torrent_url:
+            return True
+        return any(m.torrent_url for m in self.mirrors)
+
     def all_bases(self) -> list[str]:
         """The server followed by every mirror's base URL."""
         return [self.server_url] + [m.base_url for m in self.mirrors]

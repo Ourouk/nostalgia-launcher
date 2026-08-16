@@ -51,7 +51,6 @@ class AddonsController:
         self._dispatcher = dispatcher
         self.state = AddonsState()
         self._recommended = set(addons.RECOMMENDED_ADDONS)
-        self._default_addons_install_started = False
         if get_out_dir is None:
 
             def get_out_dir():
@@ -425,62 +424,9 @@ class AddonsController:
         self._dispatcher.post(AddonsLoaded(self.state))
         self._dispatcher.post(OperationFinished("addons_verify", True, ""))
 
-    def maybe_install_default_addons(self) -> bool:
-        """One-shot auto-install of every recommended addon for a fresh game
-        folder. Re-armed by reset() (a game-folder change). Returns True when
-        a verify or install actually started."""
-        if self._default_addons_install_started:
-            return False
-        if config_store.load_config().get("addons") is not None:
-            return False  # already initialized for this folder
-
-        out = (self._get_out_dir() or "").strip()
-        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
-            return False  # game isn't actually installed here yet
-
-        self._default_addons_install_started = True
-
-        # Mark this folder as initialized even if every install fails, so
-        # the batch doesn't re-fire on the next verify.
-        config_store.update_config(lambda c: c.setdefault("addons", {}))
-
-        # "Install recommended addons" (Settings → General): when off, skip
-        # the batch install but still verify so the ADDONS tab lists them.
-        if not config_store.load_config().get("auto_install_addons", True):
-            self.verify()
-            return True
-
-        ap = addons.addons_path(out)
-        recs = [
-            {
-                "folder": name,
-                "status": "available",
-                "git": url,
-                "branch": None,
-                "ref": None,
-                "toc": {},
-                "description": None,
-                "error": None,
-            }
-            for name, url in addons.RECOMMENDED_ADDONS.items()
-            if not os.path.isdir(os.path.join(ap, name))
-        ]
-        if not recs:
-            # Nothing to install (e.g. a folder that already has the addons)
-            # — still run a verify so the ADDONS tab badge shows any
-            # available updates without the user opening the tab.
-            self.verify()
-            return True
-        self._dispatcher.post(
-            LogMessage("\nInstalling recommended addons...\n", "acct")
-        )
-        self.apply(recs)
-        return True
-
     def reset(self):
-        """Drop the session verify TTL/content and re-arm the one-shot
-        auto-install (called when the game folder changes). The section
-        open/closed state is intentionally preserved."""
+        """Drop the session verify TTL/content (called when the game folder
+        changes). The section open/closed state is intentionally preserved."""
         self.state.verified_ts = 0.0
         self.state.state = "idle"
         self.state.addons = {}
@@ -488,7 +434,6 @@ class AddonsController:
         self.state.errors = {}
         self.state.updates_count = 0
         self._recommended = set(addons.RECOMMENDED_ADDONS)
-        self._default_addons_install_started = False
 
     def invalidate(self):
         """Drop the verify TTL so the next verify() rescans and rebuilds the
