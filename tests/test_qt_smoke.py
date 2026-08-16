@@ -23,7 +23,7 @@ from unittest.mock import Mock
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLabel, QWidget
+from PySide6.QtWidgets import QDialog, QLabel, QWidget
 
 import vanilla_wow_launcher.controllers.news as news_controller
 import vanilla_wow_launcher.controllers.settings as settings_controller
@@ -34,6 +34,7 @@ import vanilla_wow_launcher.core.platform_support as platform_support
 import vanilla_wow_launcher.services.addons as addons_module
 import vanilla_wow_launcher.services.mods as mods_module
 import vanilla_wow_launcher.services.news as news_module
+import vanilla_wow_launcher.ui.qt.main_window as mw
 from vanilla_wow_launcher.state.events import (
     AddonsLoaded,
     ModsLoaded,
@@ -322,7 +323,9 @@ def test_startup_schedule_runs_the_full_launch_chain(qapp, app):
     assert addons_panel._rows.get("pfUI") is not None
 
 
-def test_first_run_defers_verify_until_settings_close(qapp, build_app):
+def test_first_run_defers_verify_until_settings_close(
+    qapp, build_app, monkeypatch
+):
     app = build_app(first_run=True)
     try:
         win = app._window
@@ -335,7 +338,17 @@ def test_first_run_defers_verify_until_settings_close(qapp, build_app):
         assert win._settingsDialog.isVisible()
         hub.updater.start_verify.assert_not_called()
 
-        # Closing it arms the deferred verify (overwrite_config=True).
+        # Closing it arms the deferred verify (overwrite_config=True). The
+        # first-run auto-install prompt fires on the same close — patch it so
+        # it doesn't block the offscreen event loop.
+        class _SkipAutoInstallDialog:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def exec(self):
+                return QDialog.Rejected
+
+        monkeypatch.setattr(mw, "AutoInstallDialog", _SkipAutoInstallDialog)
         win._settingsDialog.close()
         _wait_until(lambda: hub.updater.start_verify.call_count == 1)
         hub.updater.start_verify.assert_called_once_with(True)

@@ -70,6 +70,10 @@ class SettingsController:
         self.state.first_run_verify_pending = (
             self.state.first_run and self.client_update_enabled
         )
+        # On first run ask once whether to install the server's essential
+        # mods and recommended addons (the Qt layer shows the prompt when the
+        # first-run Settings dialog closes).
+        self.state.first_run_auto_install_pending = self.state.first_run
 
         # Download-mirror reachability, as reported by the last check_mirror()
         # ({name: "" | "checking…" | "online" | "offline"}). Not part of
@@ -356,6 +360,22 @@ class SettingsController:
         self._pending_auto_addons = enabled
         self.state.config = config_store.update_config(
             lambda c: c.__setitem__("auto_install_addons", enabled)
+        )
+        return self.state.config
+
+    def set_auto_installs(
+        self, mods_enabled: bool, addons_enabled: bool
+    ) -> dict:
+        """Persist both first-run auto-install choices in one atomic config
+        write. Unlike set_auto_mods/set_auto_addons this does NOT arm the
+        close-time installs — the first-run prompt runs them itself."""
+        self.state.config = config_store.update_config(
+            lambda c: c.update(
+                {
+                    "auto_install_mods": bool(mods_enabled),
+                    "auto_install_addons": bool(addons_enabled),
+                }
+            )
         )
         return self.state.config
 

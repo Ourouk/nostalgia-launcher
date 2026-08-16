@@ -176,6 +176,7 @@ def test_first_run_flags_initialized(cfg, monkeypatch):
     assert c.state.first_run is True
     assert c.state.first_run_verify_pending is True
     assert c.state.first_run_av_pending is False  # can_manage_antivirus → off
+    assert c.state.first_run_auto_install_pending is True
 
 
 def test_client_updates_default_to_enabled(cfg, fakes):
@@ -471,6 +472,21 @@ def test_toggles_persist_config_keys(controller, cfg):
     assert cfg["close_on_launch"] is False
     assert cfg["auto_install_mods"] is False
     assert cfg["auto_install_addons"] is True
+
+
+def test_set_auto_installs_persists_both(controller, cfg):
+    controller.set_auto_installs(True, False)
+    assert cfg["auto_install_mods"] is True
+    assert cfg["auto_install_addons"] is False
+    controller.set_auto_installs(False, True)
+    assert cfg["auto_install_mods"] is False
+    assert cfg["auto_install_addons"] is True
+
+
+def test_set_auto_installs_does_not_arm_close_time_installs(controller):
+    controller.set_auto_installs(True, True)
+    assert controller.take_pending_auto_mods() is False
+    assert controller.take_pending_auto_addons() is False
 
 
 # ── verify_files ───────────────────────────────────────────────────────────

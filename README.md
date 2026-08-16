@@ -98,9 +98,12 @@ After selecting a configuration:
 
 1. Open **Settings** and select the game folder if it was not detected.
 2. Review the configured server and mirror information.
-3. Click **UPDATE** to run the complete update sequence: client, mods, then
+3. On first run, choose whether to install the server's essential mods and
+   recommended addons when prompted. You can change this later in
+   **Settings → General**.
+4. Click **UPDATE** to run the complete update sequence: client, mods, then
    addons.
-4. Use **PLAY** when the client is ready on supported platforms.
+5. Use **PLAY** when the client is ready on supported platforms.
 
 ## Using the Launcher
 
