@@ -180,6 +180,32 @@ def test_verify_needs_update_sets_diff_and_not_ready(
     assert controller.state.running is False
 
 
+def test_diff_tree_flattens_full_relative_paths(
+    controller, worker_cls, config
+):
+    """The UpdateFilesList event carries full relative paths (dir names
+    included) so they match the paths the HTTP downloader streams."""
+    diff = [
+        {
+            "type": "dir",
+            "name": "Data",
+            "files": [
+                {"type": "file", "name": "foo.mpq"},
+                {"type": "mpq", "name": "patch"},
+            ],
+        },
+        {"type": "file", "name": "WoW.exe"},
+    ]
+    worker_cls.script = [("__DIFF_TREE__", diff), ("__UPDATE_NEEDED__", "")]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    events = controller._dispatcher.drain()
+    assert (
+        UpdateFilesList(["Data/foo.mpq", "Data/patch.mpq", "WoW.exe"])
+        in events
+    )
+
+
 def test_verify_failure_records_null_diff(controller, worker_cls, config):
     worker_cls.script = [("__DIFF_TREE__", None), ("__UPDATE_NEEDED__", "")]
     controller.start_verify()

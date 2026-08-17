@@ -58,19 +58,24 @@ class Readiness:
     status: str
 
 
-def _flatten_diff_tree(nodes) -> list[str]:
+def _flatten_diff_tree(nodes, prefix=()) -> list[str]:
     """Flatten a diff tree (as returned by __DIFF_TREE__) into a list of
-    relative file paths (e.g. "Interface/addons.xml", "WoW.exe")."""
+    relative file paths (e.g. "Data/foo.mpq", "WoW.exe").
+
+    Node ``name`` values are basenames, so the recursion carries the parent
+    directory chain to rebuild the full path (matching the relative paths the
+    HTTP downloader streams via ``current_file``)."""
     paths: list[str] = []
     for node in nodes:
         t = node.get("type", "")
         name = node.get("name", "")
+        cur = prefix + (name,)
         if t == "file" or t == "del":
-            paths.append(name)
+            paths.append("/".join(cur))
         elif t == "mpq":
-            paths.append(name + ".mpq")
+            paths.append("/".join(cur) + ".mpq")
         elif t == "dir":
-            paths.extend(_flatten_diff_tree(node.get("files", [])))
+            paths.extend(_flatten_diff_tree(node.get("files", []), cur))
     return paths
 
 

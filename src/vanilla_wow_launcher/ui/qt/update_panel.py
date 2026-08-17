@@ -122,7 +122,7 @@ class UpdatePanel(QWidget):
         # appended (HTTP streams per-file paths, torrent only reports its
         # own name which has no "/").
         if event.current_file and "/" in event.current_file:
-            txt = event.current_file
+            txt = event.current_file.replace("\\", "/")
             if not self._set_file_done(txt) and not self._has_file(txt):
                 item = QListWidgetItem(txt)
                 item.setData(Qt.UserRole, True)
