@@ -199,6 +199,7 @@ def test_click_update_starts_update(qapp, window, monkeypatch):
 
     hub.updater.start_update.assert_called_once_with()
     hub.updater.launch_game.assert_not_called()
+    assert window._stack.currentIndex() == window._pages["UPDATE"]
 
 
 def test_click_terminate_terminates_game(qapp, window, monkeypatch):

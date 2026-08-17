@@ -130,6 +130,7 @@ def test_verify_scans_and_posts_addons_loaded(controller, cfg, tmp_path):
     _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
 
     assert controller.state.state == "done"
+
     assert controller.state.busy is False
     assert controller.state.verified_ts > 0
     assert controller.state.addons["Foo"].status == "upToDate"
@@ -140,6 +141,31 @@ def test_verify_scans_and_posts_addons_loaded(controller, cfg, tmp_path):
         ac.addons.RECOMMENDED_ADDONS
     )
     assert controller.updates_count == 0
+
+
+def test_ensure_catalog_loaded_stores_addon_state_objects(
+    controller, monkeypatch
+):
+    monkeypatch.setattr(
+        ac.addons,
+        "addons_catalog",
+        lambda force=False: [
+            {
+                "name": "Example",
+                "git": "https://github.com/example/addon",
+                "recommended": True,
+            }
+        ],
+    )
+
+    controller._ensure_catalog_loaded()
+
+    assert all(
+        isinstance(record, AddonState) for record in controller.state.available
+    )
+    assert any(
+        record.folder == "Example" for record in controller.state.available
+    )
 
 
 def test_verify_marks_unreachable_addon_unknown(

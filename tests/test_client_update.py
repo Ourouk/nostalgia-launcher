@@ -5,8 +5,10 @@ import os
 import queue
 import urllib.request
 
-import vanilla_wow_launcher.services.client_update as client_update
-from vanilla_wow_launcher.services.client_update import (
+import pytest
+
+import vanilla_wow_launcher.services.update_backend.http_update as client_update
+from vanilla_wow_launcher.services.update_backend.http_update import (
     UpdateWorker,
     VerifyWorker,
 )
@@ -207,6 +209,39 @@ def test_update_worker_traverse_skips_up_to_date(tmp_path, monkeypatch):
     worker = UpdateWorker(str(client), log_q, prog_q)
     worker.traverse(node, [])
     assert (client / "data.bin").read_bytes() == b"x"
+
+
+def test_update_worker_uses_verified_torrent_paths_without_manifest(
+    tmp_path, monkeypatch
+):
+    client = _mk_client(tmp_path)
+    source = client_update.DownloadSource(
+        "https://launcher.test/manifest.json",
+        "https://launcher.test/client",
+        "https://launcher.test/client.torrent",
+    )
+    monkeypatch.setattr(client_update, "_download_source", lambda: source)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        lambda *args, **kwargs: pytest.fail("manifest must not be fetched"),
+    )
+    recovered = []
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = UpdateWorker(str(client), log_q, prog_q)
+    monkeypatch.setattr(
+        worker,
+        "_recovery_download",
+        lambda wanted: recovered.append(wanted),
+    )
+
+    worker.run(None, {"Data/a.bin"})
+
+    assert recovered == [{"Data/a.bin"}]
+    value, label, details = prog_q.get_nowait()
+    assert value == 0.02
+    assert label == "Downloading via BitTorrent…"
+    assert details["phase"] == "BitTorrent"
 
 
 # ── mirror failover ──────────────────────────────────────────────────────────

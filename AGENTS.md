@@ -38,7 +38,7 @@ uv run ruff check .              # lint gate: E4/E7/E9/F/I/W/UP/B — run after 
 src/vanilla_wow_launcher/
   cli.py          # entry point: config wiring + window loop
   core/           # constants, config_store, launcher, security_http, filesystem, helpers, log_sink, platform_support, errors
-  services/       # catalog, addons, mods, news, tweaks, client_update, self_update
+  services/       # catalog, addons, mods, news, tweaks, update_backend, self_update
   controllers/    # update, news, mods, addons, settings, tweaks (toolkit-agnostic)
   state/          # models.py (state dataclasses), events.py (dispatcher)
   ui/qt/          # app, main_window, bridge, theme, panels, dialogs
@@ -84,10 +84,20 @@ src/vanilla_wow_launcher/
 - Client updates get a second download backend: when the active download
   source advertises a `torrent_url` (launcher config, server or mirror) and
   libtorrent is importable, `UpdateWorker` bulk-downloads the stale files via
-  `services/torrent_download.py` before its per-file HTTP `traverse()`, which
+  `services/update_backend/torrent_update.py` before its per-file HTTP `traverse()`, which
   re-verifies every file and HTTP-resumes anything the torrent missed. Tests
   inject a fake `libtorrent` into `sys.modules`; libtorrent is never needed
   to run the suite.
+- The torrent root is **auto-detected** from the unique `WoW.exe` position in
+  the torrent: the parent directory of `WoW.exe` (case-insensitive) is the
+  root prefix stripped from all torrent paths when mapping to the selected WoW
+  folder (e.g. `client/WoW.exe` → `<wow_folder>/WoW.exe`). A
+  `TorrentLayoutError` is raised when `WoW.exe` is missing, duplicated, or
+  any file escapes the detected root.
+- **Torrent verification is offline**: the verification session uses an empty
+  `listen_interfaces` and disables DHT/LSD/UPnP/NAT-PMP and all peer
+  connections. No P2P activity occurs before the user presses UPDATE. Only the
+  download session enables networking.
 - When the manifest itself can't be fetched, the update falls back to a
   manifest-less **BitTorrent recovery**: if the active source advertises a
   `torrent_url` and libtorrent is importable, `UpdateWorker._recovery_download()`

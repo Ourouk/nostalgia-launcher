@@ -12,7 +12,7 @@ import time
 import pytest
 
 import vanilla_wow_launcher.controllers.mods as mc
-import vanilla_wow_launcher.services.client_update as client_update
+import vanilla_wow_launcher.services.update_backend.http_update as client_update
 from vanilla_wow_launcher.controllers.mods import ModsController
 from vanilla_wow_launcher.state.events import (
     EventDispatcher,

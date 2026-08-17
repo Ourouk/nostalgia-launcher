@@ -315,8 +315,22 @@ def test_update_receives_diff_from_verify(controller, worker_cls, config):
     controller.start_update()
     _wait_and_poll(controller, worker_cls)
     w = worker_cls.instances[1]
-    assert w.run_args == (diff,)
+    assert w.run_args == (diff, None)
     assert controller.state.diff_nodes is None
+
+
+def test_update_receives_stale_paths_from_torrent_verify(
+    controller, worker_cls, config
+):
+    worker_cls.script = [("__DONE__", "")]
+    controller.state.manifest_available = False
+    controller.state.torrent_stale = ["Data/a.bin"]
+
+    controller.start_update()
+    _wait_and_poll(controller, worker_cls)
+
+    worker = worker_cls.instances[0]
+    assert worker.run_args == (None, {"Data/a.bin"})
 
 
 def test_start_update_without_folder_logs_error(worker_cls, config):
@@ -404,7 +418,7 @@ def test_readiness_recovery_update_when_manifest_down(
     r = controller.compute_readiness()
     assert r.mode == "update"
     assert r.label == "UPDATE"
-    assert r.status == "Recovery download via BitTorrent"
+    assert r.status == "Download via BitTorrent"
 
 
 def test_readiness_no_recovery_without_torrent(
@@ -445,6 +459,146 @@ def test_readiness_update_available_when_not_ready(
     assert r.mode == "update"
     assert r.label == "UPDATE"
     assert r.status == "Update available!"
+
+
+def test_torrent_diff_stores_stale_and_not_ready(
+    controller, worker_cls, config
+):
+    """A manifest-less torrent verify found stale files → the controller
+    records them, keeps the client not-ready and the manifest unavailable."""
+    worker_cls.script = [("__TORRENT_DIFF__", ["Data/a.bin", "Patch.mpq"])]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    controller._dispatcher.drain()
+
+    assert controller.state.torrent_stale == ["Data/a.bin", "Patch.mpq"]
+    assert controller.state.client_ready is False
+    assert controller.state.manifest_available is False
+
+
+def test_torrent_up_to_date_marks_client_ready(controller, worker_cls, config):
+    """A manifest-less torrent verify found nothing stale → the client is
+    ready even though no manifest was ever fetched."""
+    worker_cls.script = [("__TORRENT_UP_TO_DATE__", "")]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    controller._dispatcher.drain()
+
+    assert controller.state.client_ready is True
+    assert controller.state.manifest_available is False
+    assert controller.state.torrent_stale is None
+
+
+def test_readiness_torrent_diff_offers_update(controller, worker_cls, config):
+    """Torrent-only verify with stale files → enabled UPDATE showing the
+    count."""
+    controller.state.manifest_available = False
+    controller.state.torrent_stale = ["Data/a.bin", "Patch.mpq"]
+    r = controller.compute_readiness()
+    assert r.mode == "update"
+    assert r.label == "UPDATE"
+    assert r.status == "2 file(s) to update via BitTorrent"
+
+
+def test_readiness_torrent_up_to_date_offers_play(
+    controller, worker_cls, config
+):
+    """Torrent-only verify with no stale files → PLAY up-to-date even with no
+    manifest."""
+    controller.state.manifest_available = False
+    controller.state.client_ready = True
+    r = controller.compute_readiness()
+    assert r.mode == "play"
+    assert r.label == "PLAY"
+    assert r.status == "Everything up to date!"
+
+
+def test_update_passes_torrent_wanted_to_worker(
+    controller, worker_cls, config
+):
+    """start_update hands the stale torrent files to the update worker so it
+    only fetches those, and clears them from state."""
+    controller.state.torrent_stale = ["Data/a.bin", "Patch.mpq"]
+    worker_cls.script = [("__DONE__", "")]
+    controller.start_update()
+    _wait_and_poll(controller, worker_cls)
+    w = worker_cls.instances[0]
+    assert w.run_args == (None, {"Data/a.bin", "Patch.mpq"})
+    assert controller.state.torrent_stale is None
+
+
+def test_torrent_unreachable_sets_flag(controller, worker_cls, config):
+    """No manifest + unreachable torrent → the controller records it so the
+    UI stops offering a dead recovery download."""
+    worker_cls.script = [("__TORRENT_UNREACHABLE__", "")]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    controller._dispatcher.drain()
+
+    assert controller.state.torrent_reachable is False
+    assert controller.state.client_ready is False
+    assert controller.state.manifest_available is False
+    assert controller.state.torrent_stale is None
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "__TORRENT_UNREACHABLE__",
+        "__TORRENT_CORRUPT__",
+        "__TORRENT_STALLED__",
+        "__TORRENT_SESSION_ERROR__",
+        "__TORRENT_DISK_ERROR__",
+        "__TORRENT_VERIFY_FAILED__",
+    ],
+)
+def test_torrent_failure_preserves_update_operation_kind(controller, marker):
+    controller._op = "update"
+
+    controller._handle_log(marker, "failure")
+
+    events = controller._dispatcher.drain()
+    assert OperationFinished("update", False) in events
+
+
+def test_torrent_verify_failed_sets_flag(controller, worker_cls, config):
+    """No manifest + torrent fetched but recheck failed → the torrent IS
+    reachable, so recovery download is offered."""
+    worker_cls.script = [("__TORRENT_VERIFY_FAILED__", "")]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    controller._dispatcher.drain()
+
+    assert controller.state.torrent_reachable is True
+    assert controller.state.client_ready is False
+    assert controller.state.manifest_available is False
+    assert controller.state.torrent_stale is None
+
+
+def test_readiness_unreachable_torrent_falls_back_to_play(
+    controller, worker_cls, config
+):
+    """No manifest + unreachable torrent + launchable → PLAY only, never a
+    dead recovery UPDATE."""
+    controller.state.manifest_available = False
+    controller.state.torrent_reachable = False
+    r = controller.compute_readiness()
+    assert r.mode == "play"
+    assert r.label == "PLAY"
+    assert r.status == "Torrent unavailable"
+
+
+def test_readiness_unreachable_torrent_disabled_when_not_launchable(
+    controller, worker_cls, config, monkeypatch
+):
+    """No manifest + unreachable torrent + not launchable → grayed UPDATE."""
+    monkeypatch.setattr(uc, "can_launch_client", lambda: False)
+    controller.state.manifest_available = False
+    controller.state.torrent_reachable = False
+    r = controller.compute_readiness()
+    assert r.mode == "disabled"
+    assert r.label == "UPDATE"
+    assert r.status == "Torrent unavailable"
 
 
 def test_readiness_play_when_ready_and_launchable(
@@ -773,3 +927,95 @@ def test_launch_game_windows_prefers_vanillafixes(
     args, kwargs = popen.call_args
     assert args[0] == [str(game / "VanillaFixes.exe")]
     assert kwargs["cwd"] == str(game)
+
+
+# ── Typed torrent exception handler tests ────────────────────────────────────
+
+
+def test_torrent_corrupt_sets_unreachable(controller, worker_cls, config):
+    """Corrupt torrent → unreachable + error detail."""
+    worker_cls.script = [
+        ("__TORRENT_CORRUPT__", "Failed to parse torrent: bad data")
+    ]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    controller._dispatcher.drain()
+
+    assert controller.state.torrent_reachable is False
+    assert (
+        controller.state.torrent_error == "Failed to parse torrent: bad data"
+    )
+    assert controller.state.manifest_available is False
+
+
+def test_torrent_stalled_sets_error(controller, worker_cls, config):
+    """Verification stalled → reachable + error with peer count."""
+    worker_cls.script = [("__TORRENT_STALLED__", "Stalled (0 peers)")]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    controller._dispatcher.drain()
+
+    assert controller.state.torrent_reachable is True
+    assert controller.state.torrent_error == "Stalled (0 peers)"
+
+
+def test_torrent_session_error_sets_error(controller, worker_cls, config):
+    """Session error → reachable + error."""
+    worker_cls.script = [
+        (
+            "__TORRENT_SESSION_ERROR__",
+            "Failed to create session: address in use",
+        )
+    ]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    controller._dispatcher.drain()
+
+    assert controller.state.torrent_reachable is True
+    assert "address in use" in controller.state.torrent_error
+
+
+def test_torrent_disk_error_sets_error(controller, worker_cls, config):
+    """Disk error → reachable + error."""
+    worker_cls.script = [("__TORRENT_DISK_ERROR__", "No space left on device")]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    controller._dispatcher.drain()
+
+    assert controller.state.torrent_reachable is True
+    assert controller.state.torrent_error == "No space left on device"
+
+
+def test_readiness_torrent_unreachable_with_error(
+    controller, worker_cls, config
+):
+    """Unreachable torrent with error → status includes error detail."""
+    controller.state.manifest_available = False
+    controller.state.torrent_reachable = False
+    controller.state.torrent_error = "not a valid torrent"
+    r = controller.compute_readiness()
+    assert r.mode == "play"
+    assert r.status == "Torrent unavailable: not a valid torrent"
+
+
+def test_readiness_torrent_error_with_stale(controller, worker_cls, config):
+    """Stale files + error → download with peer count."""
+    controller.state.manifest_available = False
+    controller.state.torrent_reachable = True
+    controller.state.torrent_stale = ["a.bin", "b.bin"]
+    controller.state.torrent_error = "Stalled (3 peers)"
+    r = controller.compute_readiness()
+    assert r.mode == "update"
+    assert "2 file(s) to update" in r.status
+    assert "(Stalled (3 peers))" in r.status
+
+
+def test_readiness_torrent_error_no_stale(controller, worker_cls, config):
+    """Error only, no stale → download with error detail."""
+    controller.state.manifest_available = False
+    controller.state.torrent_reachable = True
+    controller.state.torrent_stale = None
+    controller.state.torrent_error = "session failed"
+    r = controller.compute_readiness()
+    assert r.mode == "update"
+    assert r.status == "Download via BitTorrent (session failed)"

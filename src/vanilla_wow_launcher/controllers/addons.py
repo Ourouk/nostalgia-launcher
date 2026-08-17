@@ -424,6 +424,52 @@ class AddonsController:
         self._dispatcher.post(AddonsLoaded(self.state))
         self._dispatcher.post(OperationFinished("addons_verify", True, ""))
 
+    def apply_recommended_addons(self) -> bool:
+        """Install every recommended addon (from catalog + constant) not yet
+        present. Returns True when an install actually started."""
+        if self.state.busy:
+            return False
+        client = (self._get_out_dir() or "").strip()
+        if not client or not os.path.exists(os.path.join(client, "WoW.exe")):
+            return False
+        # If the recommended set only has the constant (empty by default) and
+        # the available list is empty, force a catalog fetch so the recommended
+        # set gets populated from the server's catalog.
+        if not self.state.available and self._recommended == set(
+            addons.RECOMMENDED_ADDONS
+        ):
+            self._ensure_catalog_loaded()
+        ap = addons.addons_path(client)
+        recs = []
+        for name in sorted(self._recommended):
+            if os.path.isdir(os.path.join(ap, name)):
+                continue
+            rec = next(
+                (r for r in self.state.available if r.folder == name), None
+            )
+            if rec is not None:
+                recs.append(dict(rec))
+            elif name in addons.RECOMMENDED_ADDONS:
+                recs.append(
+                    {
+                        "folder": name,
+                        "status": "available",
+                        "git": addons.RECOMMENDED_ADDONS[name],
+                        "branch": None,
+                        "ref": None,
+                        "toc": {},
+                        "description": None,
+                        "error": None,
+                    }
+                )
+        if not recs:
+            return False
+        self._dispatcher.post(
+            LogMessage("\nInstalling recommended addons...\n", "acct")
+        )
+        self.apply(recs)
+        return True
+
     def reset(self):
         """Drop the session verify TTL/content (called when the game folder
         changes). The section open/closed state is intentionally preserved."""
@@ -450,6 +496,63 @@ class AddonsController:
         ):
             return "Update all", C_OK, "hand2"
         return "Everything up to date", C_TEXT_DIM, "arrow"
+
+    def _ensure_catalog_loaded(self):
+        """Force a catalog fetch and populate _recommended and state.available.
+        Used by apply_recommended_addons on first run when the catalog hasn't
+        been fetched yet."""
+        try:
+            catalog = addons.addons_catalog(force=True)
+        except Exception:
+            catalog = addons.catalog_from_cache()
+
+        blocked = set(addons.BLOCKED_ADDONS)
+        recommended = set(addons.RECOMMENDED_ADDONS)
+        available = []
+        by_name = {}
+        for a in catalog:
+            name = a.get("name")
+            if not name:
+                continue
+            if a.get("blocked"):
+                blocked.add(name)
+            if a.get("recommended"):
+                recommended.add(name)
+            if name in blocked:
+                continue
+            rec = {
+                "folder": name,
+                "status": "available",
+                "git": a.get("git"),
+                "branch": a.get("branch"),
+                "ref": a.get("ref"),
+                "toc": a.get("toc") or {},
+                "description": a.get("description"),
+                "error": None,
+            }
+            available.append(rec)
+            by_name[name] = rec
+
+        for name, override in addons.RECOMMENDED_ADDONS.items():
+            rec = by_name.get(name)
+            if rec is None:
+                available.append(
+                    {
+                        "folder": name,
+                        "status": "available",
+                        "git": override,
+                        "branch": None,
+                        "ref": None,
+                        "toc": {},
+                        "description": None,
+                        "error": None,
+                    }
+                )
+            elif not same_git_repo(rec.get("git"), override):
+                rec.update(git=override, branch=None, ref=None)
+
+        self._recommended = recommended
+        self.state.available = [AddonState.from_dict(rec) for rec in available]
 
     # ── internals ───────────────────────────────────────────────────────────
 

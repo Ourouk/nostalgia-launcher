@@ -64,6 +64,7 @@ class _FakeAddons:
         self.applied_recs = []
         self.invalidated = 0
         self.verify_calls = 0
+        self.recommended_recs = 0
         self.state = _FakeAddonsState()
 
     def reset(self):
@@ -72,6 +73,10 @@ class _FakeAddons:
     def apply(self, recs):
         self.applied += 1
         self.applied_recs.append(recs)
+
+    def apply_recommended_addons(self):
+        self.recommended_recs += 1
+        return True
 
     def invalidate(self):
         self.invalidated += 1
@@ -637,15 +642,7 @@ def test_install_missing_recommended_addons_delegates(
     monkeypatch.setattr(sc.addons, "addons_path", lambda out: str(ap))
 
     assert controller.install_missing_recommended_addons() is True
-    assert fakes.addons.applied == 1
-    recs = fakes.addons.applied_recs[0]
-    assert [r["folder"] for r in recs] == ["ShaguTweaks"]
-    assert recs[0]["status"] == "available"
-    assert recs[0]["git"] == "https://x/ShaguTweaks"
-    events = controller._dispatcher.drain()
-    assert any(
-        "Installing recommended addons" in t for t in _log_texts(events)
-    )
+    assert fakes.addons.recommended_recs == 1
 
 
 def test_install_missing_recommended_addons_noop_when_all_present(
@@ -660,6 +657,9 @@ def test_install_missing_recommended_addons_noop_when_all_present(
     (ap / "pfUI").mkdir()
     monkeypatch.setattr(sc.addons, "RECOMMENDED_ADDONS", {"pfUI": "url"})
     monkeypatch.setattr(sc.addons, "addons_path", lambda out: str(ap))
+    monkeypatch.setattr(
+        controller._addons, "apply_recommended_addons", lambda: False
+    )
     assert controller.install_missing_recommended_addons() is False
     assert fakes.addons.applied == 0
 

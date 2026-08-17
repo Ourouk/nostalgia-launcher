@@ -36,6 +36,13 @@ class ProgressChanged(Event):
 
     value: float
     label: str = ""
+    phase: str = ""
+    transport: str = ""
+    current_file: str = ""
+    downloaded: int = 0
+    total: int = 0
+    speed: float = 0.0
+    peers: int = 0
 
 
 @dataclass

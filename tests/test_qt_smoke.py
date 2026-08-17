@@ -246,8 +246,8 @@ def _wait_until(predicate, timeout_ms=4000):
 def test_construction_builds_full_app(qapp, app):
     win = app._window
     assert win.windowTitle() == "Vanilla WoW Launcher"
-    assert win._stack.count() == 4
-    assert win._pages == {"NEWS": 0, "TWEAKS": 1, "ADDONS": 2, "MODS": 3}
+    assert win._stack.count() == 5
+    assert win._pages["UPDATE"] == 4
     assert win._stack.currentIndex() == 0
     assert win._navButtons["NEWS"].isChecked()
     assert win._gearButton is not None

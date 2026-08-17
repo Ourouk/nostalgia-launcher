@@ -66,6 +66,7 @@ class ControllerBridge(QObject):
     statusChanged = Signal(str)
     logMessage = Signal(str, str)
     progressChanged = Signal(float, str)
+    updateProgressChanged = Signal(object)
     newsLoaded = Signal(object)
     modsLoaded = Signal(object)
     addonsLoaded = Signal(object)
@@ -98,6 +99,7 @@ class ControllerBridge(QObject):
             self.logMessage.emit(event.text, event.tag)
         elif isinstance(event, ProgressChanged):
             self.progressChanged.emit(event.value, event.label)
+            self.updateProgressChanged.emit(event)
         elif isinstance(event, NewsLoaded):
             self.newsLoaded.emit(event)
         elif isinstance(event, ModsLoaded):

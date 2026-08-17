@@ -379,14 +379,6 @@ def test_first_run_prompt_accept_installs_checked(
     hub.settings.state.first_run_verify_pending = False
     hub.settings.state.first_run_av_pending = False
     hub.settings.state.first_run_auto_install_pending = True
-    install_mods = Mock(return_value=True)
-    install_addons = Mock(return_value=True)
-    monkeypatch.setattr(
-        hub.settings, "install_missing_essential_mods", install_mods
-    )
-    monkeypatch.setattr(
-        hub.settings, "install_missing_recommended_addons", install_addons
-    )
     _FakeAutoInstallDialog.created = 0
     _FakeAutoInstallDialog.result = QDialog.Accepted
     _FakeAutoInstallDialog.mods_checked = True
@@ -399,8 +391,8 @@ def test_first_run_prompt_accept_installs_checked(
         win._on_settings_finished()
         assert _FakeAutoInstallDialog.created == 1
         assert hub.settings.state.first_run_auto_install_pending is False
-        install_mods.assert_called_once_with()
-        install_addons.assert_called_once_with()
+        assert hub.settings.state.pending_auto_mods is True
+        assert hub.settings.state.pending_auto_addons is True
     finally:
         win.close()
         hub.close()
@@ -413,14 +405,6 @@ def test_first_run_prompt_accept_partial_install(
     hub.settings.state.first_run_auto_install_pending = True
     hub.settings.state.first_run_verify_pending = False
     hub.settings.state.first_run_av_pending = False
-    install_mods = Mock(return_value=True)
-    install_addons = Mock(return_value=True)
-    monkeypatch.setattr(
-        hub.settings, "install_missing_essential_mods", install_mods
-    )
-    monkeypatch.setattr(
-        hub.settings, "install_missing_recommended_addons", install_addons
-    )
     _FakeAutoInstallDialog.created = 0
     _FakeAutoInstallDialog.result = QDialog.Accepted
     _FakeAutoInstallDialog.mods_checked = True
@@ -431,8 +415,8 @@ def test_first_run_prompt_accept_partial_install(
     win.show()
     try:
         win._on_settings_finished()
-        install_mods.assert_called_once_with()
-        install_addons.assert_not_called()
+        assert hub.settings.state.pending_auto_mods is True
+        assert hub.settings.state.pending_auto_addons is False
     finally:
         win.close()
         hub.close()
@@ -445,14 +429,6 @@ def test_first_run_prompt_skip_disables_both(
     hub.settings.state.first_run_auto_install_pending = True
     hub.settings.state.first_run_verify_pending = False
     hub.settings.state.first_run_av_pending = False
-    install_mods = Mock(return_value=True)
-    install_addons = Mock(return_value=True)
-    monkeypatch.setattr(
-        hub.settings, "install_missing_essential_mods", install_mods
-    )
-    monkeypatch.setattr(
-        hub.settings, "install_missing_recommended_addons", install_addons
-    )
     _FakeAutoInstallDialog.created = 0
     _FakeAutoInstallDialog.result = QDialog.Rejected
     monkeypatch.setattr(mw, "AutoInstallDialog", _FakeAutoInstallDialog)
@@ -463,8 +439,8 @@ def test_first_run_prompt_skip_disables_both(
         win._on_settings_finished()
         assert _FakeAutoInstallDialog.created == 1
         assert hub.settings.state.first_run_auto_install_pending is False
-        install_mods.assert_not_called()
-        install_addons.assert_not_called()
+        assert hub.settings.state.pending_auto_mods is False
+        assert hub.settings.state.pending_auto_addons is False
     finally:
         win.close()
         hub.close()
@@ -477,14 +453,6 @@ def test_first_run_prompt_skipped_when_not_pending(
     hub.settings.state.first_run_verify_pending = False
     hub.settings.state.first_run_av_pending = False
     hub.settings.state.first_run_auto_install_pending = False
-    install_mods = Mock(return_value=True)
-    install_addons = Mock(return_value=True)
-    monkeypatch.setattr(
-        hub.settings, "install_missing_essential_mods", install_mods
-    )
-    monkeypatch.setattr(
-        hub.settings, "install_missing_recommended_addons", install_addons
-    )
     _FakeAutoInstallDialog.created = 0
     monkeypatch.setattr(mw, "AutoInstallDialog", _FakeAutoInstallDialog)
 
@@ -493,8 +461,8 @@ def test_first_run_prompt_skipped_when_not_pending(
     try:
         win._on_settings_finished()
         assert _FakeAutoInstallDialog.created == 0
-        install_mods.assert_not_called()
-        install_addons.assert_not_called()
+        assert hub.settings.state.pending_auto_mods is False
+        assert hub.settings.state.pending_auto_addons is False
     finally:
         win.close()
         hub.close()

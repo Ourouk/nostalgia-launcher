@@ -3,7 +3,7 @@
     "name": "OctoWoW",
     "base_url": "https://octowow.st",
     "realm": "octowow.st",
-    "torrent_url": "https://dl.octowow.st/client.torrent",
+    "torrent_url": "https://dl.octowow.st/download/client.torrent",
     "news_url": "https://octowow.st/forum/octonews.php?mode=list&forum=2&limit=8",
     "featured_news_url": "https://octowow.st/forum/octonews.php?forum=35&mode=full",
     "mods_registry_url": "https://raw.githubusercontent.com/Ourouk/octo-updater/main/examples/octowow_mods.json",

@@ -48,6 +48,7 @@ from .news_panel import NewsPanel
 from .settings_dialog import SettingsDialog
 from .theme import logo_for_config, palette_for_config, theme_qss
 from .tweaks_panel import TweaksPanel
+from .update_panel import UpdatePanel
 
 
 class _LogoFetcher(QObject):
@@ -79,7 +80,7 @@ class MainWindow(QMainWindow):
     so posting after close is a safe no-op.
     """
 
-    TABS = ["NEWS", "TWEAKS", "ADDONS", "MODS"]
+    TABS = ["NEWS", "TWEAKS", "ADDONS", "MODS", "UPDATE"]
 
     def __init__(self, hub: ControllerHub, parent=None):
         super().__init__(parent)
@@ -322,6 +323,8 @@ class MainWindow(QMainWindow):
                     self._stack,
                     on_badge=lambda n: self.set_tab_badge("MODS", n),
                 )
+            elif name == "UPDATE":
+                page = UpdatePanel(self._palette, self._stack)
             else:
                 page = QLabel(f"{name} panel (C{i + 16})", self._stack)
                 page.setAlignment(Qt.AlignCenter)
@@ -422,6 +425,7 @@ class MainWindow(QMainWindow):
         bridge = self._hub.bridge
         bridge.statusChanged.connect(self._onStatusChanged)
         bridge.progressChanged.connect(self._onProgressChanged)
+        bridge.updateProgressChanged.connect(self._on_update_progress_changed)
         bridge.operationFinished.connect(self._onOperationFinished)
         bridge.operationFailed.connect(self._onOperationFailed)
         bridge.logMessage.connect(self._on_log_message)
@@ -526,19 +530,20 @@ class MainWindow(QMainWindow):
     def _maybe_prompt_auto_install(self):
         """First-run prompt: ask once whether to install the server's
         essential mods and recommended addons for the chosen game folder.
-        Accepting starts the checked installs (no-ops until the client is
-        actually present); skipping does nothing. There's no later Settings
-        entry for this — it's a one-shot, first-run-only choice."""
+        Accepting stores a session-only pending request that retries when
+        the client is present and the catalog is loaded; skipping clears
+        it. There's no later Settings entry — it's one-shot, first-run-only."""
         if not self._hub.settings.state.first_run_auto_install_pending:
             return
         self._hub.settings.state.first_run_auto_install_pending = False
         dlg = AutoInstallDialog(self._palette, self)
         if dlg.exec() != QDialog.Accepted:
+            self._hub.settings.state.pending_auto_mods = False
+            self._hub.settings.state.pending_auto_addons = False
             return
-        if dlg.mods_checked:
-            self._hub.settings.install_missing_essential_mods()
-        if dlg.addons_checked:
-            self._hub.settings.install_missing_recommended_addons()
+        self._hub.settings.set_auto_installs(
+            dlg.mods_checked, dlg.addons_checked
+        )
 
     def _on_show_logs_requested(self):
         """Open (or re-raise) the session-log window, seeded from the
@@ -612,6 +617,7 @@ class MainWindow(QMainWindow):
 
     def _onStatusChanged(self, text: str):
         self._statusLabel.setText(text)
+        self._stack.widget(self._pages["UPDATE"]).status_changed(text)
         # Keep the button in sync (e.g. busy while a verify starts) without
         # letting the computed readiness overwrite the posted status line.
         self._apply_readiness(self._readiness(), update_status=False)
@@ -627,7 +633,14 @@ class MainWindow(QMainWindow):
         else:
             self._progressBar.show()
 
+    def _on_update_progress_changed(self, event):
+        panel = self._stack.widget(self._pages["UPDATE"])
+        panel.progress_changed(event)
+
     def _onOperationFinished(self, kind: str, ok: bool, message: str):
+        self._stack.widget(self._pages["UPDATE"]).operation_finished(
+            kind, ok, message
+        )
         updater = self._hub.updater
         if kind in ("update", "verify"):
             # The update worker reports the (post-patch) client version just
@@ -640,6 +653,9 @@ class MainWindow(QMainWindow):
         self._refresh_ready_state()
 
     def _onOperationFailed(self, kind: str, message: str):
+        self._stack.widget(self._pages["UPDATE"]).operation_failed(
+            kind, message
+        )
         self._refresh_ready_state()
 
     def _on_addons_or_mods_loaded(self, _event=None):
@@ -680,6 +696,7 @@ class MainWindow(QMainWindow):
                 LogMessage("✗  Please set the game folder first.\n", "err")
             )
             return
+        self.switch_tab("UPDATE")
         self._hub.full_update.start()
         self._refresh_ready_state()
 
@@ -756,6 +773,8 @@ class MainWindow(QMainWindow):
             self._set_button_busy(r.label)
         if update_status:
             self._statusLabel.setText(r.status)
+            torrent_error = self._hub.updater.state.torrent_error
+            self._statusLabel.setToolTip(torrent_error or "")
 
     def _set_button_ready(self, ready: bool):
         """Gold UPDATE ↔ green PLAY flip; the button stays clickable."""
