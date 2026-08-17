@@ -1410,12 +1410,14 @@ def test_verify_worker_torrent_up_to_date(tmp_path, monkeypatch):
     assert "__MANIFEST_UNAVAILABLE__" not in msgs
 
 
-def test_verify_worker_skips_recheck_when_torrent_unchanged(
+def test_verify_worker_rechecks_even_when_torrent_unchanged(
     tmp_path, monkeypatch
 ):
-    """A cached verdict for the same URL + game folder + snapshot content hash
-    is reused: the expensive libtorrent recheck is skipped ("no torrent file
-    update since last opening") and the cached stale list is posted."""
+    """Explicit verification never trusts a cached verdict: even when the
+    snapshot at the URL is unchanged since the last verify (same content hash),
+    the libtorrent recheck still runs and the fresh verdict supersedes the
+    cached stale list. The cached record only seeds snapshot identity/resume
+    cleanup, not the reported files."""
     client = _mk_client(tmp_path)
     log_q, prog_q = queue.Queue(), queue.Queue()
     vw = client_update.VerifyWorker(str(client), log_q, prog_q)
@@ -1470,12 +1472,12 @@ def test_verify_worker_skips_recheck_when_torrent_unchanged(
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
 
-    assert verifier_calls == []
+    assert verifier_calls == ["https://srv/client.torrent"]
     msgs = [m[0] for m in log_q.queue]
     assert "__TORRENT_DIFF__" in msgs
     assert "__TORRENT_UP_TO_DATE__" not in msgs
     assert saved[client_update.TORRENT_VALIDATION_CACHE_KEY]["stale"] == [
-        "Data/old.bin"
+        "Data/other.bin"
     ]
 
 

@@ -92,8 +92,13 @@ def _download_source() -> "DownloadSource | None":
             mirror.client_url
         ):
             debug_emit(f"[torrent] selected mirror {mirror.name}")
+            # Fall back to the server's torrent snapshot when the chosen mirror
+            # doesn't advertise one, so the resolved source still exposes a
+            # torrent even though the recovery UI keys off the whole config.
             return DownloadSource(
-                mirror.manifest_url, mirror.client_url, mirror.torrent_url
+                mirror.manifest_url,
+                mirror.client_url,
+                mirror.torrent_url or cfg.torrent_url,
             )
     debug_emit(
         f"[torrent] selected server {cfg.server_name} "
@@ -255,11 +260,11 @@ class VerifyWorker:
 
         The cached validation record is identity-aware: a verdict is never
         reused for a snapshot whose content/info hash differs, and resume
-        data for a replaced snapshot is discarded. When the snapshot at the
-        URL is unchanged since the last verify (same url/out_dir/content
-        hash), the expensive libtorrent recheck is skipped and the cached
-        stale-file verdict is reused — the client can't have drifted from an
-        unchanged snapshot since the last opening.
+        data for a replaced snapshot is discarded. Explicit verification
+        always rechecks the on-disk files (the client may have drifted since
+        the last verify even when the remote snapshot is unchanged), so the
+        cached record only seeds identity/resume cleanup, never the reported
+        stale list.
 
         Posting:
         * reachable snapshot with stale files → ``__TORRENT_REACHABLE__``
@@ -291,13 +296,11 @@ class VerifyWorker:
 
         cached = self._cache.get(TORRENT_VALIDATION_CACHE_KEY)
 
-        # Skip optimization: when a previous verify already established a
-        # verdict for this exact URL + game folder, fetch the .torrent once
-        # (cheap) and, if the snapshot is unchanged since that verify
-        # ("no torrent file update since last opening"), reuse the cached
-        # stale-file verdict instead of running the expensive libtorrent
-        # recheck of the whole client. Without a matching cached record the
-        # full recheck runs as usual.
+        # When a previous verify established a record for this exact URL + game
+        # folder, fetch the .torrent once (cheap) to detect snapshot
+        # replacement: if the info hash differs, the old resume data is
+        # discarded. The libtorrent recheck itself always runs afterwards —
+        # explicit verification never trusts a cached verdict.
         if (
             isinstance(cached, dict)
             and cached.get("url") == src.torrent_url
@@ -346,23 +349,10 @@ class VerifyWorker:
                     "state cleared.",
                     "dim",
                 )
-            if cached.get("content_hash") == snapshot.content_hash:
-                # Snapshot unchanged — skip the libtorrent recheck.
-                stale = list(cached.get("stale") or [])
-                self.log(
-                    "[torrent] Snapshot unchanged since last verify — "
-                    "reusing cached verdict (recheck skipped).",
-                    "dim",
-                )
-                self._cache[TORRENT_VALIDATION_CACHE_KEY] = {
-                    **identity,
-                    "url": src.torrent_url,
-                    "out_dir": os.path.abspath(self.out_dir),
-                    "stale": sorted(stale),
-                }
-                save_cache(self._cache)
-                self._post_torrent_verdict(stale)
-                return True
+            # Explicit verification never trusts a cached verdict: even when the
+            # snapshot is unchanged since the last verify, the on-disk client
+            # may have drifted, so the libtorrent recheck always runs. The
+            # identity/resume-data cleanup above still applies.
 
         # Snapshot changed, uncached, or fetch skipped — run the full
         # libtorrent recheck of the on-disk files.
@@ -623,7 +613,7 @@ class UpdateWorker:
             f"Download failed after {DOWNLOAD_RETRY} attempts: {url}"
         )
 
-    def _skip_download(self, node, dest, name) -> bool:
+    def _skip_download(self, node, dest) -> bool:
         """Whether a file node can be skipped because the local copy already
         matches the manifest."""
         if not os.path.exists(dest):
@@ -673,23 +663,23 @@ class UpdateWorker:
         if self._cancel:
             return
         t = node["type"]
-        name = node["name"]
-        cur = path_parts + [name]
+        cur = path_parts + [node["name"]]
         if t == "dir":
             for child in node.get("files", []):
                 self._collect_wanted(child, cur, wanted)
         elif t == "file":
             rel = "/".join(cur)
             dest = os.path.join(self.out_dir, rel)
-            if not self._skip_download(node, dest, name):
+            if not self._skip_download(node, dest):
                 wanted.add(rel)
         elif t == "mpq":
-            rel = "/".join(path_parts + [name + ".mpq"])
+            rel = "/".join(cur) + ".mpq"
             dest = os.path.join(self.out_dir, rel)
-            if not self._skip_download(node, dest, name + ".mpq"):
+            if not self._skip_download(node, dest):
                 wanted.add(rel)
 
     def traverse(self, node, path_parts):
+
         if self._cancel:
             return
         if self._source is None:
@@ -712,7 +702,7 @@ class UpdateWorker:
             self.log(f"[file] {rel}", "acct")
             url = f"{src.client_url}/{'/'.join(cur)}"
 
-            if self._skip_download(node, dest, name):
+            if self._skip_download(node, dest):
                 self.log("  Already up to date.", "dim")
                 return
 
@@ -733,7 +723,7 @@ class UpdateWorker:
             dest = os.path.join(self.out_dir, rel)
             url = f"{src.client_url}/{'/'.join(cur_mpq)}"
             self.log(f"[mpq]  {rel}", "acct")
-            if self._skip_download(node, dest, mpq_name):
+            if self._skip_download(node, dest):
                 self.log("  Already up to date.", "dim")
                 return
             got_hash = self.download(url, dest, node["size"], rel)
@@ -889,6 +879,7 @@ class UpdateWorker:
         self.log_q.put(("__TORRENT_RECOVERY_DONE__", ""))
 
     def run(self, diff_nodes=None, torrent_wanted: set[str] | None = None):
+
         try:
             torrent_recovery = False
             if diff_nodes is not None:
