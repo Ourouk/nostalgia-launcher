@@ -245,7 +245,7 @@ class SettingsController:
         """Background reachability check of every configured server and
         mirror. The UI shows "checking…" itself and re-renders on the
         MirrorStatusChanged event."""
-        names = self.mirror_names()
+        names = self._http_mirror_names()
         if not names:
             self._dispatcher.post(MirrorStatusChanged(False, "Not configured"))
             return
@@ -253,13 +253,12 @@ class SettingsController:
             target=self._mirror_worker, args=(names,), daemon=True
         ).start()
 
-    def mirror_names(self) -> list:
-        """Every download source name (the server followed by its mirrors),
-        in the order the launcher configuration declares them."""
+    def _http_mirror_names(self) -> list:
+        """Names of configured mirrors that serve HTTP client files."""
         cfg = launcher.config()
         if cfg is None:
             return []
-        return [cfg.server_name] + [m.name for m in cfg.mirrors]
+        return [m.name for m in cfg.mirrors if m.manifest_url and m.client_url]
 
     def verify_files(self):
         """Full re-verification: drop the hash cache so every file is

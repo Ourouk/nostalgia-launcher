@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 import vanilla_wow_launcher.core.platform_support as platform_support
+from vanilla_wow_launcher.core import launcher
 from vanilla_wow_launcher.state.events import MirrorStatusChanged
 from vanilla_wow_launcher.ui.qt.app import create_qt_app
 from vanilla_wow_launcher.ui.qt.bridge import ControllerHub
@@ -168,19 +169,39 @@ def test_change_cancelled_leaves_path(qapp, window, monkeypatch):
 def test_mirror_rows_render_configured_sources(qapp, window):
     hub = window._hub
     dialog = _open(window)
-    assert (
-        dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
-        is not None
-    )
     assert dialog.findChild(QLabel, "settingsMirrorStatus_Backup") is not None
-    assert hub.settings.mirror_names() == ["Test Server", "Backup"]
+    assert dialog.findChild(QLabel, "settingsMirrorStatus_Backup") is not None
+    assert hub.settings._http_mirror_names() == ["Backup"]
+
+
+def test_no_http_mirrors_shows_direct_server_hint(qapp, window):
+    launcher.configure_from_dict(
+        {
+            "server": {
+                "name": "OctoWoW",
+                "base_url": "https://octowow.test",
+                "torrent_url": "https://dl.octowow.test/client.torrent",
+            },
+            "mirrors": [],
+        }
+    )
+    dialog = _open(window)
+    hint = dialog.findChild(QLabel, "settingsMirrorEmpty")
+    assert hint is not None
+    assert hint.text() == (
+        "No HTTP mirrors configured — update uses the server directly."
+    )
+    assert dialog.findChild(QLabel, "settingsMirrorStatus_Backup") is None
+    assert not dialog.findChild(
+        QToolButton, "settingsMirrorRefresh"
+    ).isVisible()
 
 
 def test_mirror_status_renders_initial_state(qapp, window):
     hub = window._hub
-    hub.settings.mirror_statuses = {"Test Server": "online"}
+    hub.settings.mirror_statuses = {"Backup": "online"}
     dialog = _open(window)
-    status = dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
+    status = dialog.findChild(QLabel, "settingsMirrorStatus_Backup")
     assert status.text() == "online"
     p = Palette()
     assert p.ok.name() in status.styleSheet()
@@ -189,12 +210,11 @@ def test_mirror_status_renders_initial_state(qapp, window):
 def test_mirror_status_updates_on_event(qapp, window):
     hub = window._hub
     dialog = _open(window)
-    status = dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
+    status = dialog.findChild(QLabel, "settingsMirrorStatus_Backup")
     p = Palette()
 
     hub.settings.mirror_statuses = {
-        "Test Server": "online",
-        "Backup": "offline",
+        "Backup": "online",
     }
     hub.dispatcher.post(MirrorStatusChanged(True, "online"))
     QTest.qWait(200)
@@ -202,7 +222,6 @@ def test_mirror_status_updates_on_event(qapp, window):
     assert p.ok.name() in status.styleSheet()
 
     hub.settings.mirror_statuses = {
-        "Test Server": "offline",
         "Backup": "offline",
     }
     hub.dispatcher.post(MirrorStatusChanged(False, "offline"))
@@ -219,7 +238,7 @@ def test_mirror_refresh_calls_check_mirror(qapp, window, monkeypatch):
     dialog.findChild(QToolButton, "settingsMirrorRefresh").click()
     check.assert_called_once()
     assert (
-        dialog.findChild(QLabel, "settingsMirrorStatus_Test Server").text()
+        dialog.findChild(QLabel, "settingsMirrorStatus_Backup").text()
         == "checking…"
     )
 

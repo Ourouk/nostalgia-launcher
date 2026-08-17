@@ -109,7 +109,7 @@ def _post(hub, state):
 
 
 def test_panel_replaces_the_mods_placeholder(qapp, window):
-    assert window._pages["UPDATE"] == 4
+    assert window._pages["UPDATE"] == MainWindow.TABS.index("UPDATE")
     panel = _panel(window)
     assert panel.objectName() == "modsPanel"
     assert panel.scroll.objectName() == "modsScroll"

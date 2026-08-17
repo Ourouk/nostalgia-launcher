@@ -56,11 +56,7 @@ def test_construction_sets_title_and_default_tab(qapp, window):
     assert window.windowTitle() == "Vanilla WoW Launcher"
     assert window._stack.count() == 5
     assert window._pages == {
-        "NEWS": 0,
-        "TWEAKS": 1,
-        "ADDONS": 2,
-        "MODS": 3,
-        "UPDATE": 4,
+        name: idx for idx, name in enumerate(MainWindow.TABS)
     }
     assert window._stack.currentIndex() == 0
     assert window._navButtons["NEWS"].isChecked()

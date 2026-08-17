@@ -84,7 +84,7 @@ def _entry(panel, tid) -> QLineEdit:
 
 
 def test_panel_replaces_the_tweaks_placeholder(qapp, window):
-    assert window._pages["UPDATE"] == 4
+    assert window._pages["UPDATE"] == MainWindow.TABS.index("UPDATE")
     panel = _panel(window)
     assert panel.objectName() == "tweaksPanel"
     # A checkbox row and a number row exist for known tweak ids.

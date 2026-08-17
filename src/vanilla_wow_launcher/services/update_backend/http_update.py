@@ -27,13 +27,13 @@ from ...core.constants import (
     UA,
 )
 from ...core.filesystem import (
-    already_updated,
     cached_sha1,
     get_client_version,
     remove_wdb,
     sha1_file,
 )
 from ...core.helpers import fmt_size, fmt_speed
+from ...core.log_sink import debug_emit
 from ...core.security_http import allowed_download_hosts, secure_urlopen
 from ..tweaks import write_config_wtf
 
@@ -46,13 +46,20 @@ class DownloadSource(NamedTuple):
     torrent_url: str | None = None
 
 
+TORRENT_VALIDATION_CACHE_KEY = "__torrent_validation__"
+
+
 def _source_reachable(url: str) -> bool:
     """Whether a download source answers at `url`. Any HTTP response — even an
     error status (4xx/5xx) — proves the host is reachable; only transport
     failures (DNS, refused, timeout) count as down."""
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     try:
-        with secure_urlopen(req, timeout=5) as r:
+        with secure_urlopen(
+            req,
+            timeout=5,
+            allowed_hosts=allowed_download_hosts(),
+        ) as r:
             r.read(1)
         return True
     except HTTPError:
@@ -73,10 +80,25 @@ def _download_source() -> "DownloadSource | None":
     if not server:
         return None
     for mirror in cfg.mirrors if cfg else []:
-        if _source_reachable(mirror.client_url):
+        if not mirror.manifest_url or not mirror.client_url:
+            continue
+        debug_emit(
+            f"[torrent] probing mirror {mirror.name} "
+            f"(manifest={'yes' if mirror.manifest_url else 'no'}, "
+            f"client={'yes' if mirror.client_url else 'no'}, "
+            f"torrent={'yes' if mirror.torrent_url else 'no'})"
+        )
+        if _source_reachable(mirror.manifest_url) and _source_reachable(
+            mirror.client_url
+        ):
+            debug_emit(f"[torrent] selected mirror {mirror.name}")
             return DownloadSource(
                 mirror.manifest_url, mirror.client_url, mirror.torrent_url
             )
+    debug_emit(
+        f"[torrent] selected server {cfg.server_name} "
+        f"(torrent={'yes' if cfg.torrent_url else 'no'})"
+    )
     return DownloadSource(cfg.manifest_url, cfg.client_url, cfg.torrent_url)
 
 
@@ -231,6 +253,14 @@ class VerifyWorker:
         posted; False when it's not possible and the caller should fall back
         to the plain manifest-unavailable path.
 
+        The cached validation record is identity-aware: a verdict is never
+        reused for a snapshot whose content/info hash differs, and resume
+        data for a replaced snapshot is discarded. When the snapshot at the
+        URL is unchanged since the last verify (same url/out_dir/content
+        hash), the expensive libtorrent recheck is skipped and the cached
+        stale-file verdict is reused — the client can't have drifted from an
+        unchanged snapshot since the last opening.
+
         Posting:
         * reachable snapshot with stale files → ``__TORRENT_REACHABLE__``
           + ``__TORRENT_DIFF__``
@@ -255,8 +285,87 @@ class VerifyWorker:
             TorrentSessionError,
             TorrentStalledError,
             TorrentVerifier,
+            _fetch_torrent,
+            remove_resume_data,
         )
 
+        cached = self._cache.get(TORRENT_VALIDATION_CACHE_KEY)
+
+        # Skip optimization: when a previous verify already established a
+        # verdict for this exact URL + game folder, fetch the .torrent once
+        # (cheap) and, if the snapshot is unchanged since that verify
+        # ("no torrent file update since last opening"), reuse the cached
+        # stale-file verdict instead of running the expensive libtorrent
+        # recheck of the whole client. Without a matching cached record the
+        # full recheck runs as usual.
+        if (
+            isinstance(cached, dict)
+            and cached.get("url") == src.torrent_url
+            and cached.get("out_dir") == os.path.abspath(self.out_dir)
+        ):
+            try:
+                snapshot = _fetch_torrent(src.torrent_url, self.log)
+            except TorrentCorruptError as e:
+                if self._cancel:
+                    return self._cancel_torrent_verify()
+                self.log(f"Torrent file corrupt: {e}", "err")
+                self.log(
+                    "No usable torrent snapshot — update unavailable.",
+                    "err",
+                )
+                self.log_q.put(("__TORRENT_CORRUPT__", str(e)))
+                return True
+            except TorrentFetchError as e:
+                if self._cancel:
+                    return self._cancel_torrent_verify()
+                self.log(f"BitTorrent snapshot unreachable: {e}", "err")
+                self.log(
+                    "No manifest and no reachable torrent — update "
+                    "unavailable via BitTorrent.",
+                    "err",
+                )
+                self.log_q.put(("__TORRENT_UNREACHABLE__", str(e)))
+                return True
+
+            identity: dict = {
+                "content_hash": snapshot.content_hash,
+                "info_hash": snapshot.info_hash or "",
+            }
+            old_hash = cached.get("info_hash")
+            new_hash = identity.get("info_hash")
+            if old_hash and new_hash and old_hash != new_hash:
+                remove_resume_data(old_hash)
+                self.log(
+                    "[torrent] Snapshot changed at URL — discarding old "
+                    "validation state and resume data.",
+                    "dim",
+                )
+            elif old_hash and not new_hash:
+                self.log(
+                    "[torrent] Snapshot identity unavailable — validation "
+                    "state cleared.",
+                    "dim",
+                )
+            if cached.get("content_hash") == snapshot.content_hash:
+                # Snapshot unchanged — skip the libtorrent recheck.
+                stale = list(cached.get("stale") or [])
+                self.log(
+                    "[torrent] Snapshot unchanged since last verify — "
+                    "reusing cached verdict (recheck skipped).",
+                    "dim",
+                )
+                self._cache[TORRENT_VALIDATION_CACHE_KEY] = {
+                    **identity,
+                    "url": src.torrent_url,
+                    "out_dir": os.path.abspath(self.out_dir),
+                    "stale": sorted(stale),
+                }
+                save_cache(self._cache)
+                self._post_torrent_verdict(stale)
+                return True
+
+        # Snapshot changed, uncached, or fetch skipped — run the full
+        # libtorrent recheck of the on-disk files.
         try:
             verifier = TorrentVerifier(self.out_dir, self.log_q, self.prog_q)
             self.log(
@@ -267,74 +376,87 @@ class VerifyWorker:
             stale = verifier.verify(src.torrent_url)
         except TorrentCorruptError as e:
             if self._cancel:
-                self.log("\nVerify cancelled.", "err")
-            else:
-                self.log(f"Torrent file corrupt: {e}", "err")
-                self.log(
-                    "No usable torrent snapshot — update unavailable.",
-                    "err",
-                )
+                return self._cancel_torrent_verify()
+            self.log(f"Torrent file corrupt: {e}", "err")
+            self.log(
+                "No usable torrent snapshot — update unavailable.",
+                "err",
+            )
             self.log_q.put(("__TORRENT_CORRUPT__", str(e)))
             return True
         except TorrentFetchError as e:
             if self._cancel:
-                self.log("\nVerify cancelled.", "err")
-            else:
-                self.log(f"BitTorrent snapshot unreachable: {e}", "err")
-                self.log(
-                    "No manifest and no reachable torrent — update "
-                    "unavailable via BitTorrent.",
-                    "err",
-                )
+                return self._cancel_torrent_verify()
+            self.log(f"BitTorrent snapshot unreachable: {e}", "err")
+            self.log(
+                "No manifest and no reachable torrent — update "
+                "unavailable via BitTorrent.",
+                "err",
+            )
             self.log_q.put(("__TORRENT_UNREACHABLE__", str(e)))
             return True
         except TorrentStalledError as e:
             if self._cancel:
-                self.log("\nVerify cancelled.", "err")
-            else:
-                self.log(f"BitTorrent verification stalled: {e}", "err")
-                self.log(
-                    "No manifest and torrent verification stalled — "
-                    "update unavailable.",
-                    "err",
-                )
+                return self._cancel_torrent_verify()
+            self.log(f"BitTorrent verification stalled: {e}", "err")
+            self.log(
+                "No manifest and torrent verification stalled — "
+                "update unavailable.",
+                "err",
+            )
             self.log_q.put(("__TORRENT_STALLED__", str(e)))
             return True
         except TorrentSessionError as e:
             if self._cancel:
-                self.log("\nVerify cancelled.", "err")
-            else:
-                self.log(f"BitTorrent session error: {e}", "err")
-                self.log(
-                    "No manifest and torrent session error — "
-                    "update unavailable.",
-                    "err",
-                )
+                return self._cancel_torrent_verify()
+            self.log(f"BitTorrent session error: {e}", "err")
+            self.log(
+                "No manifest and torrent session error — update unavailable.",
+                "err",
+            )
             self.log_q.put(("__TORRENT_SESSION_ERROR__", str(e)))
             return True
         except TorrentDiskError as e:
             if self._cancel:
-                self.log("\nVerify cancelled.", "err")
-            else:
-                self.log(f"Disk I/O error: {e}", "err")
-                self.log(
-                    "No manifest and disk error — update unavailable.",
-                    "err",
-                )
+                return self._cancel_torrent_verify()
+            self.log(f"Disk I/O error: {e}", "err")
+            self.log(
+                "No manifest and disk error — update unavailable.",
+                "err",
+            )
             self.log_q.put(("__TORRENT_DISK_ERROR__", str(e)))
             return True
         except Exception as e:
             if self._cancel:
-                self.log("\nVerify cancelled.", "err")
-            else:
-                self.log(f"BitTorrent verification failed: {e}", "err")
-                self.log(
-                    "Torrent snapshot fetched but verification failed — "
-                    "update unavailable via BitTorrent.",
-                    "err",
-                )
+                return self._cancel_torrent_verify()
+            self.log(f"BitTorrent verification failed: {e}", "err")
+            self.log(
+                "Torrent snapshot fetched but verification failed — "
+                "update unavailable via BitTorrent.",
+                "err",
+            )
             self.log_q.put(("__TORRENT_VERIFY_FAILED__", str(e)))
             return True
+
+        snapshot = getattr(verifier, "snapshot", None)
+        identity = {}
+        if snapshot is not None:
+            identity = {
+                "content_hash": snapshot.content_hash,
+                "info_hash": snapshot.info_hash or "",
+            }
+        self._cache[TORRENT_VALIDATION_CACHE_KEY] = {
+            **identity,
+            "url": src.torrent_url,
+            "out_dir": os.path.abspath(self.out_dir),
+            "stale": sorted(stale),
+        }
+        save_cache(self._cache)
+        self.log("[torrent] Validation verdict cached.", "dim")
+        self._post_torrent_verdict(stale)
+        return True
+
+    def _post_torrent_verdict(self, stale: list[str]):
         self.log_q.put(("__TORRENT_REACHABLE__", ""))
         if not stale:
             self.log("Everything is up to date (BitTorrent snapshot).", "ok")
@@ -346,6 +468,11 @@ class VerifyWorker:
                 "acct",
             )
             self.log_q.put(("__TORRENT_DIFF__", sorted(stale)))
+
+    def _cancel_torrent_verify(self) -> bool:
+        """Finish a cancelled torrent verify without reporting a failure."""
+        self.log("\nVerify cancelled.", "err")
+        self.log_q.put(("__ERROR__", ""))
         return True
 
 
@@ -499,7 +626,9 @@ class UpdateWorker:
     def _skip_download(self, node, dest, name) -> bool:
         """Whether a file node can be skipped because the local copy already
         matches the manifest."""
-        return already_updated(dest, node["hash"])
+        if not os.path.exists(dest):
+            return False
+        return cached_sha1(dest, self._cache) == node["hash"]
 
     def _torrent_download(self, nodes) -> bool:
         """Bulk-download the stale files via BitTorrent when the active source
@@ -519,7 +648,9 @@ class UpdateWorker:
         if not wanted:
             return False
         self.log(
-            f"\nDownloading {len(wanted)} stale file(s) via BitTorrent…",
+            f"\n[torrent] Downloading {len(wanted)} stale file(s): "
+            f"{', '.join(sorted(wanted))}"
+            "\n",
             "acct",
         )
         try:
@@ -527,13 +658,13 @@ class UpdateWorker:
 
             dl = TorrentDownloader(self.out_dir, self.log_q, self.prog_q)
             dl.download(src.torrent_url, wanted)
-            self.log("  BitTorrent download complete.", "ok")
+            self.log("[torrent] BitTorrent download complete.", "ok")
             return True
         except RuntimeError as e:
             if self._cancel:
                 raise
-            self.log(f"  BitTorrent download failed: {e}", "err")
-            self.log("  Falling back to HTTP downloads.", "err")
+            self.log(f"[torrent] BitTorrent download failed: {e}", "err")
+            self.log("[torrent] Falling back to HTTP downloads.", "err")
             return False
 
     def _collect_wanted(self, node, path_parts, wanted):
@@ -639,35 +770,85 @@ class UpdateWorker:
         )
 
         dl = TorrentDownloader(self.out_dir, self.log_q, self.prog_q)
+        scope = "full client" if wanted is None else f"{len(wanted)} file(s)"
+        self.log(f"[torrent] Starting recovery download ({scope}).", "acct")
         try:
             dl.download(self._source.torrent_url, wanted)
         except TorrentCorruptError as e:
+            if self._cancel:
+                raise
             self.log(f"Torrent file corrupt: {e}", "err")
             self.log_q.put(("__TORRENT_CORRUPT__", str(e)))
             return
         except TorrentStalledError as e:
+            if self._cancel:
+                raise
             self.log(f"BitTorrent download stalled: {e}", "err")
             self.log_q.put(("__TORRENT_STALLED__", str(e)))
             return
         except TorrentSessionError as e:
+            if self._cancel:
+                raise
             self.log(f"BitTorrent session error: {e}", "err")
             self.log_q.put(("__TORRENT_SESSION_ERROR__", str(e)))
             return
         except TorrentDiskError as e:
+            if self._cancel:
+                raise
             self.log(f"Disk I/O error: {e}", "err")
             self.log_q.put(("__TORRENT_DISK_ERROR__", str(e)))
             return
         except TorrentFetchError as e:
+            if self._cancel:
+                raise
             self.log(f"Torrent unreachable during download: {e}", "err")
             self.log_q.put(("__TORRENT_UNREACHABLE__", str(e)))
             return
         except Exception as e:
+            if self._cancel:
+                raise
             self.log(f"BitTorrent download failed: {e}", "err")
             self.log_q.put(("__TORRENT_VERIFY_FAILED__", str(e)))
             return
         if self._cancel:
             self.log("\nUpdate cancelled.", "err")
             self.progress(0.0, "Cancelled")
+            self.log_q.put(("__ERROR__", ""))
+            return
+        # The stale set came from an earlier snapshot; if any wanted file is
+        # still missing after a selective download, fall back to the whole
+        # torrent so a snapshot change can't leave the client half-installed.
+        if wanted is not None:
+            missing = sorted(
+                rel
+                for rel in wanted
+                if not os.path.isfile(
+                    os.path.join(self.out_dir, rel.replace("/", os.sep))
+                )
+            )
+            if missing:
+                self.log(
+                    "[torrent] Recovery incomplete — re-downloading the "
+                    f"full client ({len(missing)} file(s) missing).",
+                    "err",
+                )
+                try:
+                    dl.download(self._source.torrent_url, None)
+                except (RuntimeError, OSError) as e:
+                    if self._cancel:
+                        raise
+                    self.log(f"BitTorrent recovery failed: {e}", "err")
+                    self.log_q.put(("__TORRENT_VERIFY_FAILED__", str(e)))
+                    return
+                if self._cancel:
+                    self.log("\nUpdate cancelled.", "err")
+                    self.progress(0.0, "Cancelled")
+                    self.log_q.put(("__ERROR__", ""))
+                    return
+        # A recovered client without WoW.exe is useless — never mark ready.
+        exe = os.path.join(self.out_dir, "WoW.exe")
+        if not os.path.isfile(exe):
+            self.log("Recovered client has no WoW.exe — update failed.", "err")
             self.log_q.put(("__ERROR__", ""))
             return
         self.log("  BitTorrent recovery download complete.", "ok")
@@ -679,7 +860,21 @@ class UpdateWorker:
         if not os.path.exists(cfg_wtf):
             write_config_wtf(self.out_dir)
         self.progress(1.0, "")
+        snapshot = getattr(dl, "snapshot", None)
+        identity: dict = {}
+        if snapshot is not None:
+            identity = {
+                "content_hash": snapshot.content_hash,
+                "info_hash": snapshot.info_hash or "",
+            }
+        self._cache[TORRENT_VALIDATION_CACHE_KEY] = {
+            **identity,
+            "url": self._source.torrent_url,
+            "out_dir": os.path.abspath(self.out_dir),
+            "stale": [],
+        }
         save_cache(self._cache)
+        self.log("[torrent] Recovery validation cached.", "dim")
         self.log(
             "\n✓  Client installed via BitTorrent (no manifest — files "
             "verified against the torrent's piece hashes).",
@@ -699,11 +894,20 @@ class UpdateWorker:
             if diff_nodes is not None:
                 self.log("\nStarting client update…\n")
                 self.progress(0.05, "Downloading…", phase="Downloading")
+                self._cache.pop(TORRENT_VALIDATION_CACHE_KEY, None)
                 nodes = diff_nodes
             elif torrent_wanted is not None:
                 # A prior torrent verification already established the stale
                 # paths. Do not probe the manifest again: this is explicitly
                 # the manifest-less BitTorrent update path.
+                if not torrent_wanted:
+                    self.log(
+                        "[torrent] No stale files; torrent update skipped.",
+                        "ok",
+                    )
+                    self.progress(1.0, "")
+                    self.log_q.put(("__TORRENT_UP_TO_DATE__", ""))
+                    return
                 self.progress(
                     0.02,
                     "Downloading via BitTorrent…",
@@ -729,7 +933,11 @@ class UpdateWorker:
                         self._source.manifest_url,
                         headers={"User-Agent": UA},
                     )
-                    with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
+                    with secure_urlopen(
+                        req,
+                        timeout=DOWNLOAD_TIMEOUT,
+                        allowed_hosts=allowed_download_hosts(),
+                    ) as r:
                         manifest = json.load(r)
                 except Exception:
                     # Manifest unavailable — fall back to a BitTorrent
@@ -744,6 +952,7 @@ class UpdateWorker:
                     else:
                         raise
                 if not torrent_recovery:
+                    self._cache.pop(TORRENT_VALIDATION_CACHE_KEY, None)
                     self.log_q.put(("__MANIFEST_AVAILABLE__", ""))
                     self.log("Manifest received.", "ok")
                     self.progress(0.05, "Downloading…", phase="Downloading")

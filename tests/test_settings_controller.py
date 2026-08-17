@@ -509,7 +509,6 @@ def test_check_mirror_posts_online(controller, monkeypatch):
         for e in events
     )
     assert controller.mirror_statuses == {
-        "Test Server": "online",
         "Backup": "online",
     }
 
@@ -530,7 +529,6 @@ def test_check_mirror_posts_offline(controller, monkeypatch):
         for e in events
     )
     assert controller.mirror_statuses == {
-        "Test Server": "offline",
         "Backup": "offline",
     }
 
@@ -555,13 +553,12 @@ def test_check_mirror_http_error_still_online(controller, monkeypatch):
         for e in events
     )
     assert controller.mirror_statuses == {
-        "Test Server": "online",
         "Backup": "online",
     }
 
 
-def test_mirror_names_follow_launcher(controller):
-    assert controller.mirror_names() == ["Test Server", "Backup"]
+def test_http_mirror_names_follow_launcher(controller):
+    assert controller._http_mirror_names() == ["Backup"]
 
 
 # ── install-missing shortcuts ──────────────────────────────────────────────

@@ -32,6 +32,9 @@ dev = [
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "e2e: requires the real WoW client (context/client) and torrent (context/wow-client.torrent); local-only, skipped in CI",
+]
 
 [tool.ruff]
 # Match the codebase's existing pep8-style 79-column wrapping.

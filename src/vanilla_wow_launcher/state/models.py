@@ -27,6 +27,8 @@ class UpdateState:
     progress_total: int = 0
     progress_speed: float = 0.0
     progress_peers: int = 0
+    progress_verified_pieces: int = 0
+    progress_total_pieces: int = 0
     running: bool = False
     client_ready: bool = False
     manifest_available: bool = False

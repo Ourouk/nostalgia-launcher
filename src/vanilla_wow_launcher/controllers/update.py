@@ -39,6 +39,7 @@ from ..state.events import (
     OperationFinished,
     ProgressChanged,
     StatusChanged,
+    UpdateFilesList,
 )
 from ..state.models import UpdateState
 
@@ -55,6 +56,22 @@ class Readiness:
     mode: str
     label: str
     status: str
+
+
+def _flatten_diff_tree(nodes) -> list[str]:
+    """Flatten a diff tree (as returned by __DIFF_TREE__) into a list of
+    relative file paths (e.g. "Interface/addons.xml", "WoW.exe")."""
+    paths: list[str] = []
+    for node in nodes:
+        t = node.get("type", "")
+        name = node.get("name", "")
+        if t == "file" or t == "del":
+            paths.append(name)
+        elif t == "mpq":
+            paths.append(name + ".mpq")
+        elif t == "dir":
+            paths.extend(_flatten_diff_tree(node.get("files", [])))
+    return paths
 
 
 class UpdateController:
@@ -134,8 +151,13 @@ class UpdateController:
         self._dispatcher.post(ProgressChanged(0.0, ""))
 
     def start_update(self):
-        if self.state.running or not self._client_updates_enabled():
-            return
+        if self.state.running:
+            self._dispatcher.post(
+                LogMessage("An update is already in progress.\n", "dim")
+            )
+            return False
+        if not self._client_updates_enabled():
+            return False
         out = (self._get_out_dir() or "").strip()
         if not out:
             self._dispatcher.post(
@@ -144,6 +166,21 @@ class UpdateController:
             return
         update_config(lambda c: c.__setitem__("out_dir", out))
         self._dispatcher.post(LogMessage(f"\nGame folder: {out}\n", "dim"))
+        torrent_wanted = (
+            set(self.state.torrent_stale)
+            if self.state.torrent_stale is not None
+            else None
+        )
+        if torrent_wanted == set():
+            self.state.torrent_stale = None
+            self.state.client_ready = True
+            self.state.status = "Up to date"
+            self._dispatcher.post(
+                LogMessage("[torrent] No stale files; update skipped.\n", "ok")
+            )
+            self._dispatcher.post(ProgressChanged(1.0, ""))
+            self._dispatcher.post(OperationFinished("update", True))
+            return True
         # Clear torrent state from previous attempts
         self.state.torrent_reachable = None
         self.state.torrent_error = None
@@ -161,9 +198,6 @@ class UpdateController:
         self._worker = worker
         diff = self.state.diff_nodes
         self.state.diff_nodes = None
-        torrent_wanted = (
-            set(self.state.torrent_stale) if self.state.torrent_stale else None
-        )
         self.state.torrent_stale = None
         threading.Thread(
             target=worker.run,
@@ -172,6 +206,7 @@ class UpdateController:
         ).start()
         self._dispatcher.post(StatusChanged("Updating…"))
         self._dispatcher.post(ProgressChanged(0.0, ""))
+        return True
 
     def cancel(self):
         """Ask every live worker to stop; the queues are drained as normal."""
@@ -182,6 +217,15 @@ class UpdateController:
     def invalidate(self):
         """Drop readiness and the cached diff tree (game folder changed or a
         verify-game-files recheck)."""
+        self.cancel()
+        # Workers may still enqueue one final marker after cooperative cancel;
+        # stop polling their queues before clearing the state they could alter.
+        self._log_q = queue.Queue()
+        self._prog_q = queue.Queue()
+        self._worker = None
+        self._verify_worker = None
+        self._op = None
+        self.state.running = False
         self.state.client_ready = False
         self.state.manifest_available = False
         self.state.diff_nodes = None
@@ -410,6 +454,10 @@ class UpdateController:
             self.state.progress_total = details.get("total", 0)
             self.state.progress_speed = details.get("speed", 0.0)
             self.state.progress_peers = details.get("peers", 0)
+            self.state.progress_verified_pieces = details.get(
+                "verified_pieces", 0
+            )
+            self.state.progress_total_pieces = details.get("total_pieces", 0)
             self._dispatcher.post(
                 ProgressChanged(
                     val,
@@ -421,6 +469,8 @@ class UpdateController:
                     total=self.state.progress_total,
                     speed=self.state.progress_speed,
                     peers=self.state.progress_peers,
+                    verified_pieces=self.state.progress_verified_pieces,
+                    total_pieces=self.state.progress_total_pieces,
                 )
             )
 
@@ -516,11 +566,12 @@ class UpdateController:
             self._dispatcher.post(ProgressChanged(1.0, ""))
             self._dispatcher.post(OperationFinished("update", True))
         elif msg == "__ERROR__":
+            op = self._op or "update"
             self.state.running = False
             self.state.client_ready = False
             self._op = None
             self._dispatcher.post(ProgressChanged(0.0, ""))
-            self._dispatcher.post(OperationFailed("update", ""))
+            self._dispatcher.post(OperationFailed(op, ""))
         elif msg == "__MANIFEST_AVAILABLE__":
             # A valid manifest was fetched and parsed — the update button may
             # offer its real verdict again.
@@ -550,6 +601,8 @@ class UpdateController:
             self._dispatcher.post(OperationFinished("verify", False))
         elif msg == "__DIFF_TREE__":
             self.state.diff_nodes = tag
+            if tag:
+                self._dispatcher.post(UpdateFilesList(_flatten_diff_tree(tag)))
         elif msg == "__TORRENT_REACHABLE__":
             self.state.torrent_reachable = True
         elif msg == "__TORRENT_UNREACHABLE__":
@@ -639,6 +692,9 @@ class UpdateController:
             self.state.torrent_stale = list(tag) if tag else []
             self._op = None
             self._dispatcher.post(ProgressChanged(0.0, ""))
+            self._dispatcher.post(
+                UpdateFilesList(sorted(self.state.torrent_stale))
+            )
             self._dispatcher.post(OperationFinished("verify", False))
         elif msg == "__TORRENT_UP_TO_DATE__":
             # The client already matches the BitTorrent snapshot even though

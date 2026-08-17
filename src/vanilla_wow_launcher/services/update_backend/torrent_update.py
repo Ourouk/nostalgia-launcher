@@ -8,19 +8,24 @@ embedded in the ``.torrent`` (which itself came over TLS) — and the caller
 still re-verifies every file against the manifest's SHA-1 afterwards, so the
 torrent backend cannot weaken the integrity guarantee of the HTTP path.
 
-Uploads are limited to a minimal rate (1 B/s) and the torrent is paused and
-removed from the session once every wanted piece is in place.
+The session otherwise follows libtorrent's default storage and connection
+configuration. The torrent is paused and removed from the session once every
+wanted piece is in place. The caller remains responsible for the manifest-level
+file verification after the torrent completes.
 """
 
+import hashlib
 import os
 import queue
 import tempfile
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 
 from ...core.constants import DOWNLOAD_TIMEOUT, UA
 from ...core.helpers import fmt_size, fmt_speed
+from ...core.platform_support import cache_dir
 from ...core.security_http import allowed_download_hosts, secure_urlopen
 
 # Inactivity guard: if no wanted bytes arrive for this long, the swarm is dead
@@ -49,6 +54,11 @@ ALERT_MASK = (
     | 16  # tracker_notification
     | 64  # status_notification
     | 1024  # dht_notification
+)
+VERIFIER_ALERT_MASK = (
+    1  # error_notification
+    | 8  # storage_notification
+    | 64  # status_notification
 )
 
 
@@ -110,13 +120,135 @@ class TorrentDiskError(RuntimeError):
     pass
 
 
-def _fetch_torrent(torrent_url: str, log):
-    """Fetch the ``.torrent`` over the allowlisted HTTPS transport and parse
-    it with libtorrent. Returns the ``torrent_info``.
+class TorrentSnapshotMismatchError(RuntimeError):
+    """Raised when the fetched torrent snapshot no longer contains a wanted
+    file path (the torrent was replaced between verify and download). The
+    caller must re-verify against the new snapshot rather than trust an old
+    local file the new snapshot cannot validate."""
+
+    pass
+
+
+@dataclass
+class TorrentSnapshot:
+    """One fetched and parsed ``.torrent``, with its identity.
+
+    ``content_hash`` is the SHA-256 of the raw ``.torrent`` bytes (any change
+    to the file — trackers, web seeds, metadata — changes it); ``info_hash``
+    is the torrent's content identity from libtorrent. Together they let the
+    launcher detect a snapshot that changed at the same URL. ``torrent_info``
+    is the parsed libtorrent object; ``torrent_bytes`` the raw payload.
+    """
+
+    url: str
+    content_hash: str
+    info_hash: str | None
+    torrent_bytes: bytes
+    torrent_info: object
+
+
+def _info_hash_hex(ti) -> str | None:
+    """Best-effort hex info-hash of a parsed torrent (v1 preferred, then v2).
+
+    Returns None when the binding doesn't expose an info hash (e.g. exotic
+    torrents or a stubbed module in tests) — callers treat that as
+    "identity unavailable" and simply never cache by identity."""
+    try:
+        ih = ti.info_hashes()
+    except Exception:
+        ih = None
+    if ih is not None:
+        for attr in ("v1", "v2"):
+            try:
+                value = str(getattr(ih, attr, None) or "")
+            except Exception:
+                continue
+            if value and value != "0" * len(value):
+                return value
+    try:
+        return str(ti.info_hash()) or None
+    except Exception:
+        return None
+
+
+def _atp_info_hash_hex(atp) -> str | None:
+    """Best-effort hex info-hash of an ``add_torrent_params`` (resume data)."""
+    ih = getattr(atp, "info_hashes", None)
+    if ih is None:
+        return None
+    for attr in ("v1", "v2"):
+        try:
+            value = str(getattr(ih, attr, None) or "")
+        except Exception:
+            continue
+        if value and value != "0" * len(value):
+            return value
+    return None
+
+
+# ── torrent metadata persistence (identity + resume data) ──────────────────
+
+
+def torrent_cache_dir() -> str:
+    """Per-user cache directory for torrent metadata. Kept out of the game
+    folder so reinstall/move never wipes the resume state."""
+    return os.path.join(cache_dir(), "torrents")
+
+
+def torrent_path(info_hash: str) -> str:
+    return os.path.join(torrent_cache_dir(), f"{info_hash}.torrent")
+
+
+def resume_path(info_hash: str) -> str:
+    return os.path.join(torrent_cache_dir(), f"{info_hash}.resume")
+
+
+def _atomic_write_bytes(path: str, data: bytes):
+    """Write via a temp file + atomic rename so a crash mid-write can never
+    leave a truncated file at `path`."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def write_torrent_atomically(info_hash: str, data: bytes):
+    _atomic_write_bytes(torrent_path(info_hash), data)
+
+
+def read_resume_bytes(info_hash: str) -> bytes | None:
+    try:
+        with open(resume_path(info_hash), "rb") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def write_resume_bytes(info_hash: str, buf: bytes):
+    _atomic_write_bytes(resume_path(info_hash), buf)
+
+
+def remove_resume_data(info_hash: str):
+    try:
+        os.remove(resume_path(info_hash))
+    except OSError:
+        pass
+
+
+def _fetch_torrent(torrent_url: str, log) -> "TorrentSnapshot":
+    """Fetch the ``.torrent`` over the allowlisted HTTPS transport, parse it
+    with libtorrent, and return a :class:`TorrentSnapshot` carrying the raw
+    bytes, their SHA-256 content hash, and the torrent's info hash.
 
     Network/security failures (HTTP errors, connection refused, DNS, TLS,
     allowlist rejection) are wrapped in :class:`TorrentFetchError` so the
     caller can distinguish a *missing* snapshot from a *failed* verification.
+
+    The raw bytes are persisted under the launcher cache (keyed by info hash)
+    on a best-effort basis so resume data always has a stable home.
     """
     import libtorrent as lt
 
@@ -146,6 +278,8 @@ def _fetch_torrent(torrent_url: str, log):
     ) as exc:
         raise TorrentFetchError(str(exc)) from exc
 
+    data = bytes(data)
+    content_hash = hashlib.sha256(data).hexdigest()
     fd, tmp = tempfile.mkstemp(suffix=".torrent")
     try:
         os.close(fd)
@@ -155,9 +289,22 @@ def _fetch_torrent(torrent_url: str, log):
         except OSError as e:
             raise TorrentDiskError(f"Failed to write torrent file: {e}") from e
         try:
-            return lt.torrent_info(tmp)
+            ti = lt.torrent_info(tmp)
         except Exception as e:
             raise TorrentCorruptError(f"Failed to parse torrent: {e}") from e
+        info_hash = _info_hash_hex(ti)
+        if info_hash:
+            try:
+                write_torrent_atomically(info_hash, data)
+            except OSError as e:
+                log(f"  Failed to cache torrent metadata: {e}", "dim")
+        return TorrentSnapshot(
+            url=torrent_url,
+            content_hash=content_hash,
+            info_hash=info_hash,
+            torrent_bytes=data,
+            torrent_info=ti,
+        )
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
@@ -175,22 +322,23 @@ def _detect_torrent_root(
 ) -> tuple[str, dict[str, str]]:
     """Detect the torrent root directory from the unique ``WoW.exe`` position.
 
-        Scans every file path in the torrent (case-insensitive) looking for the
-        single entry whose basename is ``WoW.exe``.  The parent directory of that
-        entry is the *root* — all other torrent paths are expected to live under
-        the same root.
+    Scans every file path in the torrent (case-insensitive) looking for the
+    single entry whose basename is ``WoW.exe``. The parent directory of that
+    entry is the *root*; all other torrent paths are expected to live under
+    the same root.
 
-        Returns ``(torrent_root, {torrent_path: local_path})`` where:
+    Returns ``(torrent_root, {torrent_path: local_path})`` where:
 
-        * ``torrent_root`` is the leading directory to strip (e.g. ``client``).
-        * ``local_path`` is the path relative to the selected WoW folder
-          (e.g. ``Data/foo.mpq``).
+    * ``torrent_root`` is the leading directory to strip (e.g. ``client``).
+    * ``local_path`` is the path relative to the selected WoW folder
+      (e.g. ``Data/foo.mpq``).
 
-        Raises :class:`TorrentLayoutError` when:
+    Raises :class:`TorrentLayoutError` when:
 
     * no ``WoW.exe`` is found,
-        * multiple ``WoW.exe`` entries exist, or
-        * any file escapes the detected root directory."""
+    * multiple ``WoW.exe`` entries exist, or
+    * any file escapes the detected root directory.
+    """
     num = files.num_files()
     exe_indices: list[int] = []
     normalized: list[str] = []
@@ -235,6 +383,35 @@ def _map_torrent_paths(
     return mapping
 
 
+def _remap_torrent_to_out_dir(ti, out_dir: str) -> None:
+    """Strip the auto-detected torrent root so the snapshot's files resolve
+    directly under ``out_dir`` (e.g. torrent ``client/WoW.exe`` ->
+    ``out_dir/WoW.exe``).
+
+    libtorrent maps a torrent file ``client/WoW.exe`` to
+    ``save_path/client/WoW.exe``. With ``save_path == out_dir`` that reads and
+    writes at ``out_dir/client/...`` — a double prefix — so every real file
+    looks missing and the whole client is reported stale. Remapping the torrent
+    file paths to ``out_dir/local`` (root stripped) fixes the read/write target
+    while leaving piece hashes and the info hash untouched.
+
+    The root is auto-detected from the unique WoW.exe position (see
+    :func:`_detect_torrent_root`); only the leading root directory is removed.
+    Real libtorrent exposes ``torrent_info.remap_files``; the test fakes do
+    not, so this is a no-op under unit tests."""
+    if not hasattr(ti, "remap_files"):
+        return
+    import libtorrent as lt
+
+    files = ti.files()
+    mapping = _map_torrent_paths(files)
+    fs = lt.file_storage()
+    for i in range(files.num_files()):
+        rel = mapping[files.file_path(i).replace("\\", "/")]
+        fs.add_file(os.path.join(out_dir, rel), files.file_size(i))
+    ti.remap_files(fs)
+
+
 def _file_piece_ranges(files, piece_length: int) -> list[list[int]]:
     """Map each torrent file to the indices of the pieces covering it.
 
@@ -275,6 +452,7 @@ class TorrentVerifier:
         self.log_q = log_q
         self.prog_q = prog_q
         self._cancel = False
+        self.snapshot: TorrentSnapshot | None = None
 
     def cancel(self):
         self._cancel = True
@@ -298,7 +476,7 @@ class TorrentVerifier:
                 "enable_lsd": False,
                 "enable_upnp": False,
                 "enable_natpmp": False,
-                "alert_mask": ALERT_MASK,
+                "alert_mask": VERIFIER_ALERT_MASK,
             }
         )
 
@@ -318,10 +496,18 @@ class TorrentVerifier:
     def verify(self, torrent_url: str) -> list[str]:
         """Hash-check the local files against the torrent and return the stale
         (missing or differing) file paths. Raises RuntimeError on failure or
-        cancellation. Never downloads or seeds — read-only."""
+        cancellation. Never downloads or seeds — read-only. This is a
+        torrent-piece check; the update controller performs the authoritative
+        manifest hash check afterwards.
+
+        The fetched :class:`TorrentSnapshot` is stored on ``self.snapshot`` so
+        the caller can persist its identity alongside the verdict."""
         import libtorrent as lt
 
-        ti = _fetch_torrent(torrent_url, self.log)
+        snapshot = _fetch_torrent(torrent_url, self.log)
+        self.snapshot = snapshot
+        ti = snapshot.torrent_info
+        _remap_torrent_to_out_dir(ti, self.out_dir)
         files = ti.files()
         piece_length = ti.piece_length()
         total_pieces = ti.num_pieces()
@@ -338,7 +524,14 @@ class TorrentVerifier:
             atp = lt.add_torrent_params()
             atp.ti = ti
             atp.save_path = self.out_dir
-            atp.file_priorities = [0] * files.num_files()  # verify only
+            # Pieces must be "wanted" (priority > 0) for force_recheck() to
+            # hash the on-disk files against the torrent's piece hashes. A
+            # priority of 0 skips both download and verification, which would
+            # leave every piece's verified state False and stall the recheck.
+            # The verifier session is fully offline (empty listen_interfaces,
+            # DHT/LSD/UPnP/NAT-PMP off, no trackers), so max priority only
+            # triggers a read-only hash check — no peer connections or writes.
+            atp.file_priorities = [7] * files.num_files()
             try:
                 h = ses.add_torrent(atp)
             except Exception as e:
@@ -346,6 +539,12 @@ class TorrentVerifier:
                     f"Failed to add torrent to session: {e}"
                 ) from e
             h.force_recheck()
+            # Deluge's proven pattern: resume() after force_recheck() so the
+            # recheck actually proceeds even if the torrent was added paused
+            # (some bindings add it paused by default). The recheck is a
+            # read-only hash of the on-disk files; resume() does not start any
+            # peer connection in this offline session.
+            h.resume()
             self._wait_for_recheck(ses, h, total_pieces)
             return self._stale_files(h, files, piece_length)
         except OSError as e:
@@ -369,6 +568,7 @@ class TorrentVerifier:
 
         last_move = time.monotonic()
         last_checked = 0
+        seen_checking = False
         # In libtorrent 2.1, checking can be in multiple states
         checking_states = {
             lt.torrent_status.states.checking_files,
@@ -390,6 +590,8 @@ class TorrentVerifier:
                     # that fires on explicit read_piece() calls and is normal).
                     if type(a).__name__ in (
                         "file_error_alert",
+                        "file_rename_failed_alert",
+                        "torrent_delete_failed_alert",
                         "storage_moved_failed_alert",
                         "save_resume_data_failed_alert",
                     ):
@@ -400,30 +602,60 @@ class TorrentVerifier:
                         raise TorrentDiskError(
                             f"Storage error: {type(a).__name__}: {getattr(a, 'message', str)()}"
                         )
+            # status() is synchronous in the Python binding. This worker is
+            # isolated from the UI thread, so the direct snapshot is simpler
+            # than coordinating post_status/state_update_alert callbacks.
             s = h.status()
-            # libtorrent 2.1: use verified_pieces for checking progress,
-            # and state to detect if checking is still active.
-            # verified_pieces is a list[bool] - count the True values.
-            done = sum(s.verified_pieces) if s.verified_pieces else 0
+            # The authoritative "pieces verified so far" during a force_recheck()
+            # is the live "have" bitfield. In libtorrent 2.x status().pieces is a
+            # list[bool] (sum() counts the verified pieces) and it advances as each
+            # piece is hashed — this is what drives progress. torrent_status
+            # .verified_pieces is ONLY populated in seed mode (the verifier is NOT
+            # in seed mode), so it stays empty and must never be used. status
+            # ().progress may also lag a recheck, so we take the max of the
+            # have-count and progress.
+            have = 0
+            pieces = getattr(s, "pieces", None)
+            if pieces is not None:
+                have = sum(pieces)
+            elif getattr(s, "num_pieces", None):
+                have = s.num_pieces
+            checked = (
+                int(round(s.progress * total_pieces)) if total_pieces else 0
+            )
+            done = max(have, checked)
+            if s.state in checking_states:
+                # Actively hashing: never false-stall a slow multi-GB recheck,
+                # and remember we entered checking so we only finish once it ends.
+                seen_checking = True
+                last_move = time.monotonic()
+            elif seen_checking:
+                # Recheck has left the checking states -> it is done. have_piece()
+                # (used by _stale_files) is authoritative for the verdict, so we
+                # don't require a non-zero count here.
+                return
+            if total_pieces and done >= total_pieces:
+                # All pieces present (verified or assumed): recheck finished.
+                return
             if done != last_checked:
                 last_checked = done
                 last_move = time.monotonic()
-            if total_pieces and done >= total_pieces:
-                return
-            if s.state not in checking_states and done:
-                # Recheck finished (some sources report a partial count).
-                return
             self.progress(
                 min(1.0, done / total_pieces) if total_pieces else 0.0,
-                "Verifying client against torrent…",
+                f"Verifying client against torrent…  {done} / "
+                f"{total_pieces} pieces",
                 phase="Verifying",
                 transport="BitTorrent",
-                downloaded=done,
-                total=total_pieces,
+                verified_pieces=done,
+                total_pieces=total_pieces,
             )
             if time.monotonic() - last_move > STALL_TIMEOUT:
                 raise TorrentStalledError(peers=s.num_peers)
             ses.wait_for_alert(ALERT_POLL_MS)
+        try:
+            h.cancel()
+        except Exception:
+            pass
         raise RuntimeError("Cancelled")
 
     def _cleanup_part_files(self):
@@ -441,6 +673,7 @@ class TorrentDownloader:
         self.log_q = log_q
         self.prog_q = prog_q
         self._cancel = False
+        self.snapshot: TorrentSnapshot | None = None
 
     def cancel(self):
         self._cancel = True
@@ -457,15 +690,36 @@ class TorrentDownloader:
         skipped (0) so only the pieces covering the stale files download.
         ``wanted=None`` means the whole torrent (every file at max priority)
         — used by the no-manifest recovery path.  Uses the auto-detected
-        WoW.exe root for path mapping."""
+        WoW.exe root for path mapping.
+
+        A wanted path absent from the snapshot is a hard mismatch
+        (:class:`TorrentSnapshotMismatchError`) — the torrent was replaced
+        between verify and download, so the client can never be reported
+        recovered against a snapshot that no longer contains it."""
         files = ti.files()
         mapping = _map_torrent_paths(files)
+        n = files.num_files()
+        if wanted is None:
+            return [7] * n
+        local_to_index = {
+            mapping[files.file_path(i).replace("\\", "/")]: i for i in range(n)
+        }
+        missing = sorted(w for w in wanted if w not in local_to_index)
+        if missing:
+            self.log(
+                f"[torrent] {len(missing)} wanted file(s) absent from this "
+                f"snapshot: {', '.join(missing)}",
+                "err",
+            )
+            raise TorrentSnapshotMismatchError(
+                f"Torrent replaced — {len(missing)} wanted file(s) not in "
+                f"the new snapshot: {', '.join(missing)}"
+            )
         return [
             7
-            if wanted is None
-            or mapping[files.file_path(i).replace("\\", "/")] in wanted
+            if mapping[files.file_path(i).replace("\\", "/")] in wanted
             else 0
-            for i in range(files.num_files())
+            for i in range(n)
         ]
 
     def _session(self):
@@ -477,7 +731,7 @@ class TorrentDownloader:
                 "user_agent": UA,
                 "upload_rate_limit": UPLOAD_RATE_LIMIT,
                 "enable_dht": True,
-                "dht_nodes": DHT_BOOTSTRAP_NODES,
+                "dht_bootstrap_nodes": DHT_BOOTSTRAP_NODES,
                 "enable_lsd": False,
                 "enable_upnp": False,
                 "enable_natpmp": False,
@@ -485,16 +739,98 @@ class TorrentDownloader:
             }
         )
 
+    def _load_resume(self, atp, snapshot: TorrentSnapshot):
+        """Merge cached resume data into ``atp`` when it matches the
+        snapshot's info hash. Resume data is best-effort: unreadable or
+        identity-mismatched files are discarded without failing the download,
+        so the next run resumes fresh instead of trusting stale state.
+
+        Only verified-piece state is carried over — ``add_torrent_params.file_sizes``
+        is ignored by libtorrent whenever ``atp.ti`` is set (which is always the
+        case here), so it is not restored. The file selection always comes from
+        the current ``wanted`` set (``_priorities()``), never from cached resume
+        data."""
+        info_hash = snapshot.info_hash
+        if not info_hash:
+            return
+        buf = read_resume_bytes(info_hash)
+        if not buf:
+            return
+        import libtorrent as lt
+
+        try:
+            read_resume_data = getattr(lt, "read_resume_data", None)
+            if read_resume_data is None:
+                return
+            resume = read_resume_data(buf)
+            resume_hash = _atp_info_hash_hex(resume)
+            if resume_hash and resume_hash != info_hash:
+                self.log(
+                    "[torrent] Resume data info hash mismatch — discarding.",
+                    "dim",
+                )
+                remove_resume_data(info_hash)
+                return
+            value = getattr(resume, "have_pieces", None)
+            if value is not None:
+                atp.have_pieces = value
+            self.log("[torrent] Resuming from cached resume data.", "dim")
+        except Exception as e:
+            self.log(f"[torrent] Resume data unreadable: {e}", "dim")
+            remove_resume_data(info_hash)
+
+    def _save_resume(self, ses, h, snapshot: TorrentSnapshot):
+        """Best-effort persistence of resume state before the torrent handle
+        is removed, so an interrupted download can resume pieces next run.
+        Never raises — a lost resume file only costs a recheck."""
+        info_hash = snapshot.info_hash
+        if not info_hash:
+            return
+        import libtorrent as lt
+
+        try:
+            h.save_resume_data()
+        except Exception:
+            return
+        write_resume_data_buf = getattr(lt, "write_resume_data_buf", None)
+        if write_resume_data_buf is None:
+            return
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            for a in ses.pop_alerts():
+                if type(a).__name__ == "save_resume_data_alert":
+                    try:
+                        buf = write_resume_data_buf(a.params)
+                        write_resume_bytes(info_hash, buf)
+                        self.log("[torrent] Resume data saved.", "dim")
+                    except Exception as e:
+                        self.log(
+                            f"[torrent] Failed to save resume data: {e}", "dim"
+                        )
+                    return
+                if type(a).__name__ == "save_resume_data_failed_alert":
+                    return
+            ses.wait_for_alert(100)
+
     def download(self, torrent_url: str, wanted: set[str] | None) -> list[str]:
         """Download the wanted files from the torrent at ``torrent_url`` into
         ``out_dir``. ``wanted=None`` downloads the whole torrent. Returns the
-        sorted wanted paths on success and raises RuntimeError on failure or
-        cancellation."""
+        an empty list on success and raises RuntimeError on failure or
+        cancellation. The caller already knows the wanted paths. Completed
+        files are still rechecked against the update manifest by the HTTP
+        update worker.
+
+        Resume data for the snapshot's info hash is loaded before the torrent
+        is added and saved again before the handle is removed. The fetched
+        :class:`TorrentSnapshot` is stored on ``self.snapshot``."""
         import libtorrent as lt
 
         if wanted is not None and not wanted:
             return []
-        ti = _fetch_torrent(torrent_url, self.log)
+        snapshot = _fetch_torrent(torrent_url, self.log)
+        self.snapshot = snapshot
+        ti = snapshot.torrent_info
+        _remap_torrent_to_out_dir(ti, self.out_dir)
 
         try:
             ses = self._session()
@@ -506,10 +842,11 @@ class TorrentDownloader:
         h = None
         try:
             atp = lt.add_torrent_params()
+            priorities = self._priorities(ti, wanted)
             atp.ti = ti
             atp.save_path = self.out_dir
-            priorities = self._priorities(ti, wanted)
             atp.file_priorities = priorities
+            self._load_resume(atp, snapshot)
             files = ti.files()
             total_wanted = sum(
                 files.file_size(i)
@@ -535,6 +872,7 @@ class TorrentDownloader:
             raise
         finally:
             if h is not None:
+                self._save_resume(ses, h, snapshot)
                 try:
                     h.pause()
                     ses.remove_torrent(h)
@@ -575,6 +913,8 @@ class TorrentDownloader:
                 if a.category() & lt.alert.category_t.storage_notification:
                     if type(a).__name__ in (
                         "file_error_alert",
+                        "file_rename_failed_alert",
+                        "torrent_delete_failed_alert",
                         "storage_moved_failed_alert",
                         "save_resume_data_failed_alert",
                     ):
@@ -585,6 +925,9 @@ class TorrentDownloader:
                         raise TorrentDiskError(
                             f"Storage error: {type(a).__name__}: {getattr(a, 'message', str)()}"
                         )
+            # status() is synchronous in the Python binding. This worker is
+            # isolated from the UI thread, so the direct snapshot is simpler
+            # than coordinating post_status/state_update_alert callbacks.
             s = h.status()
             name = s.name or name
             wanted_done = s.total_wanted_done

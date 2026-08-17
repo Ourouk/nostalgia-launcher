@@ -1,9 +1,12 @@
 """Detailed client update progress panel."""
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QGridLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QProgressBar,
     QVBoxLayout,
     QWidget,
@@ -46,6 +49,11 @@ class UpdatePanel(QWidget):
         self._file.setWordWrap(True)
         root.addWidget(self._file)
 
+        self._file_list = QListWidget(self)
+        self._file_list.setObjectName("updateFileList")
+        self._file_list.setMinimumHeight(60)
+        root.addWidget(self._file_list)
+
         grid = QGridLayout()
         grid.setHorizontalSpacing(28)
         grid.setVerticalSpacing(8)
@@ -66,6 +74,30 @@ class UpdatePanel(QWidget):
         grid.addWidget(value, row, 1)
         return value
 
+    def set_updated_files(self, files):
+        """Replace the updated-files list with `files`, each marked pending."""
+        self._file_list.clear()
+        for rel in files:
+            item = QListWidgetItem(rel)
+            item.setData(Qt.UserRole, False)
+            self._file_list.addItem(item)
+
+    def _has_file(self, rel: str) -> bool:
+        for i in range(self._file_list.count()):
+            if self._file_list.item(i).text() == rel:
+                return True
+        return False
+
+    def _set_file_done(self, rel: str) -> bool:
+        """Mark a listed file as updated (match by text); True when found."""
+        for i in range(self._file_list.count()):
+            item = self._file_list.item(i)
+            if item.text() == rel:
+                item.setData(Qt.UserRole, True)
+                item.setForeground(QColor("#2ecc71"))
+                return True
+        return False
+
     def progress_changed(self, event):
         if event.phase:
             self._phase.setText(event.phase)
@@ -85,17 +117,39 @@ class UpdatePanel(QWidget):
             self._amount.setText(f"{event.value * 100:.0f}%")
         self._speed.setText(fmt_speed(event.speed) if event.speed else "-")
         self._peers.setText(str(event.peers) if event.peers else "-")
+        # Track the file currently being updated. When it matches an item
+        # pre-seeded by set_updated_files() it's marked done; otherwise it's
+        # appended (HTTP streams per-file paths, torrent only reports its
+        # own name which has no "/").
+        if event.current_file and "/" in event.current_file:
+            txt = event.current_file
+            if not self._set_file_done(txt) and not self._has_file(txt):
+                item = QListWidgetItem(txt)
+                item.setData(Qt.UserRole, True)
+                item.setForeground(QColor("#2ecc71"))
+                self._file_list.addItem(item)
 
     def status_changed(self, text: str):
         if text in ("Verifying…", "Updating…"):
             self._phase.setText(text)
             self._file.setText("Preparing client update…")
+            self._file_list.clear()
 
     def operation_finished(self, kind: str, ok: bool, message: str):
-        if kind == "full_update":
-            self._phase.setText("Complete" if ok else "Failed")
-            if message:
-                self._file.setText(message)
+        if kind in ("update", "verify", "full_update"):
+            if ok:
+                self._phase.setText(
+                    "Verified" if kind == "verify" else "Complete"
+                )
+                for i in range(self._file_list.count()):
+                    item = self._file_list.item(i)
+                    item.setData(Qt.UserRole, True)
+                    item.setForeground(QColor("#2ecc71"))
+            else:
+                self._phase.setText(
+                    "Update required" if kind == "verify" else "Failed"
+                )
+                self._file.setText(message or "Update failed.")
         elif kind == "mods" and ok:
             self._phase.setText("Updating addons and mods")
             self._file.setText("Mods complete; checking addons…")

@@ -23,6 +23,7 @@ from vanilla_wow_launcher.state.events import (
     OperationFinished,
     ProgressChanged,
     StatusChanged,
+    UpdateFilesList,
 )
 
 
@@ -77,8 +78,8 @@ class ScriptedWorker:
         self.run_args = args
         for msg, tag in type(self).script:
             self.log_q.put((msg, tag))
-        for val, lbl in type(self).prog_script:
-            self.prog_q.put((val, lbl))
+        for item in type(self).prog_script:
+            self.prog_q.put(item)
         type(self).done.set()
 
 
@@ -173,6 +174,7 @@ def test_verify_needs_update_sets_diff_and_not_ready(
     events = controller._dispatcher.drain()
     assert OperationFinished("verify", False) in events
     assert ProgressChanged(0.0, "") in events
+    assert UpdateFilesList(["a.bin"]) in events
     assert controller.state.diff_nodes == diff
     assert controller.state.client_ready is False
     assert controller.state.running is False
@@ -302,6 +304,15 @@ def test_update_error_posts_failure(controller, worker_cls, config):
     assert controller.state.running is False
 
 
+def test_verify_error_posts_verify_failure(controller, worker_cls, config):
+    worker_cls.script = [("__ERROR__", "")]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+
+    events = controller._dispatcher.drain()
+    assert OperationFailed("verify", "") in events
+
+
 def test_update_receives_diff_from_verify(controller, worker_cls, config):
     diff = [{"type": "file", "name": "a.bin"}]
     worker_cls.script = [("__DIFF_TREE__", diff), ("__UPDATE_NEEDED__", "")]
@@ -344,6 +355,21 @@ def test_start_update_without_folder_logs_error(worker_cls, config):
     assert not worker_cls.instances
 
 
+def test_start_update_when_busy_reports_and_returns_false(
+    controller, worker_cls, config
+):
+    controller.state.running = True
+
+    assert controller.start_update() is False
+
+    events = controller._dispatcher.drain()
+    assert any(
+        isinstance(event, LogMessage) and "already in progress" in event.text
+        for event in events
+    )
+    assert not worker_cls.instances
+
+
 # ── queue draining / progress / hashes ──────────────────────────────────
 
 
@@ -379,6 +405,33 @@ def test_invalidate_resets_readiness(controller, worker_cls, config):
     assert controller.state.client_ready is False
     assert controller.state.manifest_available is False
     assert controller.state.diff_nodes is None
+
+
+def test_empty_torrent_stale_set_skips_update_worker(
+    controller, worker_cls, config
+):
+    controller.state.manifest_available = False
+    controller.state.torrent_stale = []
+
+    assert controller.start_update() is True
+
+    assert controller.state.client_ready is True
+    assert controller.state.running is False
+    assert not worker_cls.instances
+    assert OperationFinished("update", True) in controller._dispatcher.drain()
+
+
+def test_invalidate_cancels_worker_and_drops_its_queues(
+    controller, worker_cls, config
+):
+    controller.start_verify()
+    worker = worker_cls.instances[0]
+
+    controller.invalidate()
+
+    assert worker.cancelled is True
+    assert controller.state.running is False
+    assert controller._op is None
 
 
 def test_events_delivered_to_subscribers(controller, worker_cls, config):
@@ -1019,3 +1072,90 @@ def test_readiness_torrent_error_no_stale(controller, worker_cls, config):
     r = controller.compute_readiness()
     assert r.mode == "update"
     assert r.status == "Download via BitTorrent (session failed)"
+
+
+# ── torrent snapshot lifecycle ──────────────────────────────────────────
+
+
+def test_torrent_progress_posts_piece_counts(controller, worker_cls, config):
+    """A 3-tuple progress item carrying verified_pieces/total_pieces reaches
+    the state and the ProgressChanged event unchanged."""
+    worker_cls.prog_script = [
+        (
+            0.0,
+            "Verifying",
+            {"phase": "Verifying", "verified_pieces": 1, "total_pieces": 4},
+        ),
+        (
+            0.5,
+            "Verifying",
+            {"phase": "Verifying", "verified_pieces": 3, "total_pieces": 4},
+        ),
+    ]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    events = controller._dispatcher.drain()
+    latest = [
+        e
+        for e in events
+        if isinstance(e, ProgressChanged) and e.verified_pieces == 3
+    ]
+    assert latest
+    assert controller.state.progress_verified_pieces == 3
+    assert controller.state.progress_total_pieces == 4
+
+
+def test_torrent_verify_diff_then_update_lifecycle(
+    controller, worker_cls, config
+):
+    """verify → __TORRENT_DIFF__ → update → __DONE__ is a coherent lifecycle:
+    stale paths captured into the worker args, then cleared on completion."""
+    stale = ["Data/a.bin"]
+    worker_cls.script = [
+        ("__TORRENT_DIFF__", stale),
+    ]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    assert controller.state.torrent_stale == stale
+    assert controller.state.client_ready is False
+    assert controller.state.manifest_available is False
+    assert controller.compute_readiness().mode == "update"
+
+    worker_cls.script = [("__DONE__", "")]
+    worker_cls.prog_script = []
+    worker_cls.done.clear()
+    controller.start_update()
+    _wait_and_poll(controller, worker_cls)
+    w = worker_cls.instances[1]
+    assert w.run_args == (None, {"Data/a.bin"})
+    assert controller.state.torrent_stale is None
+    assert controller.state.client_ready is True
+    assert OperationFinished("update", True) in controller._dispatcher.drain()
+
+
+def test_torrent_up_to_date_after_verify(controller, worker_cls, config):
+    """__TORRENT_UP_TO_DATE__ → play readiness with no stale paths."""
+    worker_cls.script = [("__TORRENT_UP_TO_DATE__", "")]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    assert controller.state.client_ready is True
+    assert controller.state.torrent_stale is None
+    assert controller.compute_readiness().mode == "play"
+
+
+def test_torrent_diff_empty_skips_update_and_marks_ready(
+    controller, worker_cls, config
+):
+    """A verify that reports an empty stale set completes the update inline
+    without ever spawning a worker."""
+    worker_cls.script = [("__TORRENT_DIFF__", []), ("__DONE__", "")]
+    controller.start_verify()
+    _wait_and_poll(controller, worker_cls)
+    assert controller.state.torrent_stale == []
+
+    controller._dispatcher.drain()
+    assert controller.start_update() is True
+    assert controller.state.client_ready is True
+    assert controller.state.running is False
+    assert len(worker_cls.instances) == 1  # no update worker was created
+    assert OperationFinished("update", True) in controller._dispatcher.drain()

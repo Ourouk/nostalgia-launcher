@@ -80,7 +80,7 @@ class MainWindow(QMainWindow):
     so posting after close is a safe no-op.
     """
 
-    TABS = ["NEWS", "TWEAKS", "ADDONS", "MODS", "UPDATE"]
+    TABS = ["NEWS", "UPDATE", "TWEAKS", "ADDONS", "MODS"]
 
     def __init__(self, hub: ControllerHub, parent=None):
         super().__init__(parent)
@@ -426,6 +426,7 @@ class MainWindow(QMainWindow):
         bridge.statusChanged.connect(self._onStatusChanged)
         bridge.progressChanged.connect(self._onProgressChanged)
         bridge.updateProgressChanged.connect(self._on_update_progress_changed)
+        bridge.updateFilesList.connect(self._on_update_files_list)
         bridge.operationFinished.connect(self._onOperationFinished)
         bridge.operationFailed.connect(self._onOperationFailed)
         bridge.logMessage.connect(self._on_log_message)
@@ -636,6 +637,10 @@ class MainWindow(QMainWindow):
     def _on_update_progress_changed(self, event):
         panel = self._stack.widget(self._pages["UPDATE"])
         panel.progress_changed(event)
+
+    def _on_update_files_list(self, event):
+        panel = self._stack.widget(self._pages["UPDATE"])
+        panel.set_updated_files(event.files)
 
     def _onOperationFinished(self, kind: str, ok: bool, message: str):
         self._stack.widget(self._pages["UPDATE"]).operation_finished(

@@ -67,6 +67,7 @@ from vanilla_wow_launcher.ui.qt.app import (
     QtVanillaWoWLauncherApp,
     create_qt_app,
 )
+from vanilla_wow_launcher.ui.qt.main_window import MainWindow
 from vanilla_wow_launcher.ui.qt.metrics import BASE_H, BASE_W, clamp
 from vanilla_wow_launcher.ui.qt.settings_dialog import SettingsDialog
 
@@ -238,13 +239,7 @@ def test_window_resizes_across_range_without_losing_pages(
     qapp, app_no_startup
 ):
     win = app_no_startup._window
-    pages = {
-        "NEWS": 0,
-        "TWEAKS": 1,
-        "ADDONS": 2,
-        "MODS": 3,
-        "UPDATE": 4,
-    }
+    pages = {name: idx for idx, name in enumerate(MainWindow.TABS)}
     for wsize, hsize in ((800, 600), (1400, 900)):
         win.resize(wsize, hsize)
         _qwait(app_no_startup._app)

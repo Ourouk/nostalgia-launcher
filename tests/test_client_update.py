@@ -8,6 +8,7 @@ import urllib.request
 import pytest
 
 import vanilla_wow_launcher.services.update_backend.http_update as client_update
+import vanilla_wow_launcher.services.update_backend.torrent_update as td
 from vanilla_wow_launcher.services.update_backend.http_update import (
     UpdateWorker,
     VerifyWorker,
@@ -211,6 +212,47 @@ def test_update_worker_traverse_skips_up_to_date(tmp_path, monkeypatch):
     assert (client / "data.bin").read_bytes() == b"x"
 
 
+def test_verify_worker_cancelled_torrent_posts_error_not_failure_marker(
+    tmp_path, monkeypatch
+):
+    client = _mk_client(tmp_path)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = VerifyWorker(str(client), log_q, prog_q)
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: client_update.DownloadSource(
+            "https://srv/manifest.json",
+            "https://srv/client",
+            "https://srv/client.torrent",
+        ),
+    )
+    monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ConnectionError("manifest down")
+        ),
+    )
+
+    class CancelledVerifier:
+        def __init__(self, out_dir, log_q, prog_q):
+            pass
+
+        def verify(self, url):
+            raise RuntimeError("Cancelled")
+
+    monkeypatch.setattr(td, "TorrentVerifier", CancelledVerifier)
+    worker._cancel = True
+
+    worker.run()
+
+    messages = [msg for msg, _tag in log_q.queue]
+    assert "__ERROR__" in messages
+    assert "__TORRENT_VERIFY_FAILED__" not in messages
+
+
 def test_update_worker_uses_verified_torrent_paths_without_manifest(
     tmp_path, monkeypatch
 ):
@@ -337,7 +379,9 @@ def test_download_source_uses_mirror_endpoint_overrides(monkeypatch):
     )
 
     monkeypatch.setattr(
-        client_update, "secure_urlopen", lambda req, timeout=5: _resp()
+        client_update,
+        "secure_urlopen",
+        lambda req, timeout=5, allowed_hosts=None: _resp(),
     )
     src = client_update._download_source()
     assert src.manifest_url == "https://m1.example/custom/manifest.json"
@@ -366,13 +410,16 @@ def test_download_source_probes_client_url_and_accepts_http_error(monkeypatch):
     )
     probed = []
 
-    def http_error(req, timeout=5):
+    def http_error(req, timeout=5, allowed_hosts=None):
         probed.append(req.full_url)
         raise HTTPError(req.full_url, 404, "Not Found", None, None)
 
     monkeypatch.setattr(client_update, "secure_urlopen", http_error)
     src = client_update._download_source()
-    assert probed == ["https://dl.example/client/latest"]
+    assert probed == [
+        "https://m1.example/api/file/latest/manifest.json",
+        "https://dl.example/client/latest",
+    ]
     assert src.client_url == "https://dl.example/client/latest"
     assert (
         src.manifest_url == "https://m1.example/api/file/latest/manifest.json"
@@ -437,7 +484,9 @@ def test_traverse_downloads_from_mirror_client_url(monkeypatch, tmp_path):
     )
 
     monkeypatch.setattr(
-        client_update, "secure_urlopen", lambda req, timeout=5: _resp()
+        client_update,
+        "secure_urlopen",
+        lambda req, timeout=5, allowed_hosts=None: _resp(),
     )
 
     client = tmp_path / "client"
