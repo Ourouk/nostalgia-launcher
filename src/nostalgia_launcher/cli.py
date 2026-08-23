@@ -13,7 +13,7 @@ import argparse
 import os
 import sys
 
-from .core import config_store, launcher, platform_support
+from .core import config_store, launcher
 from .core.constants import (
     CACHE_FILE,
     CONFIG_FILE,
@@ -80,8 +80,8 @@ def main(argv=None) -> int:
 def _first_launch() -> int:
     """No launcher config and no --launcher-config: ask the user to import
     one (a local file or an https URL they supply), then persist it so
-    future launches reuse it. On first run with no game folder set, the
-    client default is ~/Games/<ServerName>."""
+    future launches reuse it. No game folder is ever auto-selected — the
+    user confirms one in Settings before anything downloads."""
     try:
         chosen = _pick_launcher_config()
     except ImportError as e:
@@ -136,7 +136,6 @@ def _first_launch() -> int:
         if err:
             sys.stderr.write(f"{err}\n")
             return 1
-    _ensure_default_game_folder()
     return _run_backend()
 
 
@@ -154,21 +153,6 @@ def _pick_launcher_config() -> dict | None:
     if dlg.exec() != QDialog.DialogCode.Accepted:
         return None
     return dlg.selection()
-
-
-def _ensure_default_game_folder():
-    """On first run with no game folder configured, default it to
-    ~/Games/<ServerName> so the client installs there; the user can still
-    change it in Settings."""
-    cfg = config_store.load_config()
-    if cfg.get("out_dir"):
-        return
-    folder = platform_support.default_game_folder(launcher.server_name())
-    try:
-        os.makedirs(folder, exist_ok=True)
-    except OSError:
-        return
-    config_store.update_config(lambda c: c.__setitem__("out_dir", folder))
 
 
 def _run_backend() -> int:

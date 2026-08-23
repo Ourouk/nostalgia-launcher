@@ -36,11 +36,13 @@ src/nostalgia_launcher/
   on later runs. The download host allowlist
   (`security_http.allowed_download_hosts()`) is built from the launcher's
   server+mirror hosts plus the git hosts.
-- Default client folder comes from ONE helper,
-  `platform_support.default_game_folder(server_name)` (`~/Games/<Server>` with
-  a configured server, else `DEFAULT_OUT_DIR`) — used by both
-  `cli._ensure_default_game_folder()` and the Settings fallback. Don't
-  reintroduce divergent defaults.
+- Game folder is STRICTLY user-confirmed: `out_dir` is written ONLY by
+  Settings apply (which also sets `out_dir_user_set`); controllers read it
+  stored-or-empty and refuse to operate when empty. The only default-ish
+  value left is `platform_support.default_game_folder(server_name)`
+  (`~/Games/<Server>`, `""` when unnamed) — a UI placeholder suggestion,
+  never persisted or auto-created. Pre-flag installs get the flag backfilled
+  once in `SettingsController.__init__`. Don't reintroduce silent defaults.
 
 ## Catalogs (mods/addons)
 

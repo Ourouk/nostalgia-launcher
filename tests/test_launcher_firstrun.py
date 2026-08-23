@@ -1,5 +1,6 @@
 """Unit tests for first-run launcher config validation, persistence, the
-Games/<ServerName> default folder, and the cli first-launch flow."""
+Games/<ServerName> folder suggestion helpers and the strict cli first-launch
+flow (no game folder is ever auto-selected or created)."""
 
 import json
 import os
@@ -79,25 +80,12 @@ def test_server_games_dir_sanitizes(monkeypatch):
 # ── cli first-run ────────────────────────────────────────────────────────
 
 
-def test_ensure_default_game_folder_sets_games_subfolder(
+def test_first_launch_url_persists_without_touching_out_dir(
     tmp_path, monkeypatch
 ):
-    config_store.configure(
-        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
-    )
-    monkeypatch.setattr(launcher, "server_name", lambda: "OctoWoW")
-    monkeypatch.setattr(
-        platform_support,
-        "server_games_dir",
-        lambda name: os.path.join(str(tmp_path), "Games", name),
-    )
-    cli._ensure_default_game_folder()
-    assert config_store.load_config()["out_dir"] == os.path.join(
-        str(tmp_path), "Games", "OctoWoW"
-    )
-
-
-def test_first_launch_url_persists_and_sets_folder(tmp_path, monkeypatch):
+    """Strict folder confirmation: the first-launch flow persists the
+    launcher config but NEVER writes out_dir or creates any game folder —
+    that only happens through an explicit Settings apply."""
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
@@ -115,20 +103,18 @@ def test_first_launch_url_persists_and_sets_folder(tmp_path, monkeypatch):
             "raw": raw,
         },
     )
-    monkeypatch.setattr(launcher, "server_name", lambda: "OctoWoW")
-    monkeypatch.setattr(
-        platform_support,
-        "server_games_dir",
-        lambda name: os.path.join(str(tmp_path), "Games", name),
-    )
+
+    def boom(*a, **kw):
+        raise AssertionError("first launch must not create a game folder")
+
+    monkeypatch.setattr(platform_support, "server_games_dir", boom)
     try:
         rc = cli._first_launch()
     finally:
         launcher.reset()
     assert rc == 0
-    assert config_store.load_config()["out_dir"] == os.path.join(
-        str(tmp_path), "Games", "OctoWoW"
-    )
+    cfg = config_store.load_config()
+    assert "out_dir" not in cfg
     assert (
         json.loads((tmp_path / "cfg.json").read_text(encoding="utf-8"))[
             "server"

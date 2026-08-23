@@ -251,6 +251,11 @@ features) and requires explicit acceptance before it is persisted.
 - Downloads use HTTPS and host restrictions derived from the selected
   configuration (`core/security_http.py`); redirects remain HTTPS-only and
   TLS is verified (≥ TLS 1.2).
+- Strict game-folder confirmation: `out_dir` is persisted ONLY by a Settings
+  apply (which also writes `out_dir_user_set`; pre-flag installs are
+  backfilled once). Controllers read stored-or-empty and refuse to operate —
+  no verify, update, mod, addon or tweak write ever targets an unconfirmed
+  folder, and nothing is auto-created on disk.
 - Downloaded archives are extracted with protection against path traversal;
   installed files are confined to the selected game folder.
 - Addon Git hosts are restricted: a base allowlist (`github.com`,

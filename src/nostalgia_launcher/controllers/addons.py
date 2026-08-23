@@ -16,7 +16,6 @@ import time
 from dataclasses import replace
 
 from ..core import config_store
-from ..core.constants import DEFAULT_OUT_DIR
 from ..core.errors import describe_install_error
 from ..core.helpers import same_git_repo
 from ..services import addons
@@ -55,9 +54,7 @@ class AddonsController:
         if get_out_dir is None:
 
             def get_out_dir():
-                return config_store.load_config().get(
-                    "out_dir", DEFAULT_OUT_DIR
-                )
+                return config_store.load_config().get("out_dir", "")
 
         self._get_out_dir = get_out_dir
 
@@ -400,6 +397,9 @@ class AddonsController:
             return False
         client = (self._get_out_dir() or "").strip()
         if not client:
+            self._dispatcher.post(
+                LogMessage("✗  Please set the game folder first.\n", "err")
+            )
             return False
         self.state.busy = True
         self.state.installing = True

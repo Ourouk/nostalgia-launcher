@@ -452,12 +452,54 @@ def test_invalidate_cancels_worker_and_drops_its_queues(
 ):
     controller.start_verify()
     worker = worker_cls.instances[0]
+    controller.state.verify_out_dir = "/tmp/octo-game"
 
     controller.invalidate()
 
     assert worker.cancelled is True
     assert controller.state.running is False
     assert controller._op is None
+    assert controller.state.verify_out_dir == ""
+
+
+def test_start_update_never_persists_out_dir(
+    controller, worker_cls, config, monkeypatch
+):
+    """Strict folder confirmation: only Settings persists out_dir — the
+    update flow must never write the key back into the config."""
+    added = []
+
+    def spy(mutator):
+        before = set(config)
+        mutator(config)
+        added.extend(set(config) - before)
+        return config
+
+    monkeypatch.setattr(uc, "update_config", spy)
+    worker_cls.script = [("__VERSION__1.12.2", ""), ("__DONE__", "")]
+    assert controller.start_update() is True
+    _wait_and_poll(controller, worker_cls)
+    assert "out_dir" not in added
+
+
+def test_folder_change_after_verify_forces_reverify(
+    controller, worker_cls, config
+):
+    """A cached diff tree belongs to the folder it was verified against —
+    start_update refuses to apply it to a different path and re-verifies."""
+    controller.state.verify_out_dir = "/somewhere/else"
+    controller.state.diff_nodes = [{"path": "Data/a.bin"}]
+
+    assert controller.start_update() is False
+
+    assert len(worker_cls.instances) == 1  # a VerifyWorker, no UpdateWorker
+    assert worker_cls.instances[0].out_dir == "/tmp/octo-game"
+    assert controller._op == "verify"
+    events = controller._dispatcher.drain()
+    assert any(
+        "Game folder changed since the last verify" in getattr(e, "text", "")
+        for e in events
+    )
 
 
 def test_events_delivered_to_subscribers(controller, worker_cls, config):

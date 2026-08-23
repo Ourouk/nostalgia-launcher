@@ -19,7 +19,6 @@ import sys
 from .platform_support import (
     cache_dir,
     config_dir,
-    default_out_dir,
 )
 
 UPDATER_VERSION = "0.0.1"
@@ -41,9 +40,6 @@ else:
 
 CONFIG_FILE = os.path.join(config_dir(), "nostalgia_launcher_config.json")
 CACHE_FILE = os.path.join(cache_dir(), "nostalgia_launcher_hash_cache.json")
-
-# First-run default game folder — a user-writable location.
-DEFAULT_OUT_DIR = default_out_dir()
 
 # News feed timings (endpoints come from the launcher configuration).
 NEWS_TIMEOUT = 8

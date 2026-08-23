@@ -53,27 +53,36 @@ class SettingsController:
         self._news = news
 
         cfg = config_store.load_config()
+        # Strict game-folder confirmation: ``out_dir`` is only ever written
+        # by an explicit Settings apply. Existing installs that predate the
+        # confirmation flag are grandfathered once (backfill) so they aren't
+        # re-prompted; new installs start unconfirmed (path "").
+        if cfg.get("out_dir") and not cfg.get("out_dir_user_set"):
+            cfg = config_store.update_config(
+                lambda c: c.__setitem__("out_dir_user_set", True)
+            )
+        stored = cfg.get("out_dir") or ""
         self.state = SettingsState(
-            path=os.path.normpath(
-                cfg.get("out_dir")
-                or platform_support.default_game_folder(launcher.server_name())
+            path=os.path.normpath(stored) if stored else "",
+            suggestion=platform_support.default_game_folder(
+                launcher.server_name()
             ),
             config=cfg,
         )
         self.launch = LaunchSettings.from_config(cfg)
         # Detect first run before anything writes the config.
         self.state.first_run = not os.path.exists(CONFIG_FILE)
-        # On first run Settings auto-opens with the folder auto-set to the
-        # current dir. If the user closes it without changing the folder or
-        # adding a Defender exclusion, recommend the exclusion once on close.
+        # On first run Settings auto-opens with no folder selected — the
+        # user must confirm one before anything is downloaded or written.
+        # If they close it without adding a Defender exclusion, recommend
+        # the exclusion once on close.
         self.state.first_run_av_pending = (
             self.state.first_run and platform_support.can_manage_antivirus()
         )
         # On first run we don't verify (fetch the manifest / touch
-        # Config.wtf) until the user closes Settings, so nothing is written to
-        # the default folder before they've picked their real game folder. A
-        # folder change supersedes this (it verifies the new folder right
-        # away).
+        # Config.wtf) until the user closes Settings AND has a confirmed
+        # folder — nothing touches disk before that. A folder change
+        # supersedes this (it verifies the new folder right away).
         self.state.first_run_verify_pending = (
             self.state.first_run and self.client_update_enabled
         )
@@ -129,10 +138,12 @@ class SettingsController:
         if os.path.exists(os.path.join(new_val, "WoW.exe")):
             filesystem.remove_wdb(new_val)
 
-        # Wipe folder-scoped config (mods/addons install records) and set the
-        # new path — one atomic merge into the live config.
+        # Wipe folder-scoped config (mods/addons install records), set the
+        # new path and mark it user-confirmed — one atomic merge into the
+        # live config. This is the ONLY place out_dir is ever persisted.
         def _reset_for_new_folder(c):
             c["out_dir"] = new_val
+            c["out_dir_user_set"] = True
             for k in ("mods", "addons"):
                 c.pop(k, None)
 

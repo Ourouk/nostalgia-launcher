@@ -180,6 +180,48 @@ def test_first_run_flags_initialized(cfg, monkeypatch):
     assert c.state.first_run_av_pending is False  # can_manage_antivirus → off
 
 
+# ── strict game-folder confirmation ────────────────────────────────────
+
+
+def test_backfill_marks_existing_out_dir_user_set(cfg, fakes):
+    """Pre-flag installs keep their folder (no re-prompt) but gain the
+    confirmation flag once, on first controller construction."""
+    SettingsController(
+        fakes.dispatcher, fakes.updater, fakes.mods, fakes.addons, fakes.news
+    )
+    assert cfg["out_dir_user_set"] is True
+
+
+def test_unset_folder_starts_unconfirmed_with_suggestion(
+    cfg, fakes, monkeypatch
+):
+    """Strict mode: no stored out_dir means UNCONFIGURED (path "") — the
+    Games/<Server> value is only a placeholder suggestion."""
+    del cfg["out_dir"]
+    monkeypatch.setattr(sc.launcher, "server_name", lambda: "OctoWoW")
+    monkeypatch.setattr(
+        sc.platform_support,
+        "default_game_folder",
+        lambda name: f"/suggested/{name}",
+    )
+    c = SettingsController(
+        fakes.dispatcher, fakes.updater, fakes.mods, fakes.addons, fakes.news
+    )
+    assert c.state.path == ""
+    assert c.state.suggestion == "/suggested/OctoWoW"
+    assert "out_dir_user_set" not in cfg  # nothing to backfill → no write
+
+
+def test_set_path_marks_folder_user_set(controller, cfg, fakes, tmp_path):
+    """Settings apply is the ONLY out_dir writer — and always marks it
+    user-confirmed."""
+    game = tmp_path / "game"
+    game.mkdir()
+    assert controller.set_path(str(game)) is True
+    assert cfg["out_dir"] == str(game)
+    assert cfg["out_dir_user_set"] is True
+
+
 def test_client_updates_default_to_enabled(cfg, fakes):
     c = SettingsController(
         fakes.dispatcher, fakes.updater, fakes.mods, fakes.addons, fakes.news

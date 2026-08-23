@@ -16,6 +16,7 @@ import nostalgia_launcher.services.update_backend.http_update as client_update
 from nostalgia_launcher.controllers.mods import ModsController
 from nostalgia_launcher.state.events import (
     EventDispatcher,
+    LogMessage,
     ModsLoaded,
     OperationFinished,
     StatusChanged,
@@ -403,10 +404,16 @@ def test_apply_skips_mods_without_changes(controller, cfg, apply_backends):
     assert cfg["mods"]["AlphaMod"]["installed_version"] == "2.0"
 
 
-def test_apply_without_folder_is_noop(controller, cfg):
+def test_apply_without_folder_refuses_with_message(controller, cfg):
+    """Strict folder confirmation: no folder → refuse loudly, no worker."""
     cfg["out_dir"] = ""
-    controller.apply()
-    assert controller._dispatcher.drain() == []
+    assert controller.apply() is False
+    events = controller._dispatcher.drain()
+    assert any(
+        isinstance(e, LogMessage)
+        and "Please set the game folder first" in e.text
+        for e in events
+    )
 
 
 def test_apply_targeted_mod_keeps_pending(controller, cfg, apply_backends):

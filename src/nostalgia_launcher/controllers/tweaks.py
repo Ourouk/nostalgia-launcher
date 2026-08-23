@@ -12,7 +12,6 @@ an exception). No GUI toolkit.
 import threading
 
 from ..core import config_store
-from ..core.constants import DEFAULT_OUT_DIR
 from ..services import tweaks
 from ..services.tweaks import (
     TWEAKS_DEFAULTS,
@@ -42,9 +41,7 @@ class TweaksController:
         if get_out_dir is None:
 
             def get_out_dir():
-                return config_store.load_config().get(
-                    "out_dir", DEFAULT_OUT_DIR
-                )
+                return config_store.load_config().get("out_dir", "")
 
         self._get_out_dir = get_out_dir
 
@@ -132,7 +129,9 @@ class TweaksController:
 
         out = (self._get_out_dir() or "").strip()
         if not out:
-            self._dispatcher.post(LogMessage("Game folder not set.\n", "err"))
+            self._dispatcher.post(
+                LogMessage("✗  Please set the game folder first.\n", "err")
+            )
             return False
 
         self._dispatcher.post(LogMessage("\nApplying tweaks…\n", "acct"))

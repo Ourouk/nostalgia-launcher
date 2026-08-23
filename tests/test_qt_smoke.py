@@ -324,7 +324,7 @@ def test_startup_schedule_runs_the_full_launch_chain(qapp, app):
 
 
 def test_first_run_defers_verify_until_settings_close(
-    qapp, build_app, monkeypatch
+    qapp, build_app, monkeypatch, qt_env
 ):
     app = build_app(first_run=True)
     try:
@@ -338,11 +338,26 @@ def test_first_run_defers_verify_until_settings_close(
         assert win._settingsDialog.isVisible()
         hub.updater.start_verify.assert_not_called()
 
-        # Closing it arms the deferred verify (overwrite_config=True).
+        # Strict confirmation: closing WITHOUT confirming a folder verifies
+        # nothing — the footer says so explicitly.
         win._settingsDialog.close()
-        _wait_until(lambda: hub.updater.start_verify.call_count == 1)
-        hub.updater.start_verify.assert_called_once_with(True)
-        assert hub.settings.state.first_run_verify_pending is False
+        _wait_until(
+            lambda: hub.settings.state.first_run_verify_pending is False
+        )
+        hub.updater.start_verify.assert_not_called()
+        assert win._folderLabel.text() == "Game folder not set"
+
+        # Confirming a folder in Settings is what arms the verify.
+        game = qt_env.parent / "game"
+        game.mkdir(exist_ok=True)
+        assert hub.settings.set_path(str(game)) is True
+        hub.updater.start_verify.assert_called_once_with(overwrite_config=True)
+        # The footer mirrors the active folder whenever Settings closes.
+        win._sync_folder_label()
+        assert (
+            win._folderLabel.text()
+            == f"Game folder: {os.path.normpath(str(game))}"
+        )
     finally:
         app.close()
         app._hub.close()

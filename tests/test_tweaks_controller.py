@@ -235,7 +235,9 @@ def test_apply_without_folder_posts_error_and_does_not_spawn(
     spawned = controller.apply(dict(TWEAKS_DEFAULTS))
     assert spawned is False
     events = controller._dispatcher.drain()
-    assert LogMessage("Game folder not set.\n", "err") in events
+    assert (
+        LogMessage("✗  Please set the game folder first.\n", "err") in events
+    )
     assert not any(isinstance(e, OperationFinished) for e in events)
 
 

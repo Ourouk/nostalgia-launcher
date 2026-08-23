@@ -299,8 +299,8 @@ change to this contract.** **[verified]**
      `launcher.configure_from_dict()` → `launcher.persist_text()` (atomic write
      to `<config_dir>/nostalgia_launcher.json`).
    - Local file → `launcher.configure()` → `launcher.persist()`.
-   - `cli._ensure_default_game_folder()`: default game dir to
-     `~/Games/<ServerName>` (`platform_support.server_games_dir`).
+   - No game folder is auto-selected: the user confirms one in Settings
+     before anything downloads (strict confirmation).
 4. `_run_backend()` (`cli.py:185-212`):
    - `config_store.configure(CONFIG_FILE, CACHE_FILE, legacy_*…)` — sets the
      global store paths and runs **legacy file migration** (copy old
@@ -391,7 +391,8 @@ the mirror-probe thread. All daemon threads. **[verified]**
 - `is_windows/macos/linux`, `can_launch_client()` (Windows True; Linux True
   only if `umu.umu_available()`), `can_manage_antivirus()`, per-OS
   `config_dir()` / `cache_dir()` / `data_dir()`, `server_games_dir()`,
-  `open_folder()` (spawns `explorer`/`open`/`xdg-open`), `default_out_dir()`.
+  `default_game_folder()` (placeholder suggestion, `""` when unnamed),
+  `open_folder()` (spawns `explorer`/`open`/`xdg-open`).
 - **`open_folder`** uses `explorer.exe <path>` explicitly (not
   `os.startfile`) because ShellExecute would resolve a Desktop `.lnk` of the
   same name as an executable — a real security note in the code. **[verified]**
@@ -631,13 +632,13 @@ precedence custom > embedded > remote — see `docs/agents-architecture.md`).
 **[verified]**
 
 **Defaults.**
-- `DEFAULT_OUT_DIR`: Windows `exe_dir/VanillaWoW`; else `~/VanillaWoW`
-  (`platform_support.default_out_dir`).
-- First-run default game folder: `~/Games/<ServerName>`
-  (`cli._ensure_default_game_folder`) — *differs* from `DEFAULT_OUT_DIR`,
-  which is what `SettingsState.path` initializes to. A subtle inconsistency:
-  the Settings field shows `~/VanillaWoW` while `cli` sets `~/Games/<server>`
-  only if the field is empty. **[verified / inference]**
+- Game folder: none by default — strict user confirmation. `out_dir` is
+  persisted only by Settings apply (which also writes `out_dir_user_set`);
+  controllers read stored-or-empty and refuse when empty. Pre-flag installs
+  are backfilled once (`SettingsController.__init__`). The suggested
+  `~/Games/<ServerName>` comes from `platform_support.default_game_folder`
+  and is a placeholder only — never persisted, never auto-created.
+  **[verified]**
 - `TWEAKS_DEFAULTS`, `fov_default_for_display()` (display-ratio-based FOV).
 - `umu` defaults: `UMU-Proton`, renderer `auto`, gamemode on, wayland on.
 
@@ -1000,7 +1001,7 @@ events asserted via monkeypatched `QMessageBox`/signals; `conftest` autouse
 | K7 | `core/filesystem.py:71-76` | `get_client_version` uses fixed 1.12.1 offsets `0x00437BFC`/`0x00437C04`. **FIXED 2026-08-22**: named `_BUILD_OFFSET`/`_VERSION_OFFSET`, documented as 1.12.1-specific, and non-version-shaped bytes now decode to "" instead of garbage. | Different client builds → wrong version. | Wrong footer version label. | **Medium** |
 | K8 | `services/mods.py:fetch_mods_catalog` | Mods catalog has no TTL; cached forever unless `force=True`. **FIXED 2026-08-21** (commit `9146140`): weekly `catalog.CATALOG_TTL` refresh via `catalog_is_stale()`. | Stale mod list until manual Reload. | Users may not see new mods. | **Medium** |
 | K9 | `.tmp` (repo root) | Untracked file `{"out_dir": "/home/ourouk/Games/Nostalgia"}` — local artifact. **FIXED 2026-08-21**: deleted; root cause (a `save_cache` call before `configure()` made `_atomic_write("")` leak a `.tmp` into CWD) closed by making `save_config`/`save_cache` no-ops until the store is configured. | Should not be committed/left. | None (untracked). | **High** |
-| K10 | `controllers/settings.py` ↔ `cli.py` | Two "default game folder" values (`DEFAULT_OUT_DIR=~/VanillaWoW` vs `cli` sets `~/Games/<server>`). **FIXED 2026-08-22**: shared `platform_support.default_game_folder(server_name)` used by both the first-run default and the Settings fallback. | Settings shows one, cli sets another. | Confusing first-run UX. | **Medium** |
+| K10 | `controllers/settings.py` ↔ `cli.py` | Two "default game folder" values (`DEFAULT_OUT_DIR=~/VanillaWoW` vs `cli` sets `~/Games/<server>`). **FIXED 2026-08-22**: shared `platform_support.default_game_folder(server_name)`. **SUPERSEDED 2026-08-23 by strict confirmation**: no auto-default at all — Settings apply is the sole `out_dir` writer (plus `out_dir_user_set` flag, backfilled once for pre-flag installs); controllers read stored-or-empty and refuse when unset. | Silent wrong-folder downloads. | **High** → resolved. |
 | K11 | `BITTORRENT_UPDATER_NOTES.md` docstring vs code (§12.7) | Claim of post-torrent manifest re-verify not implemented. **FIXED 2026-08-22**: re-verification implemented (see §12.7). | Misleading doc. | Trust reasoning unclear. | **Medium** |
 | K12 | `core/config_store.save_cache` | No lock (vs `update_config` lock). **FIXED 2026-08-21**: `save_cache` (and `save_config`) now take `_CONFIG_LOCK`. | Concurrent writers possible. | Rare cache corruption. | **Low** |
 
@@ -1071,7 +1072,8 @@ events asserted via monkeypatched `QMessageBox`/signals; `conftest` autouse
   (`cli.py:83`) → `cli._pick_launcher_config` (`cli.py:146`).
 - **Path:** `server_index.fetch_servers_index` → `LauncherConfigDialog`
   (UI) → `server_index.fetch_server_config` → `launcher.configure_from_dict`
-  → `launcher.persist_text` → `cli._ensure_default_game_folder`.
+  → `launcher.persist_text` → `_run_backend` (game folder stays unset until
+  confirmed in Settings).
 - **Files:** `cli.py`, `services/server_index.py`, `core/launcher.py`,
   `ui/qt/launcher_config_dialog.py`.
 - **Risks:** network fetch of `servers.json`; a malformed chosen config is

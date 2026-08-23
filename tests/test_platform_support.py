@@ -13,7 +13,7 @@ from nostalgia_launcher.core.platform_support import (
     can_manage_antivirus,
     config_dir,
     data_dir,
-    default_out_dir,
+    default_game_folder,
     is_linux,
     is_macos,
     is_windows,
@@ -162,10 +162,18 @@ def test_cache_dir_macos(fake_platform, monkeypatch):
     assert cache_dir() == "/Users/user/Library/Caches/NostalgiaLauncher"
 
 
-def test_default_out_dir_non_windows_writable(fake_platform, monkeypatch):
+def test_default_game_folder_named_server_is_games_subfolder(
+    fake_platform, monkeypatch
+):
     fake_platform("linux")
     monkeypatch.setenv("HOME", "/home/user")
-    assert default_out_dir() == "/home/user/VanillaWoW"
+    assert default_game_folder("OctoWoW") == "/home/user/Games/OctoWoW"
+
+
+def test_default_game_folder_blank_server_is_unconfigured(fake_platform):
+    fake_platform("linux")
+    assert default_game_folder("") == ""
+    assert default_game_folder(None) == ""
 
 
 # ── data dir ────────────────────────────────────────────────────────────────

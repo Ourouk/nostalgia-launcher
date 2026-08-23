@@ -114,6 +114,7 @@ class MainWindow(QMainWindow):
         # button/status with the controller's current readiness.
         if self._hub.updater.read_client_version():
             self._versionLabel.setText(self._hub.updater.state.client_version)
+        self._sync_folder_label()
         self._refresh_ready_state()
 
         # Session-log drain: the global log_sink queue receives lines written
@@ -396,6 +397,12 @@ class MainWindow(QMainWindow):
         self._versionLabel.setStyleSheet(f"color: {p.text_dim.name()};")
         leftLayout.addWidget(self._versionLabel)
 
+        # The ACTIVE game folder, always visible — the launcher never
+        # downloads without one, so this label makes the target unmistakable.
+        self._folderLabel = QLabel("", left)
+        self._folderLabel.setStyleSheet(f"color: {p.text_dim.name()};")
+        leftLayout.addWidget(self._folderLabel)
+
         layout.addWidget(left)
         layout.addStretch(1)
 
@@ -488,6 +495,15 @@ class MainWindow(QMainWindow):
 
     # ── settings dialog ─────────────────────────────────────────────────────
 
+    def _sync_folder_label(self):
+        """Mirror the active game folder into the footer — "" renders as an
+        explicit not-set hint so the download target is never ambiguous."""
+        path = self._hub.settings.state.path.strip()
+        if path:
+            self._folderLabel.setText(f"Game folder: {path}")
+        else:
+            self._folderLabel.setText("Game folder not set")
+
     def _open_settings_dialog(self):
         """Build the settings dialog on demand and show it non-modally.
 
@@ -510,6 +526,7 @@ class MainWindow(QMainWindow):
         """First-run close: run the deferred verification against the chosen
         folder, recommend the Defender exclusion once, then mark the prompt
         done so closing Settings again never re-asks."""
+        self._sync_folder_label()
         if (
             self._hub.settings.client_update_enabled
             and self._hub.settings.state.first_run_verify_pending

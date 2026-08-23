@@ -14,7 +14,9 @@ not maintain or recommend any server directory.
 ## What it does
 
 - Verifies a selected game folder and updates only the files that changed,
-  against a manifest **you configure**.
+  against a manifest **you configure**. The folder must be confirmed once in
+  Settings — the launcher never downloads anywhere until you choose where,
+  and the active folder stays visible in the footer.
 - Bulk-downloads changed files over BitTorrent when your configuration
   advertises a snapshot, falling back to plain HTTP automatically.
 - Installs and updates mods and addons from catalogs **your configuration

@@ -36,6 +36,9 @@ class UpdateState:
     torrent_stale: list | None = None
     torrent_reachable: bool | None = None
     torrent_error: str | None = None
+    # Folder the last verify ran against — start_update refuses to apply a
+    # cached diff tree to a different path.
+    verify_out_dir: str = ""
     client_version: str = ""
     game_running: bool = False
     game_pid: int | None = None
@@ -204,9 +207,12 @@ class AddonsState:
 @dataclass
 class SettingsState:
     """Game-folder path (_path_var), the loaded config dict (_cfg) and the
-    first-run flags."""
+    first-run flags. ``path`` is the stored folder ("" when unconfirmed);
+    ``suggestion`` is the Games/<ServerName> placeholder the Settings dialog
+    shows until the user confirms a folder."""
 
     path: str = ""
+    suggestion: str = ""
     config: dict = field(default_factory=dict)
     first_run: bool = False
     first_run_av_pending: bool = False

@@ -11,7 +11,6 @@ import os
 import threading
 
 from ..core import config_store
-from ..core.constants import DEFAULT_OUT_DIR
 from ..core.errors import describe_install_error
 from ..services import mods
 from ..state.events import (
@@ -41,9 +40,7 @@ class ModsController:
         if get_out_dir is None:
 
             def get_out_dir():
-                return config_store.load_config().get(
-                    "out_dir", DEFAULT_OUT_DIR
-                )
+                return config_store.load_config().get("out_dir", "")
 
         self._get_out_dir = get_out_dir
         self.state.records, self.state.unknown = self._load_records()
@@ -159,6 +156,9 @@ class ModsController:
             return False
         out = (self._get_out_dir() or "").strip()
         if not out:
+            self._dispatcher.post(
+                LogMessage("✗  Please set the game folder first.\n", "err")
+            )
             return False
         self._busy = True
         threading.Thread(

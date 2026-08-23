@@ -179,6 +179,12 @@ class SettingsDialog(QDialog):
         self._path_edit = QLineEdit(self._settings.state.path, body)
         self._path_edit.setObjectName("settingsPath")
         self._path_edit.setReadOnly(True)
+        # No confirmed folder yet: suggest Games/<ServerName> without
+        # pretending it is already selected.
+        self._path_edit.setPlaceholderText(
+            self._settings.state.suggestion
+            or "Select the game folder containing WoW.exe"
+        )
         self._path_edit.setFont(
             QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         )

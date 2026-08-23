@@ -781,6 +781,19 @@ def test_apply_without_folder_is_noop(controller, cfg):
     assert controller._dispatcher.drain() == []
 
 
+def test_apply_pending_without_folder_refuses_with_message(controller, cfg):
+    """Strict folder confirmation: no folder → refuse loudly, no worker."""
+    cfg["out_dir"] = ""
+    controller.state.pending = {"Foo": True}
+    assert controller.apply_pending() is False
+    events = controller._dispatcher.drain()
+    assert any(
+        isinstance(e, LogMessage)
+        and "Please set the game folder first" in e.text
+        for e in events
+    )
+
+
 def test_apply_marks_pfui_for_profile_patch(
     controller, cfg, tmp_path, monkeypatch
 ):

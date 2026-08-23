@@ -34,7 +34,10 @@ this change, an existing installation starts fresh:
   (point it at your old `vanilla_wow_launcher.json` — an explicit file path
   still works regardless of filename) or the URL field, then review the
   summary and accept it.
-- The game folder must be selected again.
+- The game folder must be selected again — and the launcher now requires
+  it: nothing is downloaded, installed or written until you confirm a game
+  folder once in Settings. The active folder stays visible in the footer at
+  all times.
 - Custom catalog files (`*_custom.json`) are **not** carried over; copy or
   rename them into the current config directory by hand if you still use
   them.

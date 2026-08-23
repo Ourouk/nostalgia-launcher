@@ -13,7 +13,6 @@ import threading
 from dataclasses import dataclass
 
 from ..core.config_store import load_config, update_config
-from ..core.constants import DEFAULT_OUT_DIR
 from ..core.filesystem import (
     get_client_version,
     pick_game_executable,
@@ -103,7 +102,7 @@ class UpdateController:
         if get_out_dir is None:
 
             def get_out_dir():
-                return load_config().get("out_dir", DEFAULT_OUT_DIR)
+                return load_config().get("out_dir", "")
 
         self._get_out_dir = get_out_dir
 
@@ -131,6 +130,7 @@ class UpdateController:
         out = (self._get_out_dir() or "").strip()
         if not out:
             return
+        self.state.verify_out_dir = out
         # Cancel any verify already in flight before swapping the queues, so
         # a stale worker can't keep writing to a queue we no longer poll.
         if self._verify_worker is not None:
@@ -170,7 +170,21 @@ class UpdateController:
                 LogMessage("✗  Please set the game folder first.\n", "err")
             )
             return
-        update_config(lambda c: c.__setitem__("out_dir", out))
+        if (
+            self.state.diff_nodes is not None
+            and self.state.verify_out_dir != out
+        ):
+            # The cached diff tree belongs to another folder — never apply
+            # a stale file list to a different path; re-verify instead.
+            self._dispatcher.post(
+                LogMessage(
+                    "Game folder changed since the last verify — "
+                    "verifying again…\n",
+                    "err",
+                )
+            )
+            self.start_verify()
+            return False
         self._dispatcher.post(LogMessage(f"\nGame folder: {out}\n", "dim"))
         torrent_wanted = (
             set(self.state.torrent_stale)
@@ -235,6 +249,7 @@ class UpdateController:
         self.state.client_ready = False
         self.state.manifest_available = False
         self.state.diff_nodes = None
+        self.state.verify_out_dir = ""
         # Also clear torrent state
         self.state.torrent_reachable = None
         self.state.torrent_error = None

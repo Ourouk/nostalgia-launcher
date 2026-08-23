@@ -120,13 +120,6 @@ def _windows_local_dir() -> str:
     return os.path.join(profile, "AppData", "Local")
 
 
-def default_out_dir() -> str:
-    """First-run default game folder — always a user-writable location."""
-    if is_windows():
-        return os.path.join(_app_dir(), "VanillaWoW")
-    return os.path.join(os.path.expanduser("~"), "VanillaWoW")
-
-
 # Characters illegal in a folder name on Windows/Linux/macOS — stripped when
 # turning a server name into a Games/<name> subfolder.
 _ILLEGAL_DIR_CHARS = ':/\\*?"<>|'
@@ -152,13 +145,12 @@ def server_games_dir(name: str) -> str:
 
 
 def default_game_folder(server_name: str | None) -> str:
-    """The default client folder for a server: Games/<name> when a server is
-    configured, else the plain DEFAULT_OUT_DIR fallback. Single source of
-    truth shared by the first-run wizard and the Settings fallback so both
-    never disagree about where the client will live."""
-    if server_name:
-        return server_games_dir(server_name)
-    return default_out_dir()
+    """The suggested client folder for a server: Games/<name> when a server
+    is configured, else "" (unconfigured — the user must pick a folder; the
+    launcher never downloads without an explicit game-folder confirmation)."""
+    if not server_name:
+        return ""
+    return server_games_dir(server_name)
 
 
 def open_folder(path: str):
@@ -176,10 +168,3 @@ def open_folder(path: str):
         subprocess.Popen(["open", path], close_fds=True)
     else:
         subprocess.Popen(["xdg-open", path], close_fds=True)
-
-
-def _app_dir() -> str:
-    """Directory of the executable when frozen, otherwise this file's dir."""
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.abspath(__file__))
