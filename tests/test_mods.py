@@ -430,7 +430,13 @@ def test_fetch_updater_latest_tag_cached(tmp_path, monkeypatch):
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
     config_store.save_config(
-        {"updater_release_cache": {"timestamp": 9999999999, "tag": "v9.9.9"}}
+        {
+            "updater_release_cache": {
+                "timestamp": 9999999999,
+                "tag": "v9.9.9",
+                "version": self_update.UPDATER_VERSION,
+            }
+        }
     )
 
     def fail(*a, **k):

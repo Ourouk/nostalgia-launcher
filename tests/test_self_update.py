@@ -93,3 +93,50 @@ def test_update_available_compares_against_current_version():
     current = self_update.UPDATER_VERSION
     assert not self_update.updater_update_available(current)
     assert self_update.updater_update_available(current + ".1")
+
+
+def test_cache_ignored_when_version_mismatches(tmp_path, monkeypatch):
+    _configure(tmp_path)
+    # A stale entry stamped with a different app version (e.g. a pre-reset
+    # v1.x tag) must NOT be served after restarting at a new version.
+    config_store.save_config(
+        {
+            "updater_release_cache": {
+                "timestamp": 9999999999,
+                "tag": "v9.9.9",
+                "version": "1.4.1",
+            }
+        }
+    )
+    calls = []
+    monkeypatch.setattr(
+        self_update,
+        "secure_urlopen",
+        _fake_urlopen(calls, {"tag_name": "v0.0.1"}),
+    )
+    # The mismatch forces a re-fetch; the new (equal) tag is not "available".
+    assert self_update.fetch_updater_latest_tag() == "v0.0.1"
+    assert len(calls) == 1
+
+
+def test_http_404_clears_stale_cache(tmp_path, monkeypatch):
+    _configure(tmp_path)
+    config_store.save_config(
+        {
+            "updater_release_cache": {
+                "timestamp": 0,
+                "tag": "v9.9.9",
+                "version": self_update.UPDATER_VERSION,
+            }
+        }
+    )
+
+    def not_found(*a, **k):
+        import urllib.error
+
+        raise urllib.error.HTTPError("url", 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(self_update, "secure_urlopen", not_found)
+    assert self_update.fetch_updater_latest_tag() is None
+    # The stale entry is dropped so it can't be resurrected within the TTL.
+    assert "updater_release_cache" not in config_store.load_config()

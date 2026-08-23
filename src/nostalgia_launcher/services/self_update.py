@@ -2,6 +2,7 @@
 
 import json
 import time
+import urllib.error
 import urllib.request
 
 from ..core.config_store import load_config, update_config
@@ -14,14 +15,26 @@ UPDATER_REPO = "Ourouk/nostalgia-launcher"
 UPDATER_CHECK_TTL = 86400  # 1 day, cached in the config file
 
 
+def _invalidate_cache():
+    """Drop any stored release tag so a stale comparison can't resurface."""
+    update_config(lambda c: c.pop("updater_release_cache", None))
+
+
 def fetch_updater_latest_tag(force: bool = False) -> str | None:
     """Latest release tag of the updater's own repo, cached for a day. Returns
-    None when there are no releases yet (GitHub 404) or on any error."""
+    None when there are no releases yet (GitHub 404) or on any error.
+
+    The cache is keyed to the current app version: a version reset or
+    downgrade invalidates any previously stored tag, so an old comparison
+    (for example a pre-reset ``v1.x`` tag after restarting at ``0.0.1``)
+    can never be served back as "an update is available".
+    """
     now = time.time()
     if not force:
         entry = load_config().get("updater_release_cache", {})
         if (
-            entry.get("tag") is not None
+            entry.get("version") == UPDATER_VERSION
+            and entry.get("tag") is not None
             and (now - entry.get("timestamp", 0)) < UPDATER_CHECK_TTL
         ):
             return entry["tag"]
@@ -32,14 +45,24 @@ def fetch_updater_latest_tag(force: bool = False) -> str | None:
         )
         with secure_urlopen(req, timeout=10) as r:
             tag = json.load(r).get("tag_name")
+    except urllib.error.HTTPError as e:
+        # A 404 means the repo has no releases yet: clear any stale cache
+        # entry so a later in-TTL read can't resurrect an old tag.
+        if e.code == 404:
+            _invalidate_cache()
+        return None
     except Exception:
         return None
     if tag:
         update_config(
             lambda c: c.__setitem__(
-                "updater_release_cache", {"timestamp": now, "tag": tag}
+                "updater_release_cache",
+                {"timestamp": now, "tag": tag, "version": UPDATER_VERSION},
             )
         )
+    else:
+        # A 200 with no tag_name (unusual) — clear to avoid a phantom result.
+        _invalidate_cache()
     return tag
 
 
