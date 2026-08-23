@@ -43,6 +43,11 @@ def test_cached_sha1_invalidates_on_change(tmp_path):
     cache = {}
     h1 = filesystem.cached_sha1(str(p), cache)
     p.write_bytes(b"b")
+    # Coarse-mtime filesystems (Windows/NTFS) can give the rewrite the same
+    # timestamp as the original write — bump it explicitly so the invalidation
+    # under test is deterministic.
+    st = p.stat()
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
     h2 = filesystem.cached_sha1(str(p), cache)
     assert h1 != h2
 

@@ -11,6 +11,7 @@ import time
 import pytest
 
 import nostalgia_launcher.controllers.tweaks as tc
+import nostalgia_launcher.services.tweaks as tweaks_services
 from nostalgia_launcher.controllers.tweaks import TweaksController
 from nostalgia_launcher.services.tweaks import (
     TWEAKS_DEFAULTS,
@@ -26,6 +27,15 @@ from nostalgia_launcher.state.events import (
 @pytest.fixture
 def backends(monkeypatch):
     """Shared fake backends: config store + Config.wtf writer."""
+    # Windows runners expose their real display through ctypes.windll, which
+    # would skew fov_default_for_display(); pin a 16:9 panel so the FOV
+    # default (and every dirty/custom comparison built on it) is
+    # host-independent.
+    monkeypatch.setattr(
+        tweaks_services,
+        "_get_display_info_safe",
+        lambda: {"width": 1920, "height": 1080, "refresh_rate": 60},
+    )
     state = {"out_dir": "/tmp/octo-game"}
     monkeypatch.setattr(tc.config_store, "load_config", lambda: state)
     monkeypatch.setattr(

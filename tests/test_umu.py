@@ -39,7 +39,11 @@ def test_find_umu_falls_back_to_local_bin(monkeypatch, fake_home):
     runner = local_bin / "umu-run"
     runner.write_text("#!/bin/sh\n")
     runner.chmod(0o755)
-    assert umu.find_umu() == str(runner)
+    found = umu.find_umu()
+    assert found
+    # expanduser only swaps the "~" prefix, leaving "/" separators verbatim,
+    # so compare separator-insensitively.
+    assert os.path.normpath(found) == os.path.normpath(str(runner))
 
 
 def test_find_umu_missing(monkeypatch, fake_home):

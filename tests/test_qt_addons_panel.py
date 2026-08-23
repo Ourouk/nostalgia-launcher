@@ -496,7 +496,8 @@ def test_catalog_age_label_and_refresh_button(qapp, window, hub, monkeypatch):
     monkeypatch.setattr(
         addons_module,
         "catalog_last_updated",
-        lambda: time_mod.time() - 3600,
+        # 90min: safely inside the "1h ago" bucket (see mods panel twin).
+        lambda: time_mod.time() - 5400,
     )
     panel = _panel(window)
     panel._refresh_age_label()

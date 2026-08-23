@@ -55,25 +55,23 @@ def test_persist_text_rejects_invalid(tmp_path, monkeypatch):
 # ── platform_support Games folder ───────────────────────────────────────
 
 
-def test_games_dir_is_under_home(monkeypatch):
-    monkeypatch.setenv("HOME", "/home/tester")
+def test_games_dir_is_under_home(fake_home):
     assert platform_support.games_dir() == os.path.join(
-        "/home/tester", "Games"
+        str(fake_home), "Games"
     )
 
 
-def test_server_games_dir_sanitizes(monkeypatch):
-    monkeypatch.setenv("HOME", "/home/tester")
+def test_server_games_dir_sanitizes(fake_home):
     assert platform_support.server_games_dir("OctoWoW") == os.path.join(
-        "/home/tester", "Games", "OctoWoW"
+        str(fake_home), "Games", "OctoWoW"
     )
     # illegal path characters are stripped
     assert platform_support.server_games_dir('a/b:c*?"<>|') == os.path.join(
-        "/home/tester", "Games", "abc"
+        str(fake_home), "Games", "abc"
     )
     # a blank name falls back to VanillaWoW
     assert platform_support.server_games_dir("   ") == os.path.join(
-        "/home/tester", "Games", "VanillaWoW"
+        str(fake_home), "Games", "VanillaWoW"
     )
 
 

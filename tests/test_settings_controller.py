@@ -6,6 +6,7 @@ filesystem, platform support, browser, mirror/AV network calls) are swapped
 for fakes via monkeypatch so nothing touches the network or the real config.
 """
 
+import os
 import time
 
 import pytest
@@ -168,6 +169,11 @@ def _log_texts(events):
 
 
 def test_first_run_flags_initialized(cfg, monkeypatch):
+    # Pin the predicate off: on Windows hosts can_manage_antivirus() is
+    # True by default, which would raise first_run_av_pending.
+    monkeypatch.setattr(
+        sc.platform_support, "can_manage_antivirus", lambda: False
+    )
     c = SettingsController(
         EventDispatcher(),
         _FakeUpdater(),
@@ -490,7 +496,10 @@ def test_set_path_rejected_while_update_running(
     assert cache.exists()
     assert "mods" in cfg
     assert cfg["out_dir"] == "/tmp/octo-game"
-    assert controller.state.path == "/tmp/octo-game"
+    # state.path is normalized per host OS; compare separator-insensitively.
+    assert os.path.normpath(controller.state.path) == os.path.normpath(
+        "/tmp/octo-game"
+    )
     assert fakes.updater.invalidate_calls == 0
     assert fakes.updater.verify_calls == []
     assert fakes.mods.resets == 0
@@ -595,6 +604,9 @@ def test_allow_through_antivirus_quote_in_path_stays_inert(
     )
     evil_path = "C:/Users/O'Brien/Ga'; Start-Process calc.exe; 'mes"
     controller.state.path = evil_path
+    # The state normalizes separators per host OS, and the script encodes
+    # the *stored* path — derive the expected blob from it.
+    stored = controller.state.path
     controller.allow_through_antivirus()
     assert shell.calls
     params = shell.calls[0][3]
@@ -604,7 +616,7 @@ def test_allow_through_antivirus_quote_in_path_stays_inert(
     assert "Add-MpPreference -ExclusionPath $p" in script
     assert evil_path not in script
     # The raw path only ever appears as the base64 blob inside the script.
-    path_b64 = base64.b64encode(evil_path.encode("utf-8")).decode("ascii")
+    path_b64 = base64.b64encode(stored.encode("utf-8")).decode("ascii")
     assert f"FromBase64String('{path_b64}')" in script
 
 

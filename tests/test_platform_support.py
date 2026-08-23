@@ -127,9 +127,11 @@ def test_config_dir_linux_ignores_xdg(fake_platform, monkeypatch, tmp_path):
 def test_config_dir_macos_application_support(fake_platform, monkeypatch):
     fake_platform("darwin")
     monkeypatch.setenv("HOME", "/Users/user")
-    assert (
-        config_dir()
-        == "/Users/user/Library/Application Support/NostalgiaLauncher"
+    assert config_dir() == os.path.join(
+        "/Users/user",
+        "Library",
+        "Application Support",
+        "NostalgiaLauncher",
     )
 
 
@@ -159,15 +161,18 @@ def test_cache_dir_linux_uses_xdg(fake_platform, monkeypatch, tmp_path):
 def test_cache_dir_macos(fake_platform, monkeypatch):
     fake_platform("darwin")
     monkeypatch.setenv("HOME", "/Users/user")
-    assert cache_dir() == "/Users/user/Library/Caches/NostalgiaLauncher"
+    assert cache_dir() == os.path.join(
+        "/Users/user", "Library", "Caches", "NostalgiaLauncher"
+    )
 
 
 def test_default_game_folder_named_server_is_games_subfolder(
-    fake_platform, monkeypatch
+    fake_platform, fake_home
 ):
     fake_platform("linux")
-    monkeypatch.setenv("HOME", "/home/user")
-    assert default_game_folder("OctoWoW") == "/home/user/Games/OctoWoW"
+    assert default_game_folder("OctoWoW") == os.path.join(
+        str(fake_home), "Games", "OctoWoW"
+    )
 
 
 def test_default_game_folder_blank_server_is_unconfigured(fake_platform):
@@ -188,13 +193,14 @@ def test_data_dir_linux_uses_xdg_data_home(
 
 
 def test_data_dir_linux_falls_back_to_local_share(
-    fake_platform, monkeypatch, tmp_path
+    fake_platform, monkeypatch, fake_home
 ):
     fake_platform("linux")
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    assert data_dir() == str(
-        tmp_path / "home" / ".local" / "share" / "nostalgia-launcher"
+    # expanduser prefers USERPROFILE over HOME on Windows, so the shared
+    # fake_home fixture sets both.
+    assert data_dir() == os.path.join(
+        str(fake_home), ".local", "share", "nostalgia-launcher"
     )
 
 
@@ -209,9 +215,11 @@ def test_data_dir_windows_uses_localappdata(
 def test_data_dir_macos_application_support(fake_platform, monkeypatch):
     fake_platform("darwin")
     monkeypatch.setenv("HOME", "/Users/user")
-    assert (
-        data_dir()
-        == "/Users/user/Library/Application Support/NostalgiaLauncher"
+    assert data_dir() == os.path.join(
+        "/Users/user",
+        "Library",
+        "Application Support",
+        "NostalgiaLauncher",
     )
 
 
