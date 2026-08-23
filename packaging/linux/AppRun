@@ -1,0 +1,14 @@
+#!/bin/sh
+# AppImage AppRun launcher: exec the bundled PyInstaller app. The AppDir may
+# be mounted read-only and from anywhere, so always resolve relative to the
+# launcher's own real path (readlink -f) rather than $PWD.
+HERE="$(dirname "$(readlink -f "$0")")"
+
+# Point the dynamic loader and Qt at the bundled libraries/plugins.
+INTERNAL="$HERE/usr/bin/_internal"
+
+export LD_LIBRARY_PATH="$INTERNAL:$INTERNAL/PySide6/Qt/lib:$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export QT_PLUGIN_PATH="$INTERNAL/PySide6/Qt/plugins"
+export QT_QPA_PLATFORM_PLUGIN_PATH="$INTERNAL/PySide6/Qt/plugins/platforms"
+
+exec "$HERE/usr/bin/NostalgiaLauncher" "$@"

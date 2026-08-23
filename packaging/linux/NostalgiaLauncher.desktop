@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Nostalgia Launcher
+GenericName=Vanilla WoW updater
+Comment=Updater and mod manager for the Vanilla WoW client
+Exec=NostalgiaLauncher
+Icon=NostalgiaLauncher
+Terminal=false
+Categories=Game;Utility;
+StartupNotify=false
+StartupWMClass=NostalgiaLauncher

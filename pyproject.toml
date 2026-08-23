@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nostalgia-launcher"
+version = "0.0.1"
+description = "Standalone updater and mod manager for the Vanilla WoW client"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.6",
+    # certifi supplies a current CA bundle so TLS verification works even on
+    # platforms with a stale/incomplete system root store (e.g. Windows).
+    "certifi>=2024.0",
+    # libtorrent only ships wheels for CPython 3.10-3.13; on newer
+    # interpreters the client update path degrades to per-file HTTP
+    # downloads (services/torrent_download.available()).
+    "libtorrent; python_version < '3.14'",
+]
+
+[project.scripts]
+nostalgia-launcher = "nostalgia_launcher.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nostalgia_launcher"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pyinstaller>=6.0",
+    "ruff>=0.15",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "e2e: requires the real WoW client (context/client) and torrent (context/wow-client.torrent); local-only, skipped in CI",
+]
+
+[tool.ruff]
+# Match the codebase's existing pep8-style 79-column wrapping.
+line-length = 79
+target-version = "py310"
+exclude = ["dist", "build"]
+
+[tool.ruff.lint]
+# Core correctness (E4/E7/E9/F) plus import sorting, whitespace nits and the
+# low-risk modernisations (UP) / bugbear (B) rule families.
+select = ["E4", "E7", "E9", "F", "I", "W", "UP", "B"]

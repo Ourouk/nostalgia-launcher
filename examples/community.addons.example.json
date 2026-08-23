@@ -1,0 +1,8 @@
+[
+  {
+    "name": "ExampleAddon",
+    "git": "https://github.com/example-community/example-addon",
+    "branch": "main",
+    "description": "Synthetic example addon entry. Replace this catalog with your own community's addon list — each entry needs a `name`, a `git` URL on an allowed host, and a `branch`."
+  }
+]

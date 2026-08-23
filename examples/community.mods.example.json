@@ -1,0 +1,21 @@
+[
+  {
+    "id": "example-tweak",
+    "essential": false,
+    "name": "ExampleTweak",
+    "description": "Synthetic example mod entry. Replace this catalog with your own community's mod list — entry fields must match the mod-catalog schema.",
+    "repo_url": "https://github.com/example-community/example-tweak",
+    "source": {
+      "kind": "github_release",
+      "owner": "example-community",
+      "repo": "example-tweak",
+      "asset_pattern": "example-tweak-*.zip",
+      "prefer_no": null,
+      "extract_map": {
+        "ExampleTweak.dll": "ExampleTweak.dll"
+      }
+    },
+    "register_dll": "ExampleTweak.dll",
+    "installed_files": ["ExampleTweak.dll"]
+  }
+]
