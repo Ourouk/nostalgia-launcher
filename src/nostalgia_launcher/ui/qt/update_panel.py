@@ -1,12 +1,14 @@
 """Detailed client update progress panel."""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QProgressBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -18,6 +20,8 @@ from . import metrics
 class UpdatePanel(QWidget):
     """Render structured verify/download progress for the UPDATE tab."""
 
+    forceRecheckClicked = Signal()
+
     def __init__(self, palette, parent=None):
         super().__init__(parent)
         self._palette = palette
@@ -26,6 +30,7 @@ class UpdatePanel(QWidget):
         root.setContentsMargins(32, 28, 32, 28)
         root.setSpacing(12)
 
+        title_row = QHBoxLayout()
         title = QLabel("CLIENT UPDATE", self)
         title.setObjectName("updateTitle")
         font = title.font()
@@ -33,7 +38,29 @@ class UpdatePanel(QWidget):
         font.setPointSize(metrics.PT_PAGE)
         title.setFont(font)
         title.setStyleSheet(f"color: {palette.gold_lt.name()};")
-        root.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        # Force recheck: drop the hash/torrent-verdict cache and re-verify
+        # every file — SHA-1 checksums when the manifest is reachable,
+        # BitTorrent piece hashes otherwise (the worker picks per backend).
+        self._recheck = QToolButton(self)
+        self._recheck.setObjectName("updateRecheck")
+        self._recheck.setText("⟳  Force recheck")
+        self._recheck.setToolTip(
+            "Re-verify every game file from scratch — checksums when the "
+            "manifest is reachable, BitTorrent piece hashes otherwise"
+        )
+        self._recheck.setCursor(Qt.PointingHandCursor)
+        self._recheck.setStyleSheet(
+            f"QToolButton {{ color: {palette.text_dim.name()};"
+            " font-size: 9pt; }"
+            f"QToolButton:hover {{ color: {palette.gold.name()}; }}"
+            f"QToolButton:disabled {{ color:"
+            f" {palette.panel_bdr.name()}; }}"
+        )
+        self._recheck.clicked.connect(self.forceRecheckClicked)
+        title_row.addWidget(self._recheck)
+        root.addLayout(title_row)
 
         self._phase = QLabel("Idle", self)
         self._phase.setObjectName("updatePhase")
@@ -64,6 +91,11 @@ class UpdatePanel(QWidget):
         self._peers = self._add_value(grid, 3, "Peers")
         root.addLayout(grid)
         root.addStretch(1)
+
+    def set_recheck_enabled(self, enabled: bool):
+        """Enable/disable the Force recheck control (busy-guards live in the
+        main window; the panel only renders the state it is given)."""
+        self._recheck.setEnabled(enabled)
 
     def _add_value(self, grid, row: int, name: str) -> QLabel:
         label = QLabel(f"{name}:", self)

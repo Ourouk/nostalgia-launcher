@@ -90,6 +90,7 @@ class MainWindow(QMainWindow):
         self._logWindow = None
         self._customAddonDialog = None
         self._discordButton = None
+        self._updatePanel = None
         self._firstRunTimer = None
         self._oneShotTimers: list = []
         self.setStyleSheet(theme_qss(self._palette))
@@ -329,6 +330,8 @@ class MainWindow(QMainWindow):
                 )
             elif name == "UPDATE":
                 page = UpdatePanel(self._palette, self._stack)
+                page.forceRecheckClicked.connect(self._on_force_recheck)
+                self._updatePanel = page
             else:
                 page = QLabel(f"{name} panel (C{i + 16})", self._stack)
                 page.setAlignment(Qt.AlignCenter)
@@ -715,6 +718,20 @@ class MainWindow(QMainWindow):
         self._hub.updater.start_verify(overwrite_config)
         self._refresh_ready_state()
 
+    def _on_force_recheck(self):
+        """UPDATE-tab "Force recheck" click: drop the hash/torrent-verdict
+        cache and re-verify every file. The transport is the worker's choice
+        — SHA-1 checksums against the manifest, or BitTorrent piece hashes
+        when no manifest is available."""
+        if not (self._hub.settings.state.path or "").strip():
+            self._hub.dispatcher.post(
+                LogMessage("✗  Please set the game folder first.\n", "err")
+            )
+            return
+        self.switch_tab("UPDATE")
+        self._hub.settings.verify_files()
+        self._refresh_ready_state()
+
     def _launch_game(self):
         """Launch the game detached; the launch logic (VanillaFixes/WoW.exe
         choice, DXVK notice, clear-wdb, subprocess) lives in the
@@ -758,6 +775,21 @@ class MainWindow(QMainWindow):
         AND no mod is in an error state — the decision itself lives in
         UpdateController.compute_readiness."""
         self._apply_readiness(self._readiness())
+        self._sync_recheck_button()
+
+    def _sync_recheck_button(self):
+        """Force recheck is only offered while nothing else is in flight and
+        client updates are on — same busy-guards verify_files enforces."""
+        if self._updatePanel is None:
+            return
+        hub = self._hub
+        enabled = (
+            not hub.updater.running
+            and not hub.updater.state.game_running
+            and not hub.addons.installing
+            and hub.settings.client_update_enabled
+        )
+        self._updatePanel.set_recheck_enabled(enabled)
 
     def _readiness(self):
         return self._hub.updater.compute_readiness(

@@ -37,6 +37,7 @@ import nostalgia_launcher.services.news as news_module
 import nostalgia_launcher.ui.qt.main_window as mw
 from nostalgia_launcher.state.events import (
     AddonsLoaded,
+    LogMessage,
     ModsLoaded,
     OperationFinished,
     ProgressChanged,
@@ -434,6 +435,76 @@ def test_update_status_progress_finish_cycle(qapp, app_no_startup):
     assert win._updateButton.text() == "PLAY"
     assert win._updateButton.isEnabled()
     assert win._statusLabel.text() == "Everything up to date!"
+
+
+# ── force recheck (UPDATE panel) ─────────────────────────────────────────
+
+
+def test_force_recheck_click_invokes_settings_verify(
+    qapp, app_no_startup, monkeypatch
+):
+    win = app_no_startup._window
+    hub = app_no_startup._hub
+    panel = win._stack.widget(win._pages["UPDATE"])
+    btn = panel._recheck
+    assert btn.objectName() == "updateRecheck"
+    assert btn.isEnabled()
+
+    verify = Mock()
+    monkeypatch.setattr(hub.settings, "verify_files", verify)
+    QTest.mouseClick(btn, Qt.LeftButton)
+
+    assert verify.call_count == 1
+    # Readiness was re-evaluated after the click: the controller is running
+    # (a verify started), so the recheck control grays out.
+    hub.updater.state.running = True
+    win._refresh_ready_state()
+    assert not btn.isEnabled()
+
+
+def test_force_recheck_disabled_while_busy_or_disabled(qapp, app_no_startup):
+    win = app_no_startup._window
+    hub = app_no_startup._hub
+    btn = win._stack.widget(win._pages["UPDATE"])._recheck
+
+    hub.updater.state.running = True
+    win._refresh_ready_state()
+    assert not btn.isEnabled()
+    hub.updater.state.running = False
+
+    hub.addons.state.installing = True
+    win._refresh_ready_state()
+    assert not btn.isEnabled()
+    hub.addons.state.installing = False
+
+    hub.settings.set_client_update_enabled(False)
+    win._refresh_ready_state()
+    assert not btn.isEnabled()
+    hub.settings.set_client_update_enabled(True)
+
+    win._refresh_ready_state()
+    assert btn.isEnabled()
+
+
+def test_force_recheck_without_folder_refuses(
+    qapp, app_no_startup, monkeypatch
+):
+    win = app_no_startup._window
+    hub = app_no_startup._hub
+    hub.settings.state.path = ""
+    btn = win._stack.widget(win._pages["UPDATE"])._recheck
+
+    verify = Mock()
+    monkeypatch.setattr(hub.settings, "verify_files", verify)
+    post = Mock()
+    monkeypatch.setattr(hub.dispatcher, "post", post)
+    QTest.mouseClick(btn, Qt.LeftButton)
+
+    assert verify.call_count == 0
+    posted = [c.args[0] for c in post.call_args_list]
+    assert LogMessage("✗  Please set the game folder first.\n", "err") in (
+        posted
+    )
 
 
 # ── mods / addons snapshots → rows + nav badges ───────────────────────────
