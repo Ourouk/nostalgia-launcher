@@ -604,9 +604,9 @@ def test_allow_through_antivirus_quote_in_path_stays_inert(
     )
     evil_path = "C:/Users/O'Brien/Ga'; Start-Process calc.exe; 'mes"
     controller.state.path = evil_path
-    # The state normalizes separators per host OS, and the script encodes
-    # the *stored* path — derive the expected blob from it.
-    stored = controller.state.path
+    # allow_through_antivirus encodes normpath(state.path.strip()) — derive
+    # the expected blob from exactly what it will encode.
+    stored = os.path.normpath(controller.state.path.strip())
     controller.allow_through_antivirus()
     assert shell.calls
     params = shell.calls[0][3]
