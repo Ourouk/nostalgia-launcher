@@ -28,3 +28,18 @@ def _launcher_env():
     launcher.configure_from_dict(LAUNCHER_TEST_CONFIG)
     yield
     launcher.reset()
+
+
+@pytest.fixture
+def fake_home(tmp_path, monkeypatch):
+    """Redirect the user home to ``tmp_path/home`` for every lookup seam.
+
+    Sets BOTH ``HOME`` and ``USERPROFILE``: ``os.path.expanduser`` prefers
+    ``USERPROFILE`` on Windows, so tests that only monkeypatch ``HOME``
+    silently keep using the real profile dir there.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    return home

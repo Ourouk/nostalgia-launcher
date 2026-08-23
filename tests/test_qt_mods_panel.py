@@ -422,7 +422,10 @@ def test_catalog_age_label_and_refresh_button(qapp, window, hub, monkeypatch):
         "load_config",
         lambda: {
             "mods_catalog_cache": {
-                "timestamp": time_mod.time() - 3600,
+                # 90min: safely inside the "1h ago" bucket — an exact 1h
+                # delta can render as "59m ago" once a few ms elapse
+                # between timestamp capture and rendering.
+                "timestamp": time_mod.time() - 5400,
                 "catalog": [],
             }
         },

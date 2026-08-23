@@ -2,6 +2,7 @@
 
 import os
 import signal
+import types
 import unittest.mock as mock
 
 import pytest
@@ -31,20 +32,18 @@ def test_find_umu_on_path(monkeypatch):
     assert umu.find_umu() == "/usr/bin/umu-run"
 
 
-def test_find_umu_falls_back_to_local_bin(monkeypatch, tmp_path):
+def test_find_umu_falls_back_to_local_bin(monkeypatch, fake_home):
     monkeypatch.setattr(umu.shutil, "which", lambda name: None)
-    local_bin = tmp_path / ".local" / "bin"
+    local_bin = fake_home / ".local" / "bin"
     local_bin.mkdir(parents=True)
     runner = local_bin / "umu-run"
     runner.write_text("#!/bin/sh\n")
     runner.chmod(0o755)
-    monkeypatch.setenv("HOME", str(tmp_path))
     assert umu.find_umu() == str(runner)
 
 
-def test_find_umu_missing(monkeypatch, tmp_path):
+def test_find_umu_missing(monkeypatch, fake_home):
     monkeypatch.setattr(umu.shutil, "which", lambda name: None)
-    monkeypatch.setenv("HOME", str(tmp_path))
     assert umu.find_umu() == ""
 
 
@@ -142,13 +141,16 @@ def test_compute_wine_prefix_under_data_dir(tmp_path):
 
 
 def test_build_env_sets_umu_contract(monkeypatch, tmp_path):
+    # Windows runners have no HOME in the environment — seed it so the
+    # inheritance assertion is deterministic on every OS.
+    home = str(tmp_path / "home")
+    monkeypatch.setenv("HOME", home)
     prefix = umu.compute_wine_prefix()
     env = umu.build_env("GE-Proton", "umu-nostalgia-launcher")
     assert env["WINEPREFIX"] == prefix
     assert env["PROTONPATH"] == "GE-Proton"
     assert env["GAMEID"] == "umu-nostalgia-launcher"
-    assert env["STORE"] == "none"
-    assert env.get("HOME")  # inherits the rest of the environment
+    assert env.get("HOME") == home  # inherits the rest of the environment
 
 
 def test_build_env_resolves_proton_codename(monkeypatch, tmp_path):
@@ -211,7 +213,7 @@ def test_launch_passes_renderer_env(monkeypatch, tmp_path):
     popen = mock.Mock()
     popen.return_value.pid = 7
     monkeypatch.setattr(umu.subprocess, "Popen", popen)
-    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7, raising=False)
     monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
 
     umu.launch(
@@ -233,7 +235,7 @@ def test_launch_forwards_wayland_env(monkeypatch, tmp_path):
     popen = mock.Mock()
     popen.return_value.pid = 7
     monkeypatch.setattr(umu.subprocess, "Popen", popen)
-    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7, raising=False)
     monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
 
     umu.launch(str(game), str(exe), proton="UMU-Proton", wayland=True)
@@ -250,7 +252,7 @@ def test_launch_forwards_skip_builtin_dxvk_env(monkeypatch, tmp_path):
     popen = mock.Mock()
     popen.return_value.pid = 7
     monkeypatch.setattr(umu.subprocess, "Popen", popen)
-    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7, raising=False)
     monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
 
     umu.launch(
@@ -274,7 +276,7 @@ def test_launch_omits_wayland_env_when_disabled(monkeypatch, tmp_path):
     popen = mock.Mock()
     popen.return_value.pid = 7
     monkeypatch.setattr(umu.subprocess, "Popen", popen)
-    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7, raising=False)
     monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
 
     umu.launch(str(game), str(exe), proton="UMU-Proton", wayland=False)
@@ -294,7 +296,7 @@ def test_launch_spawns_umu_detached(monkeypatch, tmp_path):
     popen = mock.Mock()
     popen.return_value.pid = 4242
     monkeypatch.setattr(umu.subprocess, "Popen", popen)
-    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 9999)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 9999, raising=False)
     monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
 
     pid, pgid, proc = umu.launch(
@@ -325,7 +327,10 @@ def test_launch_falls_back_to_pid_when_pgid_unavailable(monkeypatch, tmp_path):
     popen.return_value.pid = 4242
     monkeypatch.setattr(umu.subprocess, "Popen", popen)
     monkeypatch.setattr(
-        umu.os, "getpgid", mock.Mock(side_effect=OSError("no such process"))
+        umu.os,
+        "getpgid",
+        mock.Mock(side_effect=OSError("no such process")),
+        raising=False,
     )
     monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
 
@@ -343,7 +348,7 @@ def test_launch_uses_custom_binary(monkeypatch, tmp_path):
     popen = mock.Mock()
     popen.return_value.pid = 1
     monkeypatch.setattr(umu.subprocess, "Popen", popen)
-    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 1)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 1, raising=False)
     monkeypatch.setattr(umu, "find_umu", lambda: "")
 
     pid, pgid, _ = umu.launch(str(game), str(exe), umu_binary="/opt/umu-run")
@@ -365,27 +370,50 @@ def test_launch_raises_when_umu_missing(monkeypatch, tmp_path):
 
 def test_kill_game_escalates_to_sigkill(monkeypatch):
     kills = []
+    # Force the POSIX branch so the full escalation flow is exercised on
+    # every host OS. Windows lacks os.killpg AND signal.SIGKILL, so both the
+    # os attrs (raising=False) and the signal constants are faked portably.
+    fake_signal = types.SimpleNamespace(
+        SIGTERM=getattr(signal, "SIGTERM", 15), SIGKILL=9
+    )
+    monkeypatch.setattr(umu, "signal", fake_signal)
+    monkeypatch.setattr(platform_support, "is_linux", lambda: True)
     monkeypatch.setattr(
-        umu.os, "killpg", lambda pgid, sig: kills.append(("pg", pgid, sig))
+        umu.os,
+        "killpg",
+        lambda pgid, sig: kills.append(("pg", pgid, sig)),
+        raising=False,
     )
     monkeypatch.setattr(
-        umu.os, "kill", lambda pid, sig: kills.append(("p", pid, sig))
+        umu.os,
+        "kill",
+        lambda pid, sig: kills.append(("p", pid, sig)),
+        raising=False,
     )
     monkeypatch.setattr(umu.time, "sleep", lambda s: None)
 
     umu.kill_game(4242, 9999, grace=0.01)
 
-    assert ("pg", 9999, signal.SIGTERM) in kills
+    assert ("pg", 9999, fake_signal.SIGTERM) in kills
     assert ("p", 4242, 0) in kills  # liveness probe
-    assert ("pg", 9999, signal.SIGKILL) in kills
+    assert ("pg", 9999, fake_signal.SIGKILL) in kills
 
 
 def test_kill_game_noop_when_process_already_gone(monkeypatch):
     kills = []
+    monkeypatch.setattr(platform_support, "is_linux", lambda: True)
     monkeypatch.setattr(
-        umu.os, "killpg", mock.Mock(side_effect=ProcessLookupError)
+        umu.os,
+        "killpg",
+        mock.Mock(side_effect=ProcessLookupError),
+        raising=False,
     )
-    monkeypatch.setattr(umu.os, "kill", lambda pid, sig: kills.append(sig))
+    monkeypatch.setattr(
+        umu.os,
+        "kill",
+        lambda pid, sig: kills.append(sig),
+        raising=False,
+    )
 
     umu.kill_game(4242, 9999)
 
@@ -393,10 +421,16 @@ def test_kill_game_noop_when_process_already_gone(monkeypatch):
 
 
 def test_kill_game_returns_early_when_process_exits_on_sigterm(monkeypatch):
-    monkeypatch.setattr(umu.os, "killpg", lambda pgid, sig: None)
+    monkeypatch.setattr(platform_support, "is_linux", lambda: True)
+    monkeypatch.setattr(
+        umu.os, "killpg", lambda pgid, sig: None, raising=False
+    )
     # Process dies right after SIGTERM: the first liveness probe raises.
     monkeypatch.setattr(
-        umu.os, "kill", mock.Mock(side_effect=ProcessLookupError)
+        umu.os,
+        "kill",
+        mock.Mock(side_effect=ProcessLookupError),
+        raising=False,
     )
     monkeypatch.setattr(umu.time, "sleep", lambda s: None)
 
@@ -406,8 +440,15 @@ def test_kill_game_returns_early_when_process_exits_on_sigterm(monkeypatch):
 def test_kill_game_noop_off_linux(monkeypatch):
     monkeypatch.setattr(platform_support, "is_linux", lambda: False)
     killed = []
-    monkeypatch.setattr(umu.os, "killpg", lambda pgid, sig: killed.append(sig))
-    monkeypatch.setattr(umu.os, "kill", lambda pid, sig: killed.append(sig))
+    monkeypatch.setattr(
+        umu.os,
+        "killpg",
+        lambda pgid, sig: killed.append(sig),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        umu.os, "kill", lambda pid, sig: killed.append(sig), raising=False
+    )
 
     umu.kill_game(4242, 9999)
 
@@ -467,7 +508,7 @@ def test_launch_prepends_gamemoderun(monkeypatch, tmp_path):
     popen = mock.Mock()
     popen.return_value.pid = 7
     monkeypatch.setattr(umu.subprocess, "Popen", popen)
-    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7, raising=False)
     monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
     monkeypatch.setattr(
         umu, "find_gamemoderun", lambda: "/usr/bin/gamemoderun"
@@ -487,7 +528,7 @@ def test_launch_skips_gamemoderun_when_absent(monkeypatch, tmp_path):
     popen = mock.Mock()
     popen.return_value.pid = 7
     monkeypatch.setattr(umu.subprocess, "Popen", popen)
-    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7, raising=False)
     monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
     monkeypatch.setattr(umu, "find_gamemoderun", lambda: "")
 

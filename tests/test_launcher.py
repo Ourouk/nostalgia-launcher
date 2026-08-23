@@ -1,6 +1,7 @@
 """Unit tests for the launcher configuration (core/launcher)."""
 
 import json
+import os
 
 import pytest
 
@@ -343,7 +344,9 @@ def test_configure_missing_returns_error(monkeypatch, tmp_path):
 
 def test_user_config_path_lives_in_config_dir(monkeypatch):
     monkeypatch.setattr(launcher, "config_dir", lambda: "/cfg")
-    assert launcher.user_config_path() == "/cfg/nostalgia_launcher.json"
+    assert launcher.user_config_path() == os.path.join(
+        "/cfg", "nostalgia_launcher.json"
+    )
 
 
 def test_auto_path_prefers_persisted_user_config(monkeypatch, tmp_path):

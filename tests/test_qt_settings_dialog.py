@@ -262,7 +262,12 @@ def test_logs_row_emits_show_logs_requested(qapp, window):
     spy.assert_called_once()
 
 
-def test_av_row_absent_when_cannot_manage_antivirus(qapp, window):
+def test_av_row_absent_when_cannot_manage_antivirus(qapp, window, monkeypatch):
+    # Pin the predicate: on Windows hosts it is True by default, but the
+    # row's absence is what this test is about.
+    monkeypatch.setattr(
+        platform_support, "can_manage_antivirus", lambda: False
+    )
     dialog = _open(window)
     assert dialog.findChild(QWidget, "settingsAv") is None
 

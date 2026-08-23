@@ -35,12 +35,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # setup-uv stopped publishing major tags in v8 — pin the full version.
-      - uses: astral-sh/setup-uv@v10.0.1
-        with:
-          enable-cache: true
       - name: Install Qt runtime dependencies (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libegl1
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          # Pin to the CPython the release builds ship (macOS universal2
+          # 3.12): libtorrent only publishes wheels for 3.10-3.13, so an
+          # unpinned uv resolution (3.14+) would drop it and break the
+          # torrent tests.
+          python-version: "3.12"
       - name: Sync dependencies
         run: uv sync --dev
       - name: Run the test suite
