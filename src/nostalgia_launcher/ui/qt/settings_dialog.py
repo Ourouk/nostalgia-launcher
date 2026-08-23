@@ -2,11 +2,11 @@
 
 A dark QDialog rendering the GAME FOLDER row (open-folder link, readonly path
 entry, Change), the DOWNLOAD MIRRORS rows (one per configured server/mirror:
-status dot + name + status label + a check button), the TROUBLESHOOTING and
-SUPPORT THE DEVELOPER clickable rows and the GENERAL checkboxes. It renders
-the SettingsController's state and forwards user actions straight into the
-toolkit-agnostic controller; mirror results arrive as MirrorStatusChanged
-events through the ControllerBridge and are rendered here.
+status dot + name + status label + a check button), the TROUBLESHOOTING
+clickable rows and the GENERAL checkboxes. It renders the SettingsController's
+state and forwards user actions straight into the toolkit-agnostic
+controller; mirror results arrive as MirrorStatusChanged events through the
+ControllerBridge and are rendered here.
 """
 
 import os
@@ -34,9 +34,6 @@ from .bridge import ControllerBridge
 from .linux_settings_dialog import LinuxSettingsDialog
 from .list_panel import ClickableLabel, make_hairline
 from .theme import Palette, theme_qss
-
-KO_FI_URL = "https://ko-fi.com/rebased"
-BMC_URL = "https://buymeacoffee.com/rebased"
 
 
 class _ClickableRow(QWidget):
@@ -293,28 +290,6 @@ class SettingsDialog(QDialog):
                 "settingsAv",
                 p.gold,
             )
-
-        support_title = QLabel("SUPPORT THE DEVELOPER", lcol)
-        support_title.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
-        )
-        lcol_layout.addWidget(support_title)
-        self._add_row(
-            lcol_layout,
-            "♥",
-            "Ko-fi",
-            lambda: self._settings.open_url(KO_FI_URL),
-            "settingsKoFi",
-            p.pink,
-        )
-        self._add_row(
-            lcol_layout,
-            "☕",
-            "Buy Me a Coffee",
-            lambda: self._settings.open_url(BMC_URL),
-            "settingsBmc",
-            p.warn,
-        )
 
         rcol = QWidget(body)
         rcol_layout = QVBoxLayout(rcol)

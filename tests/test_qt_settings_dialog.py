@@ -94,8 +94,6 @@ def test_gear_opens_settings_dialog(qapp, window):
         "settingsMirrorRefresh",
         "settingsVerify",
         "settingsLogs",
-        "settingsKoFi",
-        "settingsBmc",
         "settingsClientUpdate",
     ):
         assert dialog.findChild(QWidget, name) is not None
@@ -282,21 +280,6 @@ def test_av_row_calls_allow_through_antivirus(qapp, window, monkeypatch):
     assert row is not None
     QTest.mouseClick(row, Qt.LeftButton)
     allow.assert_called_once()
-
-
-# ── support links ───────────────────────────────────────────────────────
-
-
-def test_support_links_call_open_url(qapp, window, monkeypatch):
-    hub = window._hub
-    open_url = Mock()
-    monkeypatch.setattr(hub.settings, "open_url", open_url)
-    dialog = _open(window)
-
-    QTest.mouseClick(dialog.findChild(QWidget, "settingsKoFi"), Qt.LeftButton)
-    open_url.assert_called_once_with("https://ko-fi.com/rebased")
-    QTest.mouseClick(dialog.findChild(QWidget, "settingsBmc"), Qt.LeftButton)
-    open_url.assert_called_with("https://buymeacoffee.com/rebased")
 
 
 # ── general checkboxes ─────────────────────────────────────────────────
