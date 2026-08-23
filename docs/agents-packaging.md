@@ -31,9 +31,23 @@ uv run pyinstaller --noconfirm --clean NostalgiaLauncher.spec        # Windows o
 
 ## CI/CD
 
-GitHub Actions: `ci.yml` = pytest on push/PR (**no ruff step — the
-lint/format gate is local-only**); `release.yml` = on `v*` tag push, builds
-Windows/Linux/macOS and creates a GitHub Release.
+GitHub Actions:
+
+- `.github/workflows/tests.yml` — reusable quality gates: ruff lint +
+  format check, and pytest (`-m "not e2e"`) on a
+  ubuntu/windows/macos matrix (Qt tests self-force offscreen). Called by
+  both workflows below.
+- `ci.yml` — push to main / PRs; calls `tests.yml`, cancels superseded
+  runs via a concurrency group.
+- `release.yml` — on `v*` tag push: verifies the tag matches
+  `pyproject.toml`'s version, builds Windows/Linux/macOS (linuxdeploy is
+  sha256-pinned; every artifact gets an SLSA provenance attestation), and
+  creates a GitHub Release immediately. Only the final release job has
+  `contents: write`.
+- `.github/dependabot.yml` — weekly GitHub Actions version bumps.
+
+The lint/format gate is therefore enforced in CI too; run
+`uv run ruff format .` locally before pushing.
 
 ## Version consistency
 

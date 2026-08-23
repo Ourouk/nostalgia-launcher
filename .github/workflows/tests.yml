@@ -1,0 +1,49 @@
+name: Tests
+
+# Reusable quality gates shared by ci.yml (push/PR) and release.yml (tag
+# builds): ruff lint/format plus the test suite on every OS we ship for.
+#
+# e2e tests (real WoW client under context/) are skipped here and run only
+# locally via `RUN_E2E=1 uv run pytest -m e2e`.
+
+on:
+  workflow_call:
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # setup-uv stopped publishing major tags in v8 — pin the full version.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+      - name: Sync dependencies
+        run: uv sync --dev
+      - name: Ruff lint
+        # github output format surfaces findings inline in the run view.
+        run: uv run ruff check --output-format=github .
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      # setup-uv stopped publishing major tags in v8 — pin the full version.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+      - name: Install Qt runtime dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1
+      - name: Sync dependencies
+        run: uv sync --dev
+      - name: Run the test suite
+        # Qt tests force QT_QPA_PLATFORM=offscreen themselves, so they run
+        # headless on all three OSes.
+        run: uv run pytest -m "not e2e"

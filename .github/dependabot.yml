@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  # Covers pyproject.toml + uv.lock (Dependabot understands uv lockfiles).
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly

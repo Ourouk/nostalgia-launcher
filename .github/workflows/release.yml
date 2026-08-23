@@ -4,39 +4,66 @@ name: Release
 # on a v* tag push and publishes them to a GitHub Release, e.g. `git tag v1.3
 # && git push origin v1.3`.
 #
+# The tag must match `pyproject.toml`'s version (verify-tag), which itself is
+# kept in sync with UPDATER_VERSION by tests/test_baseline.py.
+#
 # Each platform is an independent job; the release runs as soon as at least
 # one platform build succeeded (OR), so a single platform failure does not
 # block the release of the others.
+#
+# Supply chain: third-party actions are major-version pinned, linuxdeploy is
+# checksum-pinned below, and every build artifact gets a signed SLSA
+# provenance attestation.
 
 on:
   push:
     tags: ['v*']
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  # Universal2 CPython for the macOS PyInstaller build (see build-macos).
+  MACOS_PYTHON_PKG_URL: https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg
+  # linuxdeploy publishes only a rolling `continuous` artifact, so pin it by
+  # sha256 instead of trusting a mutable download. Bump both together when
+  # updating linuxdeploy.
+  LINUXDEPLOY_URL: https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+  LINUXDEPLOY_SHA256: 421ca71d5c69ea97c6309276232990d43df1dcece0edfaa26bbf926ff96ed12e
 
 jobs:
-  test:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  verify-tag:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - name: Install Qt runtime dependencies
-        run: sudo apt-get update && sudo apt-get install -y libegl1
-      - name: Sync dependencies
-        run: uv sync --dev
-      - name: Run the test suite
-        run: uv run pytest
+      - uses: actions/checkout@v7
+      - name: Verify tag matches pyproject.toml version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n1)"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ -z "$version" ] || [ "$tag" != "$version" ]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' does not match pyproject.toml version '$version'" >&2
+            exit 1
+          fi
 
   build-windows:
-    needs: test
+    needs: [tests, verify-tag]
     runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+# setup-uv stopped publishing major tags in v8 — pin the full version.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
       - name: Sync dependencies
         run: uv sync --dev
       - name: Build (Windows)
@@ -47,26 +74,37 @@ jobs:
           test -f dist/NostalgiaLauncher.exe || { echo "Missing dist/NostalgiaLauncher.exe" >&2; exit 1; }
           cp dist/NostalgiaLauncher.exe artifacts/NostalgiaLauncher-windows-x86_64.exe
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: launcher-windows
           path: artifacts/NostalgiaLauncher-windows-x86_64.exe
           if-no-files-found: error
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: artifacts/NostalgiaLauncher-windows-x86_64.exe
 
   build-linux:
-    needs: test
+    needs: [tests, verify-tag]
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+# setup-uv stopped publishing major tags in v8 — pin the full version.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
       - name: Install Qt runtime dependencies (Linux)
         run: sudo apt-get update && sudo apt-get install -y libegl1
       - name: Install ImageMagick (Linux)
         run: sudo apt-get update && sudo apt-get install -y imagemagick
       - name: Fetch linuxdeploy (Linux)
         run: |
-          curl -L -o linuxdeploy-x86_64.AppImage \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -L -o linuxdeploy-x86_64.AppImage "$LINUXDEPLOY_URL"
+          echo "$LINUXDEPLOY_SHA256  linuxdeploy-x86_64.AppImage" | sha256sum --check --strict
           chmod +x linuxdeploy-x86_64.AppImage
           echo "LINUXDEPLOY=$PWD/linuxdeploy-x86_64.AppImage" >> "$GITHUB_ENV"
           echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"
@@ -80,28 +118,37 @@ jobs:
           test -f dist/NostalgiaLauncher-x86_64.AppImage || { echo "Missing dist/NostalgiaLauncher-x86_64.AppImage" >&2; exit 1; }
           cp dist/NostalgiaLauncher-x86_64.AppImage artifacts/NostalgiaLauncher-linux-x86_64.AppImage
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: launcher-linux
           path: artifacts/NostalgiaLauncher-linux-x86_64.AppImage
           if-no-files-found: error
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: artifacts/NostalgiaLauncher-linux-x86_64.AppImage
 
   build-macos:
-    needs: test
+    needs: [tests, verify-tag]
     runs-on: macos-14
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+# setup-uv stopped publishing major tags in v8 — pin the full version.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
 
-      # macOS needs a *universal2* CPython (python.org installer) so the
-      # PyInstaller build can target arm64 + x86_64; uv then uses it for the
-      # venv via UV_PYTHON. Build on the Intel runner — PySide6 ships
-      # universal2 wheels, so a universal2 interpreter suffices to build both
+      # macos-14 runners are Apple Silicon (arm64). The build still targets
+      # universal2 thanks to the *universal2* CPython installed here: PySide6
+      # ships universal2 wheels, so one interpreter suffices to produce both
       # architectures (verified by `lipo` in build-dmg.sh).
       - name: Install universal2 Python (macOS)
         run: |
-          curl -L -o python.pkg \
-            https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg
+          curl -L -o python.pkg "$MACOS_PYTHON_PKG_URL"
           sudo installer -pkg python.pkg -target /
           echo "UV_PYTHON=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3" >> "$GITHUB_ENV"
 
@@ -117,11 +164,15 @@ jobs:
           test -f dist/NostalgiaLauncher-universal2.dmg || { echo "Missing dist/NostalgiaLauncher-universal2.dmg" >&2; exit 1; }
           cp dist/NostalgiaLauncher-universal2.dmg artifacts/NostalgiaLauncher-universal2.dmg
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: launcher-macos
           path: artifacts/NostalgiaLauncher-universal2.dmg
           if-no-files-found: error
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: artifacts/NostalgiaLauncher-universal2.dmg
 
   release:
     needs: [build-windows, build-linux, build-macos]
@@ -130,11 +181,13 @@ jobs:
     # checks guard against a total failure / test skip producing no artifacts.
     if: ${{ always() && (needs.build-windows.result == 'success' || needs.build-linux.result == 'success' || needs.build-macos.result == 'success') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true

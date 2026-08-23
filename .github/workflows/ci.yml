@@ -5,18 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Cancel superseded runs (rapid pushes to the same branch/PR).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - name: Install Qt runtime dependencies
-        run: sudo apt-get update && sudo apt-get install -y libegl1
-      - name: Sync dependencies
-        run: uv sync --dev
-      - name: Run the test suite
-        # test_baseline.py enforces UPDATER_VERSION == pyproject.toml version.
-        # e2e tests (real WoW client under context/) are skipped here and run
-        # only locally via `RUN_E2E=1 uv run pytest -m e2e`.
-        run: uv run pytest -m "not e2e"
+  tests:
+    uses: ./.github/workflows/tests.yml
