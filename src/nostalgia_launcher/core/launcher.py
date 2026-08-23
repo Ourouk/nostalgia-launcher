@@ -29,6 +29,7 @@ other URL is derived from it unless overridden:
           "https://server.example/addons-overrides.json"
         ]
       },
+      "mods": [],
       "discord_url": "https://discord.gg/example",
       "theme": {
         "C_GOLD": "#d4a02f",
@@ -60,6 +61,12 @@ color slots named like ``C_GOLD`` (each a ``#rrggbb`` hex value) plus an
 optional ``logo`` URL shown as the header wordmark (see `core/themes`). It
 is cosmetic and never validated strictly — a malformed theme falls back to
 the default palette instead of failing startup.
+
+The optional top-level ``mods`` list embeds mod catalog entries directly in
+the config (same shape the remote mod catalog uses). Entries are kept raw
+here and sanitized by `services/mods` with the same rules as remote entries;
+embedded ids override the remote catalog, and the per-user custom file
+overrides both.
 
 A missing or invalid configuration is a hard startup error: the app has
 nothing to point at. This module is network-free; `core/security_http` builds
@@ -110,6 +117,8 @@ class LauncherConfig:
     addons_registry_url: str
     realm: str
     addons_registry_urls: list[str] = field(default_factory=list)
+    embedded_mods: list[dict] = field(default_factory=list)
+    mods_registry_url_explicit: bool = False
     mirrors: list["Mirror"] = field(default_factory=list)
     discord_url: str | None = None
     theme: dict | None = None
@@ -301,6 +310,24 @@ def _derive(data: dict) -> LauncherConfig:
     raw_theme = data.get("theme")
     theme = raw_theme if isinstance(raw_theme, dict) else None
 
+    # Whether server.mods_registry_url was explicitly set (vs. derived from
+    # the base URL): a config that embeds its mod list inline usually has
+    # no real catalog endpoint, and must not be force-refetched.
+    raw_mods_url = server.get("mods_registry_url")
+    mods_registry_url_explicit = isinstance(raw_mods_url, str) and bool(
+        raw_mods_url.strip()
+    )
+
+    # Mods embedded directly in the config. Kept raw — services/mods
+    # sanitizes each entry with catalog.validate_mod (allowlisted source
+    # kinds, https URLs, safe relative paths).
+    raw_embedded_mods = data.get("mods")
+    embedded_mods: list[dict] = (
+        [e for e in raw_embedded_mods if isinstance(e, dict)]
+        if isinstance(raw_embedded_mods, list)
+        else []
+    )
+
     addon_git_hosts = _parse_git_hosts(data.get("addon_git_hosts"))
     torrent_root_marker = _parse_root_marker(server.get("torrent_root_marker"))
 
@@ -316,6 +343,8 @@ def _derive(data: dict) -> LauncherConfig:
         addons_registry_urls=addons_registry_urls,
         realm=(server.get("realm") or host).strip(),
         mirrors=mirrors,
+        embedded_mods=embedded_mods,
+        mods_registry_url_explicit=mods_registry_url_explicit,
         discord_url=discord_url,
         theme=theme,
         torrent_url=_https_url(server.get("torrent_url")),
@@ -544,6 +573,20 @@ def featured_news_url() -> str:
 def mods_registry_url() -> str:
     c = config()
     return c.mods_registry_url if c else ""
+
+
+def embedded_mods() -> list[dict]:
+    """The mod entries embedded in the launcher config (raw; sanitized by
+    `services/mods`). Empty when the config has no usable \"mods\" list."""
+    c = config()
+    return list(c.embedded_mods) if c else []
+
+
+def mods_registry_url_explicit() -> bool:
+    """Whether server.mods_registry_url was explicitly configured (the
+    derived base_url default does not count)."""
+    c = config()
+    return bool(c and c.mods_registry_url_explicit)
 
 
 def addons_registry_urls() -> list[str]:

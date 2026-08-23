@@ -104,9 +104,21 @@ class ModsController:
     def reload_catalog(self) -> bool:
         """Force-refetch the mod catalog and republish the snapshot so the
         panel picks up new/changed entries without waiting for the weekly
-        auto-refresh. Returns True when the worker actually started."""
+        auto-refresh. Returns True when the worker actually started. When
+        the launcher embeds its mod list and no catalog URL is configured
+        there is nothing to refetch: republish instantly instead of
+        failing."""
         if self._busy:
             return False
+        if not mods.has_remote_catalog() and mods.embedded_mods():
+            self._dispatcher.post(
+                LogMessage(
+                    "Using the mods embedded in the launcher config.\n",
+                    "dim",
+                )
+            )
+            self._dispatcher.post(ModsLoaded(self.state))
+            return True
 
         def worker():
             try:

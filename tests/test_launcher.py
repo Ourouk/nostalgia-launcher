@@ -136,6 +136,66 @@ def test_server_manifest_and_client_overrides():
     assert cfg.client_url == "https://dl.example/client/latest"
 
 
+# ── embedded mods (top-level "mods") ─────────────────────────────────────────
+
+
+def test_embedded_mods_kept_raw_dicts_only():
+    a = {"id": "A", "name": "A", "source": {"kind": "direct_file"}}
+    b = {"id": "B"}
+    cfg = _config(
+        {
+            "server": {"base_url": "https://srv.example"},
+            "mods": [a, "junk", 42, b, None],
+        }
+    )
+    assert cfg is not None
+    # Kept as-is (sanitizing happens in services/mods); non-dicts dropped.
+    assert cfg.embedded_mods == [a, b]
+
+
+@pytest.mark.parametrize("value", [None, "mods", 42, {"id": "A"}])
+def test_embedded_mods_ignores_non_list(value):
+    data = {"server": {"base_url": "https://srv.example"}}
+    if value is not None:
+        data["mods"] = value
+    cfg = _config(data)
+    assert cfg is not None
+    assert cfg.embedded_mods == []
+
+
+def test_embedded_mods_accessor_and_reset():
+    entry = {"id": "A", "name": "A", "source": {"kind": "direct_file"}}
+    _config({"server": {"base_url": "https://srv.example"}, "mods": [entry]})
+    assert launcher.embedded_mods() == [entry]
+    launcher.reset()
+    assert launcher.embedded_mods() == []
+
+
+@pytest.mark.parametrize("raw", [None, "", "   "])
+def test_mods_registry_url_not_explicit_when_missing_or_blank(raw):
+    data = {"server": {"base_url": "https://srv.example"}}
+    if raw is not None:
+        data["server"]["mods_registry_url"] = raw
+    cfg = _config(data)
+    assert cfg is not None
+    # The base_url-derived default still applies…
+    assert cfg.mods_registry_url == "https://srv.example/api/mods.json"
+    # …but it does not count as an explicitly configured catalog.
+    assert cfg.mods_registry_url_explicit is False
+
+
+def test_mods_registry_url_explicit_flag():
+    cfg = _config(
+        {
+            "server": {
+                "base_url": "https://srv.example",
+                "mods_registry_url": "https://other.example/mods.json",
+            }
+        }
+    )
+    assert cfg.mods_registry_url_explicit is True
+
+
 def test_endpoint_overrides_and_realm():
     cfg = _config(
         {

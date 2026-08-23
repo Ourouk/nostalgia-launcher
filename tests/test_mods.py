@@ -9,7 +9,12 @@ import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.services.mods as mods
 import nostalgia_launcher.services.self_update as self_update
 from nostalgia_launcher.controllers.mods import ModsController
-from nostalgia_launcher.state.events import EventDispatcher
+from nostalgia_launcher.core import launcher
+from nostalgia_launcher.state.events import (
+    EventDispatcher,
+    LogMessage,
+    ModsLoaded,
+)
 
 # ── catalog / registry loading ───────────────────────────────────────────────
 
@@ -126,6 +131,140 @@ def test_mods_registry_merges_custom(tmp_path, monkeypatch):
     assert by_id["MyMod"]["essential"] is True
     # Without a bundled registry, only the custom entry is present.
     assert list(by_id) == ["MyMod"]
+
+
+# ── mods embedded in the launcher config ─────────────────────────────────────
+
+_EMB_VALID = {
+    "id": "Emb",
+    "name": "Emb",
+    "source": {
+        "kind": "direct_file",
+        "url": "https://example.com/e.dll",
+        "dest": "e.dll",
+    },
+}
+
+
+def _configure_embedded(mods_entries, server=None):
+    server = server or {"name": "S", "base_url": "https://srv.example"}
+    launcher.configure_from_dict({"server": server, "mods": mods_entries})
+
+
+def test_embedded_mods_served_without_network(tmp_path, monkeypatch):
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config({})
+    _configure_embedded([_EMB_VALID, {"id": "Bad", "source": {}}])
+
+    def fail(*a, **k):
+        raise AssertionError("embedded-only registry must not hit network")
+
+    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    reg = mods.mods_registry()
+    # The invalid entry is skipped; the valid one needs no URL or fetch.
+    assert [m["id"] for m in reg] == ["Emb"]
+    assert mods.has_remote_catalog() is False
+    assert mods.catalog_is_stale() is False
+
+
+def test_mods_registry_precedence_custom_over_embedded_over_remote(
+    tmp_path, monkeypatch
+):
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    remote = [{"id": "M", "name": "Remote", "source": {"kind": "direct_file"}}]
+    config_store.save_config(
+        {"mods_catalog_cache": {"timestamp": 9999999999, "catalog": remote}}
+    )
+    _configure_embedded(
+        [
+            {
+                "id": "M",
+                "name": "Embedded",
+                "source": {
+                    "kind": "direct_file",
+                    "url": "https://example.com/m.dll",
+                    "dest": "m.dll",
+                },
+            },
+            {
+                "id": "E2",
+                "name": "E2",
+                "source": {
+                    "kind": "direct_file",
+                    "url": "https://example.com/e2.dll",
+                    "dest": "e2.dll",
+                },
+            },
+        ]
+    )
+    monkeypatch.setattr(
+        mods.catalog, "custom_file", lambda kind: str(tmp_path / "custom.json")
+    )
+    (tmp_path / "custom.json").write_text(
+        '[{"id": "M", "name": "Custom", "source": {"kind": "github_release",'
+        ' "owner": "a", "repo": "b", "asset_pattern": "*.zip"}}]',
+        encoding="utf-8",
+    )
+
+    by_id = {m["id"]: m for m in mods.mods_registry()}
+    assert by_id["M"]["name"] == "Custom"  # custom > embedded > remote
+    assert by_id["E2"]["name"] == "E2"
+    assert set(by_id) == {"M", "E2"}
+
+
+def test_catalog_stale_when_url_explicit_despite_embedded(
+    tmp_path, monkeypatch
+):
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config({})  # no cached catalog
+    _configure_embedded(
+        [_EMB_VALID],
+        {
+            "name": "S",
+            "base_url": "https://srv.example",
+            "mods_registry_url": "https://srv.example/api/mods.json",
+        },
+    )
+    assert mods.has_remote_catalog() is True
+    assert mods.catalog_is_stale() is True
+
+
+def test_has_remote_catalog_user_override(tmp_path):
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config({})
+    # The conftest launcher config only derives a default URL — that does
+    # not count as a configured catalog.
+    assert mods.has_remote_catalog() is False
+    assert mods.set_registry_url("https://mine.example/mods.json") is None
+    assert mods.has_remote_catalog() is True
+
+
+def test_reload_catalog_republishes_when_embedded_only(tmp_path, monkeypatch):
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config({})
+    _configure_embedded([_EMB_VALID])
+
+    def fail(*a, **k):
+        raise AssertionError("embedded-only reload must not hit the network")
+
+    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    controller = ModsController(EventDispatcher(), get_out_dir=lambda: "")
+    assert controller.reload_catalog() is True
+    events = controller._dispatcher.drain()
+    texts = [e.text for e in events if isinstance(e, LogMessage)]
+    assert any("embedded in the launcher config" in t for t in texts)
+    assert any(isinstance(e, ModsLoaded) for e in events)
+    assert controller._busy is False
 
 
 # ── asset selection / versions ───────────────────────────────────────────────

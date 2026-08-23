@@ -859,6 +859,25 @@ def test_reload_mods_registry_failure_logs(
     assert fakes.mods.reloaded == 0
 
 
+def test_reload_mods_registry_republishes_when_embedded_only(
+    controller, cfg, fakes, monkeypatch
+):
+    monkeypatch.setattr(sc.mods, "has_remote_catalog", lambda: False)
+    monkeypatch.setattr(sc.mods, "embedded_mods", lambda: [{"id": "Emb"}])
+
+    def boom(force=False):
+        raise AssertionError("embedded-only reload must not fetch")
+
+    monkeypatch.setattr(sc.mods, "fetch_mods_catalog", boom)
+    controller.reload_mods_registry()
+    _drain_for(
+        controller._dispatcher,
+        lambda e: isinstance(e, LogMessage) and "embedded" in e.text,
+    )
+    assert fakes.mods.invalidated == 1
+    assert fakes.mods.reloaded == 1
+
+
 def test_open_custom_file_creates_and_opens(controller, fakes, monkeypatch):
     created = []
     opened = []

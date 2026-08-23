@@ -369,6 +369,18 @@ def _yes(no_value) -> str:
     return "no" if no_value else "yes"
 
 
+def _mods_catalog_summary(cfg) -> str:
+    """One-line description of where the config gets its mods from."""
+    embedded = len(cfg.embedded_mods)
+    if cfg.mods_registry_url_explicit and embedded:
+        return f"url + {embedded} embedded"
+    if cfg.mods_registry_url_explicit:
+        return "url"
+    if embedded:
+        return f"{embedded} embedded"
+    return "no"
+
+
 def _summary_text(kind: str, source: str, config) -> str:
     """Human-readable summary of a validated launcher configuration: what
     it is, where it points, and every host the launcher would contact."""
@@ -393,7 +405,7 @@ def _summary_text(kind: str, source: str, config) -> str:
         "Client file updates: configured (can be disabled in Settings)",
         f"BitTorrent bulk downloads: {_yes(not cfg.has_torrent())}",
         f"News feed: {_yes(not cfg.news_url)}",
-        f"Mod catalog: {_yes(not cfg.mods_registry_url)}",
+        f"Mod catalog: {_mods_catalog_summary(cfg)}",
         f"Addon catalog(s): {len(cfg.addons_registry_urls)}",
         f"Mirrors: {len(cfg.mirrors)}",
     ]

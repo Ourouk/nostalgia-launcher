@@ -625,7 +625,10 @@ is shown (which itself fetches `servers.json` over HTTPS). **[verified]**
 
 **Optional.** `mirrors[]`, `torrent_url` (server/mirror), `theme`
 (`C_*` colors + `logo` URL), `discord_url`, `addons_registry_urls`,
-`realm`, `*_news_url`, `*_registry_url` overrides. **[verified]**
+`realm`, `*_news_url`, `*_registry_url` overrides, top-level `mods[]`
+(embedded mod catalog entries; sanitized by `services.mods.embedded_mods()`,
+precedence custom > embedded > remote — see `docs/agents-architecture.md`).
+**[verified]**
 
 **Defaults.**
 - `DEFAULT_OUT_DIR`: Windows `exe_dir/VanillaWoW`; else `~/VanillaWoW`

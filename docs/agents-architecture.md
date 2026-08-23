@@ -55,8 +55,20 @@ src/nostalgia_launcher/
   `mods.reload_catalog()`, and the single ADDONS ⟳ ("Check for updates", in
   the header next to the age tag) runs `verify(force=True)`, which refetches
   the online catalog(s) AND rescans SHAs. Panel headers show a "Catalog
-  updated …" age tag. There is no bundled registry/recommended list — tests
-  provide one by monkeypatching `mods.mods_registry()`.
+  updated …" age tag. Tests provide a registry by monkeypatching
+  `mods.mods_registry()`.
+- **Mods may also be embedded directly in the launcher config** (top-level
+  `"mods": […]`, same entry shape as the remote catalog; see
+  `examples/community.example.json`). Entries are kept raw by
+  `core/launcher._derive` (core must not import services) and sanitized by
+  `services.mods.embedded_mods()` with the exact same `validate_mod` rules.
+  Precedence by id: per-user custom file > embedded > remote catalog.
+  Embedded-only configs are fully offline-safe: when no catalog URL is
+  *explicitly* configured (`launcher.mods_registry_url_explicit()` — the
+  base_url-derived default does not count; see
+  `services.mods.has_remote_catalog()`), `catalog_is_stale()` stays False and
+  the MODS ⟳ / Settings → Reload republish silently instead of failing with
+  "Mod catalog URL is not configured."
 - The ADDONS list is sectioned, not flat: stale installs get a **NEED
   UPDATE** section rendered above **INSTALLED** (only when non-empty),
   followed by **AVAILABLE**; each header shows its count and collapses

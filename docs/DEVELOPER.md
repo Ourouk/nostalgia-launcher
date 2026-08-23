@@ -78,6 +78,7 @@ overridden:
     "C_GOLD": "#d4a02f",
     "logo": "https://server.example/logo.png"
   },
+  "mods": [],
   "mirrors": [
     {
       "name": "Backup",
@@ -102,6 +103,10 @@ Key points:
   color slots named like `C_GOLD` (each a `#rrggbb` hex) plus an optional
   `logo` URL shown as the header wordmark. It is cosmetic and never validated
   strictly — a malformed theme falls back to the default palette.
+- The optional top-level `mods` list embeds mod catalog entries directly in
+  the config (same shape as the remote mod catalog; entries override same-id
+  remote catalog entries, and the per-user custom file overrides both). An
+  embedded-only config works fully offline.
 - Endpoint URLs must be HTTPS (non-HTTPS or missing-host URLs are rejected).
 - Missing or invalid configuration with no `--launcher-config` opens a modal
   first-launch wizard; an explicit `--launcher-config` that is missing or

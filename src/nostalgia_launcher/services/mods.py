@@ -1,9 +1,10 @@
 """Mods engine: release lookup, install/uninstall, DLL wiring.
 
 Mods are installed from their release archives and registered in dlls.txt.
-There is no bundled registry — the mod list comes entirely from the mod
-catalog (launcher-configured or user-set URL) merged with the per-user custom
-file, so a distribution decides what it ships.
+The mod list comes from the launcher config's embedded "mods" list (when
+present) and the mod catalog (launcher-configured or user-set URL), merged
+with the per-user custom file on top — embedded entries override same-id
+catalog entries, custom entries override both.
 """
 
 import json
@@ -45,9 +46,45 @@ def catalog_timestamp() -> float | None:
     return ts if isinstance(ts, (int, float)) and ts > 0 else None
 
 
+def has_remote_catalog() -> bool:
+    """Whether a mod catalog is actually fetchable: a user URL override, or
+    an explicitly launcher-configured URL. The base_url-derived default does
+    not count — a config that embeds its mod list has nothing to refetch."""
+    if catalog.get_registry_url("mods"):
+        return True
+    from ..core import launcher
+
+    return launcher.mods_registry_url_explicit()
+
+
+def embedded_mods() -> list:
+    """Mods defined inline in the active launcher config (top-level
+    "mods": […]), sanitized with the exact same validator as remote catalog
+    entries; unusable entries are skipped with a logged warning. Network-
+    free."""
+    from ..core import launcher
+
+    out = []
+    for entry in launcher.embedded_mods():
+        cleaned = catalog.validate_mod(entry)
+        if cleaned is None:
+            log(
+                "  Launcher config: skipping invalid embedded mod"
+                f" {entry.get('id')!r}.",
+                "err",
+            )
+            continue
+        out.append(cleaned)
+    return out
+
+
 def catalog_is_stale(now: float | None = None) -> bool:
     """Whether the cached catalog is missing or older than the weekly
-    `catalog.CATALOG_TTL` — i.e. a background refresh is due. Network-free."""
+    `catalog.CATALOG_TTL` — i.e. a background refresh is due. Always False
+    when nothing is fetchable (no catalog URL) but mods are embedded in the
+    launcher config. Network-free."""
+    if not has_remote_catalog() and embedded_mods():
+        return False
     ts = catalog_timestamp()
     if ts is None:
         return True
@@ -97,11 +134,14 @@ def fetch_mods_catalog(force=False) -> list | None:
 
 def mods_registry(force=False) -> list:
     """The effective mod registry: the remote/cached catalog merged with the
-    per-user custom file. Empty when nothing is configured yet."""
+    launcher config's embedded mods (embedded entries override same-id
+    catalog entries), then the per-user custom file on top. Empty when
+    nothing is configured yet."""
     remote = fetch_mods_catalog(force=force)
     base = [] if remote is None else remote
     return catalog.merge_mods(
-        base, catalog.load_custom("mods", catalog.validate_mod)
+        catalog.merge_mods(base, embedded_mods()),
+        catalog.load_custom("mods", catalog.validate_mod),
     )
 
 

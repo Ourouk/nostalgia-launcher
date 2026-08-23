@@ -539,7 +539,19 @@ class SettingsController:
         ).start()
 
     def reload_mods_registry(self):
-        """Force-fetch the mod catalog and re-render the MODS tab."""
+        """Force-fetch the mod catalog and re-render the MODS tab. When the
+        launcher embeds its mod list and no catalog URL is configured there
+        is nothing to fetch: republish instead of failing."""
+        if not mods.has_remote_catalog() and mods.embedded_mods():
+            self._dispatcher.post(
+                LogMessage(
+                    "Using the mods embedded in the launcher config.\n",
+                    "dim",
+                )
+            )
+            self._mods.invalidate()
+            self._mods.load_latest_versions()
+            return
         self._dispatcher.post(
             LogMessage("Reloading the mod catalog...\n", "dim")
         )

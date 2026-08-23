@@ -8,5 +8,41 @@
     "mods_registry_url": "https://launcher.example.com/community.mods.example.json",
     "addons_registry_url": "https://launcher.example.com/community.addons.example.json"
   },
-  "mirrors": []
+  "mirrors": [],
+  "mods": [
+    {
+      "id": "ExampleDirectDll",
+      "essential": false,
+      "name": "Example Direct DLL",
+      "description": "A single-file mod downloaded straight from a pinned URL.",
+      "repo_url": "https://github.com/example/example-mod",
+      "source": {
+        "kind": "direct_file",
+        "url": "https://launcher.example.com/mods/example_mod.dll",
+        "dest": "example_mod.dll",
+        "pinned_version": "v1.0.0"
+      },
+      "register_dll": "example_mod.dll",
+      "installed_files": ["example_mod.dll"]
+    },
+    {
+      "id": "ExampleReleaseMod",
+      "essential": false,
+      "name": "Example Release Mod",
+      "description": "A mod installed from its latest GitHub release archive.",
+      "repo_url": "https://github.com/example/example-release-mod",
+      "source": {
+        "kind": "github_release",
+        "owner": "example",
+        "repo": "example-release-mod",
+        "asset_pattern": "example-mod-*.zip",
+        "prefer_no": null,
+        "extract_map": {
+          "ExampleMod.dll": "ExampleMod.dll"
+        }
+      },
+      "register_dll": "ExampleMod.dll",
+      "installed_files": ["ExampleMod.dll"]
+    }
+  ]
 }
