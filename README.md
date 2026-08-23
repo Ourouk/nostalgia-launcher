@@ -56,14 +56,9 @@ Download the latest release from:
 
 <https://github.com/Ourouk/nostalgia-launcher/releases/latest>
 
-| Platform | Package |
-| --- | --- |
-| Windows | `NostalgiaLauncher-windows-x86_64.exe` |
-| Linux | `NostalgiaLauncher-linux-x86_64.AppImage` |
-| macOS | `NostalgiaLauncher-universal2.dmg` |
-
-Each release also includes a matching `.sha256` checksum file. Verify the
-checksum when downloading from an untrusted or mirrored source.
+Each release includes per-platform packages plus a matching `.sha256`
+checksum file. Verify the checksum when downloading from an untrusted or
+mirrored source.
 
 ## First launch — import a configuration
 

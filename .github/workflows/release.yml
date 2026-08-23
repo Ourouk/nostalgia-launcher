@@ -55,12 +55,17 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    # Single source of truth for this platform's artifact paths: the build
+    # scripts own dist/, we own the staged release-asset name.
+    env:
+      DIST_PATH: dist/NostalgiaLauncher.exe
+      STAGED_NAME: NostalgiaLauncher-windows-x86_64.exe
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-# setup-uv stopped publishing major tags in v8 — pin the full version.
+      # setup-uv stopped publishing major tags in v8 — pin the full version.
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
@@ -71,18 +76,18 @@ jobs:
       - name: Stage artifact
         run: |
           mkdir -p artifacts
-          test -f dist/NostalgiaLauncher.exe || { echo "Missing dist/NostalgiaLauncher.exe" >&2; exit 1; }
-          cp dist/NostalgiaLauncher.exe artifacts/NostalgiaLauncher-windows-x86_64.exe
+          test -f "$DIST_PATH" || { echo "Missing $DIST_PATH" >&2; exit 1; }
+          cp "$DIST_PATH" "artifacts/$STAGED_NAME"
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: launcher-windows
-          path: artifacts/NostalgiaLauncher-windows-x86_64.exe
+          path: artifacts/${{ env.STAGED_NAME }}
           if-no-files-found: error
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: artifacts/NostalgiaLauncher-windows-x86_64.exe
+          subject-path: artifacts/${{ env.STAGED_NAME }}
 
   build-linux:
     needs: [tests, verify-tag]
@@ -91,9 +96,13 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    # See build-windows for the DIST_PATH/STAGED_NAME convention.
+    env:
+      DIST_PATH: dist/NostalgiaLauncher-x86_64.AppImage
+      STAGED_NAME: NostalgiaLauncher-linux-x86_64.AppImage
     steps:
       - uses: actions/checkout@v7
-# setup-uv stopped publishing major tags in v8 — pin the full version.
+      # setup-uv stopped publishing major tags in v8 — pin the full version.
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
@@ -115,18 +124,18 @@ jobs:
       - name: Stage artifact
         run: |
           mkdir -p artifacts
-          test -f dist/NostalgiaLauncher-x86_64.AppImage || { echo "Missing dist/NostalgiaLauncher-x86_64.AppImage" >&2; exit 1; }
-          cp dist/NostalgiaLauncher-x86_64.AppImage artifacts/NostalgiaLauncher-linux-x86_64.AppImage
+          test -f "$DIST_PATH" || { echo "Missing $DIST_PATH" >&2; exit 1; }
+          cp "$DIST_PATH" "artifacts/$STAGED_NAME"
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: launcher-linux
-          path: artifacts/NostalgiaLauncher-linux-x86_64.AppImage
+          path: artifacts/${{ env.STAGED_NAME }}
           if-no-files-found: error
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: artifacts/NostalgiaLauncher-linux-x86_64.AppImage
+          subject-path: artifacts/${{ env.STAGED_NAME }}
 
   build-macos:
     needs: [tests, verify-tag]
@@ -135,9 +144,13 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    # See build-windows for the DIST_PATH/STAGED_NAME convention.
+    env:
+      DIST_PATH: dist/NostalgiaLauncher-universal2.dmg
+      STAGED_NAME: NostalgiaLauncher-universal2.dmg
     steps:
       - uses: actions/checkout@v7
-# setup-uv stopped publishing major tags in v8 — pin the full version.
+      # setup-uv stopped publishing major tags in v8 — pin the full version.
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
@@ -161,18 +174,18 @@ jobs:
       - name: Stage artifact
         run: |
           mkdir -p artifacts
-          test -f dist/NostalgiaLauncher-universal2.dmg || { echo "Missing dist/NostalgiaLauncher-universal2.dmg" >&2; exit 1; }
-          cp dist/NostalgiaLauncher-universal2.dmg artifacts/NostalgiaLauncher-universal2.dmg
+          test -f "$DIST_PATH" || { echo "Missing $DIST_PATH" >&2; exit 1; }
+          cp "$DIST_PATH" "artifacts/$STAGED_NAME"
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: launcher-macos
-          path: artifacts/NostalgiaLauncher-universal2.dmg
+          path: artifacts/${{ env.STAGED_NAME }}
           if-no-files-found: error
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: artifacts/NostalgiaLauncher-universal2.dmg
+          subject-path: artifacts/${{ env.STAGED_NAME }}
 
   release:
     needs: [build-windows, build-linux, build-macos]
