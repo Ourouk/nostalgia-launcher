@@ -70,8 +70,8 @@ checksum when downloading from an untrusted or mirrored source.
 The launcher has **no built-in server list**. On first launch it asks you to
 import a launcher configuration:
 
-- **Local file** — choose a `nostalgia_launcher.json` (or
-  `vanilla_wow_launcher.json`) file supplied by your community.
+- **Local file** — choose a `nostalgia_launcher.json` file supplied by your
+  community.
 - **URL** — paste an `https://` configuration URL your community provides.
 
 Before anything is saved, the launcher shows a **summary** of the
@@ -139,9 +139,8 @@ Unified Launcher for Windows Games). The play button appears only when
 
 Settings, installation records, and caches live in your user profile:
 Linux `~/.nostalgia-launcher`, Windows `%APPDATA%\NostalgiaLauncher`, macOS
-`~/Library/Application Support/NostalgiaLauncher`. (A `vanilla_wow_launcher`
-configuration or data directory from a previous version is migrated
-automatically.) Deleting the settings directory resets the launcher.
+`~/Library/Application Support/NostalgiaLauncher`. Deleting the settings
+directory resets the launcher.
 
 ## Legal notices
 

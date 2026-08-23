@@ -1,8 +1,6 @@
-# Per-user runtime state (current + legacy v1.x names)
+# Per-user runtime state
 nostalgia_launcher_config.json
 nostalgia_launcher_hash_cache.json
-vanilla_wow_launcher_config.json
-vanilla_wow_launcher_hash_cache.json
 *.tmp
 # Default game folder (created next to the app on first use)
 VanillaWoW/

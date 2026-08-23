@@ -12,25 +12,32 @@ launch. **That directory has been removed.** The launcher now starts from a
 generic, configuration-driven workflow:
 
 1. On first launch, import a configuration:
-   - **local file** — a `nostalgia_launcher.json` (or the old
-     `vanilla_wow_launcher.json`) file your community provides, or
+   - **local file** — a `nostalgia_launcher.json` file your community
+     provides, or
    - **URL** — an `https://` configuration URL your community publishes.
 2. Review the **summary** the launcher shows (server name, base URL, hosts
    contacted, enabled features) and accept only if you trust the source.
 
 The launcher never silently contacts a server directory on your behalf.
 
-### Your existing data is kept
+### Existing data is not migrated
 
-- A `vanilla_wow_launcher_config.json` or `vanilla_wow_launcher_*.json` from
-  a previous version is migrated automatically to the new
-  `~/.nostalgia-launcher` (Linux) / `%APPDATA%\NostalgiaLauncher`
-  (Windows) / `~/Library/Application Support/NostalgiaLauncher` (macOS)
-  location on first run.
-- The configuration **filename** changed from `vanilla_wow_launcher.json`
-  to `nostalgia_launcher.json`. Old filenames are still discovered and
-  migrated; the new name is preferred for anything you write.
-- Custom catalog files (`*_custom.json`) are migrated alongside the config.
+The launcher no longer carries forward data from previous versions. After
+this change, an existing installation starts fresh:
+
+- Settings, the selected game folder, and any per-user launcher config live
+  in `~/.nostalgia-launcher` (Linux) / `%APPDATA%\NostalgiaLauncher`
+  (Windows) / `~/Library/Application Support/NostalgiaLauncher` (macOS) — but
+  a previous version's files under those or any older locations are **not**
+  read or copied on first run.
+- Re-import your server configuration on first launch: via the file picker
+  (point it at your old `vanilla_wow_launcher.json` — an explicit file path
+  still works regardless of filename) or the URL field, then review the
+  summary and accept it.
+- The game folder must be selected again.
+- Custom catalog files (`*_custom.json`) are **not** carried over; copy or
+  rename them into the current config directory by hand if you still use
+  them.
 
 ## For communities / server operators
 

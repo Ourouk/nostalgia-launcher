@@ -21,10 +21,8 @@ src/nostalgia_launcher/
   per-user dirs via `platform_support.config_dir()/cache_dir()`: Linux config
   `~/.nostalgia-launcher`, Windows `%APPDATA%\NostalgiaLauncher`, macOS
   `~/Library/Application Support`; cache is Linux XDG / `%LOCALAPPDATA%` /
-  `~/Library/Caches`. Superseded (next-to-exe, old XDG) and pre-rename
-  (`octo-updater`) files are migrated on first run via the `LEGACY_*_FILES`
-  tuples in `core/constants.py`, plus `legacy_custom_pairs()` for the custom
-  catalog files that move with the config dir.
+  `~/Library/Caches`. All state lives in those current locations — the
+  launcher does not read or migrate files from any older directory layout.
 - **There are no hardcoded server/mod/addon values.** Everything is configured
   by `core/launcher.py` reading `nostalgia_launcher.json` (server, news,
   realm, registry URLs, mirrors; auto-discovered next to the exe / repo root,

@@ -260,9 +260,7 @@ features) and requires explicit acceptance before it is persisted.
   endpoints. Large binary downloads (game files, mod/addon archives) are
   sized by the UI and not capped here.
 - Settings and caches live in separate per-user dirs via
-  `platform_support.config_dir()` / `cache_dir()` (never next to the exe),
-  with `LEGACY_*_FILES` migration and `legacy_custom_pairs()` for the custom
-  catalog files that move with the config dir.
+  `platform_support.config_dir()` / `cache_dir()` (never next to the exe).
 - Configuration changes are written safely to reduce corruption after an
   interruption.
 - No telemetry or tracking is included.

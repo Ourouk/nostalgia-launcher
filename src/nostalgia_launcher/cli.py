@@ -17,9 +17,6 @@ from .core import config_store, launcher, platform_support
 from .core.constants import (
     CACHE_FILE,
     CONFIG_FILE,
-    LEGACY_CACHE_FILES,
-    LEGACY_CONFIG_FILES,
-    legacy_custom_pairs,
 )
 
 _QT_UNAVAILABLE = (
@@ -176,13 +173,7 @@ def _ensure_default_game_folder():
 
 def _run_backend() -> int:
     """Config-store setup + Qt backend resolution/construction/run."""
-    config_store.configure(
-        CONFIG_FILE,
-        CACHE_FILE,
-        legacy_config=LEGACY_CONFIG_FILES,
-        legacy_cache=LEGACY_CACHE_FILES,
-        legacy_pairs=legacy_custom_pairs(),
-    )
+    config_store.configure(CONFIG_FILE, CACHE_FILE)
     backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")
     try:
         app_cls = resolve_backend(backend)

@@ -68,7 +68,6 @@ its download allowlist from the configured hosts.
 
 import json
 import os
-import shutil
 import sys
 import tempfile
 import threading
@@ -79,9 +78,6 @@ from .log_sink import log
 from .platform_support import config_dir, is_macos
 
 LAUNCHER_FILE = "nostalgia_launcher.json"
-# v1.x compatibility: the config filename before the Nostalgia Launcher
-# rename. Still discovered and migrated, never written.
-LEGACY_LAUNCHER_FILE = "vanilla_wow_launcher.json"
 
 _LOCK = threading.Lock()
 _config: "LauncherConfig | None" = None
@@ -330,11 +326,10 @@ def _derive(data: dict) -> LauncherConfig:
 
 def discover_path() -> str:
     """Locate ``nostalgia_launcher.json``: next to the executable (frozen)
-    or the repo root (source), then the current working directory. The
-    pre-rename ``vanilla_wow_launcher.json`` name is accepted in the same
-    spots (v1.x compatibility). On macOS the frozen app also searches the
-    folder *containing* the .app bundle, so the config can sit next to the
-    bundle (e.g. in the DMG root) rather than buried in Contents/MacOS."""
+    or the repo root (source), then the current working directory. On macOS
+    the frozen app also searches the folder *containing* the .app bundle, so
+    the config can sit next to the bundle (e.g. in the DMG root) rather than
+    buried in Contents/MacOS."""
     if getattr(sys, "frozen", False):
         roots = [os.path.dirname(os.path.abspath(sys.executable))]
         if is_macos():
@@ -356,10 +351,9 @@ def discover_path() -> str:
         ]
     roots.append(os.getcwd())
     for root in roots:
-        for name in (LAUNCHER_FILE, LEGACY_LAUNCHER_FILE):
-            candidate = os.path.join(root, name)
-            if os.path.exists(candidate):
-                return candidate
+        candidate = os.path.join(root, LAUNCHER_FILE)
+        if os.path.exists(candidate):
+            return candidate
     return ""
 
 
@@ -369,27 +363,11 @@ def user_config_path() -> str:
     return os.path.join(config_dir(), LAUNCHER_FILE)
 
 
-def legacy_user_config_path() -> str:
-    """The pre-rename per-user launcher-config file (v1.x); migrated to
-    `user_config_path()` on first run when the new file doesn't exist."""
-    return os.path.join(config_dir(), LEGACY_LAUNCHER_FILE)
-
-
 def _auto_path() -> str:
     """The configuration to use when no explicit path was given: the
-    previously imported per-user file (migrating the pre-rename name when
-    needed), else the auto-discovered one."""
+    previously imported per-user file, else the auto-discovered one."""
     user = user_config_path()
     if os.path.exists(user):
-        return user
-    old = legacy_user_config_path()
-    if os.path.exists(old):
-        try:
-            directory = os.path.dirname(user) or "."
-            os.makedirs(directory, exist_ok=True)
-            shutil.copyfile(old, user)
-        except OSError:
-            return old
         return user
     return discover_path()
 
