@@ -21,6 +21,11 @@ not maintain or recommend any server directory.
   advertises a snapshot, falling back to plain HTTP automatically.
 - Installs and updates mods and addons from catalogs **your configuration
   points at** (Git hosts, validated by host allowlist).
+- Runs **multiple isolated profiles** — one per server/community, each with
+  its own server config, game-folder confirmation, mod records and caches
+  (`--profile NAME`, or Settings → PROFILES). Launching a second copy of the
+  same profile just focuses the running window; different profiles may run
+  side by side.
 - Applies common graphics, camera, sound, and gameplay preferences via
   `Config.wtf`.
 - Shows news and announcements **only if your configuration provides a
