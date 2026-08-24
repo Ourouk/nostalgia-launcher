@@ -23,7 +23,7 @@ from unittest.mock import Mock
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QMessageBox
 
 import nostalgia_launcher.cli as cli_module
 import nostalgia_launcher.controllers.news as news_controller
@@ -697,3 +697,166 @@ def test_profile_keys_and_locks_differ_across_profiles(qapp, fake_home):
     assert app_lock.lock_file_for(
         profiles.resolve("alpha").state_path()
     ) != app_lock.lock_file_for(profiles.resolve("beta").state_path())
+
+
+# ── profiles UI: chip, PROFILES section, switch & restart ─────────────
+
+
+def _open_settings_window(build_app):
+    """A running app (safe backends) with the non-modal Settings dialog
+    open. Returns the app; tests close it via _close()."""
+    app = build_app()
+    app._window._open_settings_dialog()
+    return app
+
+
+def test_header_chip_shows_active_profile_name(qapp, build_app):
+    from PySide6.QtWidgets import QLabel
+
+    app = build_app(startup=False)
+    try:
+        chip = app._window.findChild(QLabel, "profileChip")
+        assert chip is not None
+        assert chip.text() == "default"
+        assert chip.toolTip()
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_header_chip_reflects_non_default_profile(qapp, build_app, fake_home):
+    from PySide6.QtWidgets import QLabel
+
+    profiles.create("chipster")
+    profiles.activate(profiles.resolve("chipster"))
+    app = build_app(startup=False)
+    try:
+        chip = app._window.findChild(QLabel, "profileChip")
+        assert chip.text() == "chipster"
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_settings_profiles_section_renders(qapp, build_app, fake_home):
+    """The PROFILES section lists every profile with the active one
+    preselected plus all management buttons."""
+    from PySide6.QtWidgets import QPushButton
+
+    profiles.create("alpha")
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        combo = dlg._profiles_combo
+        names = [combo.itemText(i) for i in range(combo.count())]
+        assert names == ["default", "alpha"]
+        assert combo.currentText() == "default"
+        for obj_name in (
+            "profilesNew",
+            "profilesDuplicate",
+            "profilesRename",
+            "profilesDelete",
+            "profilesSwitch",
+        ):
+            assert dlg.findChild(QPushButton, obj_name) is not None
+    finally:
+        app._window._settingsDialog.close()
+        app.close()
+        app._hub.close()
+
+
+def test_switch_restart_persists_pointer_and_quits(
+    qapp, build_app, monkeypatch, fake_home
+):
+    profiles.create("beta")
+    detached = Mock(return_value=True)
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.main_window.QProcess.startDetached",
+        detached,
+    )
+    quit_calls = []
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QApplication.quit",
+        lambda *a, **kw: quit_calls.append(1),
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
+        lambda *a, **kw: QMessageBox.Yes,
+    )
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        dlg._refresh_profiles_combo(select="beta")
+        dlg._on_profile_switch()
+
+        assert profiles.load_index()["active"] == "beta"
+        assert detached.called
+        assert quit_calls == [1]
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_switch_restart_failure_asks_for_manual_restart(
+    qapp, build_app, monkeypatch, fake_home
+):
+    profiles.create("gamma")
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.main_window.QProcess.startDetached",
+        Mock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
+        lambda *a, **kw: QMessageBox.Yes,
+    )
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        dlg._refresh_profiles_combo(select="gamma")
+        dlg._on_profile_switch()
+
+        assert profiles.load_index()["active"] == "gamma"
+        assert "manually" in dlg._profiles_status.text().lower()
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_delete_active_resets_pointer_and_offers_switch(
+    qapp, build_app, monkeypatch, fake_home
+):
+    profiles.create("gone")
+    profiles.set_active("gone")
+    answers = iter([QMessageBox.Yes, QMessageBox.No])
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
+        lambda *a, **kw: next(answers),
+    )
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        dlg._refresh_profiles_combo(select="gone")
+        dlg._on_profile_delete()
+
+        idx = profiles.load_index()
+        assert idx["active"] == "default"
+        assert "gone" not in idx["order"]
+        assert not os.path.exists(
+            os.path.join(platform_support.config_dir(), "profiles", "gone")
+        )
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_delete_default_is_refused_inline(qapp, build_app, fake_home):
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        dlg._refresh_profiles_combo(select="default")
+        dlg._on_profile_delete()
+        assert "cannot be deleted" in dlg._profiles_status.text()
+        assert "default" in profiles.list_profiles()
+    finally:
+        app.close()
+        app._hub.close()

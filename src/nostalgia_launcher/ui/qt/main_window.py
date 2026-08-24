@@ -10,12 +10,14 @@ keyed by tab name in `self._pages`; the nav gear and footer widgets are
 exposed as attributes for the settings and update workflows.
 """
 
+import os
 import queue
+import sys
 import threading
 import webbrowser
 from collections import deque
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QProcess, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -40,6 +42,7 @@ from . import metrics
 from .addons_panel import AddonsPanel
 from .bridge import ControllerHub
 from .custom_addon_dialog import CustomAddonDialog
+from .list_panel import ClickableLabel
 from .log_window import LogWindow
 from .metrics import BASE_H, BASE_W, clamp
 from .mods_panel import ModsPanel
@@ -69,6 +72,52 @@ class _LogoFetcher(QObject):
 # The header wordmark logo is scaled to fit within this box.
 _LOGO_HEIGHT = 28
 _LOGO_MAX_WIDTH = 320
+
+
+def relaunch_with_profile(name: str) -> bool:
+    """Restart the app into another profile (detached child).
+
+    Strips BOTH ``--profile X`` and ``--profile=X`` from the old argv and
+    appends the new one. Source runs spawn
+    ``[sys.executable, sys.argv[0], *argv]``; frozen builds
+    ``[sys.executable, *argv]``. The child gets ``NOSTALGIA_RELAUNCH=1``
+    so its store-lock acquisition tolerates this quitting parent (bounded
+    grace window). The active pointer must already be persisted by the
+    caller. macOS frozen (.app) bundles are not supported in v1 — returns
+    False so the UI can ask the user to relaunch manually.
+    """
+    argv = []
+    skip_value = False
+    for arg in sys.argv[1:]:
+        if skip_value:
+            skip_value = False
+            continue
+        if arg == "--profile":
+            skip_value = True  # drop the value that follows
+            continue
+        if arg.startswith("--profile="):
+            continue
+        argv.append(arg)
+    argv += ["--profile", name]
+
+    if getattr(sys, "frozen", False):
+        if sys.platform == "darwin":
+            return False  # .app relaunch needs `open -na`; manual for now
+        program, args = sys.executable, argv
+    else:
+        program, args = sys.executable, [sys.argv[0], *argv]
+
+    # The child inherits its environment snapshot at spawn time, so set
+    # the grace flag just around the (synchronous) detached fork.
+    prev = os.environ.get("NOSTALGIA_RELAUNCH")
+    os.environ["NOSTALGIA_RELAUNCH"] = "1"
+    try:
+        return QProcess.startDetached(program, args)
+    finally:
+        if prev is None:
+            os.environ.pop("NOSTALGIA_RELAUNCH", None)
+        else:
+            os.environ["NOSTALGIA_RELAUNCH"] = prev
 
 
 class MainWindow(QMainWindow):
@@ -175,6 +224,21 @@ class MainWindow(QMainWindow):
         wmLayout.addWidget(self._updateAvailableLabel)
         self._updateAvailableShown = False
         layout.addWidget(wordmarkBox)
+
+        # Active-profile chip: static text (switching restarts the app);
+        # clicking it opens Settings where profiles are managed.
+        self._profileChip = ClickableLabel(self._hub.profiles_name(), header)
+        self._profileChip.setObjectName("profileChip")
+        self._profileChip.setToolTip("Active profile — manage in Settings")
+        self._profileChip.setAccessibleName("Active profile")
+        self._profileChip.setCursor(Qt.PointingHandCursor)
+        self._profileChip.setStyleSheet(
+            f"QLabel {{ color: {p.text_dim.name()}; font-weight: bold;"
+            f" font-size: {metrics.PT_BADGE}pt; }}"
+            f"QLabel:hover {{ color: {p.gold.name()}; }}"
+        )
+        self._profileChip.clicked.connect(self._open_settings_dialog)
+        layout.addWidget(self._profileChip)
 
         # A themed logo replaces the wordmark text once it has been fetched
         # (the server-name text shows until then, and stays on failure).

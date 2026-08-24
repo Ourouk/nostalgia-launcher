@@ -9,18 +9,23 @@ controller; mirror results arrive as MirrorStatusChanged events through the
 ControllerBridge and are rendered here.
 """
 
+import json
 import os
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
+    QComboBox,
     QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QToolButton,
     QVBoxLayout,
@@ -28,7 +33,8 @@ from PySide6.QtWidgets import (
 )
 
 from ...controllers.settings import SettingsController
-from ...core import launcher, platform_support
+from ...core import launcher, platform_support, profiles
+from ...core.log_sink import log
 from . import metrics
 from .bridge import ControllerBridge
 from .linux_settings_dialog import LinuxSettingsDialog
@@ -343,6 +349,7 @@ class SettingsDialog(QDialog):
         body_layout.addLayout(cols, 1)
 
         self._build_registry_section(body_layout)
+        self._build_profiles_section(body_layout)
         return body
 
     def _add_row(self, layout, icon, text, command, object_name, color):
@@ -492,6 +499,277 @@ class SettingsDialog(QDialog):
         else:
             self._registry_status.setText("")
             edit.setText(get_url())
+
+    # ── launcher profiles ────────────────────────────────────────────────
+
+    def _build_profiles_section(self, layout):
+        p = self._palette
+        layout.addSpacing(10)
+
+        title = QLabel("PROFILES", self)
+        title.setStyleSheet(
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
+        )
+        layout.addWidget(title)
+
+        hint = QLabel(
+            "Profiles fully isolate the server config, game state, "
+            "mods/addons records and caches. Switching restarts the "
+            "launcher.",
+            self,
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {p.text_dim.name()}; font-size: 9pt;")
+        layout.addWidget(hint)
+        layout.addSpacing(4)
+
+        self._profiles_status = QLabel("", self)
+        self._profiles_status.setObjectName("settingsProfilesStatus")
+        self._profiles_status.setWordWrap(True)
+        self._profiles_status.setStyleSheet(
+            f"color: {p.err.name()}; font-size: 9pt;"
+        )
+        layout.addWidget(self._profiles_status)
+        layout.addSpacing(2)
+
+        row = QHBoxLayout()
+        self._profiles_combo = QComboBox(self)
+        self._profiles_combo.setObjectName("profilesCombo")
+        self._refresh_profiles_combo()
+        row.addWidget(self._profiles_combo, 1)
+
+        switch_btn = QPushButton("Switch & Restart", self)
+        switch_btn.setObjectName("profilesSwitch")
+        switch_btn.setProperty("variant", "primary")
+        switch_btn.setCursor(Qt.PointingHandCursor)
+        switch_btn.setToolTip(
+            "Restart the launcher using the selected profile"
+        )
+        switch_btn.clicked.connect(self._on_profile_switch)
+        row.addWidget(switch_btn)
+
+        new_btn = QPushButton("New…", self)
+        new_btn.setObjectName("profilesNew")
+        new_btn.setCursor(Qt.PointingHandCursor)
+        new_btn.clicked.connect(self._on_profile_new)
+        row.addWidget(new_btn)
+
+        dup_btn = QPushButton("Duplicate", self)
+        dup_btn.setObjectName("profilesDuplicate")
+        dup_btn.setCursor(Qt.PointingHandCursor)
+        dup_btn.clicked.connect(self._on_profile_duplicate)
+        row.addWidget(dup_btn)
+
+        rename_btn = QPushButton("Rename…", self)
+        rename_btn.setObjectName("profilesRename")
+        rename_btn.setCursor(Qt.PointingHandCursor)
+        rename_btn.clicked.connect(self._on_profile_rename)
+        row.addWidget(rename_btn)
+
+        delete_btn = QPushButton("Delete", self)
+        delete_btn.setObjectName("profilesDelete")
+        delete_btn.setCursor(Qt.PointingHandCursor)
+        delete_btn.clicked.connect(self._on_profile_delete)
+        row.addWidget(delete_btn)
+
+        layout.addLayout(row)
+
+    def _refresh_profiles_combo(self, select=None):
+        """Rebuild the combo from the registry; preselect `select` (or the
+        active profile)."""
+        combo = self._profiles_combo
+        current = select or profiles.active().name
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItems(profiles.list_profiles())
+            idx = combo.findText(current)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+        finally:
+            combo.blockSignals(False)
+
+    def _selected_profile(self) -> str:
+        return self._profiles_combo.currentText()
+
+    def _profile_error(self, msg: str):
+        self._profiles_status.setText(f"✗ {msg}" if msg else "")
+
+    def _prompt_profile_name(self, title, initial=""):
+        name, ok = QInputDialog.getText(
+            self, title, "Profile name:", text=initial
+        )
+        return (name or "").strip(), ok
+
+    def _on_profile_new(self):
+        name, ok = self._prompt_profile_name("New profile")
+        if not ok:
+            return
+        err = profiles.validate_name(name)
+        if err:
+            self._profile_error(err)
+            return
+        prof, err = profiles.create(name)
+        if err:
+            self._profile_error(err)
+            return
+        self._refresh_profiles_combo(select=name)
+        self._profile_error("")
+        self._configure_new_profile(prof)
+
+    def _configure_new_profile(self, prof):
+        """Open the first-launch wizard scoped to the fresh profile: with
+        the persist override pointed at it, an accepted selection lands in
+        the profile's own launcher.json. Skipping is acceptable — the
+        profile simply stays unconfigured."""
+        from .launcher_config_dialog import LauncherConfigDialog
+
+        active = profiles.active()
+        try:
+            launcher.set_profile_launcher_path(prof.launcher_path())
+            dlg = LauncherConfigDialog(initial_path=launcher.discover_path())
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            err = self._persist_profile_selection(dlg.selection())
+            if err:
+                self._profile_error(err)
+        finally:
+            launcher.set_profile_launcher_path(
+                active.launcher_path() if active.root else ""
+            )
+
+    def _persist_profile_selection(self, sel) -> str:
+        """Mirror cli._first_launch's persistence (file or URL selection)
+        into the CURRENT persist override — without starting any backend.
+        Returns "" on success."""
+        from ..services import config_import
+
+        if sel["kind"] == "file":
+            _cfg, err = launcher.configure(sel["path"])
+            if err:
+                return err
+            dest, err = launcher.persist(sel["path"])
+            if err:
+                return err
+            if os.path.normpath(dest) != os.path.normpath(sel["path"]):
+                _cfg, err = launcher.configure(dest)
+                if err:
+                    return err
+            return ""
+        raw = sel.get("raw")
+        if not raw:
+            _data, raw, err = config_import.fetch_config_url(sel["config_url"])
+            if err:
+                return err
+        cfg = launcher.configure_from_dict(json.loads(raw))
+        if cfg is None:
+            return f"Invalid launcher configuration: {launcher.config_error()}"
+        dest, err = launcher.persist_text(raw)
+        if err:
+            return err
+        _cfg, err = launcher.configure(dest)
+        return err or ""
+
+    def _on_profile_duplicate(self):
+        src = self._selected_profile()
+        if not src:
+            return
+        suggestion = f"{src}-copy"
+        name, ok = self._prompt_profile_name(
+            "Duplicate profile",
+            initial=suggestion[:31].rstrip(". "),
+        )
+        if not ok:
+            return
+        err = profiles.duplicate(src, name)
+        if err:
+            self._profile_error(err)
+            return
+        self._profile_error("")
+        self._refresh_profiles_combo(select=name)
+
+    def _on_profile_rename(self):
+        src = self._selected_profile()
+        if not src:
+            return
+        name, ok = self._prompt_profile_name("Rename profile", initial=src)
+        if not ok:
+            return
+        err = profiles.rename(src, name)
+        if err:
+            self._profile_error(err)
+            return
+        self._profile_error("")
+        self._refresh_profiles_combo(select=name)
+
+    def _on_profile_delete(self):
+        name = self._selected_profile()
+        if not name:
+            return
+        if name == profiles.DEFAULT_PROFILE:
+            self._profile_error("The default profile cannot be deleted.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Delete profile",
+            f"Delete profile '{name}'?\n\nIts server config, state and "
+            "caches will be removed.",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        was_active = name == profiles.active().name
+        err = profiles.delete(name)
+        if err:
+            self._profile_error(err)
+            return
+        self._profile_error("")
+        self._refresh_profiles_combo()
+        if was_active:
+            # Pointer was reset to default — offer the immediate restart.
+            answer = QMessageBox.question(
+                self,
+                "Profile deleted",
+                f"'{name}' was the active profile. Switch & Restart to "
+                "'default' now?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if answer == QMessageBox.Yes:
+                self._switch_to_profile(profiles.DEFAULT_PROFILE)
+
+    def _on_profile_switch(self):
+        name = self._selected_profile()
+        if not name:
+            return
+        if name == profiles.active().name:
+            self._profile_error(f"'{name}' is already the active profile.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Switch profile",
+            f"The launcher will restart using profile '{name}'.",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self._switch_to_profile(name)
+
+    def _switch_to_profile(self, name):
+        """Persist the pointer, spawn the detached child and quit; on a
+        failed relaunch ask the user to restart manually (pointer is
+        already persisted, so a manual start still switches)."""
+        from .main_window import relaunch_with_profile
+
+        profiles.set_active(name)
+        if relaunch_with_profile(name):
+            QApplication.quit()
+            return
+        log(
+            "Could not relaunch automatically — restart manually to "
+            "switch profiles.",
+            "err",
+        )
+        self._profile_error("Restart the launcher manually to switch.")
 
     def _on_reset_registry(self, edit, get_url, on_reset):
         on_reset()
