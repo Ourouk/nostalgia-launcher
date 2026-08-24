@@ -314,3 +314,74 @@ def test_cli_explicit_launcher_config_wins_for_content(
     # The explicit file is never persisted over the profile's own config.
     with open(prof.launcher_path(), encoding="utf-8") as f:
         assert json.load(f)["server"]["base_url"] == "https://p.test"
+
+
+# ── delete-the-only-server resets to the setup wizard ───────────────────
+
+
+def _wizard_stub(monkeypatch):
+    """Stub the first-launch wizard (URL selection) + backend, mirroring
+    the existing wizard-persist test harness."""
+    raw = json.dumps(MINIMAL_CFG)
+    monkeypatch.setattr(
+        cli,
+        "_pick_launcher_config",
+        lambda: {
+            "kind": "url",
+            "config_url": "https://example.invalid/c.json",
+            "raw": raw,
+        },
+    )
+    _stub_backend(monkeypatch)
+
+
+def _legacy_config():
+    with open(launcher.user_config_path(), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def test_deleting_only_server_restarts_into_setup_wizard(
+    fake_home, monkeypatch
+):
+    """The only configured server is a profile; deleting it while it is
+    active and ACCEPTING the restart offer spawns a child running
+    ``--profile default`` — which must land on the setup wizard and
+    persist into the legacy top-level launcher config."""
+    prof, err = profiles.create("only", json.dumps(MINIMAL_CFG))
+    assert err == ""
+    profiles.set_active("only")
+    profiles.activate(profiles.resolve("only"))
+    assert profiles.active().name == "only"
+
+    # The UI flow: delete resets the pointer BEFORE removing the dir,
+    # then switch_profile("default") detaches the child.
+    assert profiles.delete("only") == ""
+    assert profiles.load_index()["active"] == "default"
+
+    _wizard_stub(monkeypatch)
+    assert cli.main(["--profile", "default"]) == 0
+
+    idx = profiles.load_index()
+    assert idx["active"] == "default"
+    assert "only" not in idx["order"]
+    assert not os.path.exists(str(prof.root))
+    assert _legacy_config()["server"]["base_url"] == "https://p.test"
+
+
+def test_declined_restart_next_launch_lands_on_wizard(fake_home, monkeypatch):
+    """Declining the post-delete restart keeps this session alive; the
+    NEXT plain launch resolves index-active default (unconfigured) and
+    lands on the setup wizard too."""
+    prof, err = profiles.create("only", json.dumps(MINIMAL_CFG))
+    assert err == ""
+    profiles.set_active("only")
+    profiles.activate(profiles.resolve("only"))
+
+    assert profiles.delete("only") == ""
+
+    _wizard_stub(monkeypatch)
+    assert cli.main([]) == 0
+
+    assert profiles.load_index()["active"] == "default"
+    assert not os.path.exists(str(prof.root))
+    assert _legacy_config()["server"]["base_url"] == "https://p.test"

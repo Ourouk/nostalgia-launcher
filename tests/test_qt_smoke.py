@@ -710,37 +710,46 @@ def _open_settings_window(build_app):
     return app
 
 
-def test_header_chip_shows_active_profile_name(qapp, build_app):
-    from PySide6.QtWidgets import QLabel
+def test_header_combo_shows_active_profile(qapp, build_app):
+    """The header selector lists every profile with the active one
+    preselected."""
+    from PySide6.QtWidgets import QComboBox
 
     app = build_app(startup=False)
     try:
-        chip = app._window.findChild(QLabel, "profileChip")
-        assert chip is not None
-        assert chip.text() == "default"
-        assert chip.toolTip()
+        combo = app._window.findChild(QComboBox, "profileCombo")
+        assert combo is not None
+        assert [combo.itemText(i) for i in range(combo.count())] == ["default"]
+        assert combo.currentText() == "default"
+        assert "restart" in combo.toolTip().lower()
+        assert combo.accessibleName()
     finally:
         app.close()
         app._hub.close()
 
 
-def test_header_chip_reflects_non_default_profile(qapp, build_app, fake_home):
-    from PySide6.QtWidgets import QLabel
+def test_header_combo_reflects_non_default_profile(qapp, build_app, fake_home):
+    from PySide6.QtWidgets import QComboBox
 
     profiles.create("chipster")
     profiles.activate(profiles.resolve("chipster"))
     app = build_app(startup=False)
     try:
-        chip = app._window.findChild(QLabel, "profileChip")
-        assert chip.text() == "chipster"
+        combo = app._window.findChild(QComboBox, "profileCombo")
+        assert combo.currentText() == "chipster"
+        assert [combo.itemText(i) for i in range(combo.count())] == [
+            "default",
+            "chipster",
+        ]
     finally:
         app.close()
         app._hub.close()
 
 
-def test_settings_profiles_section_renders(qapp, build_app, fake_home):
+def test_settings_profiles_section_is_editor_only(qapp, build_app, fake_home):
     """The PROFILES section lists every profile with the active one
-    preselected plus all management buttons."""
+    preselected plus the editor buttons — switching lives in the header,
+    so there is no Switch button here."""
     from PySide6.QtWidgets import QPushButton
 
     profiles.create("alpha")
@@ -756,38 +765,42 @@ def test_settings_profiles_section_renders(qapp, build_app, fake_home):
             "profilesDuplicate",
             "profilesRename",
             "profilesDelete",
-            "profilesSwitch",
         ):
             assert dlg.findChild(QPushButton, obj_name) is not None
+        assert dlg.findChild(QPushButton, "profilesSwitch") is None
     finally:
         app._window._settingsDialog.close()
         app.close()
         app._hub.close()
 
 
-def test_switch_restart_persists_pointer_and_quits(
+def test_header_switch_persists_pointer_and_quits(
     qapp, build_app, monkeypatch, fake_home
 ):
+    """Picking another profile in the header: confirm → pointer persisted
+    → detached relaunch spawned → quit."""
+
     profiles.create("beta")
     detached = Mock(return_value=True)
     monkeypatch.setattr(
-        "nostalgia_launcher.ui.qt.main_window.QProcess.startDetached",
+        "nostalgia_launcher.ui.qt.profiles_ui.QProcess.startDetached",
         detached,
     )
     quit_calls = []
     monkeypatch.setattr(
-        "nostalgia_launcher.ui.qt.settings_dialog.QApplication.quit",
+        "nostalgia_launcher.ui.qt.profiles_ui.QApplication.quit",
         lambda *a, **kw: quit_calls.append(1),
     )
     monkeypatch.setattr(
-        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
+        "nostalgia_launcher.ui.qt.profiles_ui.QMessageBox.question",
         lambda *a, **kw: QMessageBox.Yes,
     )
-    app = _open_settings_window(build_app)
+    app = build_app()
     try:
-        dlg = app._window._settingsDialog
-        dlg._refresh_profiles_combo(select="beta")
-        dlg._on_profile_switch()
+        win = app._window
+        idx = win._profileCombo.findText("beta")
+        win._profileCombo.setCurrentIndex(idx)
+        win._on_profile_combo_activated("beta")
 
         assert profiles.load_index()["active"] == "beta"
         assert detached.called
@@ -797,36 +810,69 @@ def test_switch_restart_persists_pointer_and_quits(
         app._hub.close()
 
 
-def test_switch_restart_failure_asks_for_manual_restart(
+def test_header_switch_declined_reverts_and_keeps_pointer(
     qapp, build_app, monkeypatch, fake_home
 ):
-    profiles.create("gamma")
-    monkeypatch.setattr(
-        "nostalgia_launcher.ui.qt.main_window.QProcess.startDetached",
-        Mock(return_value=False),
-    )
-    monkeypatch.setattr(
-        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
-        lambda *a, **kw: QMessageBox.Yes,
-    )
-    app = _open_settings_window(build_app)
-    try:
-        dlg = app._window._settingsDialog
-        dlg._refresh_profiles_combo(select="gamma")
-        dlg._on_profile_switch()
 
-        assert profiles.load_index()["active"] == "gamma"
-        assert "manually" in dlg._profiles_status.text().lower()
+    profiles.create("beta")
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QProcess.startDetached",
+        Mock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QMessageBox.question",
+        lambda *a, **kw: QMessageBox.No,
+    )
+    app = build_app()
+    try:
+        win = app._window
+        idx = win._profileCombo.findText("beta")
+        win._profileCombo.setCurrentIndex(idx)
+        win._on_profile_combo_activated("beta")
+
+        # Nothing happened: pointer unchanged, combo reverted.
+        assert profiles.load_index()["active"] == "default"
+        assert win._profileCombo.currentText() == "default"
     finally:
         app.close()
         app._hub.close()
 
 
-def test_delete_active_resets_pointer_and_offers_switch(
+def test_header_switch_failure_keeps_pointer_but_shows_selection(
+    qapp, build_app, monkeypatch, fake_home
+):
+    """A failed relaunch leaves the pointer persisted (manual start will
+    land on it) and reverts the header selection to the running profile."""
+
+    profiles.create("gamma")
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QProcess.startDetached",
+        Mock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QMessageBox.question",
+        lambda *a, **kw: QMessageBox.Yes,
+    )
+    app = build_app()
+    try:
+        win = app._window
+        idx = win._profileCombo.findText("gamma")
+        win._profileCombo.setCurrentIndex(idx)
+        win._on_profile_combo_activated("gamma")
+
+        assert profiles.load_index()["active"] == "gamma"
+        assert win._profileCombo.currentText() == "default"
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_delete_active_resets_pointer_and_offers_restart(
     qapp, build_app, monkeypatch, fake_home
 ):
     profiles.create("gone")
     profiles.set_active("gone")
+    profiles.activate(profiles.resolve("gone"))
     answers = iter([QMessageBox.Yes, QMessageBox.No])
     monkeypatch.setattr(
         "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
@@ -844,6 +890,78 @@ def test_delete_active_resets_pointer_and_offers_switch(
         assert not os.path.exists(
             os.path.join(platform_support.config_dir(), "profiles", "gone")
         )
+        # Registry + editor combo are consistent afterwards: the only
+        # profile left is the default (header combo refreshes on restart
+        # by design).
+        assert profiles.list_profiles() == ["default"]
+        combo = dlg._profiles_combo
+        assert [combo.itemText(i) for i in range(combo.count())] == ["default"]
+        assert combo.currentText() == "default"
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_delete_active_restart_offer_switches_to_default(
+    qapp, build_app, monkeypatch, fake_home
+):
+    """Answering Yes to the post-delete offer restarts on 'default' via
+    the shared switch helper (pointer persisted + quit)."""
+    profiles.create("gone")
+    profiles.set_active("gone")
+    profiles.activate(profiles.resolve("gone"))
+    answers = iter([QMessageBox.Yes, QMessageBox.Yes])
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
+        lambda *a, **kw: next(answers),
+    )
+    detached = Mock(return_value=True)
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QProcess.startDetached",
+        detached,
+    )
+    quit_calls = []
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QApplication.quit",
+        lambda *a, **kw: quit_calls.append(1),
+    )
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        dlg._refresh_profiles_combo(select="gone")
+        dlg._on_profile_delete()
+
+        assert profiles.load_index()["active"] == "default"
+        assert detached.called
+        assert quit_calls == [1]
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_delete_active_restart_offer_failure_reports_manually(
+    qapp, build_app, monkeypatch, fake_home
+):
+    profiles.create("gone")
+    profiles.set_active("gone")
+    profiles.activate(profiles.resolve("gone"))
+    answers = iter([QMessageBox.Yes, QMessageBox.Yes])
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
+        lambda *a, **kw: next(answers),
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QProcess.startDetached",
+        Mock(return_value=False),
+    )
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        dlg._refresh_profiles_combo(select="gone")
+        dlg._on_profile_delete()
+
+        assert profiles.load_index()["active"] == "default"
+        assert "manually" in dlg._profiles_status.text().lower()
     finally:
         app.close()
         app._hub.close()
