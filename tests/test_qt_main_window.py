@@ -20,6 +20,7 @@ from unittest.mock import Mock
 
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QProgressBar
 
 from nostalgia_launcher.core import launcher
 from nostalgia_launcher.state.events import (
@@ -142,26 +143,17 @@ def test_status_and_progress_events_reach_footer(qapp, window):
     QTest.qWait(200)
 
     assert window._statusLabel.text() == "Ready to update"
-    assert window._progressBar.value() == 50
+    # The footer shows the phase text only — no mini progress bar.
     assert window._progressLabel.text() == "Downloading…"
-    assert window._progressBar.isVisible()
+    assert window.findChild(QProgressBar, "footerProgress") is None
 
 
-def test_progress_bar_hides_when_idle(qapp, window):
-    hub = window._hub
-    hub.dispatcher.post(ProgressChanged(0.5, "Downloading…"))
-    QTest.qWait(200)
-    assert window._progressBar.isVisible()
-
-    hub.dispatcher.post(ProgressChanged(0.0, ""))
-    QTest.qWait(200)
-    assert not window._progressBar.isVisible()
-    assert window._progressBar.value() == 0
-
-    hub.dispatcher.post(ProgressChanged(1.0, ""))
-    QTest.qWait(200)
-    assert not window._progressBar.isVisible()
-    assert window._progressBar.value() == 100
+def test_footer_has_no_progress_bar(qapp, window):
+    """The footer keeps status text + PLAY/TERMINATE; download progress
+    lives in the UPDATE panel."""
+    assert not hasattr(window, "_progressBar")
+    panel = window._stack.widget(window._pages["UPDATE"])
+    assert panel._progress is not None
 
 
 def test_operation_events_flip_button_state(qapp, window, monkeypatch):

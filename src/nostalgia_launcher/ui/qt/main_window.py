@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QStackedWidget,
     QToolButton,
@@ -414,25 +413,14 @@ class MainWindow(QMainWindow):
         rightLayout = QVBoxLayout(right)
         rightLayout.setContentsMargins(0, 0, 0, 0)
         rightLayout.setSpacing(4)
-        # Align the progress column with the morphing button's width so the
+        # Align the status column with the morphing button's width so the
         # footer reads as two stable columns.
         right.setMinimumWidth(150)
 
-        self._progressBar = QProgressBar(right)
-        self._progressBar.setTextVisible(False)
-        self._progressBar.setRange(0, 100)
-        self._progressBar.setValue(0)
-        self._progressBar.hide()
-        self._progressBar.setStyleSheet(
-            f"QProgressBar {{ background-color: {p.hdr.name()};"
-            " border: 1px solid"
-            f" {p.panel_bdr.name()}; border-radius: 3px; height: 8px; }}"
-            f"QProgressBar::chunk {{ background-color: {p.gold.name()};"
-            " border-radius: 3px; }"
-        )
-        rightLayout.addWidget(self._progressBar)
-
+        # Footer keeps status text only — download progress lives in the
+        # UPDATE panel's own progress bar.
         self._progressLabel = QLabel("", right)
+        self._progressLabel.setStyleSheet(f"color: {p.text_dim.name()};")
         rightLayout.addWidget(self._progressLabel)
 
         layout.addWidget(right)
@@ -649,15 +637,9 @@ class MainWindow(QMainWindow):
         self._apply_readiness(self._readiness(), update_status=False)
 
     def _onProgressChanged(self, value: float, label: str):
-        value = max(0.0, min(1.0, float(value)))
-        self._progressBar.setValue(int(round(value * 100)))
+        # The footer shows the phase text only; the numeric progress lives
+        # in the UPDATE panel.
         self._progressLabel.setText(label)
-        # Hide the bar when idle (0) or finished/full (1) — it only shows
-        # while something is downloading.
-        if value <= 0.0 or value >= 1.0:
-            self._progressBar.hide()
-        else:
-            self._progressBar.show()
 
     def _on_update_progress_changed(self, event):
         panel = self._stack.widget(self._pages["UPDATE"])

@@ -46,7 +46,7 @@ class CustomAddonDialog(QDialog):
 
         title = QLabel("ADD CUSTOM GIT ADDON", self)
         title.setStyleSheet(
-            f"color: {p.purple.name()}; font-weight: bold; font-size: 12pt;"
+            f"color: {p.gold_lt.name()}; font-weight: bold; font-size: 12pt;"
         )
         root.addWidget(title)
 

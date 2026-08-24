@@ -68,7 +68,7 @@ class LauncherConfigDialog(QDialog):
         title = QLabel("FIRST LAUNCH — IMPORT A CONFIGURATION", self)
         title.setObjectName("launcherConfigTitle")
         title.setStyleSheet(
-            f"color: {p.purple.name()}; font-weight: bold; font-size: 12pt;"
+            f"color: {p.gold_lt.name()}; font-weight: bold; font-size: 12pt;"
         )
         root.addWidget(title)
 

@@ -252,15 +252,10 @@ def test_click_ignored_while_running(qapp, window, monkeypatch):
 # ── progress ──────────────────────────────────────────────────────────────
 
 
-def test_progress_changed_drives_bar(qapp, window):
+def test_progress_changed_drives_footer_label(qapp, window):
+    """The footer shows the phase text only; the bar lives in the panel."""
     window._onProgressChanged(0.5, "Downloading…")
-    assert window._progressBar.value() == 50
-    assert window._progressBar.isVisible()
     assert window._progressLabel.text() == "Downloading…"
-
-    window._onProgressChanged(0.0, "")
-    assert not window._progressBar.isVisible()
-    assert window._progressBar.value() == 0
 
 
 # ── operation finished / failed ───────────────────────────────────────────

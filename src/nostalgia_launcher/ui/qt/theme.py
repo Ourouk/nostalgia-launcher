@@ -180,8 +180,12 @@ QCheckBox::indicator {{
     border-radius: 3px;
     background-color: {p.hdr.name()};
 }}
+QCheckBox::indicator:hover {{
+    border-color: {p.gold.name()};
+}}
 QCheckBox::indicator:checked {{
     background-color: {p.gold.name()};
+    border-color: {p.gold_lt.name()};
 }}
 QLineEdit {{
     background-color: {p.hdr.name()};
@@ -335,6 +339,82 @@ QFrame[role="hairline"] {{
     background-color: {p.divider.name()};
     border: none;
     max-height: 1px;
+}}
+QDialog {{
+    background-color: {p.bg.name()};
+}}
+QProgressBar {{
+    background-color: {p.hdr.name()};
+    color: transparent;
+    border: 1px solid {p.panel_bdr.name()};
+    border-radius: 4px;
+    text-align: center;
+}}
+QProgressBar::chunk {{
+    background-color: {p.gold.name()};
+    border-radius: 3px;
+}}
+QSpinBox {{
+    background-color: {p.hdr.name()};
+    color: {p.text.name()};
+    border: 1px solid {p.panel_bdr.name()};
+    border-radius: 4px;
+    padding: 3px 6px;
+    selection-background-color: {p.gold.name()};
+    selection-color: {p.hdr.name()};
+}}
+QSpinBox::up-button, QSpinBox::down-button {{
+    background-color: transparent;
+    border: none;
+    width: 16px;
+}}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+    color: {p.gold_lt.name()};
+}}
+QComboBox {{
+    background-color: {p.hdr.name()};
+    color: {p.text.name()};
+    border: 1px solid {p.panel_bdr.name()};
+    border-radius: 4px;
+    padding: 3px 8px;
+}}
+QComboBox:hover {{
+    border-color: {p.gold.name()};
+}}
+QComboBox::drop-down {{
+    border: none;
+    width: 18px;
+}}
+QComboBox QAbstractItemView {{
+    background-color: {p.panel.name()};
+    color: {p.text.name()};
+    border: 1px solid {p.panel_bdr.name()};
+    selection-background-color: {p.panel_bdr.name()};
+    selection-color: {p.gold_lt.name()};
+    outline: none;
+}}
+QLineEdit:focus,
+QComboBox:focus,
+QSpinBox:focus {{
+    border: 1px solid {p.gold.name()};
+}}
+QToolTip {{
+    background-color: {p.hdr.name()};
+    color: {p.text.name()};
+    border: 1px solid {p.gold_lt.name()};
+    padding: 3px 6px;
+}}
+QMenu {{
+    background-color: {p.panel.name()};
+    color: {p.text.name()};
+    border: 1px solid {p.panel_bdr.name()};
+}}
+QMenu::item {{
+    padding: 4px 18px;
+}}
+QMenu::item:selected {{
+    background-color: {p.panel_bdr.name()};
+    color: {p.gold_lt.name()};
 }}
 """
 

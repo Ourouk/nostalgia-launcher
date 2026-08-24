@@ -260,7 +260,7 @@ def test_construction_builds_full_app(qapp, app):
     assert win._updateButton.text() == "PLAY"
     assert win._updateButton.isEnabled()
     assert win._statusLabel.text() == "Manifest unavailable"
-    assert win._progressBar is not None
+    assert win._progressLabel is not None
 
     for name, obj in (
         ("NEWS", "newsPanel"),
@@ -417,9 +417,8 @@ def test_update_status_progress_finish_cycle(qapp, app_no_startup):
 
     hub.dispatcher.post(ProgressChanged(0.5, "Downloading…"))
     QTest.qWait(120)
-    assert win._progressBar.value() == 50
+    # Footer shows the phase text only — no mini progress bar.
     assert win._progressLabel.text() == "Downloading…"
-    assert win._progressBar.isVisible()
 
     # The update worker sets client_ready and posts 100% progress before the
     # finish event; the footer mirrors that real controller state.
@@ -427,8 +426,6 @@ def test_update_status_progress_finish_cycle(qapp, app_no_startup):
     hub.updater.state.manifest_available = True
     hub.dispatcher.post(ProgressChanged(1.0, ""))
     QTest.qWait(120)
-    assert not win._progressBar.isVisible()
-    assert win._progressBar.value() == 100
 
     hub.dispatcher.post(OperationFinished("update", True, ""))
     QTest.qWait(120)

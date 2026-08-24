@@ -64,7 +64,7 @@ class LinuxSettingsDialog(QDialog):
 
         title = QLabel("LINUX (UMU) SETTINGS", hdr)
         title.setStyleSheet(
-            f"color: {p.purple.name()}; font-weight: bold;"
+            f"color: {p.gold_lt.name()}; font-weight: bold;"
             f" font-size: {metrics.PT_SECTION}pt;"
         )
         layout.addWidget(title)
