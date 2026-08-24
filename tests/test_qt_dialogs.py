@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QWidget,
 )
 
 import nostalgia_launcher.controllers.settings as settings_controller
@@ -64,7 +65,12 @@ def window(hub):
     win = MainWindow(hub)
     win.show()
     yield win
+    # The session log is a top-level window now — close it explicitly and
+    # let the deferred delete (WA_DeleteOnClose) run before teardown.
+    if win._logWindow is not None:
+        win._logWindow.close()
     win.close()
+    QTest.qWait(50)
 
 
 def _text(win: LogWindow) -> str:
@@ -91,28 +97,39 @@ def test_log_window_seed_renders_buffer(qapp):
 # ── MainWindow session log ────────────────────────────────────────────────
 
 
-def test_show_logs_creates_and_reuses_window(qapp, window):
-    window._on_show_logs_requested()
-    first = window._logWindow
-    assert isinstance(first, LogWindow)
-    assert first.isVisible()
-    window._on_show_logs_requested()
-    assert window._logWindow is first
+def test_toggle_opens_top_level_window(qapp, window):
+    assert window._logWindow is None
+    window.open_session_log()
+    win = window._logWindow
+    assert isinstance(win, LogWindow)
+    assert win.isVisible()
+    # Separate window: not a child of the main window.
+    assert win.parent() is None
 
 
-def test_show_logs_recreates_after_close(qapp, window):
-    window._on_show_logs_requested()
+def test_toggle_closes_and_reopens_with_fresh_seed(qapp, window):
+    window._hub.dispatcher.post(LogMessage("before open\n", "acct"))
+    QTest.qWait(200)
+    window.open_session_log()
     first = window._logWindow
-    first.close()
+    window.open_session_log()  # toggle off → close + destroy
     QTest.qWait(50)
     assert window._logWindow is None
-    window._on_show_logs_requested()
-    assert window._logWindow is not None
-    assert window._logWindow is not first
+    window.open_session_log()  # toggle on again → new window, reseeded
+    win = window._logWindow
+    assert win is not first
+    assert "before open" in _text(win)
+
+
+def test_direct_close_resets_toggle_state(qapp, window):
+    window.open_session_log()
+    window._logWindow.close()
+    QTest.qWait(50)
+    assert window._logWindow is None
 
 
 def test_log_message_event_reaches_log_window(qapp, window):
-    window._on_show_logs_requested()
+    window.open_session_log()
     win = window._logWindow
     window._hub.dispatcher.post(LogMessage("controller line\n", "ok"))
     QTest.qWait(200)
@@ -121,7 +138,7 @@ def test_log_message_event_reaches_log_window(qapp, window):
 
 
 def test_log_message_untagged_gets_auto_tag(qapp, window):
-    window._on_show_logs_requested()
+    window.open_session_log()
     win = window._logWindow
     window._hub.dispatcher.post(LogMessage("some failure happened", ""))
     QTest.qWait(200)
@@ -130,7 +147,7 @@ def test_log_message_untagged_gets_auto_tag(qapp, window):
 
 
 def test_global_log_sink_queue_reaches_log_window(qapp, window):
-    window._on_show_logs_requested()
+    window.open_session_log()
     win = window._logWindow
     log("worker line\n", "err")
     QTest.qWait(200)
@@ -141,9 +158,31 @@ def test_global_log_sink_queue_reaches_log_window(qapp, window):
 def test_log_window_seeds_existing_buffer_on_open(qapp, window):
     window._hub.dispatcher.post(LogMessage("before open\n", "acct"))
     QTest.qWait(200)
-    window._on_show_logs_requested()
+    window.open_session_log()
     win = window._logWindow
     assert "before open" in _text(win)
+
+
+def test_settings_row_label_mirrors_log_window(qapp, window):
+    window._open_settings_dialog()
+    dlg = window._settingsDialog
+    assert dlg.findChild(QWidget, "settingsLogs") is dlg._logsRow
+    assert dlg._logsRow._text_label.text() == "Show logs"
+    window.open_session_log()
+    assert dlg._logsRow._text_label.text() == "Hide logs"
+    window.open_session_log()
+    QTest.qWait(50)
+    assert dlg._logsRow._text_label.text() == "Show logs"
+
+
+def test_dialog_built_while_open_starts_checked(qapp, window):
+    window.open_session_log()
+    window._open_settings_dialog()
+    dlg = window._settingsDialog
+    assert dlg._logsRow._text_label.text() == "Hide logs"
+    window._logWindow.close()
+    QTest.qWait(50)
+    assert dlg._logsRow._text_label.text() == "Show logs"
 
 
 # ── CustomAddonDialog ─────────────────────────────────────────────────────

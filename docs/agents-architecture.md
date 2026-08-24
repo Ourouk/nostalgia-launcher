@@ -43,6 +43,14 @@ src/nostalgia_launcher/
   (`~/Games/<Server>`, `""` when unnamed) — a UI placeholder suggestion,
   never persisted or auto-created. Pre-flag installs get the flag backfilled
   once in `SettingsController.__init__`. Don't reintroduce silent defaults.
+- **Session log** (`core/log_sink.py`): `log()` is the one thread-safe sink —
+  it queues for the GUI, mirrors to stdout under `NOSTALGIA_DEBUG`, and (once
+  `configure_file()` ran — only `cli._run_backend()` calls it) appends to
+  `LOG_FILE` with size-capped rotation to `.old`. The file sink is disabled
+  until configured so library use/tests never write; tests redirect
+  `LOG_FILE` via the autouse `_log_sink_env` conftest fixture. The retained
+  log is read back headlessly with `--print-log [N]`; `--show-log` starts the
+  GUI with the top-level Session-log window open (`open_session_log()`).
 
 ## Catalogs (mods/addons)
 

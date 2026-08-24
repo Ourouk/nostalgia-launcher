@@ -97,7 +97,7 @@ def test_main_wizard_selection_runs_backend(
     calls = []
 
     class FakeQtApp:
-        def __init__(self):
+        def __init__(self, open_log=False):
             calls.append("constructed")
 
         def show(self):
@@ -127,7 +127,7 @@ def test_main_wizard_selection_persists_config(
     calls = []
 
     class FakeQtApp:
-        def __init__(self):
+        def __init__(self, open_log=False):
             calls.append("constructed")
 
         def show(self):
@@ -165,7 +165,7 @@ def test_main_wizard_persistence_failure_aborts(
     calls = []
 
     class FakeQtApp:
-        def __init__(self):
+        def __init__(self, open_log=False):
             calls.append("constructed")
 
         def show(self):
@@ -233,7 +233,7 @@ def test_main_constructs_shows_and_runs_qt_backend(
     calls = []
 
     class FakeQtApp:
-        def __init__(self):
+        def __init__(self, open_log=False):
             calls.append("constructed")
 
         def show(self):

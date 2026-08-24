@@ -40,6 +40,10 @@ else:
 
 CONFIG_FILE = os.path.join(config_dir(), "nostalgia_launcher_config.json")
 CACHE_FILE = os.path.join(cache_dir(), "nostalgia_launcher_hash_cache.json")
+# Session log (see core/log_sink.py): appended by every run, rotated to
+# launcher.log.old when it outgrows the size cap. Lives next to the config
+# so diagnostics survive cache clears and can be printed via the CLI.
+LOG_FILE = os.path.join(config_dir(), "launcher.log")
 
 # News feed timings (endpoints come from the launcher configuration).
 NEWS_TIMEOUT = 8

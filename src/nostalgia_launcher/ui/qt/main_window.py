@@ -519,7 +519,8 @@ class MainWindow(QMainWindow):
             dialog = SettingsDialog(
                 self._hub.settings, self._hub.bridge, self._palette, self
             )
-            dialog.showLogsRequested.connect(self._on_show_logs_requested)
+            dialog.logsToggleRequested.connect(self._on_logs_toggle_requested)
+            dialog.set_logs_open(self._logWindow is not None)
             dialog.finished.connect(self._on_settings_finished)
             self._settingsDialog = dialog
         self._settingsDialog.show()
@@ -554,21 +555,37 @@ class MainWindow(QMainWindow):
                 self._hub.settings.allow_through_antivirus()
         self._hub.settings.av_prompt_dismissed()
 
-    def _on_show_logs_requested(self):
-        """Open (or re-raise) the session-log window, seeded from the
-        buffer so a freshly-opened window shows the whole session."""
+    def open_session_log(self):
+        """Public entry point (CLI --show-log, the settings row): open or
+        raise the session-log window."""
+        self._on_logs_toggle_requested()
+
+    def _on_logs_toggle_requested(self):
+        """The settings row toggles the session-log window: closed → open
+        (seeded from the buffer so a fresh window shows the whole session);
+        open → close (WA_DeleteOnClose destroys it and `destroyed` resets
+        the state)."""
         if self._logWindow is None:
-            win = LogWindow(self._palette, self)
-            win.seed(self._log_buffer)
-            win.setAttribute(Qt.WA_DeleteOnClose, True)
-            win.destroyed.connect(self._on_log_window_closed)
-            self._logWindow = win
-        self._logWindow.show()
-        self._logWindow.raise_()
-        self._logWindow.activateWindow()
+            self._open_log_window()
+        else:
+            self._logWindow.close()
+
+    def _open_log_window(self):
+        win = LogWindow(self._palette)
+        win.seed(self._log_buffer)
+        win.setAttribute(Qt.WA_DeleteOnClose, True)
+        win.destroyed.connect(self._on_log_window_closed)
+        self._logWindow = win
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        if self._settingsDialog is not None:
+            self._settingsDialog.set_logs_open(True)
 
     def _on_log_window_closed(self):
         self._logWindow = None
+        if self._settingsDialog is not None:
+            self._settingsDialog.set_logs_open(False)
 
     # ── session log ─────────────────────────────────────────────────────────
 

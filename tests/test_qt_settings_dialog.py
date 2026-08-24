@@ -252,12 +252,22 @@ def test_verify_row_calls_verify_files(qapp, window, monkeypatch):
     verify.assert_called_once()
 
 
-def test_logs_row_emits_show_logs_requested(qapp, window):
+def test_logs_row_emits_logs_toggle_requested(qapp, window):
     dialog = _open(window)
     spy = Mock()
-    dialog.showLogsRequested.connect(spy)
+    dialog.logsToggleRequested.connect(spy)
     QTest.mouseClick(dialog.findChild(QWidget, "settingsLogs"), Qt.LeftButton)
     spy.assert_called_once()
+
+
+def test_set_logs_open_flips_row_label(qapp, window):
+    dialog = _open(window)
+    row = dialog._logsRow
+    assert row._text_label.text() == "Show logs"
+    dialog.set_logs_open(True)
+    assert row._text_label.text() == "Hide logs"
+    dialog.set_logs_open(False)
+    assert row._text_label.text() == "Show logs"
 
 
 def test_av_row_absent_when_cannot_manage_antivirus(qapp, window, monkeypatch):

@@ -71,6 +71,10 @@ class _ClickableRow(QWidget):
         self._palette = palette
         self._text_label = text_label
 
+    def set_text(self, text: str):
+        """Swap the row label (hover styling follows the same label)."""
+        self._text_label.setText(text)
+
     def click(self):
         self.clicked.emit()
 
@@ -97,10 +101,12 @@ class SettingsDialog(QDialog):
 
     Constructible and closable headlessly: it reads the controller's state,
     renders the mirror status it already holds, and only starts work when the
-    user clicks a row/button. `showLogsRequested` fires for the Show logs row.
+    user clicks a row/button. `logsToggleRequested` fires for the Show logs
+    row; MainWindow pushes the log window's visibility back via
+    `set_logs_open` so the row label always mirrors it.
     """
 
-    showLogsRequested = Signal()
+    logsToggleRequested = Signal()
 
     def __init__(
         self,
@@ -273,11 +279,11 @@ class SettingsDialog(QDialog):
             "settingsVerify",
             p.gold,
         )
-        self._add_row(
+        self._logsRow = self._add_row(
             lcol_layout,
             "☰",
             "Show logs",
-            self.showLogsRequested.emit,
+            self.logsToggleRequested.emit,
             "settingsLogs",
             p.gold,
         )
@@ -346,6 +352,11 @@ class SettingsDialog(QDialog):
         layout.addWidget(row)
         layout.addSpacing(8)
         return row
+
+    def set_logs_open(self, open_: bool):
+        """Reflect the session-log window's visibility in the row label
+        (the row toggles: "Show logs" when closed, "Hide logs" when open)."""
+        self._logsRow.set_text("Hide logs" if open_ else "Show logs")
 
     # ── catalog registries ───────────────────────────────────────────────
 

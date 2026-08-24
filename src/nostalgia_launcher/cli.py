@@ -13,11 +13,14 @@ import argparse
 import os
 import sys
 
-from .core import config_store, launcher
+from .core import config_store, launcher, log_sink
 from .core.constants import (
     CACHE_FILE,
     CONFIG_FILE,
+    LOG_FILE,
+    UPDATER_VERSION,
 )
+from .core.log_sink import log
 
 _QT_UNAVAILABLE = (
     "Nostalgia Launcher needs PySide6 (Qt) to run. "
@@ -37,6 +40,22 @@ def _parse_args(argv=None) -> argparse.Namespace:
         help="Path to the nostalgia_launcher.json file that configures "
         "the server, endpoints and mirrors (auto-discovered next to "
         "the executable / in the repo root when omitted).",
+    )
+    parser.add_argument(
+        "--print-log",
+        nargs="?",
+        const=None,
+        default=False,
+        metavar="N",
+        type=int,
+        help="Print the retained session logs (rotated .old first, then "
+        "current) to stdout and exit — only the last N lines when N is "
+        "given. Never starts the GUI.",
+    )
+    parser.add_argument(
+        "--show-log",
+        action="store_true",
+        help="Open the Session log window at startup (for debugging).",
     )
     return parser.parse_args(argv)
 
@@ -67,17 +86,33 @@ def backend_error_message(name, exc) -> str:
 
 def main(argv=None) -> int:
     args = _parse_args(argv)
+    if args.print_log is not False:
+        return _print_log(args.print_log)
     explicit = bool(args.launcher_config)
     _cfg, err = launcher.configure(args.launcher_config)
     if err:
         if explicit:
             sys.stderr.write(f"{err}\n")
             return 1
-        return _first_launch()
-    return _run_backend()
+        return _first_launch(args.show_log)
+    return _run_backend(args.show_log)
 
 
-def _first_launch() -> int:
+def _print_log(tail) -> int:
+    """--print-log: dump the retained session log to stdout. Runs before
+    any launcher-config handling and never imports Qt."""
+    lines = log_sink.read_lines(tail)
+    if not lines:
+        sys.stderr.write(
+            f"No launcher log yet ({log_sink.current_log_path()} has not "
+            "been created).\n"
+        )
+        return 0
+    sys.stdout.write("\n".join(lines) + "\n")
+    return 0
+
+
+def _first_launch(show_log: bool = False) -> int:
     """No launcher config and no --launcher-config: ask the user to import
     one (a local file or an https URL they supply), then persist it so
     future launches reuse it. No game folder is ever auto-selected — the
@@ -136,7 +171,7 @@ def _first_launch() -> int:
         if err:
             sys.stderr.write(f"{err}\n")
             return 1
-    return _run_backend()
+    return _run_backend(show_log)
 
 
 def _pick_launcher_config() -> dict | None:
@@ -155,9 +190,11 @@ def _pick_launcher_config() -> dict | None:
     return dlg.selection()
 
 
-def _run_backend() -> int:
-    """Config-store setup + Qt backend resolution/construction/run."""
+def _run_backend(show_log: bool = False) -> int:
+    """Config-store + log-sink setup, then Qt backend construction/run."""
     config_store.configure(CONFIG_FILE, CACHE_FILE)
+    log_sink.configure_file(LOG_FILE)
+    log(f"── Nostalgia Launcher {UPDATER_VERSION} · session start ──", "dim")
     backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")
     try:
         app_cls = resolve_backend(backend)
@@ -168,7 +205,7 @@ def _run_backend() -> int:
         sys.stderr.write(f"Unknown NOSTALGIA_UI_BACKEND: {backend}\n")
         return 1
     try:
-        app = app_cls()
+        app = app_cls(open_log=show_log)
     except Exception as e:
         sys.stderr.write(
             f"Nostalgia Launcher could not start: {e}\n"

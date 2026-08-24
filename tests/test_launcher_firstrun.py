@@ -90,7 +90,7 @@ def test_first_launch_url_persists_without_touching_out_dir(
     monkeypatch.setattr(
         launcher, "user_config_path", lambda: str(tmp_path / "cfg.json")
     )
-    monkeypatch.setattr(cli, "_run_backend", lambda: 0)
+    monkeypatch.setattr(cli, "_run_backend", lambda show_log=False: 0)
     raw = '{"server": {"base_url": "https://launcher.test"}}'
     monkeypatch.setattr(
         cli,

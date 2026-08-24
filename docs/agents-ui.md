@@ -39,3 +39,14 @@ follow this.
 - The LinuxSettingsDialog uses the `linuxSettings*` objectName prefix (tests
   assert it). Footer pseudo-actions are real `QToolButton`s, not clickable
   labels.
+
+## Session-log window
+
+`LogWindow` is a **top-level** widget (no parent): it gets its own taskbar
+entry and outlives main-window stacking. `MainWindow` owns its lifecycle —
+creation is lazy, `WA_DeleteOnClose` destroys it on close, and `destroyed`
+resets `_logWindow`. The Settings "Show logs" row (`settingsLogs`) is a
+*toggle*: `logsToggleRequested` asks MainWindow to open or close it, and
+MainWindow pushes visibility back via `SettingsDialog.set_logs_open`, which
+flips the row label between "Show logs"/"Hide logs". Keep that one-way data
+flow (dialog emits intent, window owns state) when touching either side.

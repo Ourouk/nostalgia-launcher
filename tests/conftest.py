@@ -23,6 +23,27 @@ LAUNCHER_TEST_CONFIG = {
 
 
 @pytest.fixture(autouse=True)
+def _log_sink_env(tmp_path_factory, monkeypatch):
+    """Keep every test off the real per-user launcher.log.
+
+    Points the log-sink default AND the cli entry-point's by-name binding
+    at a throwaway path; the file sink itself stays disabled until
+    `log_sink.configure_file()` runs (only the CLI startup calls it), so
+    plain unit tests never write any file.
+    """
+    import nostalgia_launcher.cli as cli_module
+    from nostalgia_launcher.core import log_sink
+
+    scratch = str(tmp_path_factory.mktemp("logs") / "launcher.log")
+    monkeypatch.setattr(log_sink, "LOG_FILE", scratch)
+    monkeypatch.setattr(cli_module, "LOG_FILE", scratch)
+    # A previous test's CLI startup may have enabled the sink; keep every
+    # test starting from the disabled state.
+    monkeypatch.setattr(log_sink, "_sink_path", None)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _launcher_env():
     launcher.reset()
     launcher.configure_from_dict(LAUNCHER_TEST_CONFIG)

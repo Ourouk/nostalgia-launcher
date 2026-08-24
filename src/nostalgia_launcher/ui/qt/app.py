@@ -89,7 +89,7 @@ class QtNostalgiaLauncherApp:
     headlessly (e.g. `QT_QPA_PLATFORM=offscreen`) and under tests.
     """
 
-    def __init__(self):
+    def __init__(self, open_log: bool = False):
         self._app = create_qt_app()
         self._hub = ControllerHub()
         self._window = MainWindow(self._hub)
@@ -101,6 +101,9 @@ class QtNostalgiaLauncherApp:
         # MainWindow.__init__ so the window stays side-effect-free when
         # constructed headlessly in tests.
         self._window.schedule_startup_tasks()
+        if open_log:
+            # CLI --show-log: bring the session log up immediately.
+            self._window.open_session_log()
 
     def show(self):
         self._window.show()

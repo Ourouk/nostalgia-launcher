@@ -86,6 +86,25 @@ NostalgiaLauncher --launcher-config PATH_OR_URL
 shown before use. An explicit file path that is missing or invalid is a
 hard error.)
 
+## Debugging from the command line
+
+Every run appends its diagnostics to a session log next to the config
+(`~/.nostalgia-launcher/launcher.log` on Linux,
+`%APPDATA%\NostalgiaLauncher\launcher.log` on Windows,
+`~/Library/Application Support/NostalgiaLauncher/launcher.log` on macOS).
+When it outgrows 512 KiB it rotates to `launcher.log.old`. Two flags read
+and surface it:
+
+```text
+NostalgiaLauncher --print-log        # whole retained log (old + current)
+NostalgiaLauncher --print-log 50     # just the last 50 lines
+NostalgiaLauncher --show-log         # launch with the Session log window open
+```
+
+`--print-log` prints and exits — it never starts the graphical launcher.
+The **Settings → Troubleshooting → Show logs** row toggles the same Session
+log window during a session.
+
 ## Using the launcher
 
 ### Verification and updates
