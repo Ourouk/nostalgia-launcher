@@ -81,9 +81,12 @@ def embedded_mods() -> list:
 def catalog_is_stale(now: float | None = None) -> bool:
     """Whether the cached catalog is missing or older than the weekly
     `catalog.CATALOG_TTL` — i.e. a background refresh is due. Always False
-    when nothing is fetchable (no catalog URL) but mods are embedded in the
-    launcher config. Network-free."""
-    if not has_remote_catalog() and embedded_mods():
+    when nothing is fetchable (no catalog URL) but mods exist locally:
+    embedded in the launcher config or in the local repo file. Network-
+    free."""
+    if not has_remote_catalog() and (
+        embedded_mods() or catalog.local_repo_has_entries("mods")
+    ):
         return False
     ts = catalog_timestamp()
     if ts is None:
@@ -133,15 +136,31 @@ def fetch_mods_catalog(force=False) -> list | None:
 
 
 def mods_registry(force=False) -> list:
-    """The effective mod registry: the remote/cached catalog merged with the
-    launcher config's embedded mods (embedded entries override same-id
-    catalog entries), then the per-user custom file on top. Empty when
-    nothing is configured yet."""
+    """The effective mod registry, in override order (later wins by id):
+    the remote/cached catalog < the local repo's server-imported entries <
+    the launcher config's embedded mods < the repo's user-custom entries <
+    the legacy per-user custom file. Empty when nothing is configured."""
     remote = fetch_mods_catalog(force=force)
     base = [] if remote is None else remote
+    repo = catalog.read_local_repo("mods")
     return catalog.merge_mods(
-        catalog.merge_mods(base, embedded_mods()),
-        catalog.load_custom("mods", catalog.validate_mod),
+        catalog.merge_mods(
+            catalog.merge_mods(
+                catalog.merge_mods(
+                    base,
+                    catalog.validate_entries(
+                        repo["server"],
+                        catalog.validate_mod,
+                        "local mods repo",
+                    ),
+                ),
+                embedded_mods(),
+            ),
+            catalog.validate_entries(
+                repo["custom"], catalog.validate_mod, "local mods repo"
+            ),
+        ),
+        catalog.legacy_custom_layer("mods", catalog.validate_mod),
     )
 
 

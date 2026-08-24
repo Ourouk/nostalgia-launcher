@@ -24,7 +24,7 @@ from ..core.constants import (
 )
 from ..core.errors import describe_net_error
 from ..core.security_http import secure_urlopen
-from ..services import addons, mods
+from ..services import addons, catalog, mods
 from ..state.events import (
     EventDispatcher,
     LogMessage,
@@ -486,52 +486,57 @@ class SettingsController:
             LogMessage("Mod catalog URL reset to default.\n", "dim")
         )
 
-    def open_addons_custom_file(self):
-        """Create the custom addon file (with a template) when missing and
-        open it in the default editor."""
-        if addons.open_custom_file():
+    def _open_kind_repo(self, kind: str, label: str):
+        """Ensure a kind's local repo file exists (migrating any legacy
+        custom file) and open it in the default editor."""
+        path = launcher.local_repo_path(kind)
+        existed = os.path.exists(path)
+        catalog.read_local_repo(kind)  # seeds/migrates on first access
+        if not existed and not os.path.exists(path):
+            err = catalog.write_local_repo(kind, [], [])
+            if err:
+                self._dispatcher.post(LogMessage(f"{err}\n", "err"))
+                return
             self._dispatcher.post(
-                LogMessage("Created the custom addon file.\n", "dim")
+                LogMessage(f"Created the local {label} repo.\n", "dim")
             )
         try:
-            platform_support.open_folder(addons.custom_file())
+            platform_support.open_folder(path)
         except OSError as e:
             self._dispatcher.post(
-                LogMessage(f"Could not open custom addon file: {e}\n", "err")
+                LogMessage(f"Could not open the {label} repo: {e}\n", "err")
             )
+
+    def open_addons_custom_file(self):
+        """Open the local addons repo (creating it when missing)."""
+        self._open_kind_repo("addons", "addons")
 
     def open_mods_custom_file(self):
-        """Create the custom mod file (with a template) when missing and open
-        it in the default editor."""
-        if mods.open_custom_file():
-            self._dispatcher.post(
-                LogMessage("Created the custom mod file.\n", "dim")
-            )
-        try:
-            platform_support.open_folder(mods.custom_file())
-        except OSError as e:
-            self._dispatcher.post(
-                LogMessage(f"Could not open custom mod file: {e}\n", "err")
-            )
+        """Open the local mods repo (creating it when missing)."""
+        self._open_kind_repo("mods", "mods")
 
     def clear_addons_custom(self):
-        if addons.clear_custom_file():
+        """Wipe the user-added entries of the local addons repo."""
+        if catalog.clear_custom_entries("addons"):
             self._dispatcher.post(
                 LogMessage("Custom addon entries cleared.\n", "ok")
             )
         else:
             self._dispatcher.post(
-                LogMessage("No custom addon file to clear.\n", "dim")
+                LogMessage(
+                    "Could not clear the custom addon entries.\n", "err"
+                )
             )
 
     def clear_mods_custom(self):
-        if mods.clear_custom_file():
+        """Wipe the user-added entries of the local mods repo."""
+        if catalog.clear_custom_entries("mods"):
             self._dispatcher.post(
                 LogMessage("Custom mod entries cleared.\n", "ok")
             )
         else:
             self._dispatcher.post(
-                LogMessage("No custom mod file to clear.\n", "dim")
+                LogMessage("Could not clear the custom mod entries.\n", "err")
             )
 
     def reload_addons_registry(self):

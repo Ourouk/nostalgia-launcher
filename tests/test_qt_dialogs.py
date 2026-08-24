@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import nostalgia_launcher.controllers.addons as addons_controller
 import nostalgia_launcher.controllers.settings as settings_controller
 import nostalgia_launcher.core.platform_support as platform_support
 from nostalgia_launcher.core.log_sink import log
@@ -276,7 +277,8 @@ def test_custom_addon_hint_lists_allowed_hosts(qapp):
 
     dlg = CustomAddonDialog(Palette())
     hint = dlg.findChild(QLabel, "customAddonHint")
-    assert hint.text() == "Allowed hosts: " + ", ".join(ADDON_GIT_HOSTS)
+    assert "Allowed hosts: " + ", ".join(ADDON_GIT_HOSTS) in hint.text()
+    assert "Interface/AddOns/<folder>" in hint.text()
 
 
 # ── MainWindow custom addon ───────────────────────────────────────────────
@@ -285,7 +287,13 @@ def test_custom_addon_hint_lists_allowed_hosts(qapp):
 def test_custom_addon_from_main_window_applies(qapp, window, monkeypatch):
     hub = window._hub
     apply_mock = Mock()
+    saved = []
     monkeypatch.setattr(hub.addons, "apply", apply_mock)
+    monkeypatch.setattr(
+        addons_controller.catalog,
+        "add_custom_entry",
+        lambda kind, entry: saved.append((kind, entry)),
+    )
 
     window._on_custom_addon_requested()
     dlg = window._customAddonDialog
@@ -294,6 +302,9 @@ def test_custom_addon_from_main_window_applies(qapp, window, monkeypatch):
         "https://github.com/Org/Repo"
     )
     dlg.findChild(QPushButton, "customAddonInstall").click()
+    assert saved == [
+        ("addons", {"name": "Repo", "git": "https://github.com/Org/Repo"})
+    ]
     apply_mock.assert_called_once()
     rec = apply_mock.call_args[0][0][0]
     assert rec["folder"] == "Repo"

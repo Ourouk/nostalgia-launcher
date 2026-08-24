@@ -86,9 +86,12 @@ def embedded_assets() -> list:
 
 def catalog_is_stale(now: float | None = None) -> bool:
     """Whether the cached catalog is missing or older than the weekly
-    `catalog.CATALOG_TTL`. Always False when nothing is fetchable but assets
-    are embedded in the launcher config. Network-free."""
-    if not has_remote_catalog() and embedded_assets():
+    `catalog.CATALOG_TTL`. Always False when nothing is fetchable but
+    assets exist locally: embedded in the launcher config or in the local
+    repo file. Network-free."""
+    if not has_remote_catalog() and (
+        embedded_assets() or catalog.local_repo_has_entries("assets")
+    ):
         return False
     ts = catalog_timestamp()
     if ts is None:
@@ -150,15 +153,31 @@ def _configured_registry_url() -> str:
 
 
 def assets_registry(force=False) -> list:
-    """The effective asset registry: the remote/cached catalog merged with
-    the launcher config's embedded assets (embedded ids override catalog
-    ids), then the per-user custom file on top. Empty when nothing is
-    configured yet."""
+    """The effective asset registry, in override order (later wins by id):
+    the remote/cached catalog < the local repo's server-imported entries <
+    the launcher config's embedded assets < the repo's user-custom entries
+    < the legacy per-user custom file. Empty when nothing is configured."""
     remote = fetch_assets_catalog(force=force)
     base = [] if remote is None else remote
+    repo = catalog.read_local_repo("assets")
     return catalog.merge_assets(
-        catalog.merge_assets(base, embedded_assets()),
-        catalog.load_custom("assets", catalog.validate_asset),
+        catalog.merge_assets(
+            catalog.merge_assets(
+                catalog.merge_assets(
+                    base,
+                    catalog.validate_entries(
+                        repo["server"],
+                        catalog.validate_asset,
+                        "local assets repo",
+                    ),
+                ),
+                embedded_assets(),
+            ),
+            catalog.validate_entries(
+                repo["custom"], catalog.validate_asset, "local assets repo"
+            ),
+        ),
+        catalog.legacy_custom_layer("assets", catalog.validate_asset),
     )
 
 

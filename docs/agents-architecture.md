@@ -55,25 +55,40 @@ src/nostalgia_launcher/
   (`[game]`) output is piped into `log()` by `UpdateController._watch_game`
   / `_drain_child_output` (dedup + `_CHILD_OUTPUT_MAX_LINES` cap).
 
-## Catalogs (mods/addons)
+## Catalogs (mods/addons/assets)
 
-- **Download backends live in `services/sources/`** — one module per way to
-  obtain a payload (`github_release`, `codeberg_release`, `direct_file`,
-  `direct_tar`, `git_archive`), each registered into a shared registry
-  (`sources.get(kind)`) and speaking one interface: `validate(source)` /
-  `resolve_version(entry)` / `fetch(entry, client_dir=, release=)`.
-  Deployment is separate (`sources/deploy.py`: plain file, zip/tar
-  extract_map, folder unpack) and chosen by entry *shape*, so every backend
-  is usable by every content vertical; only the per-type deployment choice
-  and the allowed post-install hooks (`sources/hooks.py` registry +
-  `TYPE_HOOK_POLICY`) vary. Kind-specific source validation is delegated to
-  `backend.validate()` — adding a backend means dropping a module in the
-  package; no catalog changes. The generic path validators live in
-  `sources/safety.py` (re-exported by `catalog`). Persisted cache keys
-  (`mod_release_cache`, `addon_sha_cache`) are unchanged by this layer.
-- The mods/addons lists come from remote JSON catalogs (`services/catalog.py`
-  holds the shared validation/merge logic; the fetch entry points live in
-  `services/mods.py` / `services/addons.py`). `mods.mods_registry()` is
+- **Import-time content split**: a launcher config may carry three inline
+  content sections — top-level `"mods"`, `"addons"` and `"assets"` lists
+  (same entry shapes as the remote catalogs). `launcher.persist()` /
+  `persist_text()` split them out on import: each lands in its own local
+  repo file `local_<kind>_repo.json` in the config dir, shaped
+  `{"server": […], "custom": […]}` — "server" mirrors the imported
+  document faithfully (a missing section writes `[]`, so re-imports
+  replace server content wholesale), "custom" holds user-added entries and
+  survives re-imports. The persisted launcher config itself has the three
+  sections **stripped** (the repos are the single authority); the
+  `validate_*` helpers stay side-effect-free — splitting happens only at
+  persist time, after the wizard's explicit Accept. The split is
+  transactional: any repo-write or config-write failure rolls every
+  already-written repo back to its prior bytes (freshly created files are
+  removed) before erroring, so an import is never half-applied. The legacy
+  per-user custom files (`nostalgia_launcher_<kind>_custom.json`) seed a
+  freshly created repo's "custom" list as a one-time migration and are then
+  left as backups **and no longer loaded** (`catalog.legacy_custom_layer`
+  returns empty once the repo exists) so stale copies can't shadow repo
+  edits; Settings' open/clear-custom buttons manage the repo files, and
+  clear wipes only "custom".
+- **Registry precedence per vertical** (later wins by id/folder): remote
+  catalog < repo "server" < embedded-in-config (only live for direct
+  ``--launcher-config`` runs, which never persist) < repo "custom" <
+  legacy custom file (active only until the local repo exists — see the
+  migration note above). Plumbing: `catalog.read_local_repo` /
+  `write_local_repo` / `add_custom_entry` / `clear_custom_entries`;
+  offline guards (`catalog_is_stale`) count repo entries as content.
+- The mods/addons/assets lists come from remote JSON catalogs
+  (`services/catalog.py` holds the shared validation/merge logic; the fetch
+  entry points live in `services/mods.py` / `services/addons.py` /
+  `services/assets.py`). `mods.mods_registry()` is
   network-free on non-forced calls (cache → empty list). Catalogs auto-refresh
   at most weekly (`catalog.CATALOG_TTL`): startup serves the persisted cache
   instantly (ADDONS via a preview snapshot posted before the verify scan) and
@@ -84,18 +99,26 @@ src/nostalgia_launcher/
   the online catalog(s) AND rescans SHAs. Panel headers show a "Catalog
   updated …" age tag. Tests provide a registry by monkeypatching
   `mods.mods_registry()`.
-- **Mods may also be embedded directly in the launcher config** (top-level
-  `"mods": […]`, same entry shape as the remote catalog; see
+- **Custom entries are first-class**: MODS and ASSETS panels have an
+  "+ Add custom …" banner button (`custom_mod_dialog.py` covers every
+  registered source kind; `custom_asset_dialog.py` the full asset shape);
+  both validate with the catalog validators before accepting, persist into
+  the repo's "custom" list via `<controller>.add_custom_entry(entry)` and
+  republish instantly. The ADDONS dialog additionally persists its entry
+  (`AddonsController.add_custom_entry`) so a custom addon survives
+  restarts.
+- **Content may also be embedded directly in the launcher config**
+  (top-level `"mods"` / `"addons"` / `"assets"`; see
   `examples/community.example.json`). Entries are kept raw by
   `core/launcher._derive` (core must not import services) and sanitized by
-  `services.mods.embedded_mods()` with the exact same `validate_mod` rules.
-  Precedence by id: per-user custom file > embedded > remote catalog.
-  Embedded-only configs are fully offline-safe: when no catalog URL is
-  *explicitly* configured (`launcher.mods_registry_url_explicit()` — the
-  base_url-derived default does not count; see
-  `services.mods.has_remote_catalog()`), `catalog_is_stale()` stays False and
-  the MODS ⟳ / Settings → Reload republish silently instead of failing with
-  "Mod catalog URL is not configured."
+  the services with exactly the catalog validators (addons go through the
+  git-host allowlist too). Embedded-only configs are fully offline-safe:
+  when no catalog URL is *explicitly* configured
+  (`launcher.mods_registry_url_explicit()` — the base_url-derived default
+  does not count; see `services.mods.has_remote_catalog()`),
+  `catalog_is_stale()` stays False and the MODS ⟳ / Settings → Reload
+  republish silently instead of failing with "Mod catalog URL is not
+  configured."
 - **Assets are the third content vertical** (`services/assets.py`,
   `controllers/assets.py`, `ui/qt/assets_panel.py`, state in
   `AssetsState`) — single-file server content patches such as MPQs, kept

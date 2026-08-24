@@ -44,6 +44,31 @@ def _log_sink_env(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _local_repos_env(tmp_path, monkeypatch):
+    """Keep every test off the real per-user local content repo files
+    (`core.launcher.local_repo_path` / `legacy_custom_path`) and off the
+    real pre-repo custom files read through `services.catalog.custom_file`
+    — the same on-disk names, redirected wholesale."""
+    monkeypatch.setattr(
+        launcher,
+        "local_repo_path",
+        lambda kind: str(tmp_path / f"local_{kind}_repo.json"),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "legacy_custom_path",
+        lambda kind: str(tmp_path / f"nostalgia_launcher_{kind}_custom.json"),
+    )
+    from nostalgia_launcher.services import catalog as _catalog
+
+    monkeypatch.setattr(
+        _catalog,
+        "custom_file",
+        lambda kind: str(tmp_path / f"nostalgia_launcher_{kind}_custom.json"),
+    )
+
+
+@pytest.fixture(autouse=True)
 def _launcher_env():
     launcher.reset()
     launcher.configure_from_dict(LAUNCHER_TEST_CONFIG)

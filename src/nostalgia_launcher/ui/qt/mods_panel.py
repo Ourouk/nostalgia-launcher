@@ -9,7 +9,7 @@ toolkit-agnostic ModsController. The list shell is shared with the addons
 panel via `list_panel.ScrollListPanel`.
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -134,8 +134,11 @@ class ModsPanel(ScrollListPanel):
     Renders from the controller's registry and state; re-renders on every
     ModsLoaded and forwards checkbox/action clicks into the controller. The
     optional `on_badge` callback receives the updates count after each
-    snapshot so the shell can paint a nav-tab badge.
+    snapshot so the shell can paint a nav-tab badge. Emits
+    `customModRequested` from the banner's add button.
     """
+
+    customModRequested = Signal()
 
     def __init__(
         self, mods, bridge, palette: Palette, parent=None, on_badge=None
@@ -170,6 +173,14 @@ class ModsPanel(ScrollListPanel):
             part.setStyleSheet(f"color: {color.name()};")
             banner_layout.addWidget(part)
         banner_layout.addStretch(1)
+
+        custom = QToolButton(banner)
+        custom.setObjectName("modsCustomAdd")
+        custom.setText("+  Add custom mod")
+        custom.setCursor(Qt.PointingHandCursor)
+        custom.setStyleSheet(f"color: {p.pink.name()}; font-weight: bold;")
+        custom.clicked.connect(self.customModRequested.emit)
+        banner_layout.addWidget(custom)
 
         self._age_label = QLabel("", banner)
         self._age_label.setObjectName("modsCatalogAge")

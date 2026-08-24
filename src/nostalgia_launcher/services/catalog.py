@@ -1,26 +1,37 @@
-"""Shared catalog plumbing for mods and addons.
+"""Shared catalog plumbing for the content verticals (mods/addons/assets).
 
-Both registries follow the same model:
+All three registries follow the same model:
 
-  * a remote HTTPS JSON catalog (fetched by the services in `services/mods.py`
-    and `services/addons.py`, cached in the config file so startup works
-    offline), and
-  * an optional per-user custom JSON file in the config directory that
-    extends/overrides the remote catalog — the "savvy user" escape hatch.
+  * a remote HTTPS JSON catalog (fetched by the services in `services/mods.py`,
+    `services/addons.py` and `services/assets.py`, cached in the config file
+    so startup works offline),
+  * a local repo file per kind (`local_<kind>_repo.json`, written by the
+    import-time split) holding the server-imported entries plus user-added
+    "custom" entries that survive re-imports,
+  * entries embedded directly in the launcher config (only live for direct
+    ``--launcher-config`` runs, which never persist), and
+  * the optional per-user custom JSON file in the config directory — the
+    legacy hand-edit escape hatch. Its entries are migrated into the
+    repo's "custom" list when the repo is first created, after which the
+    file is no longer loaded (it stays on disk as a backup) so stale copies
+    can never shadow repo edits.
+
+Merge precedence per kind: legacy custom file (only until the local repo
+exists) > repo custom > embedded > repo server > remote catalog.
 
 This module holds only the toolkit-agnostic, network-free pieces: catalog-URL
-storage, custom-file resolution, entry validation and merge precedence.
-Nothing from a JSON file is ever executed — the only special behaviours a mod
-catalog may name are the registered source backends / post-install hooks (see
-`services/sources`), and download hosts are still vetted by `security_http`
-at fetch time.
+storage, custom-file resolution, local-repo access, entry validation and
+merge precedence. Nothing from a JSON file is ever executed — the only
+special behaviours a mod catalog may name are the registered source backends
+/ post-install hooks (see `services/sources`), and download hosts are still
+vetted by `security_http` at fetch time.
 """
 
 import json
 import os
 from urllib.parse import urlsplit
 
-from ..core import config_store
+from ..core import config_store, launcher
 from ..core.log_sink import log
 from ..core.platform_support import config_dir
 from .sources import hooks as _hooks
@@ -146,6 +157,103 @@ def clear_custom(kind: str) -> bool:
     except OSError as e:
         log(f"  Could not clear {kind} custom file: {e}", "err")
     return False
+
+
+# ── local repo files ─────────────────────────────────────────────────────────
+# Each content kind (mods/addons/assets) lives in a single on-disk repo,
+# written by the import-time split (`core.launcher._persist_data`) and
+# extended in place by user-added entries: {"server": [...], "custom":
+# [...]} — "server" mirrors the imported document (rewritten wholesale on
+# every re-import), "custom" is user-owned and survives re-imports.
+
+
+def read_local_repo(kind: str) -> dict:
+    """The raw local repo for a content kind as ``{"server": [...],
+    "custom": [...]}`` — entries are unvalidated; each service applies its
+    own validator per layer. A missing repo file is seeded from the legacy
+    per-user custom file (one-time migration; that file stays as a backup).
+    A malformed repo degrades to empty lists with a logged error rather
+    than breaking catalog loads."""
+    if not os.path.exists(launcher.local_repo_path(kind)):
+        legacy = launcher.legacy_custom_entries(kind)
+        if legacy:
+            try:
+                launcher.store_local_repo(kind, [], legacy)
+                log(
+                    f"  Migrated {len(legacy)} {kind} entr"
+                    f"{'y' if len(legacy) == 1 else 'ies'} from the legacy "
+                    "custom file into the local repo."
+                )
+            except Exception as e:
+                log(f"  Could not migrate the legacy {kind} customs: {e}")
+    try:
+        server, custom = launcher.load_local_repo(kind)
+    except ValueError as e:
+        log(f"  {kind} local repo unreadable: {e}", "err")
+        return {"server": [], "custom": []}
+    return {"server": server, "custom": custom}
+
+
+def legacy_custom_layer(kind: str, validator) -> list:
+    """The pre-repo custom-file layer. Empty once the kind's local repo
+    exists — its "custom" list was seeded from that file at creation, so
+    loading it afterwards would shadow repo edits and survives-clears with
+    stale copies. The file itself stays on disk as a backup."""
+    if os.path.exists(launcher.local_repo_path(kind)):
+        return []
+    return load_custom(kind, validator)
+
+
+def write_local_repo(kind: str, server: list, custom: list) -> str | None:
+    """Persist both lists back to a repo file. Returns an error message,
+    or None on success."""
+    try:
+        launcher.store_local_repo(kind, server, custom)
+    except Exception as e:
+        return f"Could not save the local {kind} repo: {e}"
+    return None
+
+
+def add_custom_entry(kind: str, entry: dict) -> str | None:
+    """Add (or replace, matching id/name) a user-added entry in a repo's
+    "custom" list. Callers validate the entry first. Returns an error
+    message, or None on success."""
+    repo = read_local_repo(kind)
+
+    def _key(e):
+        return e.get("id") or e.get("name")
+
+    key = _key(entry)
+    custom = [e for e in repo["custom"] if _key(e) != key]
+    custom.append(entry)
+    return write_local_repo(kind, repo["server"], custom)
+
+
+def clear_custom_entries(kind: str) -> bool:
+    """Wipe only the user-added "custom" list of a repo — imported server
+    entries are never touched. Returns True on success."""
+    repo = read_local_repo(kind)
+    return write_local_repo(kind, repo["server"], []) is None
+
+
+def local_repo_has_entries(kind: str) -> bool:
+    """Whether any entry — server-imported or user-custom — exists in a
+    kind's local repo. Network-free."""
+    repo = read_local_repo(kind)
+    return bool(repo["server"] or repo["custom"])
+
+
+def validate_entries(entries: list, validator, label: str) -> list:
+    """Sanitize raw repo/embedded entries with a kind validator, skipping
+    unusable ones with a logged warning rather than failing the load."""
+    out = []
+    for entry in entries:
+        cleaned = validator(entry) if isinstance(entry, dict) else None
+        if cleaned is None:
+            log(f"  {label}: skipping invalid entry {entry!r}", "err")
+            continue
+        out.append(cleaned)
+    return out
 
 
 # ── shared validation helpers ────────────────────────────────────────────────

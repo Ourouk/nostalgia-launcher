@@ -314,3 +314,125 @@ def test_write_custom_template_creates_once(tmp_path, monkeypatch):
     assert catalog.write_custom_template("addons", "[]") is False
     assert catalog.clear_custom("addons") is True
     assert catalog.clear_custom("addons") is False
+
+
+# ── local repo files ─────────────────────────────────────────────────────────
+
+from pathlib import Path  # noqa: E402
+
+import pytest  # noqa: E402
+
+from nostalgia_launcher.core import launcher  # noqa: E402
+
+
+@pytest.fixture
+def repo_dir(tmp_path, monkeypatch):
+
+    monkeypatch.setattr(
+        launcher,
+        "local_repo_path",
+        lambda kind: str(tmp_path / f"local_{kind}_repo.json"),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "legacy_custom_path",
+        lambda kind: str(tmp_path / f"legacy_{kind}_custom.json"),
+    )
+    return tmp_path
+
+
+def test_read_local_repo_missing_is_empty(repo_dir):
+    assert catalog.read_local_repo("mods") == {"server": [], "custom": []}
+    assert not catalog.local_repo_has_entries("mods")
+
+
+def test_read_local_repo_seeds_once_from_legacy(repo_dir):
+    legacy = repo_dir / "legacy_addons_custom.json"
+    legacy.write_text(
+        '[{"name": "Mine", "git": "https://github.com/x/mine"}]',
+        encoding="utf-8",
+    )
+    repo = catalog.read_local_repo("addons")
+    assert repo["custom"] == [
+        {"name": "Mine", "git": "https://github.com/x/mine"}
+    ]
+    # The repo file now exists: a changed legacy file is not re-imported.
+    legacy.write_text("[],", encoding="utf-8")
+    again = catalog.read_local_repo("addons")
+    assert again["custom"] == [
+        {"name": "Mine", "git": "https://github.com/x/mine"}
+    ]
+
+
+def test_add_custom_entry_replaces_same_id_keeps_server(repo_dir):
+    launcher_store = catalog.write_local_repo
+    assert launcher_store("mods", [{"id": "Srv"}], []) is None
+    entry = {
+        "id": "Srv",
+        "name": "override",
+        "source": {"kind": "direct_file"},
+    }
+    err = catalog.add_custom_entry("mods", dict(entry))
+    assert err is None
+    repo = catalog.read_local_repo("mods")
+    assert [e["id"] for e in repo["custom"]] == ["Srv"]
+    assert repo["custom"][0]["name"] == "override"
+    assert repo["server"] == [{"id": "Srv"}]
+    assert catalog.local_repo_has_entries("mods")
+
+
+def test_clear_custom_entries_wipes_only_custom(repo_dir):
+    catalog.write_local_repo(
+        "assets", [{"id": "Srv"}], [{"id": "User1"}, {"id": "User2"}]
+    )
+    assert catalog.clear_custom_entries("assets") is True
+    repo = catalog.read_local_repo("assets")
+    assert repo == {"server": [{"id": "Srv"}], "custom": []}
+
+
+def test_read_local_repo_malformed_degrades_to_empty(repo_dir, caplog):
+    (repo_dir / "local_mods_repo.json").write_text(
+        "{not json", encoding="utf-8"
+    )
+    assert catalog.read_local_repo("mods") == {
+        "server": [],
+        "custom": [],
+    }
+
+
+def test_validate_entries_skips_invalid_with_log():
+    good = {"id": "ok"}
+    out = catalog.validate_entries(
+        [good, "junk", None],
+        lambda e: e if isinstance(e, dict) else None,
+        "test layer",
+    )
+    assert out == [good]
+
+
+def test_legacy_layer_inactive_once_repo_exists(repo_dir):
+    """After the repo file exists, the legacy custom file is no longer
+    loaded — stale copies must not shadow repo edits or survives-clears."""
+
+    legacy = Path(catalog.custom_file("mods"))
+    legacy.write_text(
+        '[{"id": "Legacy", "name": "Legacy",'
+        ' "source": {"kind": "direct_file"}}]',
+        encoding="utf-8",
+    )
+    # No repo yet: the legacy layer is active.
+    assert [
+        e["id"]
+        for e in catalog.legacy_custom_layer(
+            "mods", lambda e: e if isinstance(e, dict) else None
+        )
+    ] == ["Legacy"]
+    # Create the repo (as the import split or first read does).
+    catalog.write_local_repo("mods", [], [])
+    assert (
+        catalog.legacy_custom_layer(
+            "mods", lambda e: e if isinstance(e, dict) else None
+        )
+        == []
+    )
+    assert legacy.exists()  # still on disk as a backup

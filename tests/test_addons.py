@@ -751,3 +751,61 @@ def test_patch_pfui_installs_profile(tmp_path):
 def test_patch_pfui_missing_profile_returns_gracefully(tmp_path):
     client = tmp_path / "client"
     addons.patch_pfui_default_profile(str(client))  # no pfUI installed
+
+
+# ── local repo layer ─────────────────────────────────────────────────────────
+
+
+def _addon(name, git="https://github.com/example/repo"):
+    return {"name": name, "git": git}
+
+
+def _repo_redirect(tmp_path, monkeypatch):
+    from nostalgia_launcher.core import launcher
+
+    monkeypatch.setattr(
+        launcher,
+        "local_repo_path",
+        lambda kind: str(tmp_path / f"local_{kind}_repo.json"),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "legacy_custom_path",
+        lambda kind: str(tmp_path / f"legacy_{kind}.json"),
+    )
+
+
+def test_addons_catalog_from_cache_full_precedence(tmp_path, monkeypatch):
+    """cache < repo.server < embedded < repo.custom < legacy (by folder)."""
+    from nostalgia_launcher.core import launcher
+    from nostalgia_launcher.services import catalog as catalog_svc
+
+    _repo_redirect(tmp_path, monkeypatch)
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    url = addons.registry_urls()[0]
+    config_store.save_config(
+        {
+            "addons_catalog_cache": {
+                url: {
+                    "timestamp": 9999999999,
+                    "catalog": [_addon("X", "https://github.com/e/remote")],
+                }
+            }
+        }
+    )
+    catalog_svc.write_local_repo(
+        "addons",
+        [_addon("X", "https://github.com/e/reposrv")],
+        [_addon("X", "https://github.com/e/repocustom")],
+    )
+    launcher.reset()
+    launcher.configure_from_dict(
+        {
+            "server": {"base_url": "https://launcher.test"},
+            "addons": [_addon("X", "https://github.com/e/embedded")],
+        }
+    )
+    reg = {a["name"]: a["git"] for a in addons.catalog_from_cache()}
+    assert reg["X"] == "https://github.com/e/repocustom"

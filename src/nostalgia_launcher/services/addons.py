@@ -8,9 +8,12 @@ shared ``git_archive`` source backend (`services/sources`); this module
 keeps the addon-specific catalog machinery, the folder unpacking call and
 the pfUI "Default" profile patch.
 
-There is no bundled addon list — the ADDONS tab comes entirely from the
-addon catalog (launcher-configured or user-set URL) merged with the per-user
-custom file, so a distribution decides what it ships.
+There is no hardcoded addon list — the ADDONS tab comes from the addon
+catalog URLs (launcher-configured or user-set), the local addons repo
+(`local_addons_repo.json`: server-imported entries written by the config
+import plus user-added customs), optional entries embedded in the launcher
+config, and the per-user custom file, so a distribution decides what it
+ships.
 """
 
 import json
@@ -71,6 +74,13 @@ def _custom_validator(entry: dict) -> dict | None:
     if cleaned["git"] and not is_allowed_git_url(cleaned["git"]):
         return None
     return cleaned
+
+
+def validate_custom_entry(entry: dict) -> dict | None:
+    """Public hook for controllers persisting user-built addon entries —
+    same rules as every other custom source (validate_addon + git-host
+    allowlist)."""
+    return _custom_validator(entry)
 
 
 def fetch_addons_catalog(force=False) -> list:
@@ -146,19 +156,48 @@ def _fetch_url_catalog(url: str, force: bool, now: float) -> list:
     return catalog_list
 
 
+def embedded_addons() -> list:
+    """Addons defined inline in the active launcher config (top-level
+    "addons": […]), sanitized through the same validator as remote entries
+    (including the git-host allowlist); unusable entries are skipped with a
+    logged warning. Network-free."""
+    return catalog.validate_entries(
+        launcher.embedded_addons(), _custom_validator, "launcher config"
+    )
+
+
 def addons_catalog(force=False) -> list:
-    """The effective addon catalog: the remote/cached catalogs merged in
-    registry order (later wins) and then merged with the per-user custom
-    file (custom entries override by folder name)."""
+    """The effective addon catalog, in override order (later wins by folder
+    name): the remote/cached catalogs < the local repo's server-imported
+    entries < the launcher config's embedded addons < the repo's
+    user-custom entries < the legacy per-user custom file."""
     remote = fetch_addons_catalog(force=force)
+    repo = catalog.read_local_repo("addons")
     return catalog.merge_addons(
-        remote, catalog.load_custom("addons", _custom_validator)
+        catalog.merge_addons(
+            catalog.merge_addons(
+                catalog.merge_addons(
+                    remote,
+                    catalog.validate_entries(
+                        repo["server"],
+                        _custom_validator,
+                        "local addons repo",
+                    ),
+                ),
+                embedded_addons(),
+            ),
+            catalog.validate_entries(
+                repo["custom"], _custom_validator, "local addons repo"
+            ),
+        ),
+        catalog.legacy_custom_layer("addons", _custom_validator),
     )
 
 
 def catalog_from_cache() -> list:
-    """The cached catalogs merged with the custom file, without any network —
-    used as the offline fallback when a fresh fetch fails."""
+    """Every local layer merged without any network — used as the offline
+    fallback when a fresh fetch fails. Same override order as
+    `addons_catalog`."""
     cache = _config_store.load_config().get("addons_catalog_cache", {}) or {}
     urls = registry_urls()
     parts = []
@@ -169,12 +208,23 @@ def catalog_from_cache() -> list:
                 parts.append(entry["catalog"])
     elif isinstance(cache, dict) and cache.get("catalog"):
         parts.append(cache["catalog"])
+    repo = catalog.read_local_repo("addons")
+    parts.append(
+        catalog.validate_entries(
+            repo["server"], _custom_validator, "local addons repo"
+        )
+    )
+    parts.append(embedded_addons())
+    parts.append(
+        catalog.validate_entries(
+            repo["custom"], _custom_validator, "local addons repo"
+        )
+    )
+    parts.append(catalog.legacy_custom_layer("addons", _custom_validator))
     merged = []
     for part in parts:
         merged = catalog.merge_addons(merged, part)
-    return catalog.merge_addons(
-        merged, catalog.load_custom("addons", _custom_validator)
-    )
+    return merged
 
 
 def catalog_last_updated() -> float | None:

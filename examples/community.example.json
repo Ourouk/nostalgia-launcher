@@ -6,9 +6,31 @@
     "news_url": "https://launcher.example.com/news.json",
     "featured_news_url": "https://launcher.example.com/news/featured.json",
     "mods_registry_url": "https://launcher.example.com/community.mods.example.json",
-    "addons_registry_url": "https://launcher.example.com/community.addons.example.json"
+    "addons_registry_url": "https://launcher.example.com/community.addons.example.json",
+    "assets_registry_url": "https://launcher.example.com/community.assets.example.json"
   },
   "mirrors": [],
+  "addons": [
+    {
+      "name": "ExampleAddon",
+      "git": "https://github.com/example/example-addon",
+      "branch": "master",
+      "description": "An addon embedded directly in the launcher config.",
+      "toc": { "Title": "Example Addon", "Interface": "11200" },
+      "recommended": true
+    }
+  ],
+  "assets": [
+    {
+      "id": "ExamplePatch",
+      "name": "Example Content Patch",
+      "description": "A server content patch embedded in the config.",
+      "url": "https://launcher.example.com/patches/patch.mpq",
+      "dest": "Data/patch.mpq",
+      "version": "v1",
+      "sha1": "0123456789abcdef0123456789abcdef01234567"
+    }
+  ],
   "mods": [
     {
       "id": "ExampleDirectDll",

@@ -10,7 +10,7 @@ shell is shared with the mods/addons panels via
 `list_panel.ScrollListPanel`.
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -131,8 +131,11 @@ class AssetsPanel(ScrollListPanel):
     Renders from the controller's registry and state; re-renders on every
     AssetsLoaded and forwards checkbox/action clicks into the controller.
     The optional `on_badge` callback receives the updates count after each
-    snapshot so the shell can paint a nav-tab badge.
+    snapshot so the shell can paint a nav-tab badge. Emits
+    `customAssetRequested` from the banner's add button.
     """
+
+    customAssetRequested = Signal()
 
     def __init__(
         self, assets, bridge, palette: Palette, parent=None, on_badge=None
@@ -167,6 +170,14 @@ class AssetsPanel(ScrollListPanel):
             part.setStyleSheet(f"color: {color.name()};")
             banner_layout.addWidget(part)
         banner_layout.addStretch(1)
+
+        custom = QToolButton(banner)
+        custom.setObjectName("assetsCustomAdd")
+        custom.setText("+  Add custom asset")
+        custom.setCursor(Qt.PointingHandCursor)
+        custom.setStyleSheet(f"color: {p.pink.name()}; font-weight: bold;")
+        custom.clicked.connect(self.customAssetRequested.emit)
+        banner_layout.addWidget(custom)
 
         refresh = QToolButton(banner)
         refresh.setObjectName("assetsCatalogRefresh")

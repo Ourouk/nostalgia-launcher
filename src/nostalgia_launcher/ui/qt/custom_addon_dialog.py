@@ -65,7 +65,10 @@ class CustomAddonDialog(QDialog):
         root.addWidget(self._url)
 
         self._hint = QLabel(
-            "Allowed hosts: " + ", ".join(ADDON_GIT_HOSTS), self
+            "Allowed hosts: "
+            + ", ".join(ADDON_GIT_HOSTS)
+            + "\nInstalls into Interface/AddOns/<folder>.",
+            self,
         )
         self._hint.setObjectName("customAddonHint")
         self._hint.setStyleSheet(f"color: {p.text_dim.name()};")

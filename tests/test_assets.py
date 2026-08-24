@@ -467,3 +467,70 @@ def test_realmlist_writer(tmp_path, monkeypatch):
     write_realmlist_wtf(str(client))
     content = (client / "realmlist.wtf").read_text(encoding="utf-8")
     assert content.strip() == "SET realmlist launcher.test"
+
+
+# ── local repo layer ─────────────────────────────────────────────────────────
+
+
+def _asset(aid, name=None):
+    return {
+        "id": aid,
+        "name": name or aid,
+        "url": f"https://x.test/{aid}.mpq",
+        "dest": f"Data/{aid}.mpq",
+    }
+
+
+def test_assets_registry_full_precedence(tmp_path, monkeypatch):
+    """remote cache < repo.server < embedded < repo.custom < legacy."""
+    from nostalgia_launcher.core import launcher
+    from nostalgia_launcher.services import catalog as catalog_svc
+
+    monkeypatch.setattr(
+        launcher,
+        "local_repo_path",
+        lambda kind: str(tmp_path / f"local_{kind}_repo.json"),
+    )
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config(
+        {
+            "assets_catalog_cache": {
+                "timestamp": 9999999999,
+                "catalog": [_asset("X", "Remote")],
+            }
+        }
+    )
+    catalog_svc.write_local_repo(
+        "assets",
+        [_asset("X", "RepoServer")],
+        [_asset("X", "RepoCustom")],
+    )
+    launcher.reset()
+    launcher.configure_from_dict(
+        {
+            "server": {"base_url": "https://launcher.test"},
+            "assets": [_asset("X", "Embedded")],
+        }
+    )
+    reg = {a["id"]: a["name"] for a in assets.assets_registry()}
+    assert reg["X"] == "RepoCustom"
+
+
+def test_catalog_is_stale_false_with_repo_content_only(tmp_path, monkeypatch):
+    from nostalgia_launcher.core import launcher
+    from nostalgia_launcher.services import catalog as catalog_svc
+
+    monkeypatch.setattr(
+        launcher,
+        "local_repo_path",
+        lambda kind: str(tmp_path / f"local_{kind}_repo.json"),
+    )
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config({})
+    catalog_svc.write_local_repo("assets", [_asset("Local")], [])
+    assert not assets.has_remote_catalog()
+    assert assets.catalog_is_stale() is False

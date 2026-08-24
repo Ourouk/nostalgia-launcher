@@ -768,3 +768,85 @@ def test_catalog_timestamp_roundtrip(monkeypatch):
         lambda: {"mods_catalog_cache": {"timestamp": 123.5, "catalog": []}},
     )
     assert mods_svc.catalog_timestamp() == 123.5
+
+
+# ── local repo layer ─────────────────────────────────────────────────────────
+
+
+def _mod(mid, name=None):
+    return {
+        "id": mid,
+        "name": name or mid,
+        "source": {
+            "kind": "direct_file",
+            "url": f"https://x.test/{mid}.dll",
+            "dest": f"{mid}.dll",
+        },
+    }
+
+
+@pytest.fixture
+def repo_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        launcher,
+        "local_repo_path",
+        lambda kind: str(tmp_path / f"local_{kind}_repo.json"),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "legacy_custom_path",
+        lambda kind: str(tmp_path / f"legacy_{kind}.json"),
+    )
+    return tmp_path
+
+
+def test_mods_registry_full_precedence(tmp_path, repo_paths, monkeypatch):
+    """remote < repo.server < embedded < repo.custom < legacy custom."""
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config(
+        {
+            "mods_catalog_cache": {
+                "timestamp": 9999999999,
+                "catalog": [_mod("X", "Remote"), _mod("OnlyRemote")],
+            }
+        }
+    )
+    catalog_svc = __import__(
+        "nostalgia_launcher.services.catalog", fromlist=["catalog"]
+    )
+    catalog_svc.write_local_repo(
+        "mods",
+        [_mod("X", "RepoServer"), _mod("OnlyRepoServer")],
+        [_mod("X", "RepoCustom")],
+    )
+    launcher.reset()
+    launcher.configure_from_dict(
+        {
+            "server": {"base_url": "https://launcher.test"},
+            "mods": [_mod("X", "Embedded")],
+        }
+    )
+
+    def fail(*a, **k):
+        raise AssertionError("cached registry must not hit the network")
+
+    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    reg = {m["id"]: m["name"] for m in mods.mods_registry()}
+    assert reg["X"] == "RepoCustom"
+    assert reg["OnlyRemote"] == "OnlyRemote"
+    assert reg["OnlyRepoServer"] == "OnlyRepoServer"
+
+
+def test_catalog_is_stale_false_with_repo_content_only(tmp_path, repo_paths):
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config({})
+    catalog_svc = __import__(
+        "nostalgia_launcher.services.catalog", fromlist=["catalog"]
+    )
+    catalog_svc.write_local_repo("mods", [_mod("Local")], [])
+    assert not mods.has_remote_catalog()
+    assert mods.catalog_is_stale() is False

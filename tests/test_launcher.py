@@ -579,3 +579,259 @@ def test_non_dict_theme_parses_as_none_and_does_not_fail_config():
         )
         assert cfg is not None
         assert cfg.theme is None
+
+
+# ── import-time content split ────────────────────────────────────────────────
+
+
+@pytest.fixture
+def user_dirs(tmp_path, monkeypatch):
+    """Redirect the persisted launcher config and every local repo file
+    into tmp_path."""
+    dest = tmp_path / "user" / "nostalgia_launcher.json"
+    monkeypatch.setattr(launcher, "user_config_path", lambda: str(dest))
+    monkeypatch.setattr(
+        launcher,
+        "local_repo_path",
+        lambda kind: str(tmp_path / "user" / f"local_{kind}_repo.json"),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "legacy_custom_path",
+        lambda kind: str(
+            tmp_path / "user" / f"nostalgia_launcher_{kind}_custom.json"
+        ),
+    )
+    return dest, tmp_path / "user"
+
+
+def _import_file(tmp_path, name, data):
+    path = tmp_path / name
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+_MOD = {
+    "id": "M1",
+    "name": "M1",
+    "source": {
+        "kind": "direct_file",
+        "url": "https://x.test/m.dll",
+        "dest": "m.dll",
+    },
+}
+_ADDON = {"name": "A1", "git": "https://github.com/x/a1"}
+_ASSET = {
+    "id": "P1",
+    "url": "https://x.test/p.mpq",
+    "dest": "Data/p.mpq",
+}
+
+
+def test_persist_splits_sections_into_local_repos(tmp_path, user_dirs):
+    dest, user = user_dirs
+    src = _import_file(
+        tmp_path,
+        "cfg.json",
+        {
+            "server": {"base_url": "https://srv.example"},
+            "mods": [_MOD],
+            "addons": [_ADDON],
+            "assets": [_ASSET],
+        },
+    )
+    got, err = launcher.persist(str(src))
+    assert err == ""
+    assert got == str(dest)
+    # The persisted config is stripped of every content section.
+    assert json.loads(dest.read_text()) == {
+        "server": {"base_url": "https://srv.example"}
+    }
+    for kind, entries in (
+        ("mods", [_MOD]),
+        ("addons", [_ADDON]),
+        ("assets", [_ASSET]),
+    ):
+        repo = json.loads((user / f"local_{kind}_repo.json").read_text())
+        assert repo == {"server": entries, "custom": []}
+
+
+def test_persist_writes_empty_repos_when_sections_absent(tmp_path, user_dirs):
+    _, user = user_dirs
+    src = _import_file(
+        tmp_path, "cfg.json", {"server": {"base_url": "https://srv.example"}}
+    )
+    assert launcher.persist(str(src))[1] == ""
+    for kind in ("mods", "addons", "assets"):
+        repo = json.loads((user / f"local_{kind}_repo.json").read_text())
+        assert repo == {"server": [], "custom": []}
+
+
+def test_reimport_replaces_server_keeps_custom(tmp_path, user_dirs):
+    _, user = user_dirs
+    first = _import_file(
+        tmp_path,
+        "a.json",
+        {"server": {"base_url": "https://srv.example"}, "mods": [_MOD]},
+    )
+    assert launcher.persist(str(first))[1] == ""
+    custom = {
+        "id": "Mine",
+        "name": "Mine",
+        "source": {
+            "kind": "direct_file",
+            "url": "https://x.test/x.dll",
+            "dest": "x.dll",
+        },
+    }
+    repo_path = user / "local_mods_repo.json"
+    repo = json.loads(repo_path.read_text())
+    repo["custom"] = [custom]
+    repo_path.write_text(json.dumps(repo), encoding="utf-8")
+
+    mod2 = dict(_MOD, id="M2")
+    second = _import_file(
+        tmp_path,
+        "b.json",
+        {"server": {"base_url": "https://srv.example"}, "mods": [mod2]},
+    )
+    assert launcher.persist(str(second))[1] == ""
+    merged = json.loads(repo_path.read_text())
+    assert merged["server"] == [mod2]
+    assert merged["custom"] == [custom]
+
+
+def test_validate_helpers_never_write_repo_files(tmp_path, user_dirs):
+    dest, user = user_dirs
+    src = _import_file(
+        tmp_path,
+        "cfg.json",
+        {"server": {"base_url": "https://srv.example"}, "mods": [_MOD]},
+    )
+    cfg, err = launcher.validate_path(str(src))
+    assert err == "" and cfg is not None
+    _data, verr = launcher.validate_dict(json.loads(src.read_text()))
+    assert verr == "" and _data is not None
+    assert not dest.exists()
+    assert not list(user.glob("local_*_repo.json"))
+
+
+def test_repo_failure_aborts_import_without_persisting(
+    tmp_path, user_dirs, monkeypatch
+):
+    dest, _user = user_dirs
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(launcher, "store_local_repo", boom)
+    src = _import_file(
+        tmp_path,
+        "cfg.json",
+        {"server": {"base_url": "https://srv.example"}, "mods": [_MOD]},
+    )
+    got, err = launcher.persist(str(src))
+    assert got == "" and err
+    assert not dest.exists()
+
+
+def test_legacy_custom_seeds_fresh_repo_on_import(tmp_path, user_dirs):
+    dest, user = user_dirs
+    user.mkdir(parents=True, exist_ok=True)
+    legacy = user / "nostalgia_launcher_addons_custom.json"
+    legacy.write_text(json.dumps([_ADDON]), encoding="utf-8")
+    src = _import_file(
+        tmp_path, "cfg.json", {"server": {"base_url": "https://srv.example"}}
+    )
+    assert launcher.persist(str(src))[1] == ""
+    repo = json.loads((user / "local_addons_repo.json").read_text())
+    assert repo["server"] == []
+    assert repo["custom"] == [_ADDON]
+
+
+def test_derive_parses_embedded_addons_raw():
+    cfg = _config(
+        {
+            "server": {"base_url": "https://srv.example"},
+            "addons": [_ADDON, "junk", 42],
+        }
+    )
+    assert cfg.embedded_addons == [_ADDON]
+
+
+def test_repo_failure_rolls_back_earlier_repos(
+    tmp_path, user_dirs, monkeypatch
+):
+    """A mid-split failure must leave every previously written repo at its
+    prior content (the documented never-half-applied invariant)."""
+    dest, user = user_dirs
+    # A pre-existing mods repo with known content.
+    user.mkdir(parents=True, exist_ok=True)
+    mods_repo = user / "local_mods_repo.json"
+    mods_repo.write_text(
+        json.dumps({"server": [{"id": "Old"}], "custom": []}),
+        encoding="utf-8",
+    )
+
+    real_store = launcher.store_local_repo
+
+    def flaky(kind, server, custom):
+        if kind == "addons":
+            raise OSError("disk full")
+        real_store(kind, server, custom)
+
+    monkeypatch.setattr(launcher, "store_local_repo", flaky)
+    src = _import_file(
+        tmp_path,
+        "cfg.json",
+        {"server": {"base_url": "https://srv.example"}, "mods": [_MOD]},
+    )
+    got, err = launcher.persist(str(src))
+    assert got == "" and err
+    # mods was written before addons failed -> rolled back to prior bytes.
+    assert json.loads(mods_repo.read_text()) == {
+        "server": [{"id": "Old"}],
+        "custom": [],
+    }
+    assert not (user / "local_addons_repo.json").exists()
+    assert not dest.exists()
+
+
+def test_config_write_failure_rolls_back_repos(
+    tmp_path, user_dirs, monkeypatch
+):
+    """A failing launcher-config write rolls the fresh repos back (a brand-
+    new repo disappears; a pre-existing one keeps its old bytes)."""
+    dest, user = user_dirs
+    user.mkdir(parents=True, exist_ok=True)
+    assets_repo = user / "local_assets_repo.json"
+    assets_repo.write_text(
+        json.dumps({"server": [{"id": "Keep"}], "custom": []}),
+        encoding="utf-8",
+    )
+
+    def boom():
+        raise OSError("config dir unwritable")
+
+    monkeypatch.setattr(
+        launcher, "_derive", lambda d: None
+    )  # skip semantic validation
+    src = _import_file(
+        tmp_path,
+        "cfg.json",
+        {"server": {"base_url": "https://srv.example"}},
+    )
+    # Inject the failure at the config write itself.
+    orig_replace = launcher.os.replace
+
+    def replace_fail(src_, dst, *a, **k):
+        if str(dst) == str(dest):
+            raise OSError("unwritable")
+        return orig_replace(src_, dst, *a, **k)
+
+    monkeypatch.setattr(launcher.os, "replace", replace_fail)
+    got, err = launcher.persist(str(src))
+    assert got == "" and err
+    assert not (user / "local_mods_repo.json").exists()
+    assert not (user / "local_addons_repo.json").exists()
+    assert json.loads(assets_repo.read_text())["server"] == [{"id": "Keep"}]

@@ -12,7 +12,7 @@ import threading
 
 from ..core import config_store
 from ..core.errors import describe_install_error
-from ..services import assets
+from ..services import assets, catalog
 from ..state.events import (
     AssetsLoaded,
     EventDispatcher,
@@ -101,15 +101,17 @@ class AssetsController:
         nothing to refetch: republish instantly instead of failing."""
         if self._busy:
             return False
-        if not assets.has_remote_catalog() and assets.embedded_assets():
-            self._dispatcher.post(
-                LogMessage(
-                    "Using the assets embedded in the launcher config.\n",
-                    "dim",
-                )
-            )
-            self._dispatcher.post(AssetsLoaded(self.state))
-            return True
+        if not assets.has_remote_catalog():
+            if assets.embedded_assets():
+                note = "Using the assets embedded in the launcher config.\n"
+            elif catalog.local_repo_has_entries("assets"):
+                note = "Using the local assets repo contents.\n"
+            else:
+                note = None
+            if note is not None:
+                self._dispatcher.post(LogMessage(note, "dim"))
+                self._dispatcher.post(AssetsLoaded(self.state))
+                return True
 
         def worker():
             try:
@@ -126,6 +128,18 @@ class AssetsController:
         self._busy = True
         threading.Thread(target=worker, daemon=True).start()
         return True
+
+    def add_custom_entry(self, entry: dict) -> str | None:
+        """Validate a user-built asset entry, store it in the local assets
+        repo's "custom" list and republish the snapshot. Returns an error
+        message, or None on success."""
+        if catalog.validate_asset(entry) is None:
+            return "This asset entry is not usable."
+        err = catalog.add_custom_entry("assets", entry)
+        if err:
+            return err
+        self._dispatcher.post(AssetsLoaded(self.state))
+        return None
 
     def action_for(self, asset_id: str) -> str | None:
         """'retry' when the asset is in an error state, 'update' when a
