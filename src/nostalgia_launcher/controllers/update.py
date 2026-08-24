@@ -18,7 +18,7 @@ from ..core.filesystem import (
     pick_game_executable,
     remove_wdb,
 )
-from ..core.log_sink import debug_emit
+from ..core.log_sink import debug_emit, log
 from ..core.platform_support import can_launch_client, is_linux
 from ..services.self_update import (
     fetch_updater_latest_tag,
@@ -56,6 +56,11 @@ class Readiness:
     mode: str
     label: str
     status: str
+
+
+# Cap on captured child-process (umu/Wine, WoW.exe) lines per run — a chatty
+# Wine session must not flood the session buffer, the log file and the UI.
+_CHILD_OUTPUT_MAX_LINES = 800
 
 
 def _flatten_diff_tree(nodes, prefix=()) -> list[str]:
@@ -315,7 +320,8 @@ class UpdateController:
 
     def _launch_game_windows(self, client_dir: str, cfg: dict) -> tuple:
         """Windows direct launch: prefer the loader mod's executable, then
-        WoW.exe, spawned detached from the caller's job object."""
+        WoW.exe, spawned detached from the caller's job object. Its merged
+        output is drained into the session log by a background thread."""
         import subprocess
 
         # Prefer the loader mod's executable when it's present on disk
@@ -339,15 +345,30 @@ class UpdateController:
                 subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0
             )
             try:
-                subprocess.Popen(
-                    [exe], cwd=client_dir, creationflags=flags, close_fds=True
+                proc = subprocess.Popen(
+                    [exe],
+                    cwd=client_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    creationflags=flags,
+                    close_fds=True,
                 )
             except OSError:
                 # The job object doesn't permit breakaway — retry without it.
                 flags &= ~getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
-                subprocess.Popen(
-                    [exe], cwd=client_dir, creationflags=flags, close_fds=True
+                proc = subprocess.Popen(
+                    [exe],
+                    cwd=client_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    creationflags=flags,
+                    close_fds=True,
                 )
+            threading.Thread(
+                target=self._drain_child_output,
+                args=(proc, "game"),
+                daemon=True,
+            ).start()
             self._dispatcher.post(LogMessage(f"Launched {exe_lbl}!\n", "ok"))
             return True, dxvk_notice
         except Exception as e:
@@ -418,8 +439,10 @@ class UpdateController:
             return False, False
 
     def _watch_game(self, proc, pid: int):
-        """Background watcher: blocks until the umu process exits, then
-        clears the running state and publishes GameExited."""
+        """Background watcher: drains umu/Wine output into the session log
+        until EOF (the process exited), then clears the running state and
+        publishes GameExited."""
+        self._drain_child_output(proc)
         try:
             code = proc.wait()
         except Exception:
@@ -432,6 +455,55 @@ class UpdateController:
             self._dispatcher.post(StatusChanged("Game exited."))
         else:
             self._dispatcher.post(StatusChanged(f"Game exited (code {code})."))
+
+    def _drain_child_output(self, proc, source: str = "umu"):
+        """Log a child process's merged stdout/stderr into the session log.
+
+        Each non-blank line is prefixed ``[source]``; consecutive duplicates
+        collapse into one line with a ×N suffix and a hard cap keeps a chatty
+        Wine session from flooding the buffer/file/UI (a suppression notice
+        is logged once). Blocks until EOF — run it on a worker thread."""
+        stream = getattr(proc, "stdout", None)
+        if stream is None:
+            return
+        prefix = f"[{source}] "
+        last = None
+        repeats = 0
+        shown = 0
+        dropped = 0
+
+        def flush():
+            nonlocal last, repeats
+            if last is not None:
+                suffix = f"  ×{repeats + 1}" if repeats else ""
+                log(f"{prefix}{last}{suffix}", "dim")
+            last = None
+            repeats = 0
+
+        try:
+            for raw in iter(stream.readline, b""):
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                if shown >= _CHILD_OUTPUT_MAX_LINES:
+                    dropped += 1
+                    continue
+                if line == last:
+                    repeats += 1
+                    continue
+                flush()
+                last = line
+                shown += 1
+            flush()
+        except Exception:
+            pass
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+            if dropped:
+                log(f"{prefix}… {dropped} more lines suppressed", "dim")
 
     def terminate_game(self) -> bool:
         """Request termination of the running game (umu + WoW.exe process

@@ -51,6 +51,9 @@ src/nostalgia_launcher/
   `LOG_FILE` via the autouse `_log_sink_env` conftest fixture. The retained
   log is read back headlessly with `--print-log [N]`; `--show-log` starts the
   GUI with the top-level Session-log window open (`open_session_log()`).
+  Child processes are captured too: umu-run/Wine (`[umu]`) and WoW.exe
+  (`[game]`) output is piped into `log()` by `UpdateController._watch_game`
+  / `_drain_child_output` (dedup + `_CHILD_OUTPUT_MAX_LINES` cap).
 
 ## Catalogs (mods/addons)
 
@@ -189,8 +192,11 @@ src/nostalgia_launcher/
   (the controller imports the umu module lazily inside the launch method).
 - **One game process at a time**: `umu.launch()` returns `(pid, pgid, proc)`;
   `UpdateController` records it in `state.game_*`, posts `GameLaunched`, and
-  spawns a daemon `_watch_game()` thread that `proc.wait()`s and posts
-  `GameExited` (clearing the running state). `compute_readiness()` returns
+  spawns a daemon `_watch_game()` thread that drains the child's merged
+  stdout/stderr into the session log (`[umu] …`, dedup + line cap — see
+  `_drain_child_output`), then `proc.wait()`s and posts
+  `GameExited` (clearing the running state). The Windows path captures
+  WoW.exe output the same way (source tag `[game]`). `compute_readiness()` returns
   mode `"terminate"` while a game runs — the footer shows an enabled red
   TERMINATE button (`_terminate_game()` → `umu.kill_game()`: SIGTERM to the
   process group, SIGKILL after 2 s). A second `launch_game()` while one is

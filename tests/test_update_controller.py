@@ -5,6 +5,7 @@ from the shared EventDispatcher and its UpdateState. VerifyWorker/UpdateWorker
 are swapped for a scripted fake via monkeypatch.
 """
 
+import io
 import subprocess
 import threading
 import time
@@ -29,10 +30,12 @@ from nostalgia_launcher.state.events import (
 
 class _FakeProc:
     """A Popen stand-in whose wait() blocks until released, so the game
-    watcher thread completes only when the test says so."""
+    watcher thread completes only when the test says so. `output` (bytes)
+    becomes the merged child stdout the watcher drains."""
 
-    def __init__(self):
+    def __init__(self, output: bytes | None = None):
         self.exit_event = threading.Event()
+        self.stdout = io.BytesIO(output) if output is not None else None
 
     def wait(self):
         self.exit_event.wait()
@@ -1072,6 +1075,7 @@ def test_launch_game_windows_prefers_vanillafixes(
     monkeypatch.setattr(uc, "is_linux", lambda: False)
     monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
     popen = Mock()
+    popen.return_value.stdout = None  # keep the drain thread a no-op
     monkeypatch.setattr(subprocess, "Popen", popen)
 
     ok, dxvk = controller.launch_game()
@@ -1081,6 +1085,71 @@ def test_launch_game_windows_prefers_vanillafixes(
     args, kwargs = popen.call_args
     assert args[0] == [str(game / "VanillaFixes.exe")]
     assert kwargs["cwd"] == str(game)
+
+
+def test_launch_game_windows_captures_child_output(
+    controller, worker_cls, config, monkeypatch, tmp_path
+):
+    """WoW.exe output must reach the session log: spawned with merged
+    stdout+stderr pipes and drained on a background thread."""
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "WoW.exe").write_text("")
+    config["out_dir"] = str(game)
+    monkeypatch.setattr(uc, "can_launch_client", lambda: True)
+    monkeypatch.setattr(uc, "is_linux", lambda: False)
+    monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
+    popen = Mock()
+    popen.return_value.stdout = None
+    monkeypatch.setattr(subprocess, "Popen", popen)
+
+    ok, _ = controller.launch_game()
+
+    assert ok is True
+    _, kwargs = popen.call_args
+    assert kwargs["stdout"] == subprocess.PIPE
+    assert kwargs["stderr"] == subprocess.STDOUT
+
+
+# ── child-process output capture ─────────────────────────────────────────
+
+
+def test_watch_game_logs_child_output(controller, worker_cls, monkeypatch):
+    """The umu watcher drains merged child output into the session log,
+    prefixed and with consecutive duplicates collapsed."""
+    proc = _FakeProc(b"proton: starting\nproton: starting\nerr line\n\n")
+    proc.exit_event.set()  # wait() returns immediately
+    captured = []
+    monkeypatch.setattr(
+        uc, "log", lambda msg, tag="": captured.append((msg, tag))
+    )
+
+    controller._watch_game(proc, 1234)
+
+    msgs = [m for m, _ in captured]
+    assert "[umu] proton: starting  ×2" in msgs
+    assert "[umu] err line" in msgs
+    assert all(tag == "dim" for _, tag in captured)
+    events = controller._dispatcher.drain()
+    assert GameExited(1234, 0) in events
+
+
+def test_child_output_cap_suppresses_flood(controller, monkeypatch):
+    """A chatty Wine session is capped; one suppression notice is logged."""
+    lines = b"".join(b"wine fixme %d\n" % i for i in range(900))
+    proc = _FakeProc(lines)
+    captured = []
+    monkeypatch.setattr(
+        uc, "log", lambda msg, tag="": captured.append((msg, tag))
+    )
+
+    controller._drain_child_output(proc, "umu")
+
+    shown = [m for m, _ in captured if "suppressed" not in m]
+    notices = [m for m, _ in captured if "suppressed" in m]
+    assert len(shown) <= uc._CHILD_OUTPUT_MAX_LINES
+    assert len(notices) == 1
+    assert "100" in notices[0]  # 900 - 800 suppressed
 
 
 # ── Typed torrent exception handler tests ────────────────────────────────────

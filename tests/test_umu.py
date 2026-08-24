@@ -231,6 +231,26 @@ def test_launch_passes_renderer_env(monkeypatch, tmp_path):
     assert kwargs["env"]["PROTON_USE_WINED3D"] == "1"
 
 
+def test_launch_captures_merged_child_output(monkeypatch, tmp_path):
+    """umu/Wine output must reach the session log: the child is spawned with
+    merged stdout+stderr pipes for the caller to drain."""
+    game = tmp_path / "game"
+    game.mkdir()
+    exe = game / "WoW.exe"
+    exe.write_text("")
+    popen = mock.Mock()
+    popen.return_value.pid = 7
+    monkeypatch.setattr(umu.subprocess, "Popen", popen)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7, raising=False)
+    monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
+
+    umu.launch(str(game), str(exe))
+
+    _, kwargs = popen.call_args
+    assert kwargs["stdout"] == umu.subprocess.PIPE
+    assert kwargs["stderr"] == umu.subprocess.STDOUT
+
+
 def test_launch_forwards_wayland_env(monkeypatch, tmp_path):
     game = tmp_path / "game"
     game.mkdir()

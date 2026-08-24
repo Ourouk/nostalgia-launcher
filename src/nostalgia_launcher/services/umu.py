@@ -246,10 +246,12 @@ def launch(
     Spawns umu detached (its own session, no controlling terminal) with the
     env contract set (including renderer/backend Proton flags), cwd set to
     `out_dir`. When `gamemode` is set and GameMode is installed the wrapper is
-    prepended so the client runs under Feral GameMode. Returns
-    ``(pid, pgid, proc)`` — the umu-run PID, its POSIX process-group id (for
-    killing the whole tree), and the Popen handle (so the caller can wait()
-    on it). Raises when umu-run is missing or the spawn fails.
+    prepended so the client runs under Feral GameMode. umu/Wine output is
+    captured (merged stdout+stderr) — the caller drains `proc.stdout` into
+    the session log. Returns ``(pid, pgid, proc)`` — the umu-run PID, its
+    POSIX process-group id (for killing the whole tree), and the Popen handle
+    (so the caller can wait() on it). Raises when umu-run is missing or the
+    spawn fails.
     """
     binary = umu_binary or find_umu()
     if not binary:
@@ -274,6 +276,8 @@ def launch(
             wayland=wayland,
             skip_builtin_dxvk=skip_builtin_dxvk,
         ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         start_new_session=True,
         close_fds=True,
     )

@@ -103,7 +103,10 @@ NostalgiaLauncher --show-log         # launch with the Session log window open
 
 `--print-log` prints and exits — it never starts the graphical launcher.
 The **Settings → Troubleshooting → Show logs** row toggles the same Session
-log window during a session.
+log window during a session. Output of the launched game is captured too:
+on Linux the umu-launcher/Wine messages (`[umu] …`), on Windows WoW.exe's
+console output (`[game] …`) — so a crash report contains what the client
+itself printed.
 
 ## Using the launcher
 

@@ -227,7 +227,9 @@ tweak channel.
 
 `umu.launch()` returns `(pid, pgid, proc)`; `UpdateController` records it in
 `state.game_*`, posts `GameLaunched`, and spawns a daemon `_watch_game()`
-thread that `proc.wait()`s and posts `GameExited` (clearing the running
+thread that drains the child's merged output into the session log
+(`_drain_child_output()`, `[umu]` prefix), then `proc.wait()`s and posts
+`GameExited` (clearing the running
 state). `compute_readiness()` returns mode `"terminate"` while a game runs —
 the footer shows an enabled red TERMINATE button (`_terminate_game()` →
 `umu.kill_game()`: SIGTERM to the process group, SIGKILL after 2 s). A second
