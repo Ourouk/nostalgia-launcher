@@ -15,7 +15,6 @@ captured at install time. With no metadata an installed asset is never
 reported stale; a missing file is a missing install, not an update.
 """
 
-import hashlib
 import json
 import os
 import time
@@ -169,80 +168,35 @@ def assets_registry(force=False) -> list:
 def install_asset(asset: dict, client_dir: str) -> dict:
     """Download one asset over HTTPS into the client folder.
 
-    Integrity comes from the provided update information: the declared
-    ``size`` (short/long reads fail the install) and, when pinned, the
-    SHA-1 computed while streaming. The file lands via temp-file + rename,
-    so a failed download never leaves a truncated patch behind.
-
-    Returns the record fragment {"installed_files", "probe"} where
-    ``probe`` carries the response's size/Last-Modified/ETag for the
-    opt-in drift probe (None headers → empty dict).
+    Delegates to the shared ``direct_file`` backend, which streams the
+    payload beside its destination with the SHA-1 computed on the fly and
+    the declared size enforced; this wrapper renames it into place and
+    returns the record fragment {"installed_files", "probe"} where
+    ``probe`` carries the response headers for the opt-in drift probe
+    (empty dict when the server sent none).
     """
     dest_rel = _checked_rel(asset["dest"])
-    dest = os.path.join(client_dir, dest_rel)
-    tmp = dest + ".tmp"
-    hasher = hashlib.sha1() if asset.get("sha1") else None
-    got = 0
-    header_map: dict = {}
-    try:
-        req = urllib.request.Request(asset["url"], headers={"User-Agent": UA})
-        with secure_urlopen(
-            req,
-            timeout=120,
-            allowed_hosts=allowed_download_hosts(),
-        ) as r:
-            try:
-                header_map = (
-                    {k.lower(): v for k, v in r.headers.items()}
-                    if hasattr(r, "headers")
-                    else {}
-                )
-            except Exception:
-                header_map = {}
-            os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
-            with open(tmp, "wb") as f:
-                while True:
-                    chunk = r.read(256 * 1024)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    if hasher is not None:
-                        hasher.update(chunk)
-                    got += len(chunk)
-    except Exception:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        raise
+    source: dict = {
+        "kind": "direct_file",
+        "url": asset["url"],
+        "dest": dest_rel,
+    }
+    if asset.get("sha1"):
+        source["sha1"] = asset["sha1"]
+    if asset.get("size"):
+        source["size"] = asset["size"]
 
-    declared_size = asset.get("size")
-    if declared_size and got != declared_size:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        raise RuntimeError(
-            f"{dest_rel}: downloaded {got} bytes, expected {declared_size}"
-        )
-    expected_sha1 = asset.get("sha1")
-    if expected_sha1 and hasher.hexdigest() != expected_sha1:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        raise RuntimeError(f"{dest_rel}: SHA-1 mismatch after download")
-    os.replace(tmp, dest)
-    log(f"  Installed {dest_rel}")
+    from .sources import get as _source_get
+    from .sources.deploy import move_into_place
 
-    # Capture the response headers for the opt-in drift probe, using the
-    # same shape/semantics as remote_probe_state() (int size when sane).
-    probe: dict = {}
-    cl = header_map.get("content-length")
-    if cl:
-        try:
-            probe["size"] = int(cl)
-        except ValueError:
-            pass
-    if header_map.get("last-modified"):
-        probe["last_modified"] = header_map["last-modified"]
-    if header_map.get("etag"):
-        probe["etag"] = header_map["etag"]
-    return {"installed_files": [dest_rel], "probe": probe}
+    result = _source_get("direct_file").fetch(
+        {"id": asset["id"], "source": source}, client_dir=client_dir
+    )
+    file = result.file
+    if file is None:
+        raise RuntimeError("direct_file produced no streamed payload")
+    written = move_into_place(file.path, client_dir, dest_rel)
+    return {"installed_files": [written], "probe": dict(file.probe)}
 
 
 def remove_asset_files(installed_files: list, client_dir: str):

@@ -272,11 +272,11 @@ def test_custom_addon_host_only_url_folder_error(qapp):
 
 
 def test_custom_addon_hint_lists_allowed_hosts(qapp):
-    import nostalgia_launcher.services.addons as addons
+    from nostalgia_launcher.core.launcher import ADDON_GIT_HOSTS
 
     dlg = CustomAddonDialog(Palette())
     hint = dlg.findChild(QLabel, "customAddonHint")
-    assert hint.text() == "Allowed hosts: " + ", ".join(addons.ADDON_GIT_HOSTS)
+    assert hint.text() == "Allowed hosts: " + ", ".join(ADDON_GIT_HOSTS)
 
 
 # ── MainWindow custom addon ───────────────────────────────────────────────

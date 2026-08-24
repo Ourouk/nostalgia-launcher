@@ -375,16 +375,11 @@ class ModsController:
                             "github_release",
                             "codeberg_release",
                         ):
+                            # Reuse the slim release object for the install
+                            # itself; its version derives from the same
+                            # object (tag, or asset filename when pinned).
                             mod_release = mods._fetch_release_cached(mod)
-                            latest_ver = (
-                                mods._release_version(mod, mod_release)
-                                if mod_release
-                                else None
-                            )
-                        else:
-                            latest_ver = mods.fetch_mod_latest_version_cached(
-                                mod
-                            )
+                        latest_ver = mods.fetch_mod_latest_version_cached(mod)
                     except Exception:
                         pass
 

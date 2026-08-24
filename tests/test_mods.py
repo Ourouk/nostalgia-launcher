@@ -267,45 +267,54 @@ def test_reload_catalog_republishes_when_embedded_only(tmp_path, monkeypatch):
     assert controller._busy is False
 
 
-# ── asset selection / versions ───────────────────────────────────────────────
+# ── asset selection / versions (release backends) ────────────────────────────
 
 
 def test_pick_asset_matches_pattern_and_prefers_without_suffix():
+    from nostalgia_launcher.services.sources.github_release import pick_asset
+
     assets = [
         {"name": "vanillafixes-1.0-dxvk.zip"},
         {"name": "vanillafixes-1.0.zip"},
     ]
     assert (
-        mods._pick_asset(assets, "vanillafixes-*.zip", "-dxvk")["name"]
+        pick_asset(assets, "vanillafixes-*.zip", "-dxvk")["name"]
         == "vanillafixes-1.0.zip"
     )
 
 
 def test_pick_asset_returns_none_without_match():
-    assert mods._pick_asset([{"name": "x.dll"}], "*.zip", None) is None
+    from nostalgia_launcher.services.sources.github_release import pick_asset
+
+    assert pick_asset([{"name": "x.dll"}], "*.zip", None) is None
 
 
 def test_release_version_uses_asset_when_version_from_asset():
+    from nostalgia_launcher.services.sources.github_release import (
+        release_version,
+    )
+
     rel = {
         "tag_name": "Release",
         "assets": [
             {"name": "SuperWoW 2.2.zip"},
         ],
     }
-    mod = {
-        "source": {
-            "version_from": "asset",
-            "asset_pattern": "SuperWoW*.zip",
-            "prefer_no": None,
-        }
+    source = {
+        "version_from": "asset",
+        "asset_pattern": "SuperWoW*.zip",
+        "prefer_no": None,
     }
-    assert mods._release_version(mod, rel) == "2.2"
+    assert release_version(source, rel) == "2.2"
 
 
 def test_release_version_defaults_to_tag():
+    from nostalgia_launcher.services.sources.github_release import (
+        release_version,
+    )
+
     rel = {"tag_name": "v1.2.3", "assets": []}
-    mod = {"source": {}}
-    assert mods._release_version(mod, rel) == "v1.2.3"
+    assert release_version({}, rel) == "v1.2.3"
 
 
 # ── dlls.txt ────────────────────────────────────────────────────────────────
@@ -458,21 +467,50 @@ def test_mod_update_available_logic():
     )
 
 
-# ── dxvk conf ───────────────────────────────────────────────────────────────
+# ── dxvk conf (hook registry) ───────────────────────────────────────────────
 
 
 def test_write_dxvk_conf(tmp_path):
+    from nostalgia_launcher.services.sources import hooks
+
     client = tmp_path / "client"
     client.mkdir()
-    mods._write_dxvk_conf(str(client))
-    assert (client / "dxvk.conf").exists()
+    written = hooks.run("write_dxvk_conf", str(client))
+    assert written == ["dxvk.conf"]
     assert "d3d9.maxFrameLatency = 1" in (client / "dxvk.conf").read_text()
 
 
 # ── install_mod (direct_file) ───────────────────────────────────────────────
 
 
+def _patch_stream_download(monkeypatch, payload, target):
+    """Route the direct_file streaming fetch's secure_urlopen to a fake
+    response carrying ``payload`` (patched on the backend module). The fake
+    yields the whole body on the first read() then EOF, matching a real
+    streamed response."""
+
+    class _R:
+        headers = {}
+
+        def __init__(self):
+            self._data = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *x):
+            return False
+
+        def read(self, n=-1):
+            out, self._data = self._data[:n], self._data[n:]
+            return out
+
+    monkeypatch.setattr(target, "secure_urlopen", lambda *a, **k: _R())
+
+
 def test_install_mod_direct_file(tmp_path, monkeypatch):
+    import nostalgia_launcher.services.sources.direct_file as df
+
     client = tmp_path / "client"
     client.mkdir()
     mod = {
@@ -485,19 +523,7 @@ def test_install_mod_direct_file(tmp_path, monkeypatch):
         },
     }
     payload = b"DLLDATA"
-    monkeypatch.setattr(
-        mods,
-        "secure_urlopen",
-        lambda *a, **k: type(
-            "R",
-            (),
-            {
-                "__enter__": lambda s: s,
-                "__exit__": lambda *x: False,
-                "read": lambda s=0: payload,
-            },
-        )(),
-    )
+    _patch_stream_download(monkeypatch, payload, df)
 
     written = mods.install_mod(mod, str(client))
     assert written == ["transmogfix.dll"]
@@ -507,6 +533,8 @@ def test_install_mod_direct_file(tmp_path, monkeypatch):
 
 def test_install_mod_rejects_traversal_dest(tmp_path, monkeypatch):
     """A crafted dest (catalog-controlled) must not escape the client dir."""
+    import nostalgia_launcher.services.sources.direct_file as df
+
     client = tmp_path / "client"
     client.mkdir()
     mod = {
@@ -518,19 +546,7 @@ def test_install_mod_rejects_traversal_dest(tmp_path, monkeypatch):
         },
     }
     payload = b"DLLDATA"
-    monkeypatch.setattr(
-        mods,
-        "secure_urlopen",
-        lambda *a, **k: type(
-            "R",
-            (),
-            {
-                "__enter__": lambda s: s,
-                "__exit__": lambda *x: False,
-                "read": lambda s=0: payload,
-            },
-        )(),
-    )
+    _patch_stream_download(monkeypatch, payload, df)
 
     with pytest.raises(RuntimeError, match="unsafe install path"):
         mods.install_mod(mod, str(client))

@@ -5,6 +5,10 @@ The mod list comes from the launcher config's embedded "mods" list (when
 present) and the mod catalog (launcher-configured or user-set URL), merged
 with the per-user custom file on top — embedded entries override same-id
 catalog entries, custom entries override both.
+
+Payload acquisition is delegated to the shared source backends
+(`services/sources`): this module orchestrates — backend fetch, deployment
+by entry shape, dll registration and post-install hooks.
 """
 
 import json
@@ -13,15 +17,13 @@ import time
 import urllib.request
 
 from ..core.config_store import load_config, update_config
-from ..core.constants import GITHUB_API, MOD_UA
-from ..core.errors import describe_net_error
+from ..core.constants import UA
 from ..core.log_sink import log
-from ..core.security_http import (
-    allowed_download_hosts,
-    read_capped,
-    secure_urlopen,
-)
+from ..core.security_http import read_capped, secure_urlopen
 from . import catalog
+from .sources import deploy
+from .sources import get as _source_get
+from .sources import hooks as _hooks
 
 
 def _checked_rel(dest_rel) -> str:
@@ -29,9 +31,7 @@ def _checked_rel(dest_rel) -> str:
     or a catalog `dest`) before it is joined onto `client_dir`. A
     compromised mod upstream must not be able to write outside the client
     folder via a crafted filename (`../../evil.dll`)."""
-    if not catalog.safe_relpath(dest_rel):
-        raise RuntimeError(f"Refusing unsafe install path: {dest_rel!r}")
-    return dest_rel
+    return deploy.checked_rel(dest_rel)
 
 
 # The per-user custom mod file (a JSON list, one entry per mod, using the
@@ -110,7 +110,7 @@ def fetch_mods_catalog(force=False) -> list | None:
     if not url:
         raise RuntimeError("Mod catalog URL is not configured.")
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": MOD_UA})
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
         with secure_urlopen(req, timeout=10) as r:
             raw = json.loads(read_capped(r, 2 * 1024 * 1024))
     except Exception:
@@ -184,344 +184,96 @@ def clear_custom_file() -> bool:
     return catalog.clear_custom("mods")
 
 
-def _codeberg_latest(owner: str, repo: str, raise_errors=False) -> dict | None:
-    url = f"https://codeberg.org/api/v1/repos/{owner}/{repo}/releases?limit=10&pre-release=false"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": MOD_UA})
-        with secure_urlopen(req, timeout=10) as r:
-            releases = json.load(r)
-        for rel in releases:
-            if not rel.get("prerelease", False) and not rel.get(
-                "draft", False
-            ):
-                return rel
-        return releases[0] if releases else None
-    except Exception as e:
-        if raise_errors:
-            raise RuntimeError(describe_net_error(e)) from e
-        return None
-
-
-DXVK_CONF_CONTENT = """# Low latency - limit queued frames - helps input lag
-d3d9.maxFrameLatency = 1
-# Forces clamp for AF through DXVK - if you see grass textures shimmering or shaking try false
-d3d9.clampNegativeLodBias = True
-# Disable logging for performance
-dxvk.logLevel = none
-# Triple buffering (needed for smooth G-SYNC + RTSS capping) can try lowering backbuffers to 2 if want
-dxvk.presentInterval = 0
-dxvk.numBackBuffers = 3
-# Use hardware mouse for responsiveness
-d3d9.cursor = 1
-# VanillaFix handles DPI awareness; avoid double-scaling
-d3d9.dpiAware = False
-# Enable GPL if supported to reduce stuttering (NVIDIA 473.33+, AMD 24.6.1+)
-dxvk.enableGraphicsPipelineLibrary = Auto
-# Track pipeline lifetimes to reduce memory usage
-dxvk.trackPipelineLifetime = True
-# Limit compiler threads to reduce memory usage
-dxvk.numCompilerThreads = 2
-"""
-
-
-def _write_dxvk_conf(client_dir: str):
-    path = os.path.join(client_dir, "dxvk.conf")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(DXVK_CONF_CONTENT)
-    log("  Wrote dxvk.conf")
-
-
-def _github_latest(owner: str, repo: str, raise_errors=False) -> dict | None:
-    url = f"{GITHUB_API}/repos/{owner}/{repo}/releases/latest"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": MOD_UA})
-        with secure_urlopen(req, timeout=10) as r:
-            return json.load(r)
-    except Exception as e:
-        if raise_errors:
-            raise RuntimeError(describe_net_error(e)) from e
-        return None
-
-
-def _pick_asset(assets: list, pattern: str, prefer_no) -> dict | None:
-    import fnmatch
-
-    candidates = [a for a in assets if fnmatch.fnmatch(a["name"], pattern)]
-    if prefer_no:
-        preferred = [a for a in candidates if prefer_no not in a["name"]]
-        if preferred:
-            candidates = preferred
-    return candidates[0] if candidates else None
-
-
-def _release_version(mod: dict, rel: dict) -> str | None:
-    """Version string for a github/codeberg release. Normally the tag name —
-    but some mods (e.g. SuperWoW) keep a static tag and edit the release in
-    place, so their tag never changes. For those, derive the version from the
-    matched asset instead: its filename embeds the real version."""
-    src = mod["source"]
-    if src.get("version_from") == "asset":
-        asset = _pick_asset(
-            rel.get("assets", []), src["asset_pattern"], src.get("prefer_no")
-        )
-        if asset and asset.get("name"):
-            import re
-
-            m = re.search(r"\d+(?:[._]\d+)+", asset["name"])
-            return m.group(0) if m else asset["name"]
-    return rel.get("tag_name")
-
-
-_MOD_VERSION_CACHE_TTL = 3600
-
-
-def _slim_release(rel: dict) -> dict:
-    """Reduce an API release object to the fields the updater actually uses,
-    so the persisted cache stays small."""
-    return {
-        "tag_name": rel.get("tag_name"),
-        "assets": [
-            {
-                "name": a.get("name"),
-                "size": a.get("size", 0),
-                "browser_download_url": a.get("browser_download_url"),
-            }
-            for a in rel.get("assets", [])
-        ],
-    }
-
-
-def _fetch_release_cached(mod: dict, force: bool = False) -> dict | None:
-    """Latest-release lookup backed by a persistent cache in the config file
-    ({"mod_release_cache": {mod_id: {"timestamp": epoch, "release": {…}}}}),
-    so restarts within the TTL don't re-hit the GitHub/Codeberg APIs."""
-    src = mod["source"]
-    kind = src["kind"]
-    if kind not in ("github_release", "codeberg_release"):
-        return None
-    mid = mod["id"]
-    now = time.time()
-    if not force:
-        entry = load_config().get("mod_release_cache", {}).get(mid)
-        if (
-            entry
-            and (now - entry.get("timestamp", 0)) < _MOD_VERSION_CACHE_TTL
-        ):
-            return entry.get("release")
-    if kind == "github_release":
-        rel = _github_latest(src["owner"], src["repo"])
-    else:
-        rel = _codeberg_latest(src["owner"], src["repo"])
-    if rel is None:
-        return None
-    rel = _slim_release(rel)
-    update_config(
-        lambda c: c.setdefault("mod_release_cache", {}).__setitem__(
-            mid, {"timestamp": now, "release": rel}
-        )
-    )
-    return rel
+# ── version lookup / install ─────────────────────────────────────────────────
 
 
 def fetch_mod_latest_version_cached(
     mod: dict, force: bool = False
 ) -> str | None:
+    """Latest version for one mod, via its source backend (release kinds
+    serve the persistent cache within the TTL; direct kinds answer offline
+    from their pin)."""
     src = mod["source"]
-    kind = src["kind"]
-    if kind in ("direct_file", "direct_tar"):
-        return src.get("pinned_version")
-    rel = _fetch_release_cached(mod, force=force)
-    if rel:
-        return _release_version(mod, rel)
-    return None
-
-
-def _fetch_bytes(url: str) -> bytes:
-    """Download a mod asset/archive through the hardened transfer layer."""
-    req = urllib.request.Request(url, headers={"User-Agent": MOD_UA})
-    with secure_urlopen(
-        req, timeout=120, allowed_hosts=allowed_download_hosts()
-    ) as r:
-        return r.read()
-
-
-def _install_plain_file(client_dir: str, data: bytes, dest_rel: str) -> str:
-    """Write one file into the client dir (dest_rel already validated)."""
-    dest = os.path.join(client_dir, dest_rel)
-    os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
-    with open(dest, "wb") as f:
-        f.write(data)
-    log(f"  Installed {dest_rel}")
-    return dest_rel
-
-
-def _extract_zip_map(
-    client_dir: str, data: bytes, mod_id: str, extract_map: dict
-) -> list[str]:
-    """Write every extract_map {zip entry: dest} found in a zip archive."""
-    import zipfile
-
-    written = []
-    tmp_path = os.path.join(client_dir, f"_mod_tmp_{mod_id}.zip")
     try:
-        with open(tmp_path, "wb") as f:
-            f.write(data)
-        with zipfile.ZipFile(tmp_path) as zf:
-            for zip_path, dest_rel in extract_map.items():
-                try:
-                    zip_data = zf.read(zip_path)
-                except KeyError:
-                    log(f"  Warning: {zip_path} not in zip, skipping")
-                    continue
-                written.append(
-                    _install_plain_file(client_dir, zip_data, dest_rel)
-                )
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-    return written
+        backend = _source_get(src["kind"])
+    except KeyError:
+        return None
+    return backend.resolve_version(mod, force=force)
 
 
-def _extract_tar_map(
-    client_dir: str, data: bytes, extract_map: dict
-) -> list[str]:
-    """Write every extract_map {tar entry pattern: dest} found in a .tar.gz."""
-    import fnmatch
-    import io
-    import tarfile
+def _fetch_release_cached(mod: dict, force: bool = False) -> dict | None:
+    """Slim latest-release object for release-kind mods (persistent cache
+    within the TTL). Helper for the controller's update worker."""
+    src = mod["source"]
+    if src["kind"] == "github_release":
+        from .sources.codeberg_release import codeberg_latest  # noqa: F401
+        from .sources.github_release import fetch_release_cached, github_latest
 
-    written = []
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-        all_names = tf.getnames()
-        for pattern, dest_rel in extract_map.items():
-            matched = (
-                pattern
-                if pattern in all_names
-                else next(
-                    (n for n in all_names if fnmatch.fnmatch(n, pattern)),
-                    None,
-                )
-            )
-            if matched is None:
-                log(
-                    f"  Warning: no file matching '{pattern}' in tar, skipping"
-                )
-                continue
-            tar_data = tf.extractfile(tf.getmember(matched)).read()
-            written.append(_install_plain_file(client_dir, tar_data, dest_rel))
-    return written
+        return fetch_release_cached(
+            mod["id"],
+            lambda: github_latest(src["owner"], src["repo"]),
+            force=force,
+        )
+    if src["kind"] == "codeberg_release":
+        from .sources.codeberg_release import (
+            codeberg_latest,
+            fetch_release_cached,
+        )
+
+        return fetch_release_cached(
+            mod["id"],
+            lambda: codeberg_latest(src["owner"], src["repo"]),
+            force=force,
+        )
+    return None
 
 
 def install_mod(
     mod: dict, client_dir: str, release: dict | None = None
 ) -> list:
+    """Install one mod: fetch via its source backend, deploy by entry shape,
+    then run any declared post-install hooks. Returns the written relative
+    paths."""
     src = mod["source"]
-    written = []
+    # Validate any plain-dest target BEFORE downloading so a crafted
+    # catalog path can't make us write outside the client folder.
+    if src.get("extract_map") is None and src.get("dest"):
+        deploy.checked_rel(src["dest"])
+    backend = _source_get(src["kind"])
+    result = backend.fetch(mod, client_dir=client_dir, release=release)
 
-    if src["kind"] == "codeberg_release":
-        rel = (
-            release
-            if release is not None
-            else _codeberg_latest(src["owner"], src["repo"], raise_errors=True)
+    written: list[str] = []
+    emap = src.get("extract_map")
+    if result.file is not None:
+        # Streamed single-file payload already staged beside its destination.
+        written.append(
+            deploy.move_into_place(result.file.path, client_dir, src["dest"])
         )
-        if not rel:
-            raise RuntimeError("no release found on Codeberg")
-        import fnmatch
-
-        assets = rel.get("assets", [])
-        asset = next(
-            (
-                a
-                for a in assets
-                if fnmatch.fnmatch(a["name"], src["asset_pattern"])
-                and (
-                    not src.get("prefer_no")
-                    or src["prefer_no"] not in a["name"]
-                )
-            ),
-            None,
-        )
-        if not asset:
-            raise RuntimeError(
-                f"No matching asset '{src['asset_pattern']}' in {mod['id']} release"
-            )
-        log(f"  Downloading {asset['name']} ({asset['size'] // 1024} KB)...")
-        data = _fetch_bytes(asset["browser_download_url"])
-        if src.get("extract_map") is None:
+    elif result.data is not None:
+        if emap is None:
             written.append(
-                _install_plain_file(
-                    client_dir, data, _checked_rel(asset["name"])
+                deploy.install_plain(
+                    client_dir,
+                    result.data,
+                    deploy.checked_rel(result.name),
                 )
             )
+        elif (result.name or "").endswith((".tar.gz", ".tgz")):
+            written += deploy.extract_tar_map(client_dir, result.data, emap)
         else:
-            written += _extract_zip_map(
-                client_dir, data, mod["id"], src["extract_map"]
+            written += deploy.extract_zip_map(
+                client_dir, result.data, mod["id"], emap
             )
+    else:
+        raise RuntimeError(f"{src['kind']} produced no payload")
 
-    elif src["kind"] == "github_release":
-        rel = (
-            release
-            if release is not None
-            else _github_latest(src["owner"], src["repo"], raise_errors=True)
-        )
-        if not rel:
-            raise RuntimeError("no release found on GitHub")
-        asset = _pick_asset(
-            rel.get("assets", []), src["asset_pattern"], src["prefer_no"]
-        )
-        if not asset:
-            raise RuntimeError(
-                f"No matching asset '{src['asset_pattern']}' in {mod['id']} release"
-            )
-        log(f"  Downloading {asset['name']} ({asset['size'] // 1024} KB)...")
-        data = _fetch_bytes(asset["browser_download_url"])
-        if src.get("extract_map") is None:
-            written.append(
-                _install_plain_file(
-                    client_dir, data, _checked_rel(asset["name"])
-                )
-            )
-        elif asset["name"].endswith(".tar.gz") or asset["name"].endswith(
-            ".tgz"
-        ):
-            written += _extract_tar_map(client_dir, data, src["extract_map"])
-        else:
-            written += _extract_zip_map(
-                client_dir, data, mod["id"], src["extract_map"]
-            )
+    # The controller records this as the installed version (release kinds
+    # derive it from the tag or, with version_from:"asset", the filename).
+    if result.version:
+        mod["_resolved_version"] = result.version
 
-    elif src["kind"] == "direct_tar":
-        log(f"  Downloading {src['url'].split('/')[-1]}...")
-        data = _fetch_bytes(src["url"])
-        written += _extract_tar_map(client_dir, data, src["extract_map"])
-        if src.get("pinned_version"):
-            mod["_resolved_version"] = src["pinned_version"]
-
-    elif src["kind"] == "direct_file":
-        url = src["url"]
-        log(f"  Downloading {url.rsplit('/', 1)[-1]}...")
-        data = _fetch_bytes(url)
-
-        if src.get("extract_map") is None:
-            written.append(
-                _install_plain_file(
-                    client_dir, data, _checked_rel(src["dest"])
-                )
-            )
-        elif url.endswith(".tar.gz") or url.endswith(".tgz"):
-            written += _extract_tar_map(client_dir, data, src["extract_map"])
-        else:
-            written += _extract_zip_map(
-                client_dir, data, mod["id"], src["extract_map"]
-            )
-
-        if src.get("pinned_version"):
-            mod["_resolved_version"] = src["pinned_version"]
-
-    for hook in src.get("post_install", []):
-        if hook == "write_dxvk_conf":
-            _write_dxvk_conf(client_dir)
-            written.append("dxvk.conf")
+    for hook_name in src.get("post_install", []):
+        written += _hooks.run(hook_name, client_dir)
 
     return written
 

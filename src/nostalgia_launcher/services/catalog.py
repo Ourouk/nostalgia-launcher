@@ -11,8 +11,9 @@ Both registries follow the same model:
 This module holds only the toolkit-agnostic, network-free pieces: catalog-URL
 storage, custom-file resolution, entry validation and merge precedence.
 Nothing from a JSON file is ever executed — the only special behaviours a mod
-catalog may name are the allowlisted source kinds / post-install hooks below,
-and download hosts are still vetted by `security_http` at fetch time.
+catalog may name are the registered source backends / post-install hooks (see
+`services/sources`), and download hosts are still vetted by `security_http`
+at fetch time.
 """
 
 import json
@@ -22,16 +23,15 @@ from urllib.parse import urlsplit
 from ..core import config_store
 from ..core.log_sink import log
 from ..core.platform_support import config_dir
+from .sources import hooks as _hooks
+from .sources import kinds as _source_kinds
+from .sources.safety import safe_folder, safe_relpath  # noqa: F401 (re-export)
 
 # Allowlisted mod source kinds / post-install hooks. A remote or custom mod
-# entry can only reference these — it cannot name arbitrary code.
-MOD_SOURCE_KINDS = {
-    "github_release",
-    "codeberg_release",
-    "direct_file",
-    "direct_tar",
-}
-MOD_POST_INSTALL_HOOKS = {"write_dxvk_conf"}
+# entry can only reference these — it cannot name arbitrary code. Both come
+# from the shared backend/hook registries (`services/sources`).
+MOD_SOURCE_KINDS = set(_source_kinds())
+MOD_POST_INSTALL_HOOKS = set(_hooks.names())
 
 CUSTOM_FILE_TEMPLATE = "[\n]\n"
 
@@ -149,33 +149,8 @@ def clear_custom(kind: str) -> bool:
 
 
 # ── shared validation helpers ────────────────────────────────────────────────
-
-
-def safe_folder(name) -> bool:
-    """A directory name we are willing to install into (no separators, no
-    traversal, no NUL)."""
-    if not isinstance(name, str):
-        return False
-    name = name.strip()
-    return (
-        bool(name)
-        and name not in (".", "..")
-        and not any(ch in name for ch in "/\\")
-        and "\x00" not in name
-    )
-
-
-def safe_relpath(p) -> bool:
-    """A relative destination path: not absolute, no traversal, no NUL."""
-    if not isinstance(p, str) or not p:
-        return False
-    if p.startswith(("/", "\\")) or p[1:2] == ":":
-        return False
-    parts = p.replace("\\", "/").split("/")
-    return (
-        all(part and part not in (".", "..") for part in parts)
-        and "\x00" not in p
-    )
+# safe_folder / safe_relpath are re-exported from sources.safety (imported
+# above) so every consumer keeps its historical dotted path.
 
 
 def safe_ref(v) -> str | None:
@@ -191,48 +166,9 @@ def safe_ref(v) -> str | None:
 
 
 def _https_url(u) -> str | None:
-    if not isinstance(u, str):
-        return None
-    u = u.strip()
-    try:
-        parts = urlsplit(u)
-    except ValueError:
-        return None
-    if parts.scheme != "https" or not parts.hostname:
-        return None
-    return u
+    from .sources.safety import https_url
 
-
-def _safe_slug(s) -> str | None:
-    """A repo owner/repo slug: printable ASCII letters, digits, . _ -."""
-    if not isinstance(s, str):
-        return None
-    s = s.strip()
-    if not s or len(s) > 100 or any(ch.isspace() for ch in s):
-        return None
-    if not all(ch.isalnum() or ch in "._-" for ch in s):
-        return None
-    return s
-
-
-def _valid_extract_map(emap) -> dict | None:
-    """Sanitize an extract_map {zip/tar entry pattern: dest} into a dict of
-    valid relative destinations. None when not a dict, or when every entry
-    failed validation (a map the installer could never honour)."""
-    if emap is None:
-        return None
-    if not isinstance(emap, dict):
-        return None
-    out = {}
-    for pattern, dest in emap.items():
-        if (
-            isinstance(pattern, str)
-            and pattern
-            and isinstance(dest, str)
-            and safe_relpath(dest)
-        ):
-            out[pattern] = dest
-    return out or None
+    return https_url(u)
 
 
 # ── addon entries ────────────────────────────────────────────────────────────
@@ -304,7 +240,12 @@ def merge_addons(remote: list, custom: list) -> list:
 
 def validate_mod(entry: dict) -> dict | None:
     """Sanitize one mod catalog entry into the shape the mod installer uses;
-    None when unusable or when a field would break the installer."""
+    None when unusable or when a field would break the installer.
+
+    Kind-specific source validation is delegated to the registered backend
+    (`services/sources`), so a new backend becomes catalog-usable without
+    touching this function.
+    """
     if not isinstance(entry, dict):
         return None
     mid = (entry.get("id") or "").strip()
@@ -340,62 +281,19 @@ def validate_mod(entry: dict) -> dict | None:
             return None
         mod["source"]["post_install"] = list(hooks)
 
-    if kind in ("github_release", "codeberg_release"):
-        owner = _safe_slug(source.get("owner"))
-        repo = _safe_slug(source.get("repo"))
-        pattern = source.get("asset_pattern")
-        if (
-            not owner
-            or not repo
-            or not isinstance(pattern, str)
-            or not pattern
-        ):
-            return None
-        raw_emap = source.get("extract_map")
-        emap = _valid_extract_map(raw_emap)
-        if raw_emap is not None and emap is None:
-            return None  # a map was given but nothing in it is usable
-        version_from = source.get("version_from")
-        mod["source"].update(
-            {
-                "kind": kind,
-                "owner": owner,
-                "repo": repo,
-                "asset_pattern": pattern,
-                "prefer_no": source.get("prefer_no")
-                if isinstance(source.get("prefer_no"), str)
-                else None,
-                "extract_map": emap,
-                "version_from": version_from
-                if version_from == "asset"
-                else None,
-            }
-        )
-    elif kind == "direct_file":
-        url = _https_url(source.get("url"))
-        dest = source.get("dest")
-        emap = _valid_extract_map(source.get("extract_map"))
-        if not url or (
-            not (isinstance(dest, str) and safe_relpath(dest)) and not emap
-        ):
-            return None
-        mod["source"].update({"kind": "direct_file", "url": url})
-        if isinstance(dest, str) and safe_relpath(dest):
-            mod["source"]["dest"] = dest
-        if emap:
-            mod["source"]["extract_map"] = emap
-        if source.get("pinned_version") is not None:
-            mod["source"]["pinned_version"] = str(source["pinned_version"])
-    elif kind == "direct_tar":
-        url = _https_url(source.get("url"))
-        emap = _valid_extract_map(source.get("extract_map"))
-        if not url or not emap:
-            return None
-        mod["source"].update(
-            {"kind": "direct_tar", "url": url, "extract_map": emap}
-        )
-        if source.get("pinned_version") is not None:
-            mod["source"]["pinned_version"] = str(source["pinned_version"])
+    from .sources import get as _source_get
+
+    try:
+        cleaned_source = _source_get(kind).validate(source)
+    except Exception:
+        return None
+    if cleaned_source is None:
+        return None
+    # The backend owns everything under "source"; keep only its cleaned
+    # view plus any hooks validated above.
+    mod["source"].update(cleaned_source)
+    if hooks and "post_install" not in mod["source"]:
+        mod["source"]["post_install"] = list(hooks)
 
     register = entry.get("register_dll")
     if register is not None:

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ...core.launcher import ADDON_GIT_HOSTS
 from ...services import addons
 from .theme import Palette, apply_theme
 
@@ -64,7 +65,7 @@ class CustomAddonDialog(QDialog):
         root.addWidget(self._url)
 
         self._hint = QLabel(
-            "Allowed hosts: " + ", ".join(addons.ADDON_GIT_HOSTS), self
+            "Allowed hosts: " + ", ".join(ADDON_GIT_HOSTS), self
         )
         self._hint.setObjectName("customAddonHint")
         self._hint.setStyleSheet(f"color: {p.text_dim.name()};")

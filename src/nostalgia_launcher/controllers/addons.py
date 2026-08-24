@@ -69,7 +69,9 @@ class AddonsController:
     @property
     def git_hosts(self) -> tuple:
         """The allowed git hosts shown in the custom-addon dialog hint."""
-        return tuple(addons.ADDON_GIT_HOSTS)
+        from ..core.launcher import ADDON_GIT_HOSTS
+
+        return tuple(ADDON_GIT_HOSTS)
 
     def is_allowed_git_url(self, url: str) -> bool:
         return addons.is_allowed_git_url(url)

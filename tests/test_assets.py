@@ -223,7 +223,9 @@ def _patch_download(monkeypatch, data, headers=None):
         seen["url"] = req.full_url if hasattr(req, "full_url") else req
         return _FakeResponse(data, headers)
 
-    monkeypatch.setattr(assets, "secure_urlopen", fake)
+    import nostalgia_launcher.services.sources.direct_file as df
+
+    monkeypatch.setattr(df, "secure_urlopen", fake)
     return seen
 
 
@@ -272,12 +274,12 @@ def test_install_asset_size_mismatch_refuses(tmp_path, monkeypatch):
 
 
 def test_install_asset_unsafe_dest_refused(tmp_path, monkeypatch):
-    _patch_download(monkeypatch, b"x")
+    import nostalgia_launcher.services.sources.direct_file as df
 
     def boom(*a, **k):
         raise AssertionError("must not download")
 
-    monkeypatch.setattr(assets, "secure_urlopen", boom)
+    monkeypatch.setattr(df, "secure_urlopen", boom)
     client = tmp_path / "client"
     client.mkdir()
     with pytest.raises(RuntimeError, match="unsafe install path"):

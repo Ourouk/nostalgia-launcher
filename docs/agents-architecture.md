@@ -57,6 +57,20 @@ src/nostalgia_launcher/
 
 ## Catalogs (mods/addons)
 
+- **Download backends live in `services/sources/`** — one module per way to
+  obtain a payload (`github_release`, `codeberg_release`, `direct_file`,
+  `direct_tar`, `git_archive`), each registered into a shared registry
+  (`sources.get(kind)`) and speaking one interface: `validate(source)` /
+  `resolve_version(entry)` / `fetch(entry, client_dir=, release=)`.
+  Deployment is separate (`sources/deploy.py`: plain file, zip/tar
+  extract_map, folder unpack) and chosen by entry *shape*, so every backend
+  is usable by every content vertical; only the per-type deployment choice
+  and the allowed post-install hooks (`sources/hooks.py` registry +
+  `TYPE_HOOK_POLICY`) vary. Kind-specific source validation is delegated to
+  `backend.validate()` — adding a backend means dropping a module in the
+  package; no catalog changes. The generic path validators live in
+  `sources/safety.py` (re-exported by `catalog`). Persisted cache keys
+  (`mod_release_cache`, `addon_sha_cache`) are unchanged by this layer.
 - The mods/addons lists come from remote JSON catalogs (`services/catalog.py`
   holds the shared validation/merge logic; the fetch entry points live in
   `services/mods.py` / `services/addons.py`). `mods.mods_registry()` is

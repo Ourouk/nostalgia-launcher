@@ -317,8 +317,10 @@ def test_verify_disallowed_catalog_git_host_never_contacts_it(
     def boom(*a, **k):
         raise AssertionError("disallowed git host must not be contacted")
 
-    monkeypatch.setattr(ac.addons, "secure_urlopen", boom)
-    monkeypatch.setattr(ac.addons.subprocess, "run", boom)
+    import nostalgia_launcher.services.sources.git_archive as git_archive
+
+    monkeypatch.setattr(git_archive, "secure_urlopen", boom)
+    monkeypatch.setattr(git_archive.subprocess, "run", boom)
 
     controller = AddonsController(EventDispatcher())
 

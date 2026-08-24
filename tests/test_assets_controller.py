@@ -5,7 +5,6 @@ import threading
 import pytest
 
 import nostalgia_launcher.core.config_store as config_store
-import nostalgia_launcher.services.assets as assets
 from nostalgia_launcher.controllers.assets import AssetsController
 from nostalgia_launcher.core import launcher
 from nostalgia_launcher.state.events import (
@@ -66,7 +65,9 @@ class _R:
 
 
 def _serve(monkeypatch, data=b"MPQDATA"):
-    monkeypatch.setattr(assets, "secure_urlopen", lambda req, **k: _R(data))
+    import nostalgia_launcher.services.sources.direct_file as df
+
+    monkeypatch.setattr(df, "secure_urlopen", lambda req, **k: _R(data))
 
 
 def _make(client):
@@ -178,7 +179,9 @@ def test_download_failure_records_error(env, monkeypatch):
     def fail(req, **k):
         raise OSError("network down")
 
-    monkeypatch.setattr(assets, "secure_urlopen", fail)
+    import nostalgia_launcher.services.sources.direct_file as df
+
+    monkeypatch.setattr(df, "secure_urlopen", fail)
     ctl = _make(client)
     ctl.toggle("patch3", True)
     assert ctl.apply() is True
@@ -222,8 +225,10 @@ def test_reset_clears_pending(env):
 
 def test_operation_finished_kind_is_assets(env, monkeypatch):
     _, client, monkeypatch = env
+    import nostalgia_launcher.services.sources.direct_file as df
+
     monkeypatch.setattr(
-        assets,
+        df,
         "secure_urlopen",
         lambda req, **k: (_ for _ in ()).throw(OSError("down")),
     )
