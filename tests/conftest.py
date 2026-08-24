@@ -80,10 +80,16 @@ def fake_home(tmp_path, monkeypatch):
 
     Sets BOTH ``HOME`` and ``USERPROFILE``: ``os.path.expanduser`` prefers
     ``USERPROFILE`` on Windows, so tests that only monkeypatch ``HOME``
-    silently keep using the real profile dir there.
+    silently keep using the real profile dir there. Also points
+    ``APPDATA``/``LOCALAPPDATA`` into the fake home — on Windows those
+    take precedence over USERPROFILE (platform_support reads %APPDATA%
+    first), so without them every test would share the real per-user
+    config dir and leak state across tests/runs.
     """
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
     return home
