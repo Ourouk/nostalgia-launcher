@@ -72,6 +72,13 @@ def test_theme_qss_is_non_empty_string_with_selectors():
         "QListWidget",
         "QScrollBar",
         "QTabBar",
+        "QDialog",
+        "QProgressBar",
+        "QSpinBox",
+        "QComboBox",
+        "QToolTip",
+        "QMenu",
+        ":focus",
     ):
         assert selector in qss
 
@@ -109,6 +116,31 @@ def test_palette_for_config_falls_back_on_invalid_theme(qapp):
     palette = palette_for_config(Cfg())
     # An invalid theme means unthemed: native system-derived palette.
     assert palette.themed is False
+
+
+def test_system_palette_maps_system_roles_keeps_semantic_brand(qapp):
+    from PySide6.QtGui import QGuiApplication, QPalette
+
+    from nostalgia_launcher.ui.qt.theme import system_palette
+
+    qp = QGuiApplication.palette()
+    pal = system_palette()
+
+    assert pal.themed is False
+    # Mapped slots follow the system QPalette…
+    assert pal.bg.name() == qp.color(QPalette.ColorRole.Window).name()
+    assert pal.panel.name() == qp.color(QPalette.ColorRole.Base).name()
+    assert pal.text.name() == qp.color(QPalette.ColorRole.WindowText).name()
+    assert pal.gold.name() == qp.color(QPalette.ColorRole.Highlight).name()
+    assert (
+        pal.gold_lt.name()
+        == qp.color(QPalette.ColorRole.Highlight).lighter(125).name()
+    )
+    # …while semantic/content slots keep their fixed brand values.
+    assert pal.ok.name() == HEX["C_OK"]
+    assert pal.err.name() == HEX["C_ERR"]
+    assert pal.parch.name() == HEX["C_PARCH"]
+    assert pal.green_btn.name() == HEX["C_GREEN_BTN"]
 
 
 def test_app_shell_constructs_shows_and_closes_offscreen(qapp):

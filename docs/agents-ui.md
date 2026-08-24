@@ -2,6 +2,28 @@
 
 Scope: `src/nostalgia_launcher/ui/qt/` — styling, dialogs, widgets.
 
+## Theming modes
+
+Two modes, decided once at startup by `palette_for_config(launcher.config())`
+(never re-evaluated live):
+
+- **Themed** — the launcher config carries a valid `theme` dict
+  (`core/themes.has_valid_theme`): the global QSS (`theme_qss`) is applied
+  through `apply_theme(widget, palette, extra_qss)`. Dialogs append their own
+  background rule as `extra_qss`.
+- **Native** — no theme, or an invalid one: `system_palette()` derives slots
+  from the system `QPalette`; **no stylesheet is applied at all**
+  (`apply_theme` sets `""`). Button variants and QSS-only styling vanish;
+  per-widget inline styles built from palette attributes keep working, so
+  content colors must stay readable on light *and* dark systems — semantic
+  slots (`ok`, `err`, `pink`, `warn`, greens, parchment) deliberately do not
+  follow the system palette.
+
+Rules for both modes: never add palette slots for one-off needs (map to the
+existing ones); the `purple` slot is the wordmark only; section titles use
+`gold`, page/dialog titles use `gold_lt`. Test any visual change in all
+three render checks: default themed, overridden theme, native.
+
 ## QSS f-string braces (breaks the suite)
 
 The QSS in `ui/qt/main_window.py` is built from **f-strings that mix CSS

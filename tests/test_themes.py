@@ -3,6 +3,7 @@
 from nostalgia_launcher.core.themes import (
     COLOR_KEYS,
     DEFAULT_COLORS,
+    has_valid_theme,
     resolve_colors,
     resolve_logo,
 )
@@ -12,6 +13,26 @@ def test_default_is_default_palette():
     assert DEFAULT_COLORS["C_BG"] == "#120e1a"
     assert DEFAULT_COLORS["C_GOLD"] == "#c8922a"
     assert set(COLOR_KEYS) == set(DEFAULT_COLORS)
+
+
+def test_has_valid_theme_accepts_non_empty_dict_of_known_slots():
+    assert has_valid_theme({"C_GOLD": "#d4a02f"}) is True
+    assert (
+        has_valid_theme({"C_GOLD": "#d4a02f", "logo": "https://x/l.png"})
+        is True
+    )
+
+
+def test_has_valid_theme_rejects_missing_empty_or_malformed():
+    for spec in (None, {}, "bogus", 42, []):
+        assert has_valid_theme(spec) is False
+
+
+def test_has_valid_theme_rejects_unknown_slot_or_bad_hex():
+    assert has_valid_theme({"C_NOPE": "#123456"}) is False
+    assert has_valid_theme({"C_GOLD": "not-a-color"}) is False
+    # A single bad entry poisons the whole theme.
+    assert has_valid_theme({"C_GOLD": "#d4a02f", "C_BG": "zzz"}) is False
 
 
 def test_none_returns_default():
