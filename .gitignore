@@ -24,7 +24,7 @@ dist/
 !NostalgiaLauncher-macos.spec
 
 # Local planning notes (not part of the package)
-todo/
+todo/*
 
 # Local editor / OS files
 .vscode/

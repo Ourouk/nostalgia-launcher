@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from ...services.umu import RENDERER_CHOICES
 from . import metrics
-from .theme import Palette, theme_qss
+from .theme import Palette, apply_theme
 
 # Renderer presets surfaced in the combobox, keyed for the apply handler.
 _RENDERER_LABELS = {value: label for value, label in RENDERER_CHOICES}
@@ -43,8 +43,8 @@ class LinuxSettingsDialog(QDialog):
         self.setObjectName("linuxSettingsDialog")
         self.setWindowTitle("Linux (UMU) Settings")
         self.setMinimumSize(460, 520)
-        self.setStyleSheet(
-            theme_qss(p) + f"\nQDialog {{ background-color: {p.bg.name()}; }}"
+        apply_theme(
+            self, p, f"\nQDialog {{ background-color: {p.bg.name()}; }}"
         )
 
         root = QVBoxLayout(self)

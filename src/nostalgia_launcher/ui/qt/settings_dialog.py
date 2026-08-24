@@ -33,7 +33,7 @@ from . import metrics
 from .bridge import ControllerBridge
 from .linux_settings_dialog import LinuxSettingsDialog
 from .list_panel import ClickableLabel, make_hairline
-from .theme import Palette, theme_qss
+from .theme import Palette, apply_theme
 
 
 class _ClickableRow(QWidget):
@@ -117,8 +117,8 @@ class SettingsDialog(QDialog):
         self.setObjectName("settingsDialog")
         self.setWindowTitle("Settings")
         self.setMinimumSize(560, 660)
-        self.setStyleSheet(
-            theme_qss(p) + f"\nQDialog {{ background-color: {p.bg.name()}; }}"
+        apply_theme(
+            self, p, f"\nQDialog {{ background-color: {p.bg.name()}; }}"
         )
 
         root = QVBoxLayout(self)

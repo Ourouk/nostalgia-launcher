@@ -86,6 +86,24 @@ def _valid_logo_url(value) -> bool:
     return True
 
 
+def has_valid_theme(spec) -> bool:
+    """Whether a launcher ``theme`` value is a usable color theme.
+
+    True only for a non-empty dict whose entries are all either the
+    ``logo`` key or a known color slot with a valid hex value — exactly
+    what `resolve_colors` accepts. Anything else (None, empty, malformed)
+    means the app runs unthemed (system/native look).
+    """
+    if not isinstance(spec, dict) or not spec:
+        return False
+    for key, value in spec.items():
+        if key == LOGO_KEY:
+            continue
+        if key not in COLOR_KEYS or not _valid_hex(value):
+            return False
+    return True
+
+
 def resolve_colors(spec) -> dict:
     """The effective color dict for a launcher ``theme`` value.
 

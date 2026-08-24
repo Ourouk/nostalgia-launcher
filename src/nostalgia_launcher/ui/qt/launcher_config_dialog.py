@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 
 from ...core import launcher
 from ...services import config_import
-from .theme import Palette, theme_qss
+from .theme import Palette, apply_theme
 
 
 class LauncherConfigDialog(QDialog):
@@ -55,9 +55,10 @@ class LauncherConfigDialog(QDialog):
         self.setObjectName("launcherConfigDialog")
         self.setWindowTitle("FIRST LAUNCH — IMPORT A CONFIGURATION")
         self.setMinimumWidth(560)
-        self.setStyleSheet(
-            theme_qss(p)
-            + f"\nQDialog {{ background-color: {p.panel.name()}; }}"
+        apply_theme(
+            self,
+            p,
+            f"\nQDialog {{ background-color: {p.panel.name()}; }}",
         )
 
         root = QVBoxLayout(self)

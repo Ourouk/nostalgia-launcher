@@ -62,6 +62,13 @@ def window(qapp, monkeypatch):
     hub.settings.state.first_run = False
     hub.settings.state.first_run_av_pending = False
     hub.settings.state.first_run_verify_pending = False
+    # Pin the themed brand palette: these tests assert exact colors in the
+    # button stylesheets, which only exist in themed mode (no launcher
+    # config is loaded here, so the app would otherwise run native).
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.main_window.palette_for_config",
+        lambda cfg: Palette(),
+    )
     # A previously verified setup: a manifest has been fetched, so the
     # real compute_readiness baseline is the gold UPDATE button.
     hub.updater.state.manifest_available = True

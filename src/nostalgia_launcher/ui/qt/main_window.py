@@ -2,7 +2,8 @@
 
 `MainWindow` owns no business logic: the controllers' events arrive through
 the `ControllerHub` bridge and are rendered here. Qt layouts (not absolute
-positioning) do all sizing; the look comes from `qt_theme.theme_qss`.
+positioning) do all sizing; the look comes from `qt_theme.apply_theme`
+(themed launcher configs only — unthemed installs stay native).
 
 The panels build their content into the placeholder pages of `self._stack`,
 keyed by tab name in `self._pages`; the nav gear and footer widgets are
@@ -45,7 +46,7 @@ from .metrics import BASE_H, BASE_W, clamp
 from .mods_panel import ModsPanel
 from .news_panel import NewsPanel
 from .settings_dialog import SettingsDialog
-from .theme import logo_for_config, palette_for_config, theme_qss
+from .theme import apply_theme, logo_for_config, palette_for_config
 from .tweaks_panel import TweaksPanel
 from .update_panel import UpdatePanel
 
@@ -93,7 +94,7 @@ class MainWindow(QMainWindow):
         self._updatePanel = None
         self._firstRunTimer = None
         self._oneShotTimers: list = []
-        self.setStyleSheet(theme_qss(self._palette))
+        apply_theme(self, self._palette)
         self.setWindowTitle("Nostalgia Launcher")
         self.setMinimumSize(
             clamp(BASE_W // 2, 560, 800), clamp(BASE_H // 2, 420, 600)

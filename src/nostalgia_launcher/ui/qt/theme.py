@@ -1,19 +1,29 @@
 """Nostalgia Launcher Qt (PySide6) design system — palette, stylesheet, metrics.
 
-The source of the dark purple/gold palette (the default theme) and the QSS
-stylesheet. Pure Qt (PySide6) — no other GUI toolkit involved.
+Two theming modes:
 
-The palette can be themed by the launcher configuration: `palette_for_config`
-builds a `Palette` from the server's ``"theme"`` color overrides (see
-`core/themes`), falling back to the default palette on any problem.
+- **Themed**: the launcher configuration carries a valid ``theme`` object.
+  The source of the dark purple/gold palette (the default theme) and the
+  QSS stylesheet. `palette_for_config` builds a `Palette` from the server's
+  ``"theme"`` color overrides (see `core/themes`), and `apply_theme` applies
+  `theme_qss` to the widget tree.
+- **Native** (no config theme, or an invalid one): standard widgets render
+  with the platform style — no stylesheet is applied. A `Palette` derived
+  from the system `QPalette` (`system_palette`) still drives the few
+  in-content accents (section titles, error/ok states), while semantic and
+  parchment slots keep their fixed brand values.
 
-- `Palette` exposes the palette colors as QColor values.
-- `theme_qss(palette)` renders the dark-purple/gold stylesheet.
+Pure Qt (PySide6) — no other GUI toolkit involved.
 """
 
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QGuiApplication, QPalette
 
-from ...core.themes import DEFAULT_COLORS, resolve_colors, resolve_logo
+from ...core.themes import (
+    DEFAULT_COLORS,
+    has_valid_theme,
+    resolve_colors,
+    resolve_logo,
+)
 
 # Hex values of the Nostalgia Launcher palette (dark backgrounds, gold accents,
 # the parchment addon cards, and the semantic ok/err colors).
@@ -52,29 +62,69 @@ _ATTRS = [
 
 
 class Palette:
-    """Qt color set for the dark purple/gold design.
+    """Qt color set for the launcher design.
 
     Convenience attributes (``palette.bg``, ``palette.gold``, ...) plus a
     ``colors`` dict keyed by the HEX constant name for dynamic lookup. A
     ``colors`` dict may be passed to theme the palette (the launcher config's
     ``"theme"`` overrides); the default is the default palette.
+
+    ``themed`` marks a config-driven palette: only then is the global QSS
+    applied (see `apply_theme`). A system-derived palette keeps the
+    attributes usable for in-content accents while widgets stay native.
     """
 
-    def __init__(self, colors: dict | None = None):
+    def __init__(self, colors: dict | None = None, themed: bool = True):
         colors = colors or HEX
+        self.themed = themed
         self.colors = {name: QColor(value) for name, value in colors.items()}
         for attr, key in _ATTRS:
             setattr(self, attr, self.colors[key])
 
 
+# QPalette role → color slot for the native (unthemed) mode. Slots not
+# listed (semantic ok/err/pink/warn, the parchment card, the greens) keep
+# their fixed brand values — they are content colors, readable on both the
+# system's light and dark scheme.
+_NATIVE_ROLE_MAP = {
+    "C_BG": QPalette.ColorRole.Window,
+    "C_PANEL": QPalette.ColorRole.Base,
+    "C_HDR": QPalette.ColorRole.Button,
+    "C_PANEL_BDR": QPalette.ColorRole.Mid,
+    "C_DIVIDER": QPalette.ColorRole.Midlight,
+    "C_GOLD": QPalette.ColorRole.Highlight,
+    "C_GOLD_LT": QPalette.ColorRole.Highlight,
+    "C_PURPLE": QPalette.ColorRole.Link,
+    "C_MOD_HL": QPalette.ColorRole.Highlight,
+    "C_TEXT": QPalette.ColorRole.WindowText,
+    "C_TEXT_DIM": QPalette.ColorRole.PlaceholderText,
+    "C_LOG_BG": QPalette.ColorRole.Base,
+    "C_BTN_TEXT": QPalette.ColorRole.ButtonText,
+}
+
+
+def system_palette() -> Palette:
+    """A Palette derived from the system QPalette (native mode)."""
+    qp = QGuiApplication.palette()
+    colors = dict(HEX)
+    for key, role in _NATIVE_ROLE_MAP.items():
+        colors[key] = qp.color(role).name()
+    highlight = qp.color(QPalette.ColorRole.Highlight)
+    if highlight.isValid():
+        colors["C_GOLD_LT"] = highlight.lighter(125).name()
+    return Palette(colors, themed=False)
+
+
 def palette_for_config(cfg) -> Palette:
     """The app palette for a launcher configuration.
 
-    Uses the config's ``theme`` color overrides (falling back to the default
-    default palette on any problem), or the default palette when there is no
-    config.
+    A valid config ``theme`` yields the themed palette (defaults overlaid
+    with the config's color overrides). Without a theme — or with an
+    invalid one — the app runs native: a system-derived palette.
     """
     spec = getattr(cfg, "theme", None)
+    if not has_valid_theme(spec):
+        return system_palette()
     return Palette(resolve_colors(spec))
 
 
@@ -287,3 +337,17 @@ QFrame[role="hairline"] {{
     max-height: 1px;
 }}
 """
+
+
+def apply_theme(widget, palette, extra_qss: str = ""):
+    """Apply the global stylesheet to `widget` when the app is themed.
+
+    Native mode (no valid launcher-config theme) applies nothing — widgets
+    render with the platform style; in-content accents still come from the
+    palette attributes. `extra_qss` is appended verbatim in themed mode
+    (e.g. a dialog's own background rule). Idempotent.
+    """
+    if palette.themed:
+        widget.setStyleSheet(theme_qss(palette) + extra_qss)
+    else:
+        widget.setStyleSheet("")

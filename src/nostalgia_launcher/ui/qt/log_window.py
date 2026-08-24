@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .theme import Palette, theme_qss
+from .theme import Palette, apply_theme
 
 
 class LogWindow(QWidget):
@@ -26,7 +26,7 @@ class LogWindow(QWidget):
         self._palette = palette
         self.setObjectName("logWindow")
         self.setWindowTitle("Session log")
-        self.setStyleSheet(theme_qss(palette))
+        apply_theme(self, palette)
         self.resize(760, 420)
 
         layout = QVBoxLayout(self)

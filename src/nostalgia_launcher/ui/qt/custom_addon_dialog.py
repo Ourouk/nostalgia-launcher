@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...services import addons
-from .theme import Palette, theme_qss
+from .theme import Palette, apply_theme
 
 
 class CustomAddonDialog(QDialog):
@@ -34,9 +34,10 @@ class CustomAddonDialog(QDialog):
         self.setObjectName("customAddonDialog")
         self.setWindowTitle("ADD CUSTOM GIT ADDON")
         self.setMinimumWidth(520)
-        self.setStyleSheet(
-            theme_qss(p)
-            + f"\nQDialog {{ background-color: {p.panel.name()}; }}"
+        apply_theme(
+            self,
+            p,
+            f"\nQDialog {{ background-color: {p.panel.name()}; }}",
         )
 
         root = QVBoxLayout(self)
