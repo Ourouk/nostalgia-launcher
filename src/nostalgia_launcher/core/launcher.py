@@ -68,6 +68,12 @@ here and sanitized by `services/mods` with the same rules as remote entries;
 embedded ids override the remote catalog, and the per-user custom file
 overrides both.
 
+The optional top-level ``assets`` list embeds asset entries (single-file
+server content patches such as MPQs) the same way, sanitized by
+`services/assets`; ``server.assets_registry_url`` optionally points at a
+remote assets catalog. Every embedded asset download URL and the registry
+URL join the security allowlist.
+
 A missing or invalid configuration is a hard startup error: the app has
 nothing to point at. This module is network-free; `core/security_http` builds
 its download allowlist from the configured hosts.
@@ -119,6 +125,8 @@ class LauncherConfig:
     addons_registry_urls: list[str] = field(default_factory=list)
     embedded_mods: list[dict] = field(default_factory=list)
     mods_registry_url_explicit: bool = False
+    embedded_assets: list[dict] = field(default_factory=list)
+    assets_registry_url: str = ""
     mirrors: list["Mirror"] = field(default_factory=list)
     discord_url: str | None = None
     theme: dict | None = None
@@ -163,11 +171,18 @@ class LauncherConfig:
 
     def _all_urls(self) -> list[str]:
         """Every endpoint URL the app may contact: base URLs plus the
-        resolved manifest/client endpoints of the server and mirrors."""
+        resolved manifest/client endpoints of the server and mirrors, plus
+        every asset download URL (embedded entries and the asset registry
+        catalog) so the security allowlist covers them."""
         urls: list[str] = list(self.all_bases())
         urls += [self.manifest_url, self.client_url]
         if self.torrent_url:
             urls.append(self.torrent_url)
+        if self.assets_registry_url:
+            urls.append(self.assets_registry_url)
+        for a in self.embedded_assets:
+            if isinstance(a, dict) and isinstance(a.get("url"), str):
+                urls.append(a["url"])
         for m in self.mirrors:
             urls += [m.manifest_url, m.client_url]
             if m.torrent_url:
@@ -318,6 +333,19 @@ def _derive(data: dict) -> LauncherConfig:
         raw_mods_url.strip()
     )
 
+    # Asset registry URL — explicit-only (no base_url-derived default): a
+    # config without one simply has no remote asset catalog. Assets may
+    # also be embedded directly via the top-level "assets" list (kept raw;
+    # services/assets sanitizes with catalog.validate_asset).
+    raw_assets_url = server.get("assets_registry_url")
+    assets_registry_url = _https_url(raw_assets_url) or ""
+    raw_embedded_assets = data.get("assets")
+    embedded_assets: list[dict] = (
+        [e for e in raw_embedded_assets if isinstance(e, dict)]
+        if isinstance(raw_embedded_assets, list)
+        else []
+    )
+
     # Mods embedded directly in the config. Kept raw — services/mods
     # sanitizes each entry with catalog.validate_mod (allowlisted source
     # kinds, https URLs, safe relative paths).
@@ -345,6 +373,8 @@ def _derive(data: dict) -> LauncherConfig:
         mirrors=mirrors,
         embedded_mods=embedded_mods,
         mods_registry_url_explicit=mods_registry_url_explicit,
+        embedded_assets=embedded_assets,
+        assets_registry_url=assets_registry_url,
         discord_url=discord_url,
         theme=theme,
         torrent_url=_https_url(server.get("torrent_url")),
@@ -580,6 +610,19 @@ def embedded_mods() -> list[dict]:
     `services/mods`). Empty when the config has no usable \"mods\" list."""
     c = config()
     return list(c.embedded_mods) if c else []
+
+
+def embedded_assets() -> list[dict]:
+    """The asset entries embedded in the launcher config (raw; sanitized by
+    `services/assets`). Empty when the config has no usable \"assets\" list."""
+    c = config()
+    return list(c.embedded_assets) if c else []
+
+
+def assets_registry_url() -> str:
+    """The launcher-configured remote asset catalog URL ('' when unset)."""
+    c = config()
+    return c.assets_registry_url if c else ""
 
 
 def mods_registry_url_explicit() -> bool:

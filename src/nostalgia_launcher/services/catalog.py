@@ -435,3 +435,95 @@ def merge_mods(remote: list, custom: list) -> list:
             if entry.get(key) is not None:
                 base[key] = entry[key]
     return list(by_id.values())
+
+
+# ── asset entries ────────────────────────────────────────────────────────────
+
+
+def _valid_sha1(value) -> str | None:
+    """A lowercase 40-hex SHA-1 digest, or None when absent/invalid."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    v = value.strip().lower()
+    if len(v) != 40 or any(c not in "0123456789abcdef" for c in v):
+        return None
+    return v
+
+
+def validate_asset(entry: dict) -> dict | None:
+    """Sanitize one asset catalog entry (server content patches such as
+    MPQs); None when unusable.
+
+    An asset is a single file fetched from a pinned HTTPS URL into a safe
+    relative destination inside the client folder. The optional integrity /
+    update metadata (`sha1` / `size` / `version` / `probe`) drives both the
+    download check and the staleness verdict — see `services/assets.py`
+    for the exact precedence.
+    """
+    if not isinstance(entry, dict):
+        return None
+    aid = (entry.get("id") or "").strip()
+    if not safe_folder(aid):
+        return None
+    name = (entry.get("name") or aid).strip()
+    if not name:
+        return None
+    url = _https_url(entry.get("url"))
+    dest = entry.get("dest")
+    if not url or not (isinstance(dest, str) and safe_relpath(dest)):
+        return None
+    sha1 = _valid_sha1(entry.get("sha1"))
+    raw_sha1 = entry.get("sha1")
+    if raw_sha1 is not None and sha1 is None:
+        return None  # a pin was given but it is malformed — refuse the entry
+    size = entry.get("size")
+    if size is not None and (
+        isinstance(size, bool) or not isinstance(size, int) or size <= 0
+    ):
+        return None
+    version = entry.get("version")
+    version = version.strip() if isinstance(version, str) else None
+    desc = entry.get("description")
+    return {
+        "id": aid,
+        "name": name,
+        "essential": bool(entry.get("essential", False)),
+        "description": desc if isinstance(desc, str) else "",
+        "repo_url": _https_url(entry.get("repo_url")),
+        "url": url,
+        "dest": dest,
+        "version": version,
+        "sha1": sha1,
+        "size": size,
+        "probe": bool(entry.get("probe", False)),
+    }
+
+
+def merge_assets(remote: list, custom: list) -> list:
+    """Custom asset entries override remote ones by id; new ids append."""
+    by_id = {a["id"]: a for a in remote}
+    for entry in custom:
+        aid = entry.get("id")
+        if not aid:
+            continue
+        base = by_id.get(aid)
+        if base is None:
+            by_id[aid] = dict(entry)
+            continue
+        for key in (
+            "name",
+            "description",
+            "repo_url",
+            "essential",
+            "url",
+            "dest",
+            "version",
+            "sha1",
+            "size",
+            "probe",
+        ):
+            if entry.get(key) is not None:
+                base[key] = entry[key]
+    return list(by_id.values())

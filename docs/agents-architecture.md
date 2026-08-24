@@ -10,8 +10,8 @@ The libtorrent pitfall list lives in `docs/BITTORRENT_UPDATER_NOTES.md`.
 src/nostalgia_launcher/
   cli.py          # entry point: config wiring + window loop
   core/           # constants, config_store, launcher, security_http, filesystem, helpers, log_sink, platform_support, errors, themes
-  services/       # catalog, addons, mods, news, tweaks, self_update, server_index, umu, logo, update_backend/
-  controllers/    # update, news, mods, addons, settings, tweaks (toolkit-agnostic)
+  services/       # catalog, addons, mods, assets, news, tweaks, self_update, server_index, umu, logo, update_backend/
+  controllers/    # update, news, mods, assets, addons, settings, tweaks (toolkit-agnostic)
   state/          # models.py (state dataclasses), events.py (dispatcher)
   ui/qt/          # app, main_window, bridge, theme, panels, dialogs
 ```
@@ -82,6 +82,34 @@ src/nostalgia_launcher/
   `services.mods.has_remote_catalog()`), `catalog_is_stale()` stays False and
   the MODS ⟳ / Settings → Reload republish silently instead of failing with
   "Mod catalog URL is not configured."
+- **Assets are the third content vertical** (`services/assets.py`,
+  `controllers/assets.py`, `ui/qt/assets_panel.py`, state in
+  `AssetsState`) — single-file server content patches such as MPQs, kept
+  strictly separate from mods (DLLs) and addons (Lua/XML folders). The list
+  comes from the launcher config's top-level `"assets": […]` entries plus
+  the optional remote catalog at `server.assets_registry_url`
+  (**explicit-only** — no base_url-derived default), merged with the
+  per-user custom file; embedded ids override catalog ids, custom overrides
+  both. Every asset download URL and the registry URL join the security
+  allowlist (`LauncherConfig._all_urls`). An entry carries its own update
+  information — `{url, dest, version?, sha1?, size?, probe?}` — and the
+  staleness verdict (`assets.asset_update_available`) uses it in strict
+  precedence: version vs installed record → sha1 vs local hash → size vs
+  local file → opt-in HEAD probe (`etag`/`last_modified`/`size` compared
+  against the snapshot captured at install, cached under
+  `"asset_probe_cache"`; any probe failure is conservative: never stale) →
+  nothing provided ⇒ never stale. A missing file is an install decision,
+  not an update. Downloads stream through the hardened transport with the
+  SHA-1 computed on the fly and install via temp-file + rename. Essential
+  assets auto-install like essential mods
+  (`AssetsController.apply_essential_assets`), and a game-folder change
+  wipes the `"assets"`/`"asset_probe_cache"` config keys alongside
+  mods/addons records.
+- **realmlist.wtf**: `services/tweaks.write_realmlist_wtf(client_dir)`
+  writes `SET realmlist "<server.realm>"` into the client root wherever a
+  fresh `WTF/Config.wtf` is seeded (verify with overwrite/missing config,
+  torrent recovery, tweaks apply on a missing config) — vanilla clients
+  read both files.
 - The ADDONS list is sectioned, not flat: stale installs get a **NEED
   UPDATE** section rendered above **INSTALLED** (only when non-empty),
   followed by **AVAILABLE**; each header shows its count and collapses

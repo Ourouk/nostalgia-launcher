@@ -55,7 +55,7 @@ def window(qapp):
 
 def test_construction_sets_title_and_default_tab(qapp, window):
     assert window.windowTitle() == "Nostalgia Launcher"
-    assert window._stack.count() == 5
+    assert window._stack.count() == len(MainWindow.TABS)
     assert window._pages == {
         name: idx for idx, name in enumerate(MainWindow.TABS)
     }

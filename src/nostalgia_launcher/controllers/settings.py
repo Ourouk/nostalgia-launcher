@@ -44,13 +44,20 @@ class SettingsController:
     """
 
     def __init__(
-        self, dispatcher: EventDispatcher, updater, mods, addons, news
+        self,
+        dispatcher: EventDispatcher,
+        updater,
+        mods,
+        addons,
+        news,
+        assets=None,
     ):
         self._dispatcher = dispatcher
         self._updater = updater
         self._mods = mods
         self._addons = addons
         self._news = news
+        self._assets = assets
 
         cfg = config_store.load_config()
         # Strict game-folder confirmation: ``out_dir`` is only ever written
@@ -138,13 +145,13 @@ class SettingsController:
         if os.path.exists(os.path.join(new_val, "WoW.exe")):
             filesystem.remove_wdb(new_val)
 
-        # Wipe folder-scoped config (mods/addons install records), set the
-        # new path and mark it user-confirmed — one atomic merge into the
-        # live config. This is the ONLY place out_dir is ever persisted.
+        # Wipe folder-scoped config (mods/addons/assets install records),
+        # set the new path and mark it user-confirmed — one atomic merge
+        # into the live config.
         def _reset_for_new_folder(c):
             c["out_dir"] = new_val
             c["out_dir_user_set"] = True
-            for k in ("mods", "addons"):
+            for k in ("mods", "addons", "assets", "asset_probe_cache"):
                 c.pop(k, None)
 
         self.state.config = config_store.update_config(_reset_for_new_folder)
@@ -154,6 +161,8 @@ class SettingsController:
         # timers, pending mods/addons changes, and the footer readiness.
         self._mods.reset()
         self._addons.reset()
+        if self._assets is not None:
+            self._assets.reset()
         self._updater.invalidate()
         self._news.invalidate()
 

@@ -14,6 +14,7 @@ Event → signal mapping:
     ProgressChanged(value, label)        → progressChanged(float, str)
     NewsLoaded(kind, data)               → newsLoaded(object)       # NewsLoaded
     ModsLoaded(state)                    → modsLoaded(object)       # ModsLoaded
+    AssetsLoaded(state)                  → assetsLoaded(object)     # AssetsLoaded
     AddonsLoaded(state)                  → addonsLoaded(object)     # AddonsLoaded
     MirrorStatusChanged(ok, text)        → mirrorStatusChanged(bool, str)
     OperationFinished(kind, ok, message) → operationFinished(str, bool, str)
@@ -30,6 +31,7 @@ together with the bridge — the main window may equally do the assembly by hand
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
 from ...controllers.addons import AddonsController
+from ...controllers.assets import AssetsController
 from ...controllers.mods import ModsController
 from ...controllers.news import NewsController
 from ...controllers.settings import SettingsController
@@ -37,6 +39,7 @@ from ...controllers.tweaks import TweaksController
 from ...controllers.update import UpdateController
 from ...state.events import (
     AddonsLoaded,
+    AssetsLoaded,
     EventDispatcher,
     GameExited,
     GameLaunched,
@@ -70,6 +73,7 @@ class ControllerBridge(QObject):
     updateFilesList = Signal(object)
     newsLoaded = Signal(object)
     modsLoaded = Signal(object)
+    assetsLoaded = Signal(object)
     addonsLoaded = Signal(object)
     mirrorStatusChanged = Signal(bool, str)
     operationFinished = Signal(str, bool, str)
@@ -107,6 +111,8 @@ class ControllerBridge(QObject):
             self.newsLoaded.emit(event)
         elif isinstance(event, ModsLoaded):
             self.modsLoaded.emit(event)
+        elif isinstance(event, AssetsLoaded):
+            self.assetsLoaded.emit(event)
         elif isinstance(event, AddonsLoaded):
             self.addonsLoaded.emit(event)
         elif isinstance(event, MirrorStatusChanged):
@@ -137,7 +143,8 @@ class ControllerBridge(QObject):
 
 
 class ControllerHub:
-    """Assembles the six controllers on one shared dispatcher plus the bridge.
+    """Assembles the seven controllers on one shared dispatcher plus the
+    bridge.
 
     Plain Python object (no QObject); it exists so the Qt main window gets a
     ready-made wiring in one line. The bridge shares the hub's dispatcher.
@@ -148,10 +155,16 @@ class ControllerHub:
         self.updater = UpdateController(self.dispatcher, get_out_dir)
         self.news = NewsController(self.dispatcher)
         self.mods = ModsController(self.dispatcher, get_out_dir)
+        self.assets = AssetsController(self.dispatcher, get_out_dir)
         self.addons = AddonsController(self.dispatcher, get_out_dir)
         self.tweaks = TweaksController(self.dispatcher, get_out_dir)
         self.settings = SettingsController(
-            self.dispatcher, self.updater, self.mods, self.addons, self.news
+            self.dispatcher,
+            self.updater,
+            self.mods,
+            self.addons,
+            self.news,
+            assets=self.assets,
         )
         self.bridge = ControllerBridge(self.dispatcher)
 

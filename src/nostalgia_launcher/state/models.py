@@ -112,6 +112,55 @@ class ModsState:
         return bool(self.pending)
 
 
+# ── assets ───────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class AssetPending:
+    """One not-yet-applied checkbox change from the ASSETS panel."""
+
+    enabled: bool | None = None
+
+
+@dataclass
+class AssetState:
+    """One per-asset config record ("assets" key): enabled, installed
+    version, installed files, install-time probe state, error.
+
+    ``present`` is the session-computed filesystem-truth flag (recorded
+    files exist on disk); it is not a config key.
+    """
+
+    enabled: bool = False
+    installed_version: str | None = None
+    installed_files: list = field(default_factory=list)
+    probe_state: dict = field(default_factory=dict)
+    error: str | None = None
+    present: bool = False
+
+    @property
+    def has_error(self) -> bool:
+        return bool(self.error)
+
+
+@dataclass
+class AssetsState:
+    """ASSETS panel state: config records and pending checkbox changes,
+    plus the nav-badge updates count."""
+
+    records: dict[str, AssetState] = field(default_factory=dict)
+    pending: dict[str, AssetPending] = field(default_factory=dict)
+    updates_count: int = 0
+
+    @property
+    def has_errors(self) -> bool:
+        return any(rec.has_error for rec in self.records.values())
+
+    @property
+    def has_pending_changes(self) -> bool:
+        return bool(self.pending)
+
+
 # ── addons ────────────────────────────────────────────────────────────────────
 
 
@@ -268,6 +317,7 @@ class AppState:
     update: UpdateState = field(default_factory=UpdateState)
     news: NewsState = field(default_factory=NewsState)
     mods: ModsState = field(default_factory=ModsState)
+    assets: AssetsState = field(default_factory=AssetsState)
     addons: AddonsState = field(default_factory=AddonsState)
     settings: SettingsState = field(default_factory=SettingsState)
     log_buffer: list[LogEntry] = field(default_factory=list)

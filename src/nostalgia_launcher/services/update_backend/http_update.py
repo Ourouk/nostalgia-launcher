@@ -35,7 +35,7 @@ from ...core.security_http import (
     read_capped,
     secure_urlopen,
 )
-from ..tweaks import write_config_wtf
+from ..tweaks import write_config_wtf, write_realmlist_wtf
 from . import markers
 from .sources import DownloadSource, _download_source
 from .worker_base import WorkerBase
@@ -152,10 +152,12 @@ class VerifyWorker(WorkerBase):
 
             # Config.wtf isn't part of the manifest — it's user game config.
             # Create it when missing, or overwrite it when the user
-            # committed to this folder.
+            # committed to this folder. realmlist.wtf rides along so a
+            # fresh client folder points at the configured realm too.
             cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
             if self.overwrite_config or not os.path.exists(cfg_wtf):
                 write_config_wtf(self.out_dir)
+                write_realmlist_wtf(self.out_dir)
 
             if stale_nodes:
                 self.log("Update available.", "acct")
@@ -967,10 +969,11 @@ class UpdateWorker(WorkerBase):
         remove_wdb(self.out_dir)
         # A fresh recovery install has no Config.wtf — create it (a regular
         # update never touches user config, but this path has no verify step
-        # to seed it).
+        # to seed it). realmlist.wtf rides along for the same reason.
         cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
         if not os.path.exists(cfg_wtf):
             write_config_wtf(self.out_dir)
+            write_realmlist_wtf(self.out_dir)
         self.progress(1.0, "")
         snapshot = getattr(dl, "snapshot", None)
         identity: dict = {}

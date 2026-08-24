@@ -38,6 +38,7 @@ from ...services import logo
 from ...state.events import LogMessage
 from . import metrics
 from .addons_panel import AddonsPanel
+from .assets_panel import AssetsPanel
 from .bridge import ControllerHub
 from .custom_addon_dialog import CustomAddonDialog
 from .log_window import LogWindow
@@ -79,7 +80,7 @@ class MainWindow(QMainWindow):
     so posting after close is a safe no-op.
     """
 
-    TABS = ["NEWS", "UPDATE", "TWEAKS", "ADDONS", "MODS"]
+    TABS = ["NEWS", "UPDATE", "TWEAKS", "ADDONS", "MODS", "ASSETS"]
 
     def __init__(self, hub: ControllerHub, parent=None):
         super().__init__(parent)
@@ -327,6 +328,14 @@ class MainWindow(QMainWindow):
                     self._palette,
                     self._stack,
                     on_badge=lambda n: self.set_tab_badge("MODS", n),
+                )
+            elif name == "ASSETS":
+                page = AssetsPanel(
+                    self._hub.assets,
+                    self._hub.bridge,
+                    self._palette,
+                    self._stack,
+                    on_badge=lambda n: self.set_tab_badge("ASSETS", n),
                 )
             elif name == "UPDATE":
                 page = UpdatePanel(self._palette, self._stack)
@@ -847,6 +856,8 @@ class MainWindow(QMainWindow):
             self._after(300, self._start_verify)
         self._after(600, hub.news.load)
         self._after(900, hub.mods.load_latest_versions)
+        # Asset verdicts refresh off-thread too (a probe may HEAD the server).
+        self._after(1100, hub.assets.refresh_verdicts)
         # Verify unconditionally so a first-launch user with an
         # uninitialized config still sees the catalog list (the verify TTL
         # skips redundant rescans on later launches). The catalog fetch
