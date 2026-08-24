@@ -191,6 +191,13 @@ def compute_wine_prefix() -> str:
     return prefix
 
 
+def game_output_log_path() -> str:
+    """Sidecar file for game output when the launcher won't stay alive to
+    drain it (close-on-launch): the child's merged output is redirected
+    there so nothing depends on this process's pipes."""
+    return os.path.join(platform_support.cache_dir(), "game-output.log")
+
+
 def build_env(
     proton: str,
     game_id: str,
@@ -240,15 +247,23 @@ def launch(
     gamemode: bool = False,
     wayland: bool = False,
     skip_builtin_dxvk: bool = False,
+    output_file: str = "",
 ) -> tuple:
     """Launch `exe` (an absolute path to the client binary) via umu-run.
 
     Spawns umu detached (its own session, no controlling terminal) with the
     env contract set (including renderer/backend Proton flags), cwd set to
     `out_dir`. When `gamemode` is set and GameMode is installed the wrapper is
-    prepended so the client runs under Feral GameMode. umu/Wine output is
-    captured (merged stdout+stderr) — the caller drains `proc.stdout` into
-    the session log. Returns ``(pid, pgid, proc)`` — the umu-run PID, its
+    prepended so the client runs under Feral GameMode.
+
+    Output handling: by default umu/Wine output is captured (merged
+    stdout+stderr) — the caller drains `proc.stdout` into the session log.
+    When `output_file` is a path, the merged output is written there instead
+    (truncated per launch; the parent's handle closes right after the spawn —
+    the child keeps its inherited fd). This is how close-on-launch stays
+    safe: a launcher that exits right after spawning would leave the pipe
+    unread, and any later write by umu/Proton would die of EPIPE/SIGPIPE
+    mid-startup. Returns ``(pid, pgid, proc)`` — the umu-run PID, its
     POSIX process-group id (for killing the whole tree), and the Popen handle
     (so the caller can wait() on it). Raises when umu-run is missing or the
     spawn fails.
@@ -265,22 +280,38 @@ def launch(
         gamemoderun = find_gamemoderun()
         if gamemoderun:
             args = [gamemoderun] + args
-    proc = subprocess.Popen(
-        args,
-        cwd=out_dir,
-        env=build_env(
-            proton,
-            game_id,
-            store,
-            renderer,
-            wayland=wayland,
-            skip_builtin_dxvk=skip_builtin_dxvk,
-        ),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-        close_fds=True,
-    )
+    stdout = subprocess.PIPE
+    stderr = subprocess.STDOUT
+    out_fh = None
+    if output_file:
+        parent = os.path.dirname(output_file)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        out_fh = open(output_file, "wb")
+        stdout = out_fh
+        stderr = out_fh
+    try:
+        proc = subprocess.Popen(
+            args,
+            cwd=out_dir,
+            env=build_env(
+                proton,
+                game_id,
+                store,
+                renderer,
+                wayland=wayland,
+                skip_builtin_dxvk=skip_builtin_dxvk,
+            ),
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=True,
+            close_fds=True,
+        )
+    finally:
+        # The child inherited the fd at spawn time; our copy must close even
+        # when Popen raises, or we leak the truncated file handle.
+        if out_fh is not None:
+            out_fh.close()
     try:
         pgid = os.getpgid(proc.pid)
     except (AttributeError, OSError):

@@ -13,10 +13,13 @@ from nostalgia_launcher.core import platform_support
 
 @pytest.fixture(autouse=True)
 def _umu_env(monkeypatch, tmp_path):
-    """Pin the data dir and the Steam compatibility-tools root per test, so
-    nothing touches the real user's filesystem."""
+    """Pin the data/cache dirs and the Steam compatibility-tools root per
+    test, so nothing touches the real user's filesystem."""
     monkeypatch.setattr(
         platform_support, "data_dir", lambda: str(tmp_path / "data")
+    )
+    monkeypatch.setattr(
+        platform_support, "cache_dir", lambda: str(tmp_path / "cache")
     )
     monkeypatch.setattr(
         umu, "_COMPAT_TOOLS_DIRS", (str(tmp_path / "compat-tools"),)
@@ -249,6 +252,40 @@ def test_launch_captures_merged_child_output(monkeypatch, tmp_path):
     _, kwargs = popen.call_args
     assert kwargs["stdout"] == umu.subprocess.PIPE
     assert kwargs["stderr"] == umu.subprocess.STDOUT
+
+
+def test_game_output_log_path_under_cache_dir():
+    assert os.path.normpath(umu.game_output_log_path()) == os.path.normpath(
+        os.path.join(platform_support.cache_dir(), "game-output.log")
+    )
+
+
+def test_launch_redirects_child_output_to_file(monkeypatch, tmp_path):
+    """With output_file set (close-on-launch), the child's merged output is
+    written to the sidecar file instead of a pipe owned by this process —
+    and the parent's handle is closed right after the spawn."""
+    game = tmp_path / "game"
+    game.mkdir()
+    exe = game / "WoW.exe"
+    exe.write_text("")
+    target = tmp_path / "cache" / "game-output.log"
+    popen = mock.Mock()
+    popen.return_value.pid = 7
+    monkeypatch.setattr(umu.subprocess, "Popen", popen)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 7, raising=False)
+    monkeypatch.setattr(umu, "find_umu", lambda: "/usr/bin/umu-run")
+
+    pid, pgid, proc = umu.launch(str(game), str(exe), output_file=str(target))
+
+    _, kwargs = popen.call_args
+    fh = kwargs["stdout"]
+    assert fh.name == str(target)
+    assert kwargs["stderr"] is fh
+    # The launcher may exit right after spawning; its copy must be closed.
+    assert fh.closed is True
+    assert kwargs["start_new_session"] is True
+    assert (pid, pgid) == (7, 7)
+    assert proc is popen.return_value
 
 
 def test_launch_forwards_wayland_env(monkeypatch, tmp_path):

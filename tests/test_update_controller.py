@@ -842,6 +842,55 @@ def test_launch_game_linux_via_umu(
     assert controller.state.game_pgid == 9999
 
 
+def test_launch_game_linux_close_on_launch_redirects_output(
+    controller, worker_cls, config, monkeypatch, tmp_path
+):
+    """close_on_launch: umu output goes to the sidecar file and no watcher
+    thread drains it — the launcher exits right after spawning, so nothing
+    may depend on its pipes staying open."""
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "WoW.exe").write_text("")
+    config["out_dir"] = str(game)
+    config["close_on_launch"] = True
+    monkeypatch.setattr(uc, "can_launch_client", lambda: True)
+    monkeypatch.setattr(uc, "is_linux", lambda: True)
+    monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
+    launched = {}
+    monkeypatch.setattr(
+        "nostalgia_launcher.services.umu.launch",
+        lambda out_dir, exe, **kw: (
+            launched.update(exe=exe, kw=kw) or (1234, 9999, _FakeProc())
+        ),
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.services.umu.compute_wine_prefix",
+        lambda: "/prefix",
+    )
+    started = []
+    real_thread = threading.Thread
+
+    def _spy_thread(*args, **kwargs):
+        started.append(kwargs.get("target"))
+        return real_thread(*args, **kwargs)
+
+    monkeypatch.setattr(uc.threading, "Thread", _spy_thread)
+
+    ok, dxvk = controller.launch_game()
+
+    assert ok is True
+    assert dxvk is False
+    assert launched["kw"]["output_file"].endswith("game-output.log")
+    assert all(target != controller._watch_game for target in started)
+    events = controller._dispatcher.drain()
+    assert GameLaunched(1234, 9999) in events
+    assert any(
+        isinstance(e, LogMessage) and "game-output.log" in e.text
+        for e in events
+    )
+    assert controller.state.game_running is True
+
+
 def test_launch_game_linux_passes_skip_builtin_dxvk(
     controller, worker_cls, config, monkeypatch, tmp_path
 ):

@@ -381,7 +381,10 @@ class UpdateController:
         """Linux launch through umu-launcher: the client run under Proton in
         a launcher-wide WINEPREFIX. Prefers the VanillaFixes loader like
         Windows. No DXVK notice (shader-cache stutter is a Windows/DXVK-mod
-        concern). Records the running game and watches its exit."""
+        concern). Records the running game and watches its exit — unless
+        close_on_launch fires, in which case the child's output goes to a
+        sidecar file and no watcher runs (the launcher exits right after
+        spawning, so nothing may depend on our pipes staying open)."""
         from ..services import umu
 
         exe, exe_lbl = pick_game_executable(client_dir)
@@ -394,6 +397,15 @@ class UpdateController:
             remove_wdb(client_dir)
 
         launch_cfg = cfg.get("launch") or {}
+        # Once this process exits, any later write by umu/Proton into a pipe
+        # we used to read dies of EPIPE/SIGPIPE and can kill the game
+        # mid-startup (worst on SteamOS: first-run Proton download). With
+        # close-on-launch there is no reader left, so redirect to a file.
+        output_file = (
+            umu.game_output_log_path()
+            if cfg.get("close_on_launch", False)
+            else ""
+        )
         try:
             pid, pgid, proc = umu.launch(
                 client_dir,
@@ -409,14 +421,16 @@ class UpdateController:
                 skip_builtin_dxvk=launch_cfg.get(
                     "umu_skip_builtin_dxvk", False
                 ),
+                output_file=output_file,
             )
             self.state.game_running = True
             self.state.game_pid = pid
             self.state.game_pgid = pgid
             self._dispatcher.post(GameLaunched(pid, pgid))
-            threading.Thread(
-                target=self._watch_game, args=(proc, pid), daemon=True
-            ).start()
+            if not output_file:
+                threading.Thread(
+                    target=self._watch_game, args=(proc, pid), daemon=True
+                ).start()
             prefix = umu.compute_wine_prefix()
             self._dispatcher.post(
                 LogMessage(
@@ -425,6 +439,14 @@ class UpdateController:
                     "ok",
                 )
             )
+            if output_file:
+                self._dispatcher.post(
+                    LogMessage(
+                        "Launcher will close on launch — game output "
+                        f"goes to {output_file}\n",
+                        "dim",
+                    )
+                )
             self._dispatcher.post(
                 StatusChanged("Running WoW.exe — click TERMINATE to quit")
             )

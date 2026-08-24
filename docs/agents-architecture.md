@@ -188,6 +188,11 @@ src/nostalgia_launcher/
   so client-folder DLLs installed via MODS (the catalog's dxvk-gplasync mod:
   `d3d9.dll` + `dxvk.conf`) are what Wine loads (default `native,builtin`
   overrides — no staging code here, the mods pipeline owns the files).
+  With `close_on_launch`, `_launch_game_via_umu` redirects the child's
+  merged output to `umu.game_output_log_path()` (`game-output.log` in the
+  cache dir) and skips the watcher thread: the launcher process exits ~1 s
+  after spawning, and a pipe whose reader vanished would EPIPE/SIGPIPE-kill
+  umu/Proton mid-startup (worst on SteamOS first-run Proton downloads).
   Tests patch the FULL path, e.g. `"nostalgia_launcher.services.umu.launch"`
   (the controller imports the umu module lazily inside the launch method).
 - **One game process at a time**: `umu.launch()` returns `(pid, pgid, proc)`;
