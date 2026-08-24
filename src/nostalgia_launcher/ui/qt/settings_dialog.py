@@ -15,7 +15,6 @@ import os
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -34,11 +33,11 @@ from PySide6.QtWidgets import (
 
 from ...controllers.settings import SettingsController
 from ...core import launcher, platform_support, profiles
-from ...core.log_sink import log
 from . import metrics
 from .bridge import ControllerBridge
 from .linux_settings_dialog import LinuxSettingsDialog
 from .list_panel import ClickableLabel, make_hairline
+from .profiles_ui import switch_profile
 from .theme import Palette, apply_theme
 
 
@@ -513,9 +512,10 @@ class SettingsDialog(QDialog):
         layout.addWidget(title)
 
         hint = QLabel(
-            "Profiles fully isolate the server config, game state, "
-            "mods/addons records and caches. Switching restarts the "
-            "launcher.",
+            "Profile editor — these buttons manage the profile selected "
+            "above (fully isolated server config, game state, mods/addons "
+            "records and caches). Switch profiles from the selector in the "
+            "main-window header; switching restarts the launcher.",
             self,
         )
         hint.setWordWrap(True)
@@ -537,16 +537,6 @@ class SettingsDialog(QDialog):
         self._profiles_combo.setObjectName("profilesCombo")
         self._refresh_profiles_combo()
         row.addWidget(self._profiles_combo, 1)
-
-        switch_btn = QPushButton("Switch & Restart", self)
-        switch_btn.setObjectName("profilesSwitch")
-        switch_btn.setProperty("variant", "primary")
-        switch_btn.setCursor(Qt.PointingHandCursor)
-        switch_btn.setToolTip(
-            "Restart the launcher using the selected profile"
-        )
-        switch_btn.clicked.connect(self._on_profile_switch)
-        row.addWidget(switch_btn)
 
         new_btn = QPushButton("New…", self)
         new_btn.setObjectName("profilesNew")
@@ -726,50 +716,18 @@ class SettingsDialog(QDialog):
         self._profile_error("")
         self._refresh_profiles_combo()
         if was_active:
-            # Pointer was reset to default — offer the immediate restart.
+            # Pointer was reset to default — offer the immediate restart
+            # (no extra confirm; the deletion itself was just confirmed).
             answer = QMessageBox.question(
                 self,
                 "Profile deleted",
-                f"'{name}' was the active profile. Switch & Restart to "
-                "'default' now?",
+                f"'{name}' was the active profile. Restart now on 'default'?",
                 QMessageBox.Yes | QMessageBox.No,
             )
-            if answer == QMessageBox.Yes:
-                self._switch_to_profile(profiles.DEFAULT_PROFILE)
-
-    def _on_profile_switch(self):
-        name = self._selected_profile()
-        if not name:
-            return
-        if name == profiles.active().name:
-            self._profile_error(f"'{name}' is already the active profile.")
-            return
-        answer = QMessageBox.question(
-            self,
-            "Switch profile",
-            f"The launcher will restart using profile '{name}'.",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        if answer != QMessageBox.Yes:
-            return
-        self._switch_to_profile(name)
-
-    def _switch_to_profile(self, name):
-        """Persist the pointer, spawn the detached child and quit; on a
-        failed relaunch ask the user to restart manually (pointer is
-        already persisted, so a manual start still switches)."""
-        from .main_window import relaunch_with_profile
-
-        profiles.set_active(name)
-        if relaunch_with_profile(name):
-            QApplication.quit()
-            return
-        log(
-            "Could not relaunch automatically — restart manually to "
-            "switch profiles.",
-            "err",
-        )
-        self._profile_error("Restart the launcher manually to switch.")
+            if answer == QMessageBox.Yes and not switch_profile(
+                profiles.DEFAULT_PROFILE
+            ):
+                self._profile_error("Restart the launcher manually to switch.")
 
     def _on_reset_registry(self, edit, get_url, on_reset):
         on_reset()

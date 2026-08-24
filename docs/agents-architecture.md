@@ -87,11 +87,18 @@ active per process, pinned once via `profiles.activate(resolve(...))` in
 `controllers/settings` checks `first_run` against
 `config_store.config_file` (NOT the constants) so a fresh profile gets
 its own wizard flow. Name grammar `[A-Za-z0-9][A-Za-z0-9 _.-]{0,31}` with
-no trailing dot/space; `"default"` is reserved. UI: header chip shows the
-active name; Settings → PROFILES manages create/duplicate/rename/delete/
-switch — switching persists the pointer, relaunches detached
-(`relaunch_with_profile` strips BOTH `--profile X` and `--profile=X`,
-child env gets `NOSTALGIA_RELAUNCH=1`) and quits. Concurrency model: one
+no trailing dot/space; `"default"` is reserved. UI: the main-window
+header carries a profile **combo box** (`profileCombo`) — picking
+another entry confirms ("The launcher will restart using profile …"),
+persists the pointer and relaunches detached (`profiles_ui.
+switch_profile`; `relaunch_with_profile` strips BOTH `--profile X` and
+`--profile=X`, child env gets `NOSTALGIA_RELAUNCH=1`) and quits;
+declining or a failed relaunch reverts the selection (a failed relaunch
+still leaves the pointer persisted, so a manual start lands on it).
+Settings → PROFILES is the **editor** only: New…/Duplicate/Rename…/
+Delete acting on its combo selection — deleting the ACTIVE profile
+resets the pointer to default and offers an immediate restart.
+Concurrency model: one
 active profile, restart on switch, NO parallel instances of the SAME
 profile — different profiles MAY run side by side.
 

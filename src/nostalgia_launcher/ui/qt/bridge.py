@@ -35,7 +35,6 @@ from ...controllers.news import NewsController
 from ...controllers.settings import SettingsController
 from ...controllers.tweaks import TweaksController
 from ...controllers.update import UpdateController
-from ...core import profiles
 from ...state.events import (
     AddonsLoaded,
     EventDispatcher,
@@ -158,7 +157,3 @@ class ControllerHub:
 
     def close(self):
         self.bridge.close()
-
-    def profiles_name(self) -> str:
-        """Name of the active launcher profile (header chip text)."""
-        return profiles.active().name
