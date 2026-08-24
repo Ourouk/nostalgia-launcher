@@ -2490,12 +2490,19 @@ def _install_snapshot_fake(
     return fake
 
 
+def _redirect_torrent_cache(monkeypatch, cache_root):
+    """Point torrent metadata persistence at <cache_root>/torrents."""
+    monkeypatch.setattr(
+        td, "torrent_cache_dir", lambda: str(cache_root / "torrents")
+    )
+
+
 def test_fetch_torrent_computes_identity_and_persists(monkeypatch, tmp_path):
     """_fetch_torrent returns a snapshot with content hash + info hash and
     persists the raw torrent bytes under the cache keyed by info hash."""
     cache_root = tmp_path / "cache"
     cache_root.mkdir()
-    monkeypatch.setattr(td, "cache_dir", lambda: str(cache_root))
+    _redirect_torrent_cache(monkeypatch, cache_root)
     _install_snapshot_fake(monkeypatch, info_hash="ab" * 20)
     snap = td._fetch_torrent(
         "https://srv.example/client.torrent", lambda m, t="": None
@@ -2514,7 +2521,7 @@ def test_fetch_torrent_skips_persistence_without_info_hash(
     not persisted by identity."""
     cache_root = tmp_path / "cache"
     cache_root.mkdir()
-    monkeypatch.setattr(td, "cache_dir", lambda: str(cache_root))
+    _redirect_torrent_cache(monkeypatch, cache_root)
     _install_fake_lt(monkeypatch)  # no info_hashes() on the fake
     snap = td._fetch_torrent(
         "https://srv.example/client.torrent", lambda m, t="": None
@@ -2535,7 +2542,7 @@ def test_downloader_resumes_torrent_and_ignores_stale_cache(
     client = _mk_client(tmp_path)
     cache_root = tmp_path / "cache"
     cache_root.mkdir()
-    monkeypatch.setattr(td, "cache_dir", lambda: str(cache_root))
+    _redirect_torrent_cache(monkeypatch, cache_root)
     info_hash = "aa" * 20
     # A stale resume file from a prior run — must be ignored now.
     td.write_resume_bytes(info_hash, b"stale")
@@ -2555,7 +2562,7 @@ def test_downloader_priorities_come_from_wanted_set(tmp_path, monkeypatch):
     client = _mk_client(tmp_path)
     cache_root = tmp_path / "cache"
     cache_root.mkdir()
-    monkeypatch.setattr(td, "cache_dir", lambda: str(cache_root))
+    _redirect_torrent_cache(monkeypatch, cache_root)
     fake = _install_snapshot_fake(monkeypatch, info_hash="aa" * 20)
     d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
     d.download("https://srv.example/client.torrent", {"Data/a.bin"})
@@ -2569,7 +2576,7 @@ def test_downloader_removes_handle_on_completion(tmp_path, monkeypatch):
     client = _mk_client(tmp_path)
     cache_root = tmp_path / "cache"
     cache_root.mkdir()
-    monkeypatch.setattr(td, "cache_dir", lambda: str(cache_root))
+    _redirect_torrent_cache(monkeypatch, cache_root)
     info_hash = "aa" * 20
     fake = _install_snapshot_fake(monkeypatch, info_hash=info_hash)
     d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())

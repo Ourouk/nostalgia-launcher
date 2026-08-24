@@ -19,9 +19,8 @@ import json
 import os
 from urllib.parse import urlsplit
 
-from ..core import config_store
+from ..core import config_store, profiles
 from ..core.log_sink import log
-from ..core.platform_support import config_dir
 
 # Allowlisted mod source kinds / post-install hooks. A remote or custom mod
 # entry can only reference these — it cannot name arbitrary code.
@@ -85,8 +84,9 @@ def reset_registry_url(kind: str):
 
 
 def custom_file(kind: str) -> str:
-    """Path of the per-user custom JSON file for a catalog kind."""
-    return os.path.join(config_dir(), f"nostalgia_launcher_{kind}_custom.json")
+    """Path of the per-user custom JSON file for a catalog kind — scoped
+    to the active profile (legacy top-level file for the default)."""
+    return profiles.active().custom_catalog_path(kind)
 
 
 def load_custom(kind: str, validator) -> list:

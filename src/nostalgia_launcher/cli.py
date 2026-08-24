@@ -13,14 +13,13 @@ import argparse
 import os
 import sys
 
-from .core import config_store, launcher, log_sink
+from .core import config_store, launcher, log_sink, profiles
 from .core.constants import (
-    CACHE_FILE,
-    CONFIG_FILE,
     LOG_FILE,
     UPDATER_VERSION,
 )
 from .core.log_sink import log
+from .core.profiles import ProfileError
 
 _QT_UNAVAILABLE = (
     "Nostalgia Launcher needs PySide6 (Qt) to run. "
@@ -40,6 +39,13 @@ def _parse_args(argv=None) -> argparse.Namespace:
         help="Path to the nostalgia_launcher.json file that configures "
         "the server, endpoints and mirrors (auto-discovered next to "
         "the executable / in the repo root when omitted).",
+    )
+    parser.add_argument(
+        "--profile",
+        metavar="NAME",
+        help="Run within the named launcher profile (isolated server "
+        "config, state, cache, catalogs and torrent metadata under "
+        "<config dir>/profiles/NAME). Unknown names are a hard error.",
     )
     parser.add_argument(
         "--print-log",
@@ -88,6 +94,23 @@ def main(argv=None) -> int:
     args = _parse_args(argv)
     if args.print_log is not False:
         return _print_log(args.print_log)
+    try:
+        prof = profiles.resolve(args.profile)
+    except ProfileError as e:
+        sys.stderr.write(f"{e}\n")
+        return 2
+    profiles.activate(prof)
+    if prof.root:
+        # Non-default profile: persist target (and auto-discovery of the
+        # previously imported config) becomes the profile's own file.
+        launcher.set_profile_launcher_path(prof.launcher_path())
+        if not args.launcher_config and not os.path.exists(
+            prof.launcher_path()
+        ):
+            # First launch FOR THIS PROFILE: no launcher config anywhere
+            # in its scope — the wizard below persists into the profile's
+            # own launcher.json (legacy-file discovery is bypassed).
+            return _first_launch(args.show_log)
     explicit = bool(args.launcher_config)
     _cfg, err = launcher.configure(args.launcher_config)
     if err:
@@ -192,7 +215,8 @@ def _pick_launcher_config() -> dict | None:
 
 def _run_backend(show_log: bool = False) -> int:
     """Config-store + log-sink setup, then Qt backend construction/run."""
-    config_store.configure(CONFIG_FILE, CACHE_FILE)
+    prof = profiles.active()
+    config_store.configure(prof.state_path(), prof.cache_path())
     log_sink.configure_file(LOG_FILE)
     log(f"── Nostalgia Launcher {UPDATER_VERSION} · session start ──", "dim")
     backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")

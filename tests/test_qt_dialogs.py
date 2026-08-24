@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import nostalgia_launcher.controllers.settings as settings_controller
+import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.core.platform_support as platform_support
 from nostalgia_launcher.core.log_sink import log
 from nostalgia_launcher.state.events import LogMessage
@@ -306,7 +306,7 @@ def test_custom_addon_from_main_window_applies(qapp, window, monkeypatch):
 def test_first_run_opens_settings_and_av_prompt(qapp, monkeypatch, tmp_path):
     monkeypatch.setattr(platform_support, "can_manage_antivirus", lambda: True)
     monkeypatch.setattr(
-        settings_controller, "CONFIG_FILE", str(tmp_path / "no-config.json")
+        config_store, "config_file", str(tmp_path / "no-config.json")
     )
     hub = ControllerHub()
     assert hub.settings.state.first_run is True

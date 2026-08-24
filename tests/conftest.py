@@ -8,7 +8,7 @@ each test.
 
 import pytest
 
-from nostalgia_launcher.core import launcher
+from nostalgia_launcher.core import launcher, profiles
 
 LAUNCHER_TEST_CONFIG = {
     "server": {
@@ -49,6 +49,14 @@ def _launcher_env():
     launcher.configure_from_dict(LAUNCHER_TEST_CONFIG)
     yield
     launcher.reset()
+
+
+@pytest.fixture(autouse=True)
+def _profiles_env():
+    """The active profile is process-global; drop any per-test activation
+    so a profile-scoped test can't bleed into later ones."""
+    yield
+    profiles.activate(profiles.DEFAULT)
 
 
 @pytest.fixture

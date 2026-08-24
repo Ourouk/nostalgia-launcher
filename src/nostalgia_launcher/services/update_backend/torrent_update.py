@@ -27,9 +27,9 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from ...core import profiles
 from ...core.constants import DOWNLOAD_TIMEOUT, UA
 from ...core.helpers import fmt_size, fmt_speed
-from ...core.platform_support import cache_dir
 from ...core.security_http import allowed_download_hosts, secure_urlopen
 from .worker_base import WorkerBase
 
@@ -184,9 +184,9 @@ def _info_hash_hex(ti) -> str | None:
 
 
 def torrent_cache_dir() -> str:
-    """Per-user cache directory for torrent metadata. Kept out of the game
-    folder so reinstall/move never wipes the resume state."""
-    return os.path.join(cache_dir(), "torrents")
+    """Per-profile cache directory for torrent metadata. Kept out of the
+    game folder so reinstall/move never wipes the resume state."""
+    return profiles.active().torrents_dir()
 
 
 def torrent_path(info_hash: str) -> str:

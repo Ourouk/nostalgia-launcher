@@ -90,6 +90,9 @@ _LOCK = threading.Lock()
 _config: "LauncherConfig | None" = None
 _path: str = ""
 _error: str = ""
+# Active-profile override for user_config_path() (see set_profile_
+# launcher_path); empty means the legacy per-user default file.
+_profile_launcher_path: str = ""
 
 
 @dataclass
@@ -388,8 +391,22 @@ def discover_path() -> str:
 
 def user_config_path() -> str:
     """The per-user launcher-config file, where a first-launch selection is
-    persisted so future launches reuse it (lives in the OS config dir)."""
+    persisted so future launches reuse it (lives in the OS config dir).
+    Redirected into the active profile's directory when a profile override
+    is set (set_profile_launcher_path)."""
+    if _profile_launcher_path:
+        return _profile_launcher_path
     return os.path.join(config_dir(), LAUNCHER_FILE)
+
+
+def set_profile_launcher_path(path: str):
+    """Route persist()/persist_text() (and therefore auto-discovery of the
+    previously imported config) at a profile-scoped launcher.json instead
+    of the legacy top-level file. Called by the CLI for non-default
+    profiles; empty string restores the default."""
+    global _profile_launcher_path
+    with _LOCK:
+        _profile_launcher_path = path or ""
 
 
 def _auto_path() -> str:
@@ -525,9 +542,10 @@ def configure_from_dict(data: dict) -> "LauncherConfig | None":
 
 def reset():
     """Drop the loaded configuration (test teardown)."""
-    global _config, _path, _error
+    global _config, _path, _error, _profile_launcher_path
     with _LOCK:
         _config, _path, _error = None, "", ""
+        _profile_launcher_path = ""
 
 
 def config() -> "LauncherConfig | None":

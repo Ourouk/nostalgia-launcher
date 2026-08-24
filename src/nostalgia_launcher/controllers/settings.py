@@ -17,11 +17,7 @@ import webbrowser
 from urllib.error import HTTPError
 
 from ..core import config_store, filesystem, launcher, platform_support
-from ..core.constants import (
-    CACHE_FILE,
-    CONFIG_FILE,
-    UA,
-)
+from ..core.constants import UA
 from ..core.errors import describe_net_error
 from ..core.security_http import secure_urlopen
 from ..services import addons, mods
@@ -70,8 +66,9 @@ class SettingsController:
             config=cfg,
         )
         self.launch = LaunchSettings.from_config(cfg)
-        # Detect first run before anything writes the config.
-        self.state.first_run = not os.path.exists(CONFIG_FILE)
+        # Detect first run before anything writes the config. Read through
+        # the store (not constants) so a per-profile state file counts.
+        self.state.first_run = not os.path.exists(config_store.config_file)
         # On first run Settings auto-opens with no folder selected — the
         # user must confirm one before anything is downloaded or written.
         # If they close it without adding a Defender exclusion, recommend
@@ -128,8 +125,8 @@ class SettingsController:
             return False
 
         try:
-            if os.path.exists(CACHE_FILE):
-                os.remove(CACHE_FILE)
+            if os.path.exists(config_store.cache_file):
+                os.remove(config_store.cache_file)
         except Exception:
             pass
 
@@ -259,8 +256,8 @@ class SettingsController:
         if self._updater.running or not self.client_update_enabled:
             return
         try:
-            if os.path.exists(CACHE_FILE):
-                os.remove(CACHE_FILE)
+            if os.path.exists(config_store.cache_file):
+                os.remove(config_store.cache_file)
         except Exception:
             pass
 
