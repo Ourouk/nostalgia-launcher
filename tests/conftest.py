@@ -59,6 +59,21 @@ def _profiles_env():
     profiles.activate(profiles.DEFAULT)
 
 
+@pytest.fixture(autouse=True)
+def _single_instance_env():
+    """Close any QLocalServer a test's CLI run started, so the next
+    cli.main() never sees a stale 'already running' guard for the same
+    key (the key derives from constants.CONFIG_FILE in default flows).
+    Only touches an ALREADY-imported module: importing here would fight
+    the fake import hooks some tests install."""
+    import sys
+
+    yield
+    mod = sys.modules.get("nostalgia_launcher.ui.qt.app_lock_qt")
+    if mod is not None:
+        mod.stop_all()
+
+
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch):
     """Redirect the user home to ``tmp_path/home`` for every lookup seam.

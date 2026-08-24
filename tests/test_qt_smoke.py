@@ -25,11 +25,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel
 
+import nostalgia_launcher.cli as cli_module
 import nostalgia_launcher.controllers.news as news_controller
 import nostalgia_launcher.controllers.update as update_controller
 import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.core.constants as constants
+import nostalgia_launcher.core.launcher as launcher
 import nostalgia_launcher.core.platform_support as platform_support
+import nostalgia_launcher.core.profiles as profiles
 import nostalgia_launcher.services.addons as addons_module
 import nostalgia_launcher.services.mods as mods_module
 import nostalgia_launcher.services.news as news_module
@@ -582,3 +585,115 @@ def test_bundled_font_loads_into_qt(qapp):
     families = QFontDatabase.applicationFontFamilies(font_id)
     assert len(families) > 0
     assert "STIX Two Math" in families
+
+
+# ── single-instance guard (QLocalServer + store lock) ──────────────────
+
+
+def test_guard_roundtrip_delivers_one_json_line(qapp):
+    """A second instance connects to the served key and its single JSON
+    line arrives as a dispatched dict."""
+    from nostalgia_launcher.core import app_lock
+    from nostalgia_launcher.ui.qt import app_lock_qt
+
+    key = app_lock.state_key("smoke-test-state.json")
+    received = []
+    server, _relay = app_lock_qt.serve(key, received.append)
+    try:
+        sock = app_lock_qt.try_connect_existing(key)
+        assert sock is not None
+        app_lock_qt.send_json_line(sock, {"op": "raise"})
+        _wait_until(lambda: received != [])
+        assert received == [{"op": "raise"}]
+        assert app_lock_qt.try_connect_existing(key) is not None
+    finally:
+        server.close()
+        app_lock_qt.stop_server(key)
+
+
+def test_raise_message_raises_window(qapp, app, monkeypatch):
+    """The relay dispatches on the main thread into the window-raise
+    handler; unknown ops are ignored."""
+    from unittest.mock import Mock
+
+    from nostalgia_launcher.core import app_lock
+    from nostalgia_launcher.ui.qt import app_lock_qt
+
+    key = app_lock.state_key(str(config_store.config_file))
+    window = app._window
+    monkeypatch.setattr(window, "activateWindow", Mock())
+    monkeypatch.setattr(window, "raise_", Mock())
+    server, relay = app_lock_qt.serve(key, cli_module._make_raise_handler(app))
+    try:
+        sock = app_lock_qt.try_connect_existing(key)
+        app_lock_qt.send_json_line(sock, {"op": "raise"})
+        _wait_until(lambda: window.activateWindow.called)
+        assert window.raise_.called
+    finally:
+        server.close()
+        app_lock_qt.stop_server(key)
+
+
+def test_run_backend_second_instance_returns_0_without_app(
+    qapp, fake_home, monkeypatch, capsys
+):
+    """Pre-existing server for the profile key: main() forwards the raise
+    and exits 0 WITHOUT constructing the Qt app shell."""
+    from nostalgia_launcher.core import app_lock
+    from nostalgia_launcher.ui.qt import app_lock_qt
+
+    os.makedirs(platform_support.config_dir(), exist_ok=True)
+    with open(launcher.user_config_path(), "w", encoding="utf-8") as f:
+        f.write('{"server": {"base_url": "https://launcher.test"}}')
+
+    def boom(*a, **kw):
+        raise AssertionError("QtNostalgiaLauncherApp must not be built")
+
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.app.QtNostalgiaLauncherApp", boom
+    )
+
+    key = app_lock.state_key(constants.CONFIG_FILE)
+    server, _relay = app_lock_qt.serve(key)
+    try:
+        rc = cli_module.main([])
+    finally:
+        server.close()
+        app_lock_qt.stop_server(key)
+    assert rc == 0
+    assert "Already running" in capsys.readouterr().err
+
+
+def test_busy_store_exits_6(qapp, fake_home, monkeypatch, capsys):
+    """When another process holds the profile's store lock (and no guard
+    server answers), startup fails with exit code 6 and a message."""
+    import nostalgia_launcher.core.app_lock as app_lock_module
+
+    prof, err = profiles.create(
+        "busy", '{"server": {"base_url": "https://launcher.test"}}'
+    )
+    assert err == ""
+
+    def boom(state_path, *a, **kw):
+        raise app_lock_module.AcquireError(state_path)
+
+    monkeypatch.setattr(
+        "nostalgia_launcher.core.app_lock.acquire_with_grace", boom
+    )
+    assert cli_module.main(["--profile", "busy"]) == 6
+    assert "already holds this profile's store" in capsys.readouterr().err
+
+
+def test_profile_keys_and_locks_differ_across_profiles(qapp, fake_home):
+    """Cross-profile parallelism precondition: distinct state paths give
+    distinct guard keys AND distinct lock files."""
+    from nostalgia_launcher.core import app_lock
+
+    profiles.create("alpha")
+    profiles.create("beta")
+    ka = app_lock.state_key(profiles.resolve("alpha").state_path())
+    kb = app_lock.state_key(profiles.resolve("beta").state_path())
+    assert ka != kb
+    assert app_lock.lock_file_for(
+        profiles.resolve("alpha").state_path()
+    ) != app_lock.lock_file_for(profiles.resolve("beta").state_path())

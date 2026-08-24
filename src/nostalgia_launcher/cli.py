@@ -13,7 +13,13 @@ import argparse
 import os
 import sys
 
-from .core import config_store, launcher, log_sink, profiles
+from .core import (
+    app_lock,
+    config_store,
+    launcher,
+    log_sink,
+    profiles,
+)
 from .core.constants import (
     LOG_FILE,
     UPDATER_VERSION,
@@ -25,6 +31,14 @@ _QT_UNAVAILABLE = (
     "Nostalgia Launcher needs PySide6 (Qt) to run. "
     "Install it with `uv sync` or `pip install PySide6`.\n"
 )
+
+# Sentinel from the single-instance handshake: an existing instance
+# answered, so main() must exit 0 immediately.
+_GUARD_BUSY = object()
+
+# The QLocalServer serving THIS instance's guard key; module-level so it
+# stays referenced (a garbage-collected server stops listening).
+_GUARD_SERVER_KEY: str | None = None
 
 
 def _parse_args(argv=None) -> argparse.Namespace:
@@ -213,10 +227,68 @@ def _pick_launcher_config() -> dict | None:
     return dlg.selection()
 
 
+def _guard_enter(key, prof):
+    """Single-instance handshake for the active profile.
+
+    When another instance of this profile is already up: forward
+    ``{"op": "raise"}`` so it focuses its window, print the notice, and
+    return ``_GUARD_BUSY`` (caller exits 0). Otherwise start serving the
+    key (raise messages are dispatched once our window exists) and return
+    the message relay — or None when Qt is unavailable / listening failed,
+    in which case the store lock alone still guards the profile.
+    """
+    try:
+        from .ui.qt import app_lock_qt
+    except ImportError:
+        return None  # no Qt at all: lock-only protection
+    global _GUARD_SERVER_KEY
+    existing = app_lock_qt.try_connect_existing(key)
+    if existing is not None:
+        app_lock_qt.send_json_line(existing, {"op": "raise"})
+        sys.stderr.write(
+            f"Already running (profile {prof.name}) — focusing existing "
+            "window.\n"
+        )
+        return _GUARD_BUSY
+    try:
+        server, relay = app_lock_qt.serve(key)
+    except RuntimeError as e:
+        # Degrade gracefully: the advisory store lock still protects us.
+        log(f"single-instance server unavailable: {e}", "dim")
+        return None
+    _GUARD_SERVER_KEY = key
+    return relay
+
+
+def _make_raise_handler(app):
+    """Dispatch single-instance messages to the live window. Unknown ops
+    are ignored with a log line."""
+
+    def _handle(msg):
+        op = msg.get("op") if isinstance(msg, dict) else None
+        if op == "raise":
+            app.raise_to_front()
+        else:
+            log(f"Ignoring single-instance op: {op!r}")
+
+    return _handle
+
+
 def _run_backend(show_log: bool = False) -> int:
     """Config-store + log-sink setup, then Qt backend construction/run."""
     prof = profiles.active()
-    config_store.configure(prof.state_path(), prof.cache_path())
+    state_path = prof.state_path()
+    relay = _guard_enter(app_lock.state_key(state_path), prof)
+    if relay is _GUARD_BUSY:
+        return 0
+    try:
+        app_lock.acquire_with_grace(state_path)
+    except app_lock.AcquireError:
+        sys.stderr.write(
+            "Another launcher instance already holds this profile's store.\n"
+        )
+        return 6
+    config_store.configure(state_path, prof.cache_path())
     log_sink.configure_file(LOG_FILE)
     log(f"── Nostalgia Launcher {UPDATER_VERSION} · session start ──", "dim")
     backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")
@@ -236,8 +308,28 @@ def _run_backend(show_log: bool = False) -> int:
             "A graphical display (X11/Wayland) is required.\n"
         )
         return 1
+    if relay is not None and relay is not _GUARD_BUSY:
+        relay.message.connect(_make_raise_handler(app))
     app.show()
-    return app.run()
+    rc = app.run()
+    _guard_shutdown()
+    return rc
+
+
+def _guard_shutdown():
+    """Close this instance's guard server (socket file removed so the
+    next launch never sees a stale AddressInUse)."""
+    global _GUARD_SERVER_KEY
+    key = _GUARD_SERVER_KEY
+    if key is None:
+        return
+    _GUARD_SERVER_KEY = None
+    try:
+        from .ui.qt import app_lock_qt
+
+        app_lock_qt.stop_server(key)
+    except ImportError:
+        pass
 
 
 if __name__ == "__main__":

@@ -135,3 +135,22 @@ def test_no_grace_without_env_var(tmp_path):
     finally:
         proc.kill()
         proc.wait()
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX flock")
+def test_different_profiles_may_run_in_parallel(tmp_path):
+    """--profile A running must NOT block --profile B: distinct state
+    paths -> distinct keys and distinct lock files."""
+    state_a = str(tmp_path / "a" / "state.json")
+    state_b = str(tmp_path / "b" / "state.json")
+    assert app_lock.state_key(state_a) != app_lock.state_key(state_b)
+    assert app_lock.lock_file_for(state_a) != app_lock.lock_file_for(state_b)
+    proc = _spawn_holder(state_a, hold_s=10)
+    try:
+        assert proc.stdout.readline().strip() == "READY"
+        app_lock.acquire_store_lock(state_b)  # B while A held elsewhere
+        assert app_lock.holds_store_lock()
+        app_lock.release_store_lock()
+    finally:
+        proc.kill()
+        proc.wait()
