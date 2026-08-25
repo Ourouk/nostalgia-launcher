@@ -316,14 +316,6 @@ def test_load_custom_skips_invalid_and_missing(tmp_path, monkeypatch):
     assert [a["name"] for a in out] == ["Good"]
 
 
-def test_write_custom_template_creates_once(tmp_path, monkeypatch):
-    _redirect_custom(tmp_path, monkeypatch)
-    assert catalog.write_custom_template("addons", "[]") is True
-    assert catalog.write_custom_template("addons", "[]") is False
-    assert catalog.clear_custom("addons") is True
-    assert catalog.clear_custom("addons") is False
-
-
 # ── local repo files ─────────────────────────────────────────────────────────
 
 from pathlib import Path  # noqa: E402

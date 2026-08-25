@@ -107,7 +107,8 @@ def test_ok_with_valid_file_accepts_after_summary(qapp, tmp_path):
         # Second submit (Accept) closes the dialog with the selection.
         dlg.findChild(QPushButton, "launcherConfigOk").click()
         assert dlg.result() == QDialog.DialogCode.Accepted
-        assert dlg.selected_path() == str(path)
+        assert dlg.selection()["kind"] == "file"
+        assert dlg.selection()["path"] == str(path)
         assert dlg.selection()["kind"] == "file"
     finally:
         dlg.close()

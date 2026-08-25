@@ -543,7 +543,6 @@ def test_accessors_empty_when_not_configured():
     assert launcher.news_url() == ""
     assert launcher.mods_registry_url() == ""
     assert launcher.mirrors() == []
-    assert launcher.is_configured() is False
 
 
 def test_theme_dict_parses():

@@ -782,13 +782,6 @@ def test_open_client_folder_oserror_logs(controller, monkeypatch, tmp_path):
     assert any("Could not open folder" in t for t in _log_texts(events))
 
 
-def test_open_url_launches_browser(controller, monkeypatch):
-    calls = []
-    monkeypatch.setattr(sc.webbrowser, "open", lambda url: calls.append(url))
-    controller.open_url("https://example.com")
-    assert calls == ["https://example.com"]
-
-
 # ── catalog registries ───────────────────────────────────────────────────────
 
 

@@ -399,7 +399,9 @@ def test_e2e_torrent_replacement_invalidates_verdict(tmp_path, monkeypatch):
     log_q, prog_q = queue.Queue(), queue.Queue()
     VerifyWorker(str(empty), log_q, prog_q).run()
     old_ih = captured_a[0].info_hash
-    torrent_update.write_resume_bytes(old_ih, b"old resume data")
+    torrent_update._atomic_write_bytes(
+        torrent_update.resume_path(old_ih), b"old resume data"
+    )
     assert os.path.exists(torrent_update.resume_path(old_ih))
 
     # Second run: snapshot at the same URL now has a *different* identity.

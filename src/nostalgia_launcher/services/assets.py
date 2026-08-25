@@ -267,11 +267,6 @@ def remote_probe_state(url: str) -> dict | None:
         return None
 
 
-def recorded_probe_state(asset_id: str) -> dict | None:
-    """The probe state captured when this asset was last installed."""
-    return load_config().get("asset_probe_cache", {}).get(asset_id)
-
-
 def remember_probe_state(asset_id: str, state: dict):
     """Persist the install-time probe state (merged into the live config so
     concurrent writers aren't clobbered)."""

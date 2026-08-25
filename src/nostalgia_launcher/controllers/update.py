@@ -570,8 +570,6 @@ class UpdateController:
             self.state.progress_label = lbl
             phase = details.get("phase", "")
             transport = details.get("transport", "")
-            self.state.progress_phase = phase
-            self.state.progress_transport = transport
             self.state.progress_file = details.get("current_file", "")
             self.state.progress_downloaded = details.get("downloaded", 0)
             self.state.progress_total = details.get("total", 0)

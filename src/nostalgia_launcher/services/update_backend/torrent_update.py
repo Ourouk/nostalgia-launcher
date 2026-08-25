@@ -213,10 +213,6 @@ def write_torrent_atomically(info_hash: str, data: bytes):
     _atomic_write_bytes(torrent_path(info_hash), data)
 
 
-def write_resume_bytes(info_hash: str, buf: bytes):
-    _atomic_write_bytes(resume_path(info_hash), buf)
-
-
 def remove_resume_data(info_hash: str):
     try:
         os.remove(resume_path(info_hash))

@@ -429,9 +429,9 @@ def test_verdict_uninstalled_asset_is_not_an_update(tmp_path):
 def test_probe_state_roundtrip_and_forget(tmp_path):
     _isolated_config(tmp_path)
     assets.remember_probe_state("p3", {"etag": '"e"'})
-    assert assets.recorded_probe_state("p3") == {"etag": '"e"'}
+    assert assets.load_config()["asset_probe_cache"]["p3"] == {"etag": '"e"'}
     assets.forget_probe_state("p3")
-    assert assets.recorded_probe_state("p3") is None
+    assert "p3" not in assets.load_config().get("asset_probe_cache", {})
 
 
 def test_remove_asset_files(tmp_path):

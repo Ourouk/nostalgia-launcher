@@ -770,11 +770,6 @@ def config_error() -> str:
         return _error
 
 
-def is_configured() -> bool:
-    c = config()
-    return bool(c and c.configured)
-
-
 def server_url() -> str:
     c = config()
     return c.server_url if c else ""

@@ -2545,7 +2545,7 @@ def test_downloader_resumes_torrent_and_ignores_stale_cache(
     _redirect_torrent_cache(monkeypatch, cache_root)
     info_hash = "aa" * 20
     # A stale resume file from a prior run — must be ignored now.
-    td.write_resume_bytes(info_hash, b"stale")
+    td._atomic_write_bytes(td.resume_path(info_hash), b"stale")
     fake = _install_snapshot_fake(monkeypatch, info_hash=info_hash)
     d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
     d.download("https://srv.example/client.torrent", {"Data/a.bin"})

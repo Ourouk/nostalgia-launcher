@@ -67,7 +67,7 @@ def test_git_parts_community_gitea():
 
 
 def test_addon_zip_url_community_gitea():
-    url = addons.addon_zip_url(
+    url = git_archive.GitArchiveBackend().zip_url(
         "https://gitea.example.com/git/a/b", "abc123" * 6
     )
     assert (
@@ -102,7 +102,9 @@ def test_git_parts_gitlab():
 
 
 def test_addon_zip_url_github():
-    url = addons.addon_zip_url("https://github.com/a/b", "abc123" * 6)
+    url = git_archive.GitArchiveBackend().zip_url(
+        "https://github.com/a/b", "abc123" * 6
+    )
     assert (
         url
         == "https://github.com/a/b/archive/abc123abc123abc123abc123abc123abc123.zip"
@@ -110,7 +112,9 @@ def test_addon_zip_url_github():
 
 
 def test_addon_zip_url_gitlab():
-    url = addons.addon_zip_url("https://gitlab.com/a/b", "abc123")
+    url = git_archive.GitArchiveBackend().zip_url(
+        "https://gitlab.com/a/b", "abc123"
+    )
     assert url == "https://gitlab.com/a/b/-/archive/abc123/b-abc123.zip"
 
 

@@ -36,7 +36,6 @@ def _checked_rel(dest_rel) -> str:
 
 # The per-user custom mod file (a JSON list, one entry per mod, using the
 # same shape the mod catalog uses). Written empty on first use via Settings.
-CUSTOM_FILE_TEMPLATE = "[\n]\n"
 
 
 def catalog_timestamp() -> float | None:
@@ -186,21 +185,6 @@ def set_registry_url(url: str) -> str | None:
 def reset_registry_url():
     """Drop the per-user override so the launcher-configured URL is used."""
     catalog.reset_registry_url("mods")
-
-
-def custom_file() -> str:
-    """Path of the per-user custom mod JSON file."""
-    return catalog.custom_file("mods")
-
-
-def open_custom_file() -> bool:
-    """Create the custom mod file (with the template) when missing."""
-    return catalog.write_custom_template("mods", CUSTOM_FILE_TEMPLATE)
-
-
-def clear_custom_file() -> bool:
-    """Delete the custom mod file. True when something was removed."""
-    return catalog.clear_custom("mods")
 
 
 # ── version lookup / install ─────────────────────────────────────────────────

@@ -66,13 +66,6 @@ class AddonsController:
         Grows as the catalog flags addons as recommended during a verify."""
         return self._recommended
 
-    @property
-    def git_hosts(self) -> tuple:
-        """The allowed git hosts shown in the custom-addon dialog hint."""
-        from ..core.launcher import ADDON_GIT_HOSTS
-
-        return tuple(ADDON_GIT_HOSTS)
-
     def is_allowed_git_url(self, url: str) -> bool:
         return addons.is_allowed_git_url(url)
 

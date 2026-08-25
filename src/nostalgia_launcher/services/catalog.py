@@ -43,8 +43,6 @@ from .sources.safety import safe_folder, safe_relpath  # noqa: F401 (re-export)
 MOD_SOURCE_KINDS = set(_source_kinds())
 MOD_POST_INSTALL_HOOKS = set(_hooks.names())
 
-CUSTOM_FILE_TEMPLATE = "[\n]\n"
-
 # Catalogs auto-refresh at most once a week: startup and panel loads serve
 # the persisted cache instantly, and only a cache older than this TTL (or an
 # explicit Settings → Reload / ⟳ refresh) hits the network again.
@@ -130,33 +128,6 @@ def load_custom(kind: str, validator) -> list:
             continue
         out.append(cleaned)
     return out
-
-
-def write_custom_template(kind: str, template: str) -> bool:
-    """Create the custom file from ``template`` when it doesn't exist yet."""
-    path = custom_file(kind)
-    if os.path.exists(path):
-        return False
-    try:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(template)
-    except OSError as e:
-        log(f"  Could not create {kind} custom file: {e}", "err")
-        return False
-    return True
-
-
-def clear_custom(kind: str) -> bool:
-    """Delete the custom file. Returns True when something was removed."""
-    path = custom_file(kind)
-    try:
-        if os.path.exists(path):
-            os.remove(path)
-            return True
-    except OSError as e:
-        log(f"  Could not clear {kind} custom file: {e}", "err")
-    return False
 
 
 # ── local repo files ─────────────────────────────────────────────────────────
