@@ -128,7 +128,7 @@ def test_mods_registry_merges_custom(tmp_path, monkeypatch):
 
     reg = mods.mods_registry()
     by_id = {m["id"]: m for m in reg}
-    assert by_id["MyMod"]["essential"] is True
+    assert by_id["MyMod"]["installation"] == "required"
     # Without a bundled registry, only the custom entry is present.
     assert list(by_id) == ["MyMod"]
 
@@ -274,12 +274,12 @@ def test_pick_asset_matches_pattern_and_prefers_without_suffix():
     from nostalgia_launcher.services.sources.github_release import pick_asset
 
     assets = [
-        {"name": "vanillafixes-1.0-dxvk.zip"},
-        {"name": "vanillafixes-1.0.zip"},
+        {"name": "example-loader-1.0-dxvk.zip"},
+        {"name": "example-loader-1.0.zip"},
     ]
     assert (
-        pick_asset(assets, "vanillafixes-*.zip", "-dxvk")["name"]
-        == "vanillafixes-1.0.zip"
+        pick_asset(assets, "example-loader-*.zip", "-dxvk")["name"]
+        == "example-loader-1.0.zip"
     )
 
 
@@ -641,15 +641,22 @@ def test_example_community_mods_catalog_validates():
     with open(path, encoding="utf-8") as f:
         raw = json.load(f)
     assert isinstance(raw, list)
-    assert len(raw) == 1
-    cleaned = catalog.validate_mod(raw[0])
+    assert len(raw) == 2
+    by_id = {e["id"]: e for e in raw}
+    cleaned = catalog.validate_mod(by_id["example-tweak"])
     assert cleaned is not None
-    assert cleaned["id"] == "example-tweak"
     assert cleaned["name"] == "ExampleTweak"
     assert cleaned["source"]["kind"] == "github_release"
     assert cleaned["source"]["owner"] == "example-community"
     assert cleaned["source"]["repo"] == "example-tweak"
-    assert cleaned["register_dll"] == "ExampleTweak.dll"
+    assert cleaned["register_dll"] == ["ExampleTweak.dll"]
+    assert cleaned["installation"] == "user_opt_in"
+    assert cleaned["clientVersions"] == ["1.12.1"]
+    launcher_mod = catalog.validate_mod(by_id["example-loader"])
+    assert launcher_mod is not None
+    assert launcher_mod["type"] == "external-launcher"
+    assert launcher_mod["executable"] == "ExampleLoader.exe"
+    assert launcher_mod["installation"] == "required"
 
 
 # ── ModsController.apply_essential_mods ─────────────────────────────────────
@@ -668,9 +675,9 @@ def test_apply_essential_mods_toggles_missing_and_applies(
     game.mkdir()
     (game / "WoW.exe").write_bytes(b"MZ")
     registry = [
-        {"id": "EssentialA", "essential": True, "name": "A"},
-        {"id": "EssentialB", "essential": True, "name": "B"},
-        {"id": "Optional", "essential": False, "name": "O"},
+        {"id": "EssentialA", "installation": "required", "name": "A"},
+        {"id": "EssentialB", "installation": "required", "name": "B"},
+        {"id": "Optional", "name": "O"},
     ]
     monkeypatch.setattr(mods, "mods_registry", lambda *a, **k: registry)
     monkeypatch.setattr(
@@ -850,3 +857,78 @@ def test_catalog_is_stale_false_with_repo_content_only(tmp_path, repo_paths):
     catalog_svc.write_local_repo("mods", [_mod("Local")], [])
     assert not mods.has_remote_catalog()
     assert mods.catalog_is_stale() is False
+
+
+# ── register_dll lists + external-launcher executables ──────────────────────
+
+
+def test_scan_unknown_mods_flattens_register_dll_lists(tmp_path):
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "dlls.txt").write_text("A.dll\nB.dll\nmystery.dll\n")
+    registry = [{"id": "t", "register_dll": ["A.dll", "b.dll"]}]
+    assert mods.scan_unknown_mods(str(client), registry) == ["mystery.dll"]
+
+
+def test_mod_installed_files_present_requires_every_listed_dll(
+    tmp_path, monkeypatch
+):
+    client = tmp_path / "client"
+    client.mkdir()
+    monkeypatch.setattr(mods, "load_config", lambda: {})
+    (client / "a.dll").write_bytes(b"MZ")
+    (client / "b.dll").write_bytes(b"MZ")
+    mod = {
+        "id": "m",
+        "installed_files": ["a.dll", "b.dll"],
+        "register_dll": ["a.dll", "b.dll"],
+    }
+    # Only one of the two DLLs registered → not fully installed.
+    (client / "dlls.txt").write_text("a.dll\n")
+    assert not mods.mod_installed_files_present(mod, str(client))
+    (client / "dlls.txt").write_text("a.dll\nB.dll\n")
+    assert mods.mod_installed_files_present(mod, str(client))
+
+
+def test_external_launcher_executables_state_matrix(tmp_path, monkeypatch):
+    """Only active external-launcher mods contribute executables:
+    required = always (once on disk), user_opt_in = only when enabled."""
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    client = tmp_path / "game"
+    client.mkdir()
+    (client / "Required.exe").write_bytes(b"MZ")
+    (client / "OptIn.exe").write_bytes(b"MZ")
+    registry = [
+        {
+            "id": "req",
+            "type": "external-launcher",
+            "installation": "required",
+            "executable": "Required.exe",
+        },
+        {
+            "id": "optin",
+            "type": "external-launcher",
+            "installation": "user_opt_in",
+            "executable": "OptIn.exe",
+        },
+        {"id": "plain", "executable": "Ignored.exe"},
+    ]
+    monkeypatch.setattr(mods, "mods_registry", lambda *a, **k: registry)
+
+    # Opt-in disabled → only the required loader.
+    config_store.save_config({"mods": {}})
+    assert mods.external_launcher_executables(str(client)) == ["Required.exe"]
+
+    # Opt-in enabled → both, in registry order.
+    config_store.save_config({"mods": {"optin": {"enabled": True}}})
+    assert mods.external_launcher_executables(str(client)) == [
+        "Required.exe",
+        "OptIn.exe",
+    ]
+
+    # Required mod whose executable is missing from disk → excluded.
+    (client / "Required.exe").unlink()
+    config_store.save_config({"mods": {}})
+    assert mods.external_launcher_executables(str(client)) == []

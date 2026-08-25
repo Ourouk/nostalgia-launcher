@@ -43,6 +43,14 @@ from .sources.safety import safe_folder, safe_relpath  # noqa: F401 (re-export)
 MOD_SOURCE_KINDS = set(_source_kinds())
 MOD_POST_INSTALL_HOOKS = set(_hooks.names())
 
+# Mod discriminators. ``type`` says what a mod provides (a DLL drop-in vs
+# the game executable itself); ``installation`` replaces the legacy
+# ``essential`` boolean ("required" mods auto-install and cannot be
+# disabled). A catalog entry carrying the legacy ``essential: true`` is
+# translated to ``installation: "required"``.
+MOD_TYPES = ("mod", "external-launcher")
+MOD_INSTALLATIONS = ("required", "user_opt_in")
+
 CUSTOM_FILE_TEMPLATE = "[\n]\n"
 
 # Catalogs auto-refresh at most once a week: startup and panel loads serve
@@ -372,7 +380,8 @@ def validate_mod(entry: dict) -> dict | None:
     mod = {
         "id": mid,
         "name": name,
-        "essential": bool(entry.get("essential", False)),
+        "type": entry.get("type", "mod"),
+        "installation": _mod_installation(entry),
         "description": (
             entry.get("description")
             if isinstance(entry.get("description"), str)
@@ -381,6 +390,10 @@ def validate_mod(entry: dict) -> dict | None:
         "repo_url": _https_url(entry.get("repo_url")),
         "source": {},
     }
+    if mod["type"] not in MOD_TYPES:
+        return None
+    if mod["installation"] not in MOD_INSTALLATIONS:
+        return None
     hooks = source.get("post_install") or []
     if hooks:
         if not isinstance(hooks, list) or not all(
@@ -405,9 +418,17 @@ def validate_mod(entry: dict) -> dict | None:
 
     register = entry.get("register_dll")
     if register is not None:
-        if not isinstance(register, str) or not safe_relpath(register):
+        if isinstance(register, str):
+            register = [register]
+        if (
+            not isinstance(register, list)
+            or not register
+            or not all(
+                isinstance(d, str) and safe_relpath(d) for d in register
+            )
+        ):
             return None
-        mod["register_dll"] = register
+        mod["register_dll"] = list(register)
     files = entry.get("installed_files")
     if files is not None:
         if not isinstance(files, list) or not all(
@@ -415,7 +436,31 @@ def validate_mod(entry: dict) -> dict | None:
         ):
             return None
         mod["installed_files"] = list(files)
+    executable = entry.get("executable")
+    if executable is not None:
+        if not isinstance(executable, str) or not safe_relpath(executable):
+            return None
+        mod["executable"] = executable
+    client_versions = entry.get("clientVersions")
+    if client_versions is not None:
+        if not isinstance(client_versions, list) or not all(
+            isinstance(v, str) for v in client_versions
+        ):
+            return None
+        mod["clientVersions"] = list(client_versions)
     return mod
+
+
+def _mod_installation(entry: dict) -> str:
+    """The effective installation policy: the new ``installation`` field,
+    else the legacy ``essential`` boolean translated (true → "required"),
+    else the "user_opt_in" default."""
+    installation = entry.get("installation")
+    if isinstance(installation, str):
+        return installation.lower()
+    if entry.get("essential", False):
+        return "required"
+    return "user_opt_in"
 
 
 def merge_mods(remote: list, custom: list) -> list:
@@ -433,10 +478,13 @@ def merge_mods(remote: list, custom: list) -> list:
             "name",
             "description",
             "repo_url",
-            "essential",
+            "type",
+            "installation",
             "source",
             "register_dll",
             "installed_files",
+            "executable",
+            "clientVersions",
         ):
             if entry.get(key) is not None:
                 base[key] = entry[key]

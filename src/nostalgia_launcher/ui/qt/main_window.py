@@ -848,7 +848,7 @@ class MainWindow(QMainWindow):
         self._refresh_ready_state()
 
     def _launch_game(self):
-        """Launch the game detached; the launch logic (VanillaFixes/WoW.exe
+        """Launch the game detached; the launch logic (ExampleLoader/WoW.exe
         choice, DXVK notice, clear-wdb, subprocess) lives in the
         UpdateController — this only drives the footer chrome and dialogs."""
         ok, dxvk_notice = self._hub.updater.launch_game()

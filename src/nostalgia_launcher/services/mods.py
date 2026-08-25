@@ -322,13 +322,22 @@ def read_dlls_entries(client_dir: str) -> set:
         return set()
 
 
+def registered_dlls(mod: dict) -> list:
+    """The DLL names a catalog mod wires into dlls.txt, normalized to a
+    list (legacy catalogs carry a single string)."""
+    reg = mod.get("register_dll")
+    if not reg:
+        return []
+    if isinstance(reg, str):
+        return [reg]
+    return [d for d in reg if isinstance(d, str) and d]
+
+
 def scan_unknown_mods(client_dir: str, registry: list) -> list:
     """dlls.txt entries no catalog mod claims (by register_dll, case-
     insensitive) — mods the client loads that the launcher doesn't track."""
     known = {
-        mod.get("register_dll", "").strip().lower()
-        for mod in registry
-        if mod.get("register_dll")
+        d.strip().lower() for mod in registry for d in registered_dlls(mod)
     }
     return sorted(n for n in read_dlls_entries(client_dir) if n not in known)
 
@@ -395,8 +404,8 @@ def mod_installed_files_present(mod: dict, client_dir: str) -> bool:
     The filesystem — not the config record — is the source of truth for what
     the client loads: a mod is installed when every file it declares (catalog
     ``installed_files`` first, then the config record) exists on disk, and a
-    mod that registers a DLL is actually listed in dlls.txt. Falls back to the
-    recorded version when nothing is verifiable on disk.
+    mod that registers DLLs has them all listed in dlls.txt. Falls back to
+    the recorded version when nothing is verifiable on disk.
     """
     files = mod.get("installed_files")
     if not files:
@@ -406,15 +415,19 @@ def mod_installed_files_present(mod: dict, client_dir: str) -> bool:
             .get(mod["id"], {})
             .get("installed_files", [])
         )
+    regs = [d.lower() for d in registered_dlls(mod)]
+    entries = read_dlls_entries(client_dir)
     if files:
         if not all(os.path.exists(os.path.join(client_dir, f)) for f in files):
             return False
-        reg = mod.get("register_dll")
-        return (reg.lower() in read_dlls_entries(client_dir)) if reg else True
-    reg = mod.get("register_dll")
-    if reg and (
-        reg.lower() in read_dlls_entries(client_dir)
-        and os.path.exists(os.path.join(client_dir, reg))
+        return all(reg in entries for reg in regs)
+    if (
+        regs
+        and all(reg in entries for reg in regs)
+        and all(
+            os.path.exists(os.path.join(client_dir, d))
+            for d in registered_dlls(mod)
+        )
     ):
         return True
     return bool(
@@ -423,6 +436,33 @@ def mod_installed_files_present(mod: dict, client_dir: str) -> bool:
         .get(mod["id"], {})
         .get("installed_version")
     )
+
+
+def external_launcher_executables(client_dir: str) -> list:
+    """Game executables provided by installed external-launcher mods, in
+    registry order (first = highest precedence).
+
+    Active means: ``type == "external-launcher"`` with a non-empty
+    ``executable``, the installation policy satisfied ("required" mods are
+    always active; "user_opt_in" only when their per-user record is enabled),
+    AND the executable exists on disk. Anything else is excluded so launch
+    falls back to WoW.exe — no implicit loader preference.
+    """
+    out = []
+    records = load_config().get("mods", {})
+    for mod in mods_registry():
+        if mod.get("type") != "external-launcher":
+            continue
+        exe = mod.get("executable")
+        if not exe:
+            continue
+        if mod.get("installation") != "required" and not records.get(
+            mod["id"], {}
+        ).get("enabled", False):
+            continue
+        if os.path.exists(os.path.join(client_dir, exe)):
+            out.append(exe)
+    return out
 
 
 def mod_supports_update_check(mod: dict) -> bool:

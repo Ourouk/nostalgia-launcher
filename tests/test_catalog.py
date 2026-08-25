@@ -74,27 +74,28 @@ def test_validate_addon_normalizes_bad_refs():
 def test_validate_mod_github_release():
     cleaned = catalog.validate_mod(
         {
-            "id": "VanillaFixes",
-            "name": "VanillaFixes",
+            "id": "ExampleLoader",
+            "name": "ExampleLoader",
             "essential": True,
-            "repo_url": "https://github.com/hannesmann/vanillafixes",
+            "repo_url": "https://github.com/hannesmann/example-loader",
             "source": {
                 "kind": "github_release",
                 "owner": "hannesmann",
-                "repo": "vanillafixes",
-                "asset_pattern": "vanillafixes-*.zip",
+                "repo": "example-loader",
+                "asset_pattern": "example-loader-*.zip",
                 "prefer_no": "-dxvk",
                 "extract_map": {"VfPatcher.dll": "VfPatcher.dll"},
             },
             "register_dll": "VfPatcher.dll",
-            "installed_files": ["VfPatcher.dll", "VanillaFixes.exe"],
+            "installed_files": ["VfPatcher.dll", "ExampleLoader.exe"],
         }
     )
-    assert cleaned["id"] == "VanillaFixes"
+    assert cleaned["id"] == "ExampleLoader"
     assert cleaned["source"]["kind"] == "github_release"
     assert cleaned["source"]["owner"] == "hannesmann"
-    assert cleaned["register_dll"] == "VfPatcher.dll"
-    assert cleaned["essential"] is True
+    assert cleaned["register_dll"] == ["VfPatcher.dll"]
+    assert cleaned["installation"] == "required"
+    assert cleaned["type"] == "mod"
 
 
 def test_validate_mod_rejects_unknown_kind():
@@ -238,10 +239,13 @@ def test_merge_addons_custom_overrides_and_appends():
 
 
 def test_merge_mods_custom_overrides_and_appends():
-    remote = [{"id": "A", "name": "A", "essential": False}]
-    custom = [{"id": "A", "essential": True}, {"id": "B", "name": "B"}]
+    remote = [{"id": "A", "name": "A", "installation": "user_opt_in"}]
+    custom = [
+        {"id": "A", "installation": "required"},
+        {"id": "B", "name": "B"},
+    ]
     merged = {m["id"]: m for m in catalog.merge_mods(remote, custom)}
-    assert merged["A"]["essential"] is True
+    assert merged["A"]["installation"] == "required"
     assert merged["B"]["name"] == "B"
 
 
@@ -444,3 +448,99 @@ def test_legacy_layer_inactive_once_repo_exists(repo_dir):
         == []
     )
     assert legacy.exists()  # still on disk as a backup
+
+
+# ── mod type / installation / multi-dll schema ──────────────────────────────
+
+
+def test_validate_mod_defaults_type_and_installation():
+    cleaned = catalog.validate_mod(
+        {
+            "id": "X",
+            "source": {
+                "kind": "direct_file",
+                "url": "https://example.com/x.dll",
+                "dest": "x.dll",
+            },
+        }
+    )
+    assert cleaned["type"] == "mod"
+    assert cleaned["installation"] == "user_opt_in"
+
+
+def test_validate_mod_translates_legacy_essential():
+    base = {
+        "id": "X",
+        "essential": True,
+        "source": {
+            "kind": "direct_file",
+            "url": "https://example.com/x.dll",
+            "dest": "x.dll",
+        },
+    }
+    assert catalog.validate_mod(base)["installation"] == "required"
+    base["essential"] = False
+    assert catalog.validate_mod(base)["installation"] == "user_opt_in"
+
+
+def test_validate_mod_rejects_unknown_type_and_installation():
+    base = {
+        "id": "X",
+        "source": {
+            "kind": "direct_file",
+            "url": "https://example.com/x.dll",
+            "dest": "x.dll",
+        },
+    }
+    assert catalog.validate_mod({**base, "type": "loader"}) is None
+    assert catalog.validate_mod({**base, "installation": "mandatory"}) is None
+
+
+def test_validate_mod_external_launcher_fields():
+    cleaned = catalog.validate_mod(
+        {
+            "id": "example-loader",
+            "type": "external-launcher",
+            "executable": "ExampleLoader.exe",
+            "clientVersions": ["1.12.1"],
+            "source": {
+                "kind": "github_release",
+                "owner": "a",
+                "repo": "b",
+                "asset_pattern": "*.zip",
+                "extract_map": {"ExampleLoader.exe": "ExampleLoader.exe"},
+            },
+            "installed_files": ["ExampleLoader.exe"],
+        }
+    )
+    assert cleaned is not None
+    # An external-launcher without any register_dll is valid.
+    assert "register_dll" not in cleaned
+    assert cleaned["executable"] == "ExampleLoader.exe"
+    assert cleaned["clientVersions"] == ["1.12.1"]
+    assert cleaned["type"] == "external-launcher"
+
+
+def test_validate_mod_register_dll_list_normalization():
+    base = {
+        "id": "dxvk",
+        "source": {
+            "kind": "direct_tar",
+            "url": "https://example.com/dxvk.tar.gz",
+            "extract_map": {"d3d9.dll": "d3d9.dll"},
+        },
+    }
+    # Legacy single string → one-element list.
+    one = catalog.validate_mod({**base, "register_dll": "d3d9.dll"})
+    assert one["register_dll"] == ["d3d9.dll"]
+    # Real-world quirk: a non-file name registered into dlls.txt only.
+    named = catalog.validate_mod({**base, "register_dll": "dxvk"})
+    assert named["register_dll"] == ["dxvk"]
+    # Lists pass through validated.
+    many = catalog.validate_mod({**base, "register_dll": ["a.dll", "b.dll"]})
+    assert many["register_dll"] == ["a.dll", "b.dll"]
+    # Bad shapes are rejected.
+    assert catalog.validate_mod({**base, "register_dll": []}) is None
+    assert (
+        catalog.validate_mod({**base, "register_dll": ["../evil.dll"]}) is None
+    )

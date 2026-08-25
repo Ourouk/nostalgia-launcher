@@ -441,7 +441,7 @@ def test_set_path_resets_for_new_folder(
     game = tmp_path / "game"
     game.mkdir()
     (game / "WoW.exe").write_bytes(b"MZ")
-    cfg["mods"] = {"VanillaFixes": {"enabled": True}}
+    cfg["mods"] = {"ExampleLoader": {"enabled": True}}
     cfg["addons"] = {"pfUI": {"git": "x"}}
     wdb_calls = []
     monkeypatch.setattr(
@@ -490,7 +490,7 @@ def test_set_path_rejected_while_update_running(
     monkeypatch.setattr(sc.config_store, "cache_file", str(cache))
     game = tmp_path / "game"
     game.mkdir()
-    cfg["mods"] = {"VanillaFixes": {"enabled": True}}
+    cfg["mods"] = {"ExampleLoader": {"enabled": True}}
     fakes.updater.running = True
 
     assert controller.set_path(str(game)) is False

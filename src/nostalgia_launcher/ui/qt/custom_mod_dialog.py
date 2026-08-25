@@ -41,6 +41,8 @@ class CustomModDialog(QDialog):
         self._release_edits: list = []
         self._direct_caps: list = []
         self._direct_edits: list = []
+        self._external_caps: list = []
+        self._external_edits: list = []
         p = palette
         self.setObjectName("customModDialog")
         self.setWindowTitle("ADD CUSTOM MOD")
@@ -69,9 +71,45 @@ class CustomModDialog(QDialog):
         )
         self._description = self._field(root, "DESCRIPTION (optional)", mono)
 
-        self._essential = QCheckBox("Essential (auto-install)", self)
-        self._essential.setObjectName("customModEssential")
-        root.addWidget(self._essential)
+        type_row = QHBoxLayout()
+        type_label = QLabel("TYPE", self)
+        type_label.setStyleSheet(
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 9pt;"
+        )
+        type_row.addWidget(type_label)
+        self._type = QComboBox(self)
+        self._type.setObjectName("customModType")
+        self._type.addItems(catalog.MOD_TYPES)
+        self._type.currentTextChanged.connect(self._sync_type_fields)
+        type_row.addWidget(self._type, 1)
+        root.addLayout(type_row)
+
+        install_row = QHBoxLayout()
+        install_label = QLabel("INSTALLATION", self)
+        install_label.setStyleSheet(
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 9pt;"
+        )
+        install_row.addWidget(install_label)
+        self._installation = QComboBox(self)
+        self._installation.setObjectName("customModInstallation")
+        self._installation.addItems(catalog.MOD_INSTALLATIONS)
+        install_row.addWidget(self._installation, 1)
+        root.addLayout(install_row)
+
+        self._executable_cap, self._executable = self._external_field(
+            root,
+            "GAME EXECUTABLE (relative to the game folder)",
+            mono,
+        )
+        self._executable.setPlaceholderText("ExampleLoader.exe")
+        self._client_versions_cap, self._client_versions = (
+            self._external_field(
+                root,
+                "CLIENT VERSIONS (comma-separated, optional metadata)",
+                mono,
+            )
+        )
+        self._client_versions.setPlaceholderText("1.12.1, 1.12.2")
 
         kind_row = QHBoxLayout()
         kind_label = QLabel("SOURCE KIND", self)
@@ -158,8 +196,27 @@ class CustomModDialog(QDialog):
         root.addLayout(buttons)
 
         self._sync_kind_fields()
+        self._sync_type_fields()
 
     # ── construction helpers ─────────────────────────────────────────────
+
+    def _external_field(
+        self, root: QVBoxLayout, label: str, font
+    ) -> tuple[QLabel, QLineEdit]:
+        """A labelled line edit tagged for show/hide with the
+        external-launcher mod type."""
+        cap = QLabel(label, self)
+        cap.setStyleSheet(
+            f"color: {self._palette.gold.name()};"
+            "font-weight: bold; font-size: 9pt;"
+        )
+        root.addWidget(cap)
+        edit = QLineEdit(self)
+        edit.setFont(font)
+        root.addWidget(edit)
+        self._external_caps.append(cap)
+        self._external_edits.append(edit)
+        return cap, edit
 
     def _field(
         self,
@@ -189,6 +246,11 @@ class CustomModDialog(QDialog):
 
     # ── interaction ──────────────────────────────────────────────────────
 
+    def _sync_type_fields(self):
+        external = self._type.currentText() == "external-launcher"
+        for widget in (*self._external_caps, *self._external_edits):
+            widget.setVisible(external)
+
     def _sync_kind_fields(self):
         kind = self._kind.currentText()
         release = kind in ("github_release", "codeberg_release")
@@ -217,13 +279,26 @@ class CustomModDialog(QDialog):
         mid = self._id.text().strip()
         name = self._name.text().strip()
         kind = self._kind.currentText()
+        mod_type = self._type.currentText()
         entry = {
             "id": mid,
             "name": name or mid,
-            "essential": self._essential.isChecked(),
+            "type": mod_type,
+            "installation": self._installation.currentText(),
             "description": self._description.text().strip(),
             "source": {"kind": kind},
         }
+        if mod_type == "external-launcher":
+            executable = self._executable.text().strip()
+            if executable:
+                entry["executable"] = executable
+        client_versions = [
+            v.strip()
+            for v in self._client_versions.text().split(",")
+            if v.strip()
+        ]
+        if client_versions:
+            entry["clientVersions"] = client_versions
         repo_url = self._repo_url.text().strip()
         if repo_url:
             entry["repo_url"] = repo_url

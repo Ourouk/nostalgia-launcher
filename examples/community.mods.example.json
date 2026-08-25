@@ -1,7 +1,8 @@
 [
   {
     "id": "example-tweak",
-    "essential": false,
+    "type": "mod",
+    "installation": "user_opt_in",
     "name": "ExampleTweak",
     "description": "Synthetic example mod entry. Replace this catalog with your own community's mod list — entry fields must match the mod-catalog schema.",
     "repo_url": "https://github.com/example-community/example-tweak",
@@ -15,7 +16,30 @@
         "ExampleTweak.dll": "ExampleTweak.dll"
       }
     },
-    "register_dll": "ExampleTweak.dll",
-    "installed_files": ["ExampleTweak.dll"]
+    "register_dll": ["ExampleTweak.dll"],
+    "installed_files": ["ExampleTweak.dll"],
+    "clientVersions": ["1.12.1"]
+  },
+  {
+    "id": "example-loader",
+    "type": "external-launcher",
+    "installation": "required",
+    "name": "ExampleLoader",
+    "description": "Synthetic example of an external-launcher mod: it provides the game executable the launcher starts when installed and enabled.",
+    "repo_url": "https://github.com/example-community/example-loader",
+    "source": {
+      "kind": "github_release",
+      "owner": "example-community",
+      "repo": "example-loader",
+      "asset_pattern": "example-loader-*.zip",
+      "prefer_no": null,
+      "extract_map": {
+        "ExampleLoaderHook.dll": "ExampleLoaderHook.dll",
+        "ExampleLoader.exe": "ExampleLoader.exe"
+      }
+    },
+    "register_dll": ["ExampleLoaderHook.dll"],
+    "installed_files": ["ExampleLoaderHook.dll", "ExampleLoader.exe"],
+    "executable": "ExampleLoader.exe"
   }
 ]

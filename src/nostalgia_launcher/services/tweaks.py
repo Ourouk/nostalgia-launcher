@@ -2,7 +2,7 @@
 
 Holds the tweak registry (defaults, UI items, clamping limits), the display
 detection used to pick an FOV default, and the Config.wtf reader/writer.
-Runtime fixes are left to the VanillaFixes loader mod where installed; the
+Runtime fixes are left to the ExampleLoader mod where installed; the
 launcher itself only ever writes Config.wtf.
 """
 

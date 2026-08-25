@@ -18,7 +18,7 @@ git-ignored). This is what makes the 0/9012 "stuck at verifying" regression
 provable on real data instead of synthetic unit fakes.
 
 Note: ``context/client`` is a *lightly* modded client — it ships a few loader
-mods (VanillaFixes/transmogfix/…) but those mod files are themselves part of the
+mods (ExampleLoader/transmogfix/…) but those mod files are themselves part of the
 ``wow-client.torrent`` snapshot, and the vanilla files are byte-identical to it.
 So against the real snapshot the verifier must report the client **up to date**
 (empty stale set). The e2e asserts exactly that for the real client, and uses an

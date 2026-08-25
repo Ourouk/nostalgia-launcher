@@ -32,15 +32,15 @@ FAKE_REGISTRY = [
     {
         "id": "AlphaMod",
         "name": "AlphaMod",
-        "essential": True,
+        "installation": "required",
         "repo_url": "https://example.invalid/alpha",
-        "description": "First essential mod.",
+        "description": "First required mod.",
         "source": {"kind": "github_release"},
     },
     {
         "id": "BetaMod",
         "name": "BetaMod",
-        "essential": False,
+        "installation": "user_opt_in",
         "repo_url": "https://example.invalid/beta",
         "description": "Second mod.",
         "source": {"kind": "github_release"},
@@ -48,7 +48,7 @@ FAKE_REGISTRY = [
     {
         "id": "GammaMod",
         "name": "GammaMod",
-        "essential": False,
+        "installation": "user_opt_in",
         "repo_url": "https://example.invalid/gamma",
         "description": "Third mod.",
         "source": {"kind": "github_release"},
@@ -56,7 +56,7 @@ FAKE_REGISTRY = [
     {
         "id": "NoRepoMod",
         "name": "NoRepoMod",
-        "essential": False,
+        "installation": "user_opt_in",
         "description": "Mod with no repo URL.",
         "source": {"kind": "github_release"},
     },
@@ -138,7 +138,7 @@ def test_rerender_rebuilds_rows(qapp, window, hub):
 # ── rendering state ─────────────────────────────────────────────────────
 
 
-def test_installed_mod_name_is_green_and_essential_shows_star(
+def test_installed_mod_name_is_green_and_required_shows_star(
     qapp, window, hub
 ):
     state = ModsState(
@@ -157,7 +157,7 @@ def test_installed_mod_name_is_green_and_essential_shows_star(
     assert panel._palette.mod_hl.name() in name.styleSheet()
     # Installed mods show their installed version.
     assert panel.findChild(QLabel, "modsVer_AlphaMod").text() == "  1.2"
-    # Essential mods carry the gold star; others keep a blank slot.
+    # Required mods carry the gold star; others keep a blank slot.
     assert panel.findChild(QLabel, "modsStar_AlphaMod").text() == "★"
     assert panel.findChild(QLabel, "modsStar_BetaMod").text() == ""
 
@@ -360,22 +360,22 @@ def test_badge_shows_update_count_and_hides_at_zero(qapp, window, hub):
     assert not badge.isVisible()
 
 
-# ── install-essential button ─────────────────────────────────────────────
+# ── install-required button ──────────────────────────────────────────────
 
 
-def test_install_essential_button_present_and_enabled_when_missing(
+def test_install_required_button_present_and_enabled_when_missing(
     qapp, window, hub
 ):
     window.switch_tab("MODS")
     panel = _panel(window)
     btn = panel.findChild(QPushButton, "modsInstallRecommended")
     assert btn is not None
-    # No records posted → the essential AlphaMod is not installed → enabled.
+    # No records posted → the required AlphaMod is not installed → enabled.
     _post(hub, ModsState())
     assert btn.isEnabled()
 
 
-def test_install_essential_button_disabled_when_all_installed(
+def test_install_required_button_disabled_when_all_installed(
     qapp, window, hub
 ):
     window.switch_tab("MODS")
@@ -385,7 +385,7 @@ def test_install_essential_button_disabled_when_all_installed(
     assert not btn.isEnabled()
 
 
-def test_install_essential_button_calls_controller(
+def test_install_required_button_calls_controller(
     qapp, window, hub, monkeypatch
 ):
     window.switch_tab("MODS")

@@ -187,7 +187,7 @@ def build_app(qapp, monkeypatch, qt_env):
                 {
                     "out_dir": str(cfg.parent / "game"),
                     "mod_release_cache": {
-                        "VanillaFixes": {"timestamp": 0, "release": {}}
+                        "ExampleLoader": {"timestamp": 0, "release": {}}
                     },
                     "addons": {},
                 }

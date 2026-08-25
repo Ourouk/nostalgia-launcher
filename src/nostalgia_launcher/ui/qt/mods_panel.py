@@ -1,7 +1,7 @@
 """Nostalgia Launcher Qt (PySide6) mods panel.
 
 Renders the mod registry into a scrollable list of `ModRow` widgets —
-install checkbox, essential star badge, name/version, repo link,
+install checkbox, required star badge, name/version, repo link,
 retry/update action and error line — plus an Apply footer and a nav-badge
 callback driven by the updates count. Rows are rebuilt from every ModsLoaded
 snapshot the bridge forwards; user actions are forwarded straight into the
@@ -54,7 +54,7 @@ class ModRow(QWidget):
             if pend is not None and pend.enabled is not None
             else (rec.enabled if rec else False)
         )
-        essential = mod.get("essential", False)
+        required = mod.get("installation") == "required"
 
         name_col = p.err if has_error else (p.mod_hl if installed else p.text)
         desc_col = p.text if enabled else p.text_dim
@@ -74,7 +74,7 @@ class ModRow(QWidget):
 
         # Fixed-width slot keeps names aligned whether or not the star shows.
         self.star_label = add_star(
-            top_layout, f"modsStar_{mid}", essential, "Essential mod", p
+            top_layout, f"modsStar_{mid}", required, "Required mod", p
         )
 
         self.name_label = QLabel(mod["name"], top)
@@ -167,7 +167,7 @@ class ModsPanel(ScrollListPanel):
         for text, color in (
             ("Mods marked with ", p.text_dim),
             ("★", p.gold),
-            (" are essential", p.text_dim),
+            (" are required", p.text_dim),
         ):
             part = QLabel(text, banner)
             part.setStyleSheet(f"color: {color.name()};")
@@ -222,7 +222,7 @@ class ModsPanel(ScrollListPanel):
         footer = QWidget(self)
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(16, 6, 16, 10)
-        self._recommended_button = QPushButton("★  Install Essential", footer)
+        self._recommended_button = QPushButton("★  Install Required", footer)
         self._recommended_button.setObjectName("modsInstallRecommended")
         self._recommended_button.setCursor(Qt.PointingHandCursor)
         self._recommended_button.setProperty("variant", "primary")
@@ -329,10 +329,10 @@ class ModsPanel(ScrollListPanel):
         )
 
     def _essential_remaining(self) -> list:
-        """Essential mods (registry flag) not yet present on disk."""
+        """Required mods (installation flag) not yet present on disk."""
         remaining = []
         for mod in self._mods.registry:
-            if not mod.get("essential", False):
+            if mod.get("installation") != "required":
                 continue
             rec = self._mods.state.records.get(mod["id"])
             if rec is not None and rec.present:
@@ -341,8 +341,8 @@ class ModsPanel(ScrollListPanel):
         return remaining
 
     def _refresh_recommended_visibility(self):
-        """The 'Install Essential' button is enabled only while there is at
-        least one essential mod not yet installed and no install is running —
+        """The 'Install Required' button is enabled only while there is at
+        least one required mod not yet installed and no install is running —
         otherwise it greys out."""
         self._recommended_button.setEnabled(
             bool(self._essential_remaining())

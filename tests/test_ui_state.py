@@ -44,7 +44,7 @@ def test_mods_state_defaults():
     assert m.updates_count == 0
     assert m.has_errors is False
     assert m.has_pending_changes is False
-    assert m.latest_version("VanillaFixes") is None
+    assert m.latest_version("ExampleLoader") is None
 
 
 def test_addons_state_defaults():
@@ -161,10 +161,10 @@ def test_mod_pending_partial_change():
 
 def test_mods_state_construction():
     records = {
-        "VanillaFixes": ModState(enabled=True, installed_version="2.0"),
+        "ExampleLoader": ModState(enabled=True, installed_version="2.0"),
         "dxvk": ModState(enabled=False, error="API rate limit"),
     }
-    latest = {"VanillaFixes": "2.0", "dxvk": "1.10.5", "ClassicAPI": "1.3"}
+    latest = {"ExampleLoader": "2.0", "dxvk": "1.10.5", "ClassicAPI": "1.3"}
     pending = {"dxvk": ModPending(enabled=True)}
     m = ModsState(
         records=records,
@@ -180,7 +180,7 @@ def test_mods_state_construction():
 
 
 def test_mods_state_no_errors_or_pending():
-    m = ModsState(records={"VanillaFixes": ModState(enabled=True)})
+    m = ModsState(records={"ExampleLoader": ModState(enabled=True)})
     assert m.has_errors is False
     assert m.has_pending_changes is False
 

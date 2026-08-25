@@ -3,7 +3,7 @@
 Owns the TWEAKS-panel business logic: reading the saved tweak values,
 clamping the UI entries, deciding when Apply/Reset are offered, and the
 apply/reset workers (Config.wtf update). Runtime client fixes are left to the
-VanillaFixes loader mod; the launcher never patches WoW.exe. Speaks to the UI
+ExampleLoader loader mod; the launcher never patches WoW.exe. Speaks to the UI
 only through events on the shared EventDispatcher: LogMessage for every log
 line and OperationFinished(kind="tweaks") at the end (plus OperationFailed on
 an exception). No GUI toolkit.

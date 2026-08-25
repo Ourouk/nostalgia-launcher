@@ -26,7 +26,7 @@ from nostalgia_launcher.state.models import ModPending
 # Small synthetic registry so tests don't depend on the real one.
 MOD_A = {
     "id": "AlphaMod",
-    "essential": True,
+    "installation": "required",
     "name": "AlphaMod",
     "description": "alpha",
     "source": {
@@ -40,7 +40,7 @@ MOD_A = {
 }
 MOD_B = {
     "id": "BetaMod",
-    "essential": False,
+    "installation": "user_opt_in",
     "name": "BetaMod",
     "description": "beta",
     "source": {
@@ -523,9 +523,8 @@ def test_load_records_adopts_present_untracked_mod(
     mod = {
         "id": "NewMod",
         "name": "NewMod",
-        "essential": True,
         "installed_files": ["new.dll"],
-        "register_dll": "new.dll",
+        "register_dll": ["new.dll"],
         "source": {"kind": "github_release"},
     }
     monkeypatch.setattr(mc.mods, "mods_registry", lambda *a, **k: [mod])
@@ -585,7 +584,7 @@ def test_apply_uninstalls_adopted_mod_when_disabled(
         "id": "NewMod",
         "name": "NewMod",
         "installed_files": ["new.dll"],
-        "register_dll": "new.dll",
+        "register_dll": ["new.dll"],
         "source": {"kind": "github_release"},
     }
     monkeypatch.setattr(mc.mods, "mods_registry", lambda *a, **k: [mod])

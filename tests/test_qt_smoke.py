@@ -143,8 +143,8 @@ def qt_env(monkeypatch, tmp_path):
         "mods_registry",
         lambda *a, **k: [
             {
-                "id": "VanillaFixes",
-                "name": "VanillaFixes",
+                "id": "ExampleLoader",
+                "name": "ExampleLoader",
                 "essential": True,
                 "description": "Fixes stutter",
                 "repo_url": "https://example.invalid/vf",
@@ -219,7 +219,7 @@ def build_app(qapp, monkeypatch, qt_env):
                 {
                     "out_dir": str(cfg.parent / "game"),
                     "mod_release_cache": {
-                        "VanillaFixes": {"timestamp": 0, "release": {}}
+                        "ExampleLoader": {"timestamp": 0, "release": {}}
                     },
                     "addons": {},
                 }
@@ -340,9 +340,9 @@ def test_startup_schedule_runs_the_full_launch_chain(qapp, app):
 
     # 900 ms → mod latest-version fetch (mod_release_cache present).
     _wait_until(lambda: bool(hub.mods.state.latest_versions))
-    assert hub.mods.state.latest_versions["VanillaFixes"] == "1.2.3"
-    assert "VanillaFixes" in mods_panel._rows
-    assert "1.2.3" in mods_panel._rows["VanillaFixes"].version_label.text()
+    assert hub.mods.state.latest_versions["ExampleLoader"] == "1.2.3"
+    assert "ExampleLoader" in mods_panel._rows
+    assert "1.2.3" in mods_panel._rows["ExampleLoader"].version_label.text()
 
     # 1500 ms → addons verify against the fake catalog.
     _wait_until(lambda: hub.addons.state.state == "done")
@@ -537,13 +537,15 @@ def test_mods_loaded_renders_rows_and_updates_badge(qapp, app_no_startup):
     hub = app_no_startup._hub
     panel = win._stack.widget(win._pages["MODS"])
 
-    state = ModsState(latest_versions={"VanillaFixes": "2.0"}, updates_count=3)
+    state = ModsState(
+        latest_versions={"ExampleLoader": "2.0"}, updates_count=3
+    )
     hub.mods.state = state
     hub.dispatcher.post(ModsLoaded(state))
     QTest.qWait(200)
 
-    assert "VanillaFixes" in panel._rows
-    assert "2.0" in panel._rows["VanillaFixes"].version_label.text()
+    assert "ExampleLoader" in panel._rows
+    assert "2.0" in panel._rows["ExampleLoader"].version_label.text()
     badge = win._tabBadges["MODS"]
     assert badge.text() == "3"
     assert badge.isVisible()
