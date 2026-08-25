@@ -481,8 +481,12 @@ CONTENT_KINDS = ("mods", "addons", "assets")
 
 def local_repo_path(kind: str) -> str:
     """The local repo file for a content kind (one of `CONTENT_KINDS`),
-    living in the per-user config dir next to the launcher config."""
-    return os.path.join(config_dir(), f"local_{kind}_repo.json")
+    scoped to the active profile (the legacy top-level file for the
+    default profile). Function-local profiles import: profiles imports
+    LAUNCHER_FILE/CONTENT_KINDS from this module."""
+    from . import profiles
+
+    return profiles.active().local_repo_path(kind)
 
 
 def load_local_repo(kind: str) -> tuple[list, list]:
@@ -513,9 +517,13 @@ def load_local_repo(kind: str) -> tuple[list, list]:
 
 def legacy_custom_path(kind: str) -> str:
     """Path of the pre-repo per-user custom file (the hand-edit escape
-    hatch that predates the local repos). Kept as a backup after the
-    one-time migration into the repo's "custom" list."""
-    return os.path.join(config_dir(), f"nostalgia_launcher_{kind}_custom.json")
+    hatch that predates the local repos), scoped to the active profile —
+    the SAME file services.catalog.custom_file() serves, so the one-time
+    migration seeds from what that profile's user actually had. Kept as a
+    backup after the migration into the repo's "custom" list."""
+    from . import profiles
+
+    return profiles.active().custom_catalog_path(kind)
 
 
 def legacy_custom_entries(kind: str) -> list:

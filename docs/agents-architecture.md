@@ -68,9 +68,12 @@ live under `<config_dir>/profiles/<name>/`:
   nostalgia_launcher_config.json       │ legacy paths, never moved
   <cache_dir>/…_hash_cache.json        ┘
   profiles.json                        {"active": str, "order": [str]}
+  local_<kind>_repo.json               ┐ per-kind content repos
+                                       ┘ ({"server", "custom"}), default only
   profiles/<name>/
     launcher.json  state.json  hash_cache.json
-    custom/nostalgia_launcher_{mods,addons}_custom.json
+    local_<kind>_repo.json             mods/addons/assets content repos
+    custom/nostalgia_launcher_{mods,addons,assets}_custom.json
     torrents/<info_hash>.torrent|.resume   launcher_logo.img
 ```
 
@@ -81,7 +84,9 @@ directory scan — startup never crashes over the registry. One profile is
 active per process, pinned once via `profiles.activate(resolve(...))` in
 `cli.main()`; everything downstream routes through `profiles.active()`:
 `config_store.configure(state/cache)` in `_run_backend`,
-`catalog.custom_file()`, `logo.logo_cache_path()`,
+`catalog.custom_file()`, `launcher.local_repo_path()` /
+`legacy_custom_path()` (the import-time content repos),
+`logo.logo_cache_path()`,
 `torrent_update.torrent_cache_dir()`, and first-launch wizard persistence
 (via `launcher.set_profile_launcher_path`, cleared by `launcher.reset()`).
 `controllers/settings` checks `first_run` against

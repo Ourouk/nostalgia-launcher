@@ -22,7 +22,7 @@ import threading
 from dataclasses import dataclass
 
 from .constants import CACHE_FILE, CONFIG_FILE
-from .launcher import LAUNCHER_FILE
+from .launcher import CONTENT_KINDS, LAUNCHER_FILE
 from .platform_support import cache_dir, config_dir
 
 DEFAULT_PROFILE = "default"
@@ -81,6 +81,14 @@ class Profile:
         return os.path.join(
             self.custom_dir(), f"nostalgia_launcher_{kind}_custom.json"
         )
+
+    def local_repo_path(self, kind: str) -> str:
+        """The content-kind local repo file (launcher CONTENT_KINDS):
+        `{"server": [...], "custom": [...]}` written by the import-time
+        split."""
+        if not self.root:
+            return os.path.join(config_dir(), f"local_{kind}_repo.json")
+        return os.path.join(self.root, f"local_{kind}_repo.json")
 
     def torrents_dir(self) -> str:
         """Torrent metadata/resume directory for this profile."""
@@ -245,9 +253,11 @@ def create(name: str, launcher_json_text: str = "") -> tuple:
 
 
 def duplicate(src: str, dst: str) -> str:
-    """Copy a profile's server config into a new profile (runtime state,
-    caches and install records stay per-machine and are NOT copied).
-    Returns "" on success, else an error message."""
+    """Copy a profile's server config AND its content repos (mods/addons/
+    assets server + custom entries — the pre-split embedded content)
+    into a new profile. Runtime state, caches and install records stay
+    per-machine and are NOT copied. Returns "" on success, else an
+    error message."""
     src_prof = _existing_or_none(src)
     if src_prof is None:
         return f"Unknown profile: {src}"
@@ -260,8 +270,19 @@ def duplicate(src: str, dst: str) -> str:
             text = f.read()
     except OSError:
         pass  # unconfigured source duplicates as unconfigured
-    _new, err = create(dst, launcher_json_text=text)
-    return err
+    new_prof, err = create(dst, launcher_json_text=text)
+    if err:
+        return err
+    for kind in CONTENT_KINDS:
+        src_repo = src_prof.local_repo_path(kind)
+        if not os.path.exists(src_repo):
+            continue
+        try:
+            shutil.copyfile(src_repo, new_prof.local_repo_path(kind))
+        except OSError as e:
+            shutil.rmtree(new_prof.root, ignore_errors=True)
+            return f"Could not copy the {kind} content repo: {e}"
+    return ""
 
 
 def rename(src: str, dst: str) -> str:

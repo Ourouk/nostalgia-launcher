@@ -23,6 +23,13 @@ import nostalgia_launcher.services.update_backend.torrent_update as tu
 
 MINIMAL_CFG = {"server": {"name": "P", "base_url": "https://p.test"}}
 
+# Real, profile-aware implementations — the autouse _local_repos_env
+# conftest fixture replaces the launcher/catalog seam attributes with
+# flat tmp redirects; these let individual tests exercise the genuine
+# routing.
+_REAL_LOCAL_REPO_PATH = launcher.local_repo_path
+_REAL_LEGACY_CUSTOM_PATH = launcher.legacy_custom_path
+
 
 @pytest.fixture()
 def prof_home(tmp_path, monkeypatch):
@@ -34,6 +41,23 @@ def prof_home(tmp_path, monkeypatch):
         profiles, "index_path", lambda: str(tmp_path / "profiles.json")
     )
     return root
+
+
+@pytest.fixture()
+def real_repo_seams(monkeypatch):
+    """Undo the autouse _local_repos_env redirect for tests verifying the
+    real (profile-aware) path resolution."""
+    import nostalgia_launcher.services.catalog as catalog
+
+    monkeypatch.setattr(launcher, "local_repo_path", _REAL_LOCAL_REPO_PATH)
+    monkeypatch.setattr(
+        launcher, "legacy_custom_path", _REAL_LEGACY_CUSTOM_PATH
+    )
+    monkeypatch.setattr(
+        catalog,
+        "custom_file",
+        lambda kind: profiles.active().custom_catalog_path(kind),
+    )
 
 
 def _write_index(path, payload):
@@ -66,9 +90,10 @@ def test_default_maps_legacy_paths_byte_identically():
 def test_default_active_services_keep_legacy_paths():
     """With nothing activated, artifact indirection yields exactly
     today's paths."""
-    assert catalog.custom_file("addons") == os.path.join(
-        platform_support.config_dir(),
-        "nostalgia_launcher_addons_custom.json",
+    # The autouse _local_repos_env may redirect these wholesale; the
+    # contract under a default-active profile is mutual consistency.
+    assert catalog.custom_file("addons") == (
+        launcher.legacy_custom_path("addons")
     )
     assert logo.logo_cache_path() == os.path.join(
         platform_support.cache_dir(), "launcher_logo.img"
@@ -206,7 +231,7 @@ def test_ghost_active_falls_back_to_default(prof_home):
 # ── artifact indirection with an active non-default profile ───────────
 
 
-def test_artifacts_route_into_profile(prof_home):
+def test_artifacts_route_into_profile(prof_home, real_repo_seams):
     prof, err = profiles.create("iso")
     assert err == ""
     profiles.activate(prof)
@@ -385,3 +410,98 @@ def test_declined_restart_next_launch_lands_on_wizard(fake_home, monkeypatch):
     assert profiles.load_index()["active"] == "default"
     assert not os.path.exists(str(prof.root))
     assert _legacy_config()["server"]["base_url"] == "https://p.test"
+
+
+# ── local content repos (post main-merge: import-time split) ───────────
+
+
+def test_local_repos_route_into_profile(prof_home, real_repo_seams):
+    """launcher.local_repo_path resolves through the active profile; the
+    default profile keeps the byte-compatible top-level file."""
+    prof, err = profiles.create("iso")
+    assert err == ""
+    profiles.activate(prof)
+    try:
+        for kind in launcher.CONTENT_KINDS:
+            assert launcher.local_repo_path(kind) == os.path.join(
+                prof.root, f"local_{kind}_repo.json"
+            )
+    finally:
+        profiles.activate(profiles.DEFAULT)
+    for kind in launcher.CONTENT_KINDS:
+        assert launcher.local_repo_path(kind) == os.path.join(
+            platform_support.config_dir(), f"local_{kind}_repo.json"
+        )
+
+
+def test_legacy_custom_path_matches_custom_file(prof_home, real_repo_seams):
+    """The migration seed and catalog.custom_file() must resolve to the
+    SAME per-profile file (no split brain)."""
+    import nostalgia_launcher.services.catalog as catalog
+
+    prof, _ = profiles.create("iso")
+    profiles.activate(prof)
+    try:
+        assert launcher.legacy_custom_path("mods") == (
+            catalog.custom_file("mods")
+        )
+    finally:
+        profiles.activate(profiles.DEFAULT)
+
+
+def test_duplicate_carries_content_repos(prof_home):
+    src, _ = profiles.create("src", json.dumps(MINIMAL_CFG))
+    payload = json.dumps(
+        {"server": [{"name": "S"}], "custom": [{"name": "U"}]}
+    )
+    for kind in launcher.CONTENT_KINDS:
+        with open(src.local_repo_path(kind), "w", encoding="utf-8") as f:
+            f.write(payload)
+
+    assert profiles.duplicate("src", "dst") == ""
+    dst = profiles.resolve("dst")
+    for kind in launcher.CONTENT_KINDS:
+        with open(dst.local_repo_path(kind), encoding="utf-8") as f:
+            repo = json.load(f)
+        assert [e["name"] for e in repo["server"]] == ["S"]
+        assert [e["name"] for e in repo["custom"]] == ["U"]
+
+
+def test_duplicate_without_repos_stays_clean(prof_home):
+    profiles.create("bare", json.dumps(MINIMAL_CFG))
+    assert profiles.duplicate("bare", "dst") == ""
+    dst = profiles.resolve("dst")
+    for kind in launcher.CONTENT_KINDS:
+        assert not os.path.exists(dst.local_repo_path(kind))
+
+
+def test_persist_text_splits_content_into_active_profile(
+    fake_home, real_repo_seams
+):
+    """persist_text writes the stripped config into the active profile's
+    launcher.json AND lands the local repos inside the profile root."""
+    from nostalgia_launcher.core.constants import CACHE_FILE
+
+    prof, err = profiles.create("seeded")
+    assert err == ""
+    profiles.set_active("seeded")
+    profiles.activate(prof)
+    launcher.set_profile_launcher_path(prof.launcher_path())
+    try:
+        doc = {
+            "server": {"base_url": "https://p.test"},
+            "mods": [],
+            "addons": [],
+            "assets": [],
+        }
+        config_store.configure(prof.state_path(), CACHE_FILE)
+        dest, err = launcher.persist_text(json.dumps(doc))
+        assert err == ""
+        assert dest == prof.launcher_path()
+        for kind in launcher.CONTENT_KINDS:
+            path = os.path.join(prof.root, f"local_{kind}_repo.json")
+            with open(path, encoding="utf-8") as f:
+                repo = json.load(f)
+            assert repo == {"server": [], "custom": []}
+    finally:
+        launcher.set_profile_launcher_path("")

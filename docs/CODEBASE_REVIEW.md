@@ -528,7 +528,8 @@ the mirror-probe thread. All daemon threads. **[verified]**
 PER-PROFILE. The paths shown are the reserved `default` profile's (the
 legacy top-level files, never moved); a non-default profile P resolves
 them under `<config_dir>/profiles/P/` as `launcher.json`, `state.json`,
-`hash_cache.json`, `custom/<…>_custom.json`, `torrents/<hash>.*`,
+`hash_cache.json`, `local_<kind>_repo.json` (content repos),
+`custom/<…>_custom.json`, `torrents/<hash>.*`,
 `launcher_logo.img`. The registry itself is `<config_dir>/profiles.json`
 (`{"active", "order"}`; tolerant of corruption — rebuilt by dir scan).
 Single-instance machinery adds two more files/artifacts next to the state
