@@ -123,7 +123,9 @@ def cfg(monkeypatch, tmp_path):
         "update_config",
         lambda mutator: (mutator(state), state)[1],
     )
-    monkeypatch.setattr(sc, "CONFIG_FILE", str(tmp_path / "no-config.json"))
+    monkeypatch.setattr(
+        sc.config_store, "config_file", str(tmp_path / "no-config.json")
+    )
     return state
 
 
@@ -435,7 +437,7 @@ def test_set_path_resets_for_new_folder(
 ):
     cache = tmp_path / "hash.json"
     cache.write_text("{}")
-    monkeypatch.setattr(sc, "CACHE_FILE", str(cache))
+    monkeypatch.setattr(sc.config_store, "cache_file", str(cache))
     game = tmp_path / "game"
     game.mkdir()
     (game / "WoW.exe").write_bytes(b"MZ")
@@ -485,7 +487,7 @@ def test_set_path_rejected_while_update_running(
     """A folder change during a running update is ignored wholesale."""
     cache = tmp_path / "hash.json"
     cache.write_text("{}")
-    monkeypatch.setattr(sc, "CACHE_FILE", str(cache))
+    monkeypatch.setattr(sc.config_store, "cache_file", str(cache))
     game = tmp_path / "game"
     game.mkdir()
     cfg["mods"] = {"VanillaFixes": {"enabled": True}}
@@ -658,7 +660,7 @@ def test_toggles_persist_config_keys(controller, cfg):
 def test_verify_files_delegates(controller, cfg, fakes, monkeypatch, tmp_path):
     cache = tmp_path / "hash.json"
     cache.write_text("{}")
-    monkeypatch.setattr(sc, "CACHE_FILE", str(cache))
+    monkeypatch.setattr(sc.config_store, "cache_file", str(cache))
     controller.verify_files()
     assert not cache.exists()
     assert fakes.updater.invalidate_calls == 1

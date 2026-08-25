@@ -31,9 +31,8 @@ import json
 import os
 from urllib.parse import urlsplit
 
-from ..core import config_store, launcher
+from ..core import config_store, launcher, profiles
 from ..core.log_sink import log
-from ..core.platform_support import config_dir
 from .sources import hooks as _hooks
 from .sources import kinds as _source_kinds
 from .sources.safety import safe_folder, safe_relpath  # noqa: F401 (re-export)
@@ -96,8 +95,9 @@ def reset_registry_url(kind: str):
 
 
 def custom_file(kind: str) -> str:
-    """Path of the per-user custom JSON file for a catalog kind."""
-    return os.path.join(config_dir(), f"nostalgia_launcher_{kind}_custom.json")
+    """Path of the per-user custom JSON file for a catalog kind — scoped
+    to the active profile (legacy top-level file for the default)."""
+    return profiles.active().custom_catalog_path(kind)
 
 
 def load_custom(kind: str, validator) -> list:

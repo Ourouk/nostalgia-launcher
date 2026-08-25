@@ -19,6 +19,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -31,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...core import launcher
+from ...core import launcher, profiles
 from ...core.constants import UPDATER_VERSION
 from ...core.log_sink import _LOG_Q, log
 from ...services import logo
@@ -180,6 +181,27 @@ class MainWindow(QMainWindow):
         wmLayout.addWidget(self._updateAvailableLabel)
         self._updateAvailableShown = False
         layout.addWidget(wordmarkBox)
+
+        # Active-profile selector: picking another profile confirms and
+        # RESTARTS the app into it (profiles_ui.switch_profile); a
+        # declined confirmation or failed relaunch reverts the selection.
+        # Management (create/duplicate/rename/delete) lives in Settings →
+        # PROFILES.
+        self._profileCombo = QComboBox(header)
+        self._profileCombo.setObjectName("profileCombo")
+        self._profileCombo.setToolTip(
+            "Active profile — selecting another one restarts the launcher"
+        )
+        self._profileCombo.setAccessibleName("Active profile")
+        self._fill_profile_combo()
+        self._profileCombo.activated.connect(self._on_profile_combo_activated)
+        self._profileCombo.setStyleSheet(
+            f"QComboBox {{ font-size: {metrics.PT_BADGE}pt;"
+            f" font-weight: bold; color: {p.text_dim.name()}; }}"
+            f"QComboBox:hover {{ color: {p.gold.name()}; }}"
+            f"QComboBox::drop-down {{ border: none; }}"
+        )
+        layout.addWidget(self._profileCombo)
 
         # A themed logo replaces the wordmark text once it has been fetched
         # (the server-name text shows until then, and stays on failure).
@@ -558,6 +580,36 @@ class MainWindow(QMainWindow):
             self._folderLabel.setText(f"Game folder: {path}")
         else:
             self._folderLabel.setText("Game folder not set")
+
+    # ── profile switching (header combo) ─────────────────────────────────
+
+    def _fill_profile_combo(self):
+        """(Re)populate from the registry, preselecting the active profile
+        with signals blocked (programmatic changes must not trigger the
+        switch flow)."""
+        combo = self._profileCombo
+        active = profiles.active().name
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItems(profiles.list_profiles())
+            idx = combo.findText(active)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+        finally:
+            combo.blockSignals(False)
+
+    def _on_profile_combo_activated(self, name: str):
+        """User picked a profile in the header: confirm, then restart into
+        it. A declined confirmation or failed relaunch reverts the combo
+        to the still-active profile."""
+        if name == profiles.active().name:
+            return
+        from .profiles_ui import confirm_switch, switch_profile
+
+        if confirm_switch(self, name) and switch_profile(name):
+            return  # quitting; nothing left to do
+        self._fill_profile_combo()
 
     def _open_settings_dialog(self):
         """Build the settings dialog on demand and show it non-modally.

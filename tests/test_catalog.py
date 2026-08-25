@@ -295,8 +295,16 @@ def test_set_registry_url_rejects_insecure_and_credentials(tmp_path):
 # ── custom-file loading ──────────────────────────────────────────────────────
 
 
+def _redirect_custom(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        catalog,
+        "custom_file",
+        lambda kind: str(tmp_path / f"nostalgia_launcher_{kind}_custom.json"),
+    )
+
+
 def test_load_custom_skips_invalid_and_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(catalog, "config_dir", lambda: str(tmp_path))
+    _redirect_custom(tmp_path, monkeypatch)
     assert catalog.load_custom("addons", catalog.validate_addon) == []
 
     (tmp_path / "nostalgia_launcher_addons_custom.json").write_text(
@@ -309,7 +317,7 @@ def test_load_custom_skips_invalid_and_missing(tmp_path, monkeypatch):
 
 
 def test_write_custom_template_creates_once(tmp_path, monkeypatch):
-    monkeypatch.setattr(catalog, "config_dir", lambda: str(tmp_path))
+    _redirect_custom(tmp_path, monkeypatch)
     assert catalog.write_custom_template("addons", "[]") is True
     assert catalog.write_custom_template("addons", "[]") is False
     assert catalog.clear_custom("addons") is True

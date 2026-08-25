@@ -55,7 +55,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 
 import nostalgia_launcher.controllers.news as news_controller
-import nostalgia_launcher.controllers.settings as settings_controller
 import nostalgia_launcher.controllers.update as update_controller
 import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.core.constants as constants
@@ -103,8 +102,6 @@ def qt_env(monkeypatch, tmp_path):
     config_store.configure(str(cfg), str(cache))
     monkeypatch.setattr(constants, "CONFIG_FILE", str(cfg))
     monkeypatch.setattr(constants, "CACHE_FILE", str(cache))
-    monkeypatch.setattr(settings_controller, "CONFIG_FILE", str(cfg))
-    monkeypatch.setattr(settings_controller, "CACHE_FILE", str(cache))
 
     featured = {
         "title": "1.16.2 is live",

@@ -11,9 +11,9 @@ import os
 import urllib.request
 from urllib.parse import urlsplit
 
+from ..core import profiles
 from ..core.constants import UA
 from ..core.log_sink import log
-from ..core.platform_support import cache_dir
 from ..core.security_http import (
     allowed_download_hosts,
     read_capped,
@@ -26,8 +26,8 @@ LOGO_FILE = "launcher_logo.img"
 
 
 def logo_cache_path() -> str:
-    """Where the downloaded logo is cached."""
-    return os.path.join(cache_dir(), LOGO_FILE)
+    """Where the downloaded logo is cached (active profile's cache)."""
+    return profiles.active().logo_path()
 
 
 def cached_logo() -> str | None:

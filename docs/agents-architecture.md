@@ -55,6 +55,82 @@ src/nostalgia_launcher/
   (`[game]`) output is piped into `log()` by `UpdateController._watch_game`
   / `_drain_child_output` (dedup + `_CHILD_OUTPUT_MAX_LINES` cap).
 
+## Profiles & single-instance guard
+
+**Profiles** (`core/profiles.py`, pure stdlib) give each server/community
+fully isolated state. The reserved `default` profile maps byte-identically
+onto the legacy top-level files — zero migration. Non-default profiles
+live under `<config_dir>/profiles/<name>/`:
+
+```
+<config_dir>/
+  nostalgia_launcher.json              ┐ default profile = exactly these
+  nostalgia_launcher_config.json       │ legacy paths, never moved
+  <cache_dir>/…_hash_cache.json        ┘
+  profiles.json                        {"active": str, "order": [str]}
+  local_<kind>_repo.json               ┐ per-kind content repos
+                                       ┘ ({"server", "custom"}), default only
+  profiles/<name>/
+    launcher.json  state.json  hash_cache.json
+    local_<kind>_repo.json             mods/addons/assets content repos
+    custom/nostalgia_launcher_{mods,addons,assets}_custom.json
+    torrents/<info_hash>.torrent|.resume   launcher_logo.img
+```
+
+Resolution order: explicit `--profile NAME` > `profiles.json.active` >
+`default`. An unknown `--profile` is a hard CLI error (stderr, exit 2);
+a missing/corrupt index or ghost pointer rebuilds silently from a
+directory scan — startup never crashes over the registry. One profile is
+active per process, pinned once via `profiles.activate(resolve(...))` in
+`cli.main()`; everything downstream routes through `profiles.active()`:
+`config_store.configure(state/cache)` in `_run_backend`,
+`catalog.custom_file()`, `launcher.local_repo_path()` /
+`legacy_custom_path()` (the import-time content repos),
+`logo.logo_cache_path()`,
+`torrent_update.torrent_cache_dir()`, and first-launch wizard persistence
+(via `launcher.set_profile_launcher_path`, cleared by `launcher.reset()`).
+`controllers/settings` checks `first_run` against
+`config_store.config_file` (NOT the constants) so a fresh profile gets
+its own wizard flow. Name grammar `[A-Za-z0-9][A-Za-z0-9 _.-]{0,31}` with
+no trailing dot/space; `"default"` is reserved. UI: the main-window
+header carries a profile **combo box** (`profileCombo`) — picking
+another entry confirms ("The launcher will restart using profile …"),
+persists the pointer and relaunches detached (`profiles_ui.
+switch_profile`; `relaunch_with_profile` strips BOTH `--profile X` and
+`--profile=X`, child env gets `NOSTALGIA_RELAUNCH=1`) and quits;
+declining or a failed relaunch reverts the selection (a failed relaunch
+still leaves the pointer persisted, so a manual start lands on it).
+Settings → PROFILES is the **editor** only: New…/Duplicate/Rename…/
+Delete acting on its combo selection — deleting the ACTIVE profile
+resets the pointer to default and offers an immediate restart.
+Concurrency model: one
+active profile, restart on switch, NO parallel instances of the SAME
+profile — different profiles MAY run side by side.
+
+| Shared across all profiles | Isolated per profile |
+|---|---|
+| wine prefix (`data_dir()/wineprefix`), self-update release cache, session log (`launcher.log`) | server config, state store (out_dir/mods/addons/tweaks/launch), hash cache, custom catalogs, torrent metadata/resume, logo cache |
+
+**Single-instance guard**: `cli._run_backend` derives the key from the
+active profile's state path (`core/app_lock.state_key` =
+`"nostalgia-launcher-" + sha1(state_path)[:12]`) and serves a Qt
+`QLocalServer` (`ui/qt/app_lock_qt.py`; Qt imports stay inside
+functions so core stays PySide6-free). A second launch of the SAME
+profile connects, forwards `{"op": "raise"}`, prints "Already running
+(profile X) — focusing existing window." and exits 0; the running window
+raises/unminimizes via the relay signal. Belt-and-braces, an exclusive
+non-blocking advisory lock on `<dir-of-state>/<stem>.lock`
+(`fcntl.flock` / Windows `msvcrt.locking` byte 0; file never written)
+is held for the process lifetime and freed by the OS on death — busy
+store exits 6 ("another instance holds this profile's store").
+`--print-log` runs before the guard and stays read-only. A future
+headless CLI reuses the same guard with `{op: "busy"}` semantics → exit
+7 instead of raising a GUI. Switch & Restart children inherit
+`NOSTALGIA_RELAUNCH=1` and retry the lock ~250 ms × 12 (~3 s) before
+declaring "already running", so the quitting parent never blocks them.
+NFS/network home dirs make flock unreliable (documented, acceptable);
+the QLocalServer guard remains authoritative there.
+
 ## Catalogs (mods/addons/assets)
 
 - **Import-time content split**: a launcher config may carry three inline

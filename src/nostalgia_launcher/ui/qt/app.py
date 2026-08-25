@@ -108,6 +108,15 @@ class QtNostalgiaLauncherApp:
     def show(self):
         self._window.show()
 
+    def raise_to_front(self):
+        """Bring the main window to the front, unminimizing if needed
+        (single-instance "raise" op from a second launch)."""
+        window = self._window
+        if window.isMinimized():
+            window.showNormal()
+        window.raise_()
+        window.activateWindow()
+
     def run(self):
         """Start the event loop, showing the window if it isn't visible yet
         (callers should call `show()` first, but this makes the loop safe

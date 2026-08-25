@@ -524,6 +524,19 @@ the mirror-probe thread. All daemon threads. **[verified]**
 | Torrent cache | `<cache_dir>/torrents/<info_hash>.torrent` (and `.resume`) | bytes | `torrent_update` |
 | Logo cache | `<cache_dir>/launcher_logo.img` | binary pixmap | `services/logo` |
 
+**Per-profile note** (`core/profiles.py`): every artifact row above is
+PER-PROFILE. The paths shown are the reserved `default` profile's (the
+legacy top-level files, never moved); a non-default profile P resolves
+them under `<config_dir>/profiles/P/` as `launcher.json`, `state.json`,
+`hash_cache.json`, `local_<kind>_repo.json` (content repos),
+`custom/<…>_custom.json`, `torrents/<hash>.*`,
+`launcher_logo.img`. The registry itself is `<config_dir>/profiles.json`
+(`{"active", "order"}`; tolerant of corruption — rebuilt by dir scan).
+Single-instance machinery adds two more files/artifacts next to the state
+store: the advisory lock `<dir-of-state>/<stem>.lock`
+(`core/app_lock.py`) and a Qt named server keyed on sha1(state_path)
+(`ui/qt/app_lock_qt.py`).
+
 ### 7.2 Important on-disk config keys (`nostalgia_launcher_config.json`)
 `out_dir`, `client_update_enabled`, `mods` (`{id: {enabled, installed_version,
 installed_files, error}}`), `addons` (`{folder: {git, branch,

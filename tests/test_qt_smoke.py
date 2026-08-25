@@ -10,6 +10,7 @@ writes outside tmp_path. run()/exec() is never called; QTest.qWait and the
 bridge's QTimer deliver dispatcher events exactly as in production.
 """
 
+import json
 import os
 import time
 
@@ -23,14 +24,16 @@ from unittest.mock import Mock
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QMessageBox
 
+import nostalgia_launcher.cli as cli_module
 import nostalgia_launcher.controllers.news as news_controller
-import nostalgia_launcher.controllers.settings as settings_controller
 import nostalgia_launcher.controllers.update as update_controller
 import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.core.constants as constants
+import nostalgia_launcher.core.launcher as launcher
 import nostalgia_launcher.core.platform_support as platform_support
+import nostalgia_launcher.core.profiles as profiles
 import nostalgia_launcher.services.addons as addons_module
 import nostalgia_launcher.services.mods as mods_module
 import nostalgia_launcher.services.news as news_module
@@ -60,6 +63,30 @@ def _offscreen(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
 
+# Real, profile-aware repo-path implementations (the autouse
+# _local_repos_env conftest fixture replaces these seams with flat tmp
+# redirects; individual tests restore them to verify genuine routing).
+_REAL_LOCAL_REPO_PATH = launcher.local_repo_path
+_REAL_LEGACY_CUSTOM_PATH = launcher.legacy_custom_path
+
+
+@pytest.fixture()
+def real_repo_seams(monkeypatch):
+    """Restore the real (profile-aware) repo-path resolution for tests
+    that exercise it."""
+    import nostalgia_launcher.services.catalog as catalog_module
+
+    monkeypatch.setattr(launcher, "local_repo_path", _REAL_LOCAL_REPO_PATH)
+    monkeypatch.setattr(
+        launcher, "legacy_custom_path", _REAL_LEGACY_CUSTOM_PATH
+    )
+    monkeypatch.setattr(
+        catalog_module,
+        "custom_file",
+        lambda kind: profiles.active().custom_catalog_path(kind),
+    )
+
+
 @pytest.fixture(scope="session")
 def qapp():
     return create_qt_app()
@@ -81,8 +108,6 @@ def qt_env(monkeypatch, tmp_path):
     config_store.configure(str(cfg), str(cache))
     monkeypatch.setattr(constants, "CONFIG_FILE", str(cfg))
     monkeypatch.setattr(constants, "CACHE_FILE", str(cache))
-    monkeypatch.setattr(settings_controller, "CONFIG_FILE", str(cfg))
-    monkeypatch.setattr(settings_controller, "CACHE_FILE", str(cache))
 
     featured = {
         "title": "1.16.2 is live",
@@ -585,3 +610,489 @@ def test_bundled_font_loads_into_qt(qapp):
     families = QFontDatabase.applicationFontFamilies(font_id)
     assert len(families) > 0
     assert "STIX Two Math" in families
+
+
+# ── single-instance guard (QLocalServer + store lock) ──────────────────
+
+
+def test_guard_roundtrip_delivers_one_json_line(qapp):
+    """A second instance connects to the served key and its single JSON
+    line arrives as a dispatched dict."""
+    from nostalgia_launcher.core import app_lock
+    from nostalgia_launcher.ui.qt import app_lock_qt
+
+    key = app_lock.state_key("smoke-test-state.json")
+    received = []
+    server, _relay = app_lock_qt.serve(key, received.append)
+    try:
+        sock = app_lock_qt.try_connect_existing(key)
+        assert sock is not None
+        app_lock_qt.send_json_line(sock, {"op": "raise"})
+        _wait_until(lambda: received != [])
+        assert received == [{"op": "raise"}]
+        assert app_lock_qt.try_connect_existing(key) is not None
+    finally:
+        server.close()
+        app_lock_qt.stop_server(key)
+
+
+def test_raise_message_raises_window(qapp, app, monkeypatch):
+    """The relay dispatches on the main thread into the window-raise
+    handler; unknown ops are ignored."""
+    from unittest.mock import Mock
+
+    from nostalgia_launcher.core import app_lock
+    from nostalgia_launcher.ui.qt import app_lock_qt
+
+    key = app_lock.state_key(str(config_store.config_file))
+    window = app._window
+    monkeypatch.setattr(window, "activateWindow", Mock())
+    monkeypatch.setattr(window, "raise_", Mock())
+    server, relay = app_lock_qt.serve(key, cli_module._make_raise_handler(app))
+    try:
+        sock = app_lock_qt.try_connect_existing(key)
+        app_lock_qt.send_json_line(sock, {"op": "raise"})
+        _wait_until(lambda: window.activateWindow.called)
+        assert window.raise_.called
+    finally:
+        server.close()
+        app_lock_qt.stop_server(key)
+
+
+def test_run_backend_second_instance_returns_0_without_app(
+    qapp, fake_home, monkeypatch, capsys
+):
+    """Pre-existing server for the profile key: main() forwards the raise
+    and exits 0 WITHOUT constructing the Qt app shell."""
+    from nostalgia_launcher.core import app_lock
+    from nostalgia_launcher.ui.qt import app_lock_qt
+
+    os.makedirs(platform_support.config_dir(), exist_ok=True)
+    with open(launcher.user_config_path(), "w", encoding="utf-8") as f:
+        f.write('{"server": {"base_url": "https://launcher.test"}}')
+
+    def boom(*a, **kw):
+        raise AssertionError("QtNostalgiaLauncherApp must not be built")
+
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.app.QtNostalgiaLauncherApp", boom
+    )
+
+    key = app_lock.state_key(constants.CONFIG_FILE)
+    server, _relay = app_lock_qt.serve(key)
+    try:
+        rc = cli_module.main([])
+    finally:
+        server.close()
+        app_lock_qt.stop_server(key)
+    assert rc == 0
+    assert "Already running" in capsys.readouterr().err
+
+
+def test_busy_store_exits_6(qapp, fake_home, monkeypatch, capsys):
+    """When another process holds the profile's store lock (and no guard
+    server answers), startup fails with exit code 6 and a message."""
+    import nostalgia_launcher.core.app_lock as app_lock_module
+
+    prof, err = profiles.create(
+        "busy", '{"server": {"base_url": "https://launcher.test"}}'
+    )
+    assert err == ""
+
+    def boom(state_path, *a, **kw):
+        raise app_lock_module.AcquireError(state_path)
+
+    monkeypatch.setattr(
+        "nostalgia_launcher.core.app_lock.acquire_with_grace", boom
+    )
+    assert cli_module.main(["--profile", "busy"]) == 6
+    assert "already holds this profile's store" in capsys.readouterr().err
+
+
+def test_profile_keys_and_locks_differ_across_profiles(qapp, fake_home):
+    """Cross-profile parallelism precondition: distinct state paths give
+    distinct guard keys AND distinct lock files."""
+    from nostalgia_launcher.core import app_lock
+
+    profiles.create("alpha")
+    profiles.create("beta")
+    ka = app_lock.state_key(profiles.resolve("alpha").state_path())
+    kb = app_lock.state_key(profiles.resolve("beta").state_path())
+    assert ka != kb
+    assert app_lock.lock_file_for(
+        profiles.resolve("alpha").state_path()
+    ) != app_lock.lock_file_for(profiles.resolve("beta").state_path())
+
+
+# ── profiles UI: chip, PROFILES section, switch & restart ─────────────
+
+
+def _open_settings_window(build_app):
+    """A running app (safe backends) with the non-modal Settings dialog
+    open. Returns the app; tests close it via _close()."""
+    app = build_app()
+    app._window._open_settings_dialog()
+    return app
+
+
+def test_header_combo_shows_active_profile(qapp, build_app):
+    """The header selector lists every profile with the active one
+    preselected."""
+    from PySide6.QtWidgets import QComboBox
+
+    app = build_app(startup=False)
+    try:
+        combo = app._window.findChild(QComboBox, "profileCombo")
+        assert combo is not None
+        assert [combo.itemText(i) for i in range(combo.count())] == ["default"]
+        assert combo.currentText() == "default"
+        assert "restart" in combo.toolTip().lower()
+        assert combo.accessibleName()
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_header_combo_reflects_non_default_profile(qapp, build_app, fake_home):
+    from PySide6.QtWidgets import QComboBox
+
+    profiles.create("chipster")
+    profiles.activate(profiles.resolve("chipster"))
+    app = build_app(startup=False)
+    try:
+        combo = app._window.findChild(QComboBox, "profileCombo")
+        assert combo.currentText() == "chipster"
+        assert [combo.itemText(i) for i in range(combo.count())] == [
+            "default",
+            "chipster",
+        ]
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_settings_profiles_section_is_editor_only(qapp, build_app, fake_home):
+    """The PROFILES section lists every profile with the active one
+    preselected plus the editor buttons — switching lives in the header,
+    so there is no Switch button here."""
+    from PySide6.QtWidgets import QPushButton
+
+    profiles.create("alpha")
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        combo = dlg._profiles_combo
+        names = [combo.itemText(i) for i in range(combo.count())]
+        assert names == ["default", "alpha"]
+        assert combo.currentText() == "default"
+        for obj_name in (
+            "profilesNew",
+            "profilesDuplicate",
+            "profilesRename",
+            "profilesDelete",
+        ):
+            assert dlg.findChild(QPushButton, obj_name) is not None
+        assert dlg.findChild(QPushButton, "profilesSwitch") is None
+    finally:
+        app._window._settingsDialog.close()
+        app.close()
+        app._hub.close()
+
+
+def test_header_switch_persists_pointer_and_quits(
+    qapp, build_app, monkeypatch, fake_home
+):
+    """Picking another profile in the header: confirm → pointer persisted
+    → detached relaunch spawned → quit."""
+
+    profiles.create("beta")
+    detached = Mock(return_value=True)
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QProcess.startDetached",
+        detached,
+    )
+    quit_calls = []
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QApplication.quit",
+        lambda *a, **kw: quit_calls.append(1),
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QMessageBox.question",
+        lambda *a, **kw: QMessageBox.Yes,
+    )
+    app = build_app()
+    try:
+        win = app._window
+        idx = win._profileCombo.findText("beta")
+        win._profileCombo.setCurrentIndex(idx)
+        win._on_profile_combo_activated("beta")
+
+        assert profiles.load_index()["active"] == "beta"
+        assert detached.called
+        assert quit_calls == [1]
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_header_switch_declined_reverts_and_keeps_pointer(
+    qapp, build_app, monkeypatch, fake_home
+):
+
+    profiles.create("beta")
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QProcess.startDetached",
+        Mock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QMessageBox.question",
+        lambda *a, **kw: QMessageBox.No,
+    )
+    app = build_app()
+    try:
+        win = app._window
+        idx = win._profileCombo.findText("beta")
+        win._profileCombo.setCurrentIndex(idx)
+        win._on_profile_combo_activated("beta")
+
+        # Nothing happened: pointer unchanged, combo reverted.
+        assert profiles.load_index()["active"] == "default"
+        assert win._profileCombo.currentText() == "default"
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_header_switch_failure_keeps_pointer_but_shows_selection(
+    qapp, build_app, monkeypatch, fake_home
+):
+    """A failed relaunch leaves the pointer persisted (manual start will
+    land on it) and reverts the header selection to the running profile."""
+
+    profiles.create("gamma")
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QProcess.startDetached",
+        Mock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QMessageBox.question",
+        lambda *a, **kw: QMessageBox.Yes,
+    )
+    app = build_app()
+    try:
+        win = app._window
+        idx = win._profileCombo.findText("gamma")
+        win._profileCombo.setCurrentIndex(idx)
+        win._on_profile_combo_activated("gamma")
+
+        assert profiles.load_index()["active"] == "gamma"
+        assert win._profileCombo.currentText() == "default"
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_delete_active_resets_pointer_and_offers_restart(
+    qapp, build_app, monkeypatch, fake_home
+):
+    profiles.create("gone")
+    profiles.set_active("gone")
+    profiles.activate(profiles.resolve("gone"))
+    answers = iter([QMessageBox.Yes, QMessageBox.No])
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
+        lambda *a, **kw: next(answers),
+    )
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        dlg._refresh_profiles_combo(select="gone")
+        dlg._on_profile_delete()
+
+        idx = profiles.load_index()
+        assert idx["active"] == "default"
+        assert "gone" not in idx["order"]
+        assert not os.path.exists(
+            os.path.join(platform_support.config_dir(), "profiles", "gone")
+        )
+        # Registry + editor combo are consistent afterwards: the only
+        # profile left is the default (header combo refreshes on restart
+        # by design).
+        assert profiles.list_profiles() == ["default"]
+        combo = dlg._profiles_combo
+        assert [combo.itemText(i) for i in range(combo.count())] == ["default"]
+        assert combo.currentText() == "default"
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_delete_active_restart_offer_switches_to_default(
+    qapp, build_app, monkeypatch, fake_home
+):
+    """Answering Yes to the post-delete offer restarts on 'default' via
+    the shared switch helper (pointer persisted + quit)."""
+    profiles.create("gone")
+    profiles.set_active("gone")
+    profiles.activate(profiles.resolve("gone"))
+    answers = iter([QMessageBox.Yes, QMessageBox.Yes])
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
+        lambda *a, **kw: next(answers),
+    )
+    detached = Mock(return_value=True)
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QProcess.startDetached",
+        detached,
+    )
+    quit_calls = []
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QApplication.quit",
+        lambda *a, **kw: quit_calls.append(1),
+    )
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        dlg._refresh_profiles_combo(select="gone")
+        dlg._on_profile_delete()
+
+        assert profiles.load_index()["active"] == "default"
+        assert detached.called
+        assert quit_calls == [1]
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_delete_active_restart_offer_failure_reports_manually(
+    qapp, build_app, monkeypatch, fake_home
+):
+    profiles.create("gone")
+    profiles.set_active("gone")
+    profiles.activate(profiles.resolve("gone"))
+    answers = iter([QMessageBox.Yes, QMessageBox.Yes])
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
+        lambda *a, **kw: next(answers),
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.profiles_ui.QProcess.startDetached",
+        Mock(return_value=False),
+    )
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        dlg._refresh_profiles_combo(select="gone")
+        dlg._on_profile_delete()
+
+        assert profiles.load_index()["active"] == "default"
+        assert "manually" in dlg._profiles_status.text().lower()
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_delete_default_is_refused_inline(qapp, build_app, fake_home):
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        dlg._refresh_profiles_combo(select="default")
+        dlg._on_profile_delete()
+        assert "cannot be deleted" in dlg._profiles_status.text()
+        assert "default" in profiles.list_profiles()
+    finally:
+        app.close()
+        app._hub.close()
+
+
+def test_new_profile_wizard_scopes_repos_and_globals(
+    qapp, build_app, fake_home, monkeypatch, real_repo_seams
+):
+    """Settings → New… import: launcher.json AND content repos land in
+    the NEW profile while the ACTIVE profile's stores and the global
+    launcher config stay untouched."""
+    import nostalgia_launcher.services.catalog as catalog_module
+
+    prof, err = profiles.create("fresh2")
+    assert err == ""
+    sentinel = '{"server": [{"sentinel": true}], "custom": []}'
+    os.makedirs(platform_support.config_dir(), exist_ok=True)
+    with open(
+        os.path.join(platform_support.config_dir(), "local_mods_repo.json"),
+        "w",
+        encoding="utf-8",
+    ) as f:
+        f.write(sentinel)
+
+    raw = json.dumps(
+        {
+            "server": {"base_url": "https://fresh.test"},
+            "mods": [],
+        }
+    )
+
+    class _FakeWizard:
+        def __init__(self, initial_path=None):
+            pass
+
+        def exec(self):
+            return 1  # QDialog.DialogCode.Accepted
+
+        def selection(self):
+            return {
+                "kind": "url",
+                "config_url": "https://example.invalid/c.json",
+                "raw": raw,
+            }
+
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.launcher_config_dialog.LauncherConfigDialog",
+        _FakeWizard,
+    )
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        dlg._configure_new_profile(prof)
+
+        # Repos landed in the NEW profile…
+        with open(prof.local_repo_path("mods"), encoding="utf-8") as f:
+            assert json.load(f) == {"server": [], "custom": []}
+        with open(prof.launcher_path(), encoding="utf-8") as f:
+            assert json.load(f)["server"]["base_url"] == "https://fresh.test"
+        # …the ACTIVE profile's store is untouched…
+        with open(
+            os.path.join(
+                platform_support.config_dir(), "local_mods_repo.json"
+            ),
+            encoding="utf-8",
+        ) as f:
+            assert f.read() == sentinel
+        # …and the running session's globals are exactly what they were.
+        assert profiles.active().name == "default"
+        assert profiles.load_index()["active"] == "default"
+        assert launcher.server_url() == "https://launcher.test"
+        assert catalog_module.custom_file("mods").startswith(
+            str(platform_support.config_dir())
+        )
+    finally:
+        app._window._settingsDialog.close()
+        app.close()
+        app._hub.close()
+
+
+def test_guard_serve_never_unlinks_live_server(qapp):
+    """Launch race: when AddressInUse hits because ANOTHER instance just
+    won, serve() refuses to removeServer() the live socket — the winner
+    stays raisable."""
+    from nostalgia_launcher.core import app_lock
+    from nostalgia_launcher.ui.qt import app_lock_qt
+
+    key = app_lock.state_key("race-test-state.json")
+    server1, _relay = app_lock_qt.serve(key)
+    try:
+        with pytest.raises(RuntimeError, match="just started"):
+            app_lock_qt.serve(key)
+        assert app_lock_qt.try_connect_existing(key) is not None
+    finally:
+        server1.close()
+        app_lock_qt.stop_server(key)

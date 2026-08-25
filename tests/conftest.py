@@ -8,7 +8,7 @@ each test.
 
 import pytest
 
-from nostalgia_launcher.core import launcher
+from nostalgia_launcher.core import launcher, profiles
 
 LAUNCHER_TEST_CONFIG = {
     "server": {
@@ -76,16 +76,45 @@ def _launcher_env():
     launcher.reset()
 
 
+@pytest.fixture(autouse=True)
+def _profiles_env():
+    """The active profile is process-global; drop any per-test activation
+    so a profile-scoped test can't bleed into later ones."""
+    yield
+    profiles.activate(profiles.DEFAULT)
+
+
+@pytest.fixture(autouse=True)
+def _single_instance_env():
+    """Close any QLocalServer a test's CLI run started, so the next
+    cli.main() never sees a stale 'already running' guard for the same
+    key (the key derives from constants.CONFIG_FILE in default flows).
+    Only touches an ALREADY-imported module: importing here would fight
+    the fake import hooks some tests install."""
+    import sys
+
+    yield
+    mod = sys.modules.get("nostalgia_launcher.ui.qt.app_lock_qt")
+    if mod is not None:
+        mod.stop_all()
+
+
 @pytest.fixture
 def fake_home(tmp_path, monkeypatch):
     """Redirect the user home to ``tmp_path/home`` for every lookup seam.
 
     Sets BOTH ``HOME`` and ``USERPROFILE``: ``os.path.expanduser`` prefers
     ``USERPROFILE`` on Windows, so tests that only monkeypatch ``HOME``
-    silently keep using the real profile dir there.
+    silently keep using the real profile dir there. Also points
+    ``APPDATA``/``LOCALAPPDATA`` into the fake home — on Windows those
+    take precedence over USERPROFILE (platform_support reads %APPDATA%
+    first), so without them every test would share the real per-user
+    config dir and leak state across tests/runs.
     """
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
     return home
