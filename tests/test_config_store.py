@@ -61,6 +61,45 @@ def test_update_config_saves_to_disk():
     assert config_store.load_config()["addons"] == {"pfUI": {}}
 
 
+def test_apply_confirmed_out_dir_writes_flag_and_wipes_folder_scope(
+    tmp_path,
+):
+    """The wizard's recorder mirrors SettingsController.set_path's reset:
+    out_dir + confirmation flag in, folder-scoped install records out —
+    at an EXPLICIT path (independent of the configured globals)."""
+    other = tmp_path / "other" / "state.json"
+    other.parent.mkdir()
+    other.write_text(
+        json.dumps(
+            {
+                "mods": {"m": 1},
+                "addons": {"a": {}},
+                "assets": [],
+                "asset_probe_cache": {"x": 1},
+                "keep": 7,
+                "out_dir": "/old",
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_store.save_config({"untouched": True})
+    config_store.apply_confirmed_out_dir(str(other), "/games/wow/")
+    cfg = json.loads(other.read_text(encoding="utf-8"))
+    assert cfg["out_dir"] == "/games/wow"  # normalized
+    assert cfg["out_dir_user_set"] is True
+    for scoped in ("mods", "addons", "assets", "asset_probe_cache"):
+        assert scoped not in cfg
+    assert cfg["keep"] == 7
+    # The globally-configured store is untouched.
+    assert config_store.load_config() == {"untouched": True}
+
+
+def test_apply_confirmed_out_dir_empty_is_a_noop(tmp_path):
+    target = tmp_path / "state.json"
+    config_store.apply_confirmed_out_dir(str(target), "   ")
+    assert not target.exists()
+
+
 def test_atomic_write_leaves_no_tmp_behind(tmp_path):
     config_store.save_config({"a": 1})
     assert not (tmp_path / "config.json.tmp").exists()

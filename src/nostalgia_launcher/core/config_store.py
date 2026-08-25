@@ -7,6 +7,7 @@ truncated file).
 """
 
 import json
+import os
 import sys
 import threading
 
@@ -60,6 +61,38 @@ def update_config(mutator):
         mutator(cfg)
         save_config(cfg)
         return cfg
+
+
+def apply_confirmed_out_dir(path: str, out_dir: str) -> None:
+    """Record a user-confirmed game folder into an explicit state file:
+    ``out_dir`` + the ``out_dir_user_set`` flag, wiping the folder-scoped
+    install records (mods/addons/assets + probe cache) — the same key
+    semantics as SettingsController.set_path's reset. Takes an explicit
+    file path so it works before configure() bound the module globals
+    (the first-run wizard writes the active profile's state directly) and
+    for writing ANOTHER profile's store (Settings → New…). Failures are
+    reported on stderr, never raised: the user can still confirm a folder
+    through Settings."""
+    out_val = os.path.normpath((out_dir or "").strip())
+    if not out_val or out_val == ".":
+        return
+    with _CONFIG_LOCK:
+        try:
+            with open(path, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except FileNotFoundError:
+            cfg = {}
+        except Exception as e:
+            sys.stderr.write(f"[config] failed to read {path}: {e}\n")
+            return
+        cfg["out_dir"] = out_val
+        cfg["out_dir_user_set"] = True
+        for key in ("mods", "addons", "assets", "asset_probe_cache"):
+            cfg.pop(key, None)
+        try:
+            _atomic_write(path, json.dumps(cfg, indent=2))
+        except Exception as e:
+            sys.stderr.write(f"[config] failed to write {path}: {e}\n")
 
 
 def load_cache() -> dict:

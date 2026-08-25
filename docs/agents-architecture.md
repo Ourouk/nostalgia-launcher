@@ -31,18 +31,26 @@ src/nostalgia_launcher/
   driven by `cli._pick_launcher_config()`); an explicit `--launcher-config`
   that is missing/invalid is a hard `cli.main()` error (no wizard). The wizard
   validates via `launcher.validate_path()` (no global-state side effect) and
-  the selection is persisted to `launcher.user_config_path()` (the per-user
-  config dir) via `launcher.persist()`, taking precedence over auto-discovery
-  on later runs. The download host allowlist
+  REQUIRES an install folder: after validation it shows an editable
+  Games/<ServerName>-pre-filled folder stage, and the accepted folder is
+  recorded as the active profile's confirmed game folder by
+  `config_store.apply_confirmed_out_dir(prof.state_path(), …)` in
+  `cli._first_launch` (Settings → PROFILES → New… writes the fresh profile's
+  own store the same way). The config selection itself is persisted to
+  `launcher.user_config_path()` (the per-user config dir) via
+  `launcher.persist()`, taking precedence over auto-discovery on later runs.
+  The download host allowlist
   (`security_http.allowed_download_hosts()`) is built from the launcher's
   server+mirror hosts plus the git hosts.
-- Game folder is STRICTLY user-confirmed: `out_dir` is written ONLY by
-  Settings apply (which also sets `out_dir_user_set`); controllers read it
-  stored-or-empty and refuse to operate when empty. The only default-ish
-  value left is `platform_support.default_game_folder(server_name)`
-  (`~/Games/<Server>`, `""` when unnamed) — a UI placeholder suggestion,
-  never persisted or auto-created. Pre-flag installs get the flag backfilled
-  once in `SettingsController.__init__`. Don't reintroduce silent defaults.
+- Game folder is STRICTLY user-confirmed: there are exactly two writers of
+  `out_dir` — Settings apply and the first-run wizard's required folder step
+  (both set `out_dir_user_set`); controllers read it stored-or-empty and
+  refuse to operate when empty. The only default-ish value left is
+  `platform_support.default_game_folder(server_name)`
+  (`~/Games/<Server>`, "" when unnamed) — the wizard pre-fills its editable
+  field with it; it is never persisted without the user accepting that
+  stage, never auto-created. Pre-flag installs get the flag backfilled once
+  in `SettingsController.__init__`. Don't reintroduce silent defaults.
 - **Session log** (`core/log_sink.py`): `log()` is the one thread-safe sink —
   it queues for the GUI, mirrors to stdout under `NOSTALGIA_DEBUG`, and (once
   `configure_file()` ran — only `cli._run_backend()` calls it) appends to
@@ -89,7 +97,10 @@ active per process, pinned once via `profiles.activate(resolve(...))` in
 `logo.logo_cache_path()`,
 `torrent_update.torrent_cache_dir()`, and first-launch wizard persistence
 (via `launcher.set_profile_launcher_path`, cleared by `launcher.reset()`).
-`controllers/settings` checks `first_run` against
+The wizard's install-folder step lands in the same profile's state store
+(`config_store.apply_confirmed_out_dir(prof.state_path(), …)`), so each
+profile keeps its own client install folder. `controllers/settings`
+checks `first_run` against
 `config_store.config_file` (NOT the constants) so a fresh profile gets
 its own wizard flow. Name grammar `[A-Za-z0-9][A-Za-z0-9 _.-]{0,31}` with
 no trailing dot/space; `"default"` is reserved. UI: the main-window

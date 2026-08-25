@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...controllers.settings import SettingsController
-from ...core import launcher, platform_support, profiles
+from ...core import config_store, launcher, platform_support, profiles
 from . import metrics
 from .bridge import ControllerBridge
 from .linux_settings_dialog import LinuxSettingsDialog
@@ -613,8 +613,10 @@ class SettingsDialog(QDialog):
         while the dialog runs, so an accepted selection lands its
         launcher.json AND content repos into the new profile without ever
         touching the running profile's stores or the global launcher
-        config. Skipping is acceptable — the profile simply stays
-        unconfigured."""
+        config. The wizard's required install folder is recorded into the
+        new profile's OWN state store (the process store still points at
+        the running profile), so the profile restarts fully configured.
+        Skipping is acceptable — the profile simply stays unconfigured."""
         from .launcher_config_dialog import LauncherConfigDialog
 
         prev_active = profiles.active()
@@ -624,9 +626,16 @@ class SettingsDialog(QDialog):
             dlg = LauncherConfigDialog(initial_path=launcher.discover_path())
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 return
-            err = self._persist_profile_selection(dlg.selection())
+            sel = dlg.selection()
+            err = self._persist_profile_selection(sel)
             if err:
                 self._profile_error(err)
+                return
+            install_dir = (sel.get("install_dir") or "").strip()
+            if install_dir:
+                config_store.apply_confirmed_out_dir(
+                    prof.state_path(), install_dir
+                )
         finally:
             profiles.activate(prev_active)
             launcher.set_profile_launcher_path(

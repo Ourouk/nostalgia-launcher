@@ -152,8 +152,11 @@ def _print_log(tail) -> int:
 def _first_launch(show_log: bool = False) -> int:
     """No launcher config and no --launcher-config: ask the user to import
     one (a local file or an https URL they supply), then persist it so
-    future launches reuse it. No game folder is ever auto-selected — the
-    user confirms one in Settings before anything downloads."""
+    future launches reuse it. The wizard also REQUIRES an install folder;
+    it is recorded as the active profile's confirmed game folder
+    (``out_dir`` in its own state store) so each profile installs its own
+    client. No folder is ever assumed without that explicit wizard step —
+    profiles configured otherwise stay unconfirmed until Settings."""
     try:
         chosen = _pick_launcher_config()
     except ImportError as e:
@@ -208,6 +211,14 @@ def _first_launch(show_log: bool = False) -> int:
         if err:
             sys.stderr.write(f"{err}\n")
             return 1
+    # The wizard's required install folder becomes THIS profile's
+    # confirmed game folder (its own state store; legacy top-level file
+    # for the default profile).
+    install_dir = (chosen.get("install_dir") or "").strip()
+    if install_dir:
+        config_store.apply_confirmed_out_dir(
+            profiles.active().state_path(), install_dir
+        )
     return _run_backend(show_log)
 
 
