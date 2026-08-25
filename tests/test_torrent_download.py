@@ -2074,9 +2074,14 @@ def test_torrent_corrupt_error_on_malformed_torrent(tmp_path, monkeypatch):
         "secure_urlopen",
         lambda *a, **k: io.BytesIO(b"not a real torrent file"),
     )
-    monkeypatch.setattr(
-        "libtorrent.torrent_info",
-        lambda *_: (_ for _ in ()).throw(RuntimeError("invalid torrent")),
+
+    def _bad_torrent_info(*_):
+        raise RuntimeError("invalid torrent")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "libtorrent",
+        SimpleNamespace(torrent_info=_bad_torrent_info),
     )
 
     with pytest.raises(
@@ -2102,6 +2107,9 @@ def test_torrent_session_error_on_session_fail(tmp_path, monkeypatch):
         raise RuntimeError("address already in use")
 
     q = queue.Queue()
+    # verify() imports libtorrent before it reaches the session; a fake
+    # keeps the session-failure path testable without the real binding.
+    monkeypatch.setitem(sys.modules, "libtorrent", SimpleNamespace())
     v = td.TorrentVerifier(str(tmp_path), q, q)
 
     class FakeTI:

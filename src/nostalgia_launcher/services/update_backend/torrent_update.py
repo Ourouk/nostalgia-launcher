@@ -221,8 +221,6 @@ def _fetch_torrent(torrent_url: str, log) -> "TorrentSnapshot":
     The raw bytes are persisted under the launcher cache (keyed by info hash)
     on a best-effort basis so resume data always has a stable home.
     """
-    import libtorrent as lt
-
     log(f"  Fetching torrent: {torrent_url}", "dim")
     req = urllib.request.Request(torrent_url, headers={"User-Agent": UA})
     try:
@@ -260,6 +258,10 @@ def _fetch_torrent(torrent_url: str, log) -> "TorrentSnapshot":
         except OSError as e:
             raise TorrentDiskError(f"Failed to write torrent file: {e}") from e
         try:
+            # Imported only once parsing is actually reached: the fetch and
+            # its error wrapping must work on installs without libtorrent.
+            import libtorrent as lt
+
             ti = lt.torrent_info(tmp)
         except Exception as e:
             raise TorrentCorruptError(f"Failed to parse torrent: {e}") from e
