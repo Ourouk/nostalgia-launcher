@@ -80,6 +80,15 @@ def serve(key, on_message=None):
     class _Relay(QObject):
         message = Signal(object)
 
+    # Launch-race probe: never compete with a live listener. On POSIX a
+    # duplicate listen() reports AddressInUse; on Windows named pipes a
+    # second listener can succeed SILENTLY (splitting raise-to-front
+    # traffic), so this pre-check runs on every platform. A crashed
+    # instance leaves a socket with NO listener — the probe ignores it,
+    # and the AddressInUse branch below clears it.
+    if try_connect_existing(key) is not None:
+        raise RuntimeError("another instance of this profile just started")
+
     server = QLocalServer()
     if not server.listen(key):
         # AddressInUse: a crashed instance left its socket behind (no
