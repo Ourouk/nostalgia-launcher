@@ -290,3 +290,46 @@ def test_cancel_during_fetch_never_accepts(qapp, monkeypatch):
         assert dlg.selection() is None
     finally:
         dlg.close()
+
+
+# ── three-category summary ───────────────────────────────────────────────────
+
+
+def test_summary_lists_embedded_and_local_store(qapp, tmp_path):
+    path = tmp_path / "cfg.json"
+    path.write_text(
+        json.dumps(
+            {
+                "server": {"base_url": "https://launcher.test"},
+                "mods": [{"id": "m"}],
+                "addons": [{"name": "a", "git": "https://github.com/e/a"}],
+                "assets": [
+                    {
+                        "id": "p",
+                        "url": "https://launcher.test/p.mpq",
+                        "dest": "Data/p.mpq",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    dlg = LauncherConfigDialog(initial_path=str(path))
+    dlg._submit_file(str(path))
+    text = dlg.findChild(QLabel, "launcherConfigSummary").text()
+    assert "Will store locally: 1 mod, 1 addon, 1 asset" in text
+    assert "+1 embedded" in text
+    assert "Asset catalog:" in text
+
+
+def test_summary_omits_asset_line_when_unconfigured(qapp, tmp_path):
+    path = tmp_path / "cfg.json"
+    path.write_text(
+        json.dumps({"server": {"base_url": "https://launcher.test"}}),
+        encoding="utf-8",
+    )
+    dlg = LauncherConfigDialog(initial_path=str(path))
+    dlg._submit_file(str(path))
+    text = dlg.findChild(QLabel, "launcherConfigSummary").text()
+    assert "Asset catalog:" not in text
+    assert "Will store locally" not in text

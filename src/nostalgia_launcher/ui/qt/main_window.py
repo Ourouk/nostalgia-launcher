@@ -39,8 +39,11 @@ from ...services import logo
 from ...state.events import LogMessage
 from . import metrics
 from .addons_panel import AddonsPanel
+from .assets_panel import AssetsPanel
 from .bridge import ControllerHub
 from .custom_addon_dialog import CustomAddonDialog
+from .custom_asset_dialog import CustomAssetDialog
+from .custom_mod_dialog import CustomModDialog
 from .log_window import LogWindow
 from .metrics import BASE_H, BASE_W, clamp
 from .mods_panel import ModsPanel
@@ -80,7 +83,7 @@ class MainWindow(QMainWindow):
     so posting after close is a safe no-op.
     """
 
-    TABS = ["NEWS", "UPDATE", "TWEAKS", "ADDONS", "MODS"]
+    TABS = ["NEWS", "UPDATE", "TWEAKS", "ADDONS", "MODS", "ASSETS"]
 
     def __init__(self, hub: ControllerHub, parent=None):
         super().__init__(parent)
@@ -90,6 +93,8 @@ class MainWindow(QMainWindow):
         self._log_buffer: deque = deque(maxlen=2000)
         self._logWindow = None
         self._customAddonDialog = None
+        self._customModDialog = None
+        self._customAssetDialog = None
         self._discordButton = None
         self._updatePanel = None
         self._firstRunTimer = None
@@ -350,6 +355,18 @@ class MainWindow(QMainWindow):
                     self._stack,
                     on_badge=lambda n: self.set_tab_badge("MODS", n),
                 )
+                page.customModRequested.connect(self._on_custom_mod_requested)
+            elif name == "ASSETS":
+                page = AssetsPanel(
+                    self._hub.assets,
+                    self._hub.bridge,
+                    self._palette,
+                    self._stack,
+                    on_badge=lambda n: self.set_tab_badge("ASSETS", n),
+                )
+                page.customAssetRequested.connect(
+                    self._on_custom_asset_requested
+                )
             elif name == "UPDATE":
                 page = UpdatePanel(self._palette, self._stack)
                 page.forceRecheckClicked.connect(self._on_force_recheck)
@@ -501,11 +518,57 @@ class MainWindow(QMainWindow):
         self._customAddonDialog.activateWindow()
 
     def _on_custom_addon_apply(self, rec: dict):
+        err = self._hub.addons.add_custom_entry(
+            {"name": rec["folder"], "git": rec.get("git")}
+        )
+        if err:
+            log(f"✗ Custom addon {rec['folder']}: {err}\n", "err")
+            return
         log(f"\nInstalling custom addon {rec['folder']}…\n", "acct")
         self._hub.addons.apply([rec])
 
     def _on_custom_addon_finished(self):
         self._customAddonDialog = None
+
+    def _show_custom_dialog(self, dialog) -> None:
+        """Show a non-modal custom-entry dialog, single-instance."""
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _on_custom_mod_requested(self):
+        if self._customModDialog is None:
+            dialog = CustomModDialog(self._palette, self)
+            dialog.modRequested.connect(self._on_custom_mod_apply)
+            dialog.finished.connect(
+                lambda: setattr(self, "_customModDialog", None)
+            )
+            self._customModDialog = dialog
+        self._show_custom_dialog(self._customModDialog)
+
+    def _on_custom_mod_apply(self, entry: dict):
+        err = self._hub.mods.add_custom_entry(entry)
+        if err:
+            log(f"✗ Custom mod {entry.get('id')}: {err}\n", "err")
+            return
+        log(f"\nCustom mod {entry['id']} saved to the local repo.\n", "acct")
+
+    def _on_custom_asset_requested(self):
+        if self._customAssetDialog is None:
+            dialog = CustomAssetDialog(self._palette, self)
+            dialog.assetRequested.connect(self._on_custom_asset_apply)
+            dialog.finished.connect(
+                lambda: setattr(self, "_customAssetDialog", None)
+            )
+            self._customAssetDialog = dialog
+        self._show_custom_dialog(self._customAssetDialog)
+
+    def _on_custom_asset_apply(self, entry: dict):
+        err = self._hub.assets.add_custom_entry(entry)
+        if err:
+            log(f"✗ Custom asset {entry.get('id')}: {err}\n", "err")
+            return
+        log(f"\nCustom asset {entry['id']} saved to the local repo.\n", "acct")
 
     # ── settings dialog ─────────────────────────────────────────────────────
 
@@ -899,6 +962,8 @@ class MainWindow(QMainWindow):
             self._after(300, self._start_verify)
         self._after(600, hub.news.load)
         self._after(900, hub.mods.load_latest_versions)
+        # Asset verdicts refresh off-thread too (a probe may HEAD the server).
+        self._after(1100, hub.assets.refresh_verdicts)
         # Verify unconditionally so a first-launch user with an
         # uninitialized config still sees the catalog list (the verify TTL
         # skips redundant rescans on later launches). The catalog fetch

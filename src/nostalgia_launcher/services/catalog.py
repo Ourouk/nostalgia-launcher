@@ -1,36 +1,47 @@
-"""Shared catalog plumbing for mods and addons.
+"""Shared catalog plumbing for the content verticals (mods/addons/assets).
 
-Both registries follow the same model:
+All three registries follow the same model:
 
-  * a remote HTTPS JSON catalog (fetched by the services in `services/mods.py`
-    and `services/addons.py`, cached in the config file so startup works
-    offline), and
-  * an optional per-user custom JSON file in the config directory that
-    extends/overrides the remote catalog — the "savvy user" escape hatch.
+  * a remote HTTPS JSON catalog (fetched by the services in `services/mods.py`,
+    `services/addons.py` and `services/assets.py`, cached in the config file
+    so startup works offline),
+  * a local repo file per kind (`local_<kind>_repo.json`, written by the
+    import-time split) holding the server-imported entries plus user-added
+    "custom" entries that survive re-imports,
+  * entries embedded directly in the launcher config (only live for direct
+    ``--launcher-config`` runs, which never persist), and
+  * the optional per-user custom JSON file in the config directory — the
+    legacy hand-edit escape hatch. Its entries are migrated into the
+    repo's "custom" list when the repo is first created, after which the
+    file is no longer loaded (it stays on disk as a backup) so stale copies
+    can never shadow repo edits.
+
+Merge precedence per kind: legacy custom file (only until the local repo
+exists) > repo custom > embedded > repo server > remote catalog.
 
 This module holds only the toolkit-agnostic, network-free pieces: catalog-URL
-storage, custom-file resolution, entry validation and merge precedence.
-Nothing from a JSON file is ever executed — the only special behaviours a mod
-catalog may name are the allowlisted source kinds / post-install hooks below,
-and download hosts are still vetted by `security_http` at fetch time.
+storage, custom-file resolution, local-repo access, entry validation and
+merge precedence. Nothing from a JSON file is ever executed — the only
+special behaviours a mod catalog may name are the registered source backends
+/ post-install hooks (see `services/sources`), and download hosts are still
+vetted by `security_http` at fetch time.
 """
 
 import json
 import os
 from urllib.parse import urlsplit
 
-from ..core import config_store, profiles
+from ..core import config_store, launcher, profiles
 from ..core.log_sink import log
+from .sources import hooks as _hooks
+from .sources import kinds as _source_kinds
+from .sources.safety import safe_folder, safe_relpath  # noqa: F401 (re-export)
 
 # Allowlisted mod source kinds / post-install hooks. A remote or custom mod
-# entry can only reference these — it cannot name arbitrary code.
-MOD_SOURCE_KINDS = {
-    "github_release",
-    "codeberg_release",
-    "direct_file",
-    "direct_tar",
-}
-MOD_POST_INSTALL_HOOKS = {"write_dxvk_conf"}
+# entry can only reference these — it cannot name arbitrary code. Both come
+# from the shared backend/hook registries (`services/sources`).
+MOD_SOURCE_KINDS = set(_source_kinds())
+MOD_POST_INSTALL_HOOKS = set(_hooks.names())
 
 CUSTOM_FILE_TEMPLATE = "[\n]\n"
 
@@ -148,34 +159,106 @@ def clear_custom(kind: str) -> bool:
     return False
 
 
+# ── local repo files ─────────────────────────────────────────────────────────
+# Each content kind (mods/addons/assets) lives in a single on-disk repo,
+# written by the import-time split (`core.launcher._persist_data`) and
+# extended in place by user-added entries: {"server": [...], "custom":
+# [...]} — "server" mirrors the imported document (rewritten wholesale on
+# every re-import), "custom" is user-owned and survives re-imports.
+
+
+def read_local_repo(kind: str) -> dict:
+    """The raw local repo for a content kind as ``{"server": [...],
+    "custom": [...]}`` — entries are unvalidated; each service applies its
+    own validator per layer. A missing repo file is seeded from the legacy
+    per-user custom file (one-time migration; that file stays as a backup).
+    A malformed repo degrades to empty lists with a logged error rather
+    than breaking catalog loads."""
+    if not os.path.exists(launcher.local_repo_path(kind)):
+        legacy = launcher.legacy_custom_entries(kind)
+        if legacy:
+            try:
+                launcher.store_local_repo(kind, [], legacy)
+                log(
+                    f"  Migrated {len(legacy)} {kind} entr"
+                    f"{'y' if len(legacy) == 1 else 'ies'} from the legacy "
+                    "custom file into the local repo."
+                )
+            except Exception as e:
+                log(f"  Could not migrate the legacy {kind} customs: {e}")
+    try:
+        server, custom = launcher.load_local_repo(kind)
+    except ValueError as e:
+        log(f"  {kind} local repo unreadable: {e}", "err")
+        return {"server": [], "custom": []}
+    return {"server": server, "custom": custom}
+
+
+def legacy_custom_layer(kind: str, validator) -> list:
+    """The pre-repo custom-file layer. Empty once the kind's local repo
+    exists — its "custom" list was seeded from that file at creation, so
+    loading it afterwards would shadow repo edits and survives-clears with
+    stale copies. The file itself stays on disk as a backup."""
+    if os.path.exists(launcher.local_repo_path(kind)):
+        return []
+    return load_custom(kind, validator)
+
+
+def write_local_repo(kind: str, server: list, custom: list) -> str | None:
+    """Persist both lists back to a repo file. Returns an error message,
+    or None on success."""
+    try:
+        launcher.store_local_repo(kind, server, custom)
+    except Exception as e:
+        return f"Could not save the local {kind} repo: {e}"
+    return None
+
+
+def add_custom_entry(kind: str, entry: dict) -> str | None:
+    """Add (or replace, matching id/name) a user-added entry in a repo's
+    "custom" list. Callers validate the entry first. Returns an error
+    message, or None on success."""
+    repo = read_local_repo(kind)
+
+    def _key(e):
+        return e.get("id") or e.get("name")
+
+    key = _key(entry)
+    custom = [e for e in repo["custom"] if _key(e) != key]
+    custom.append(entry)
+    return write_local_repo(kind, repo["server"], custom)
+
+
+def clear_custom_entries(kind: str) -> bool:
+    """Wipe only the user-added "custom" list of a repo — imported server
+    entries are never touched. Returns True on success."""
+    repo = read_local_repo(kind)
+    return write_local_repo(kind, repo["server"], []) is None
+
+
+def local_repo_has_entries(kind: str) -> bool:
+    """Whether any entry — server-imported or user-custom — exists in a
+    kind's local repo. Network-free."""
+    repo = read_local_repo(kind)
+    return bool(repo["server"] or repo["custom"])
+
+
+def validate_entries(entries: list, validator, label: str) -> list:
+    """Sanitize raw repo/embedded entries with a kind validator, skipping
+    unusable ones with a logged warning rather than failing the load."""
+    out = []
+    for entry in entries:
+        cleaned = validator(entry) if isinstance(entry, dict) else None
+        if cleaned is None:
+            log(f"  {label}: skipping invalid entry {entry!r}", "err")
+            continue
+        out.append(cleaned)
+    return out
+
+
 # ── shared validation helpers ────────────────────────────────────────────────
-
-
-def safe_folder(name) -> bool:
-    """A directory name we are willing to install into (no separators, no
-    traversal, no NUL)."""
-    if not isinstance(name, str):
-        return False
-    name = name.strip()
-    return (
-        bool(name)
-        and name not in (".", "..")
-        and not any(ch in name for ch in "/\\")
-        and "\x00" not in name
-    )
-
-
-def safe_relpath(p) -> bool:
-    """A relative destination path: not absolute, no traversal, no NUL."""
-    if not isinstance(p, str) or not p:
-        return False
-    if p.startswith(("/", "\\")) or p[1:2] == ":":
-        return False
-    parts = p.replace("\\", "/").split("/")
-    return (
-        all(part and part not in (".", "..") for part in parts)
-        and "\x00" not in p
-    )
+# safe_folder / safe_relpath are re-exported from sources.safety (imported
+# above) so every consumer keeps its historical dotted path.
 
 
 def safe_ref(v) -> str | None:
@@ -191,48 +274,9 @@ def safe_ref(v) -> str | None:
 
 
 def _https_url(u) -> str | None:
-    if not isinstance(u, str):
-        return None
-    u = u.strip()
-    try:
-        parts = urlsplit(u)
-    except ValueError:
-        return None
-    if parts.scheme != "https" or not parts.hostname:
-        return None
-    return u
+    from .sources.safety import https_url
 
-
-def _safe_slug(s) -> str | None:
-    """A repo owner/repo slug: printable ASCII letters, digits, . _ -."""
-    if not isinstance(s, str):
-        return None
-    s = s.strip()
-    if not s or len(s) > 100 or any(ch.isspace() for ch in s):
-        return None
-    if not all(ch.isalnum() or ch in "._-" for ch in s):
-        return None
-    return s
-
-
-def _valid_extract_map(emap) -> dict | None:
-    """Sanitize an extract_map {zip/tar entry pattern: dest} into a dict of
-    valid relative destinations. None when not a dict, or when every entry
-    failed validation (a map the installer could never honour)."""
-    if emap is None:
-        return None
-    if not isinstance(emap, dict):
-        return None
-    out = {}
-    for pattern, dest in emap.items():
-        if (
-            isinstance(pattern, str)
-            and pattern
-            and isinstance(dest, str)
-            and safe_relpath(dest)
-        ):
-            out[pattern] = dest
-    return out or None
+    return https_url(u)
 
 
 # ── addon entries ────────────────────────────────────────────────────────────
@@ -304,7 +348,12 @@ def merge_addons(remote: list, custom: list) -> list:
 
 def validate_mod(entry: dict) -> dict | None:
     """Sanitize one mod catalog entry into the shape the mod installer uses;
-    None when unusable or when a field would break the installer."""
+    None when unusable or when a field would break the installer.
+
+    Kind-specific source validation is delegated to the registered backend
+    (`services/sources`), so a new backend becomes catalog-usable without
+    touching this function.
+    """
     if not isinstance(entry, dict):
         return None
     mid = (entry.get("id") or "").strip()
@@ -340,62 +389,19 @@ def validate_mod(entry: dict) -> dict | None:
             return None
         mod["source"]["post_install"] = list(hooks)
 
-    if kind in ("github_release", "codeberg_release"):
-        owner = _safe_slug(source.get("owner"))
-        repo = _safe_slug(source.get("repo"))
-        pattern = source.get("asset_pattern")
-        if (
-            not owner
-            or not repo
-            or not isinstance(pattern, str)
-            or not pattern
-        ):
-            return None
-        raw_emap = source.get("extract_map")
-        emap = _valid_extract_map(raw_emap)
-        if raw_emap is not None and emap is None:
-            return None  # a map was given but nothing in it is usable
-        version_from = source.get("version_from")
-        mod["source"].update(
-            {
-                "kind": kind,
-                "owner": owner,
-                "repo": repo,
-                "asset_pattern": pattern,
-                "prefer_no": source.get("prefer_no")
-                if isinstance(source.get("prefer_no"), str)
-                else None,
-                "extract_map": emap,
-                "version_from": version_from
-                if version_from == "asset"
-                else None,
-            }
-        )
-    elif kind == "direct_file":
-        url = _https_url(source.get("url"))
-        dest = source.get("dest")
-        emap = _valid_extract_map(source.get("extract_map"))
-        if not url or (
-            not (isinstance(dest, str) and safe_relpath(dest)) and not emap
-        ):
-            return None
-        mod["source"].update({"kind": "direct_file", "url": url})
-        if isinstance(dest, str) and safe_relpath(dest):
-            mod["source"]["dest"] = dest
-        if emap:
-            mod["source"]["extract_map"] = emap
-        if source.get("pinned_version") is not None:
-            mod["source"]["pinned_version"] = str(source["pinned_version"])
-    elif kind == "direct_tar":
-        url = _https_url(source.get("url"))
-        emap = _valid_extract_map(source.get("extract_map"))
-        if not url or not emap:
-            return None
-        mod["source"].update(
-            {"kind": "direct_tar", "url": url, "extract_map": emap}
-        )
-        if source.get("pinned_version") is not None:
-            mod["source"]["pinned_version"] = str(source["pinned_version"])
+    from .sources import get as _source_get
+
+    try:
+        cleaned_source = _source_get(kind).validate(source)
+    except Exception:
+        return None
+    if cleaned_source is None:
+        return None
+    # The backend owns everything under "source"; keep only its cleaned
+    # view plus any hooks validated above.
+    mod["source"].update(cleaned_source)
+    if hooks and "post_install" not in mod["source"]:
+        mod["source"]["post_install"] = list(hooks)
 
     register = entry.get("register_dll")
     if register is not None:
@@ -431,6 +437,98 @@ def merge_mods(remote: list, custom: list) -> list:
             "source",
             "register_dll",
             "installed_files",
+        ):
+            if entry.get(key) is not None:
+                base[key] = entry[key]
+    return list(by_id.values())
+
+
+# ── asset entries ────────────────────────────────────────────────────────────
+
+
+def _valid_sha1(value) -> str | None:
+    """A lowercase 40-hex SHA-1 digest, or None when absent/invalid."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    v = value.strip().lower()
+    if len(v) != 40 or any(c not in "0123456789abcdef" for c in v):
+        return None
+    return v
+
+
+def validate_asset(entry: dict) -> dict | None:
+    """Sanitize one asset catalog entry (server content patches such as
+    MPQs); None when unusable.
+
+    An asset is a single file fetched from a pinned HTTPS URL into a safe
+    relative destination inside the client folder. The optional integrity /
+    update metadata (`sha1` / `size` / `version` / `probe`) drives both the
+    download check and the staleness verdict — see `services/assets.py`
+    for the exact precedence.
+    """
+    if not isinstance(entry, dict):
+        return None
+    aid = (entry.get("id") or "").strip()
+    if not safe_folder(aid):
+        return None
+    name = (entry.get("name") or aid).strip()
+    if not name:
+        return None
+    url = _https_url(entry.get("url"))
+    dest = entry.get("dest")
+    if not url or not (isinstance(dest, str) and safe_relpath(dest)):
+        return None
+    sha1 = _valid_sha1(entry.get("sha1"))
+    raw_sha1 = entry.get("sha1")
+    if raw_sha1 is not None and sha1 is None:
+        return None  # a pin was given but it is malformed — refuse the entry
+    size = entry.get("size")
+    if size is not None and (
+        isinstance(size, bool) or not isinstance(size, int) or size <= 0
+    ):
+        return None
+    version = entry.get("version")
+    version = version.strip() if isinstance(version, str) else None
+    desc = entry.get("description")
+    return {
+        "id": aid,
+        "name": name,
+        "essential": bool(entry.get("essential", False)),
+        "description": desc if isinstance(desc, str) else "",
+        "repo_url": _https_url(entry.get("repo_url")),
+        "url": url,
+        "dest": dest,
+        "version": version,
+        "sha1": sha1,
+        "size": size,
+        "probe": bool(entry.get("probe", False)),
+    }
+
+
+def merge_assets(remote: list, custom: list) -> list:
+    """Custom asset entries override remote ones by id; new ids append."""
+    by_id = {a["id"]: a for a in remote}
+    for entry in custom:
+        aid = entry.get("id")
+        if not aid:
+            continue
+        base = by_id.get(aid)
+        if base is None:
+            by_id[aid] = dict(entry)
+            continue
+        for key in (
+            "name",
+            "description",
+            "repo_url",
+            "essential",
+            "url",
+            "dest",
+            "version",
+            "sha1",
+            "size",
+            "probe",
         ):
             if entry.get(key) is not None:
                 base[key] = entry[key]

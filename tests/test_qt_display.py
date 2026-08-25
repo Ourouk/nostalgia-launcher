@@ -240,7 +240,7 @@ def test_window_resizes_across_range_without_losing_pages(
     for wsize, hsize in ((800, 600), (1400, 900)):
         win.resize(wsize, hsize)
         _qwait(app_no_startup._app)
-        assert win._stack.count() == 5
+        assert win._stack.count() == len(MainWindow.TABS)
         assert win._pages == pages
         # The four panels survive the reflow; only the current tab is laid
         # out visible, the rest are hidden by the stacked widget.

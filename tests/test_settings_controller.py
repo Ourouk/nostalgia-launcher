@@ -934,30 +934,31 @@ def test_reload_mods_registry_republishes_when_embedded_only(
     assert fakes.mods.reloaded == 1
 
 
-def test_open_custom_file_creates_and_opens(controller, fakes, monkeypatch):
-    created = []
+def test_open_custom_file_creates_and_opens(
+    controller, fakes, monkeypatch, tmp_path
+):
     opened = []
-    monkeypatch.setattr(
-        sc.addons, "open_custom_file", lambda: created.append(1) or True
-    )
+    repo_path = str(tmp_path / "local_addons_repo.json")
+    monkeypatch.setattr(sc.launcher, "local_repo_path", lambda kind: repo_path)
     monkeypatch.setattr(
         sc.platform_support, "open_folder", lambda p: opened.append(p)
     )
     controller.open_addons_custom_file()
-    assert created == [1]
-    assert opened
+    assert opened == [repo_path]
     events = controller._dispatcher.drain()
     assert any(
-        "Created the custom addon file" in t for t in _log_texts(events)
+        "Created the local addons repo" in t for t in _log_texts(events)
     )
 
 
 def test_clear_custom_addons_logs(controller, monkeypatch):
     cleared = []
     monkeypatch.setattr(
-        sc.addons, "clear_custom_file", lambda: cleared.append(1) or True
+        sc.catalog,
+        "clear_custom_entries",
+        lambda kind: cleared.append(kind) or True,
     )
     controller.clear_addons_custom()
-    assert cleared == [1]
+    assert cleared == ["addons"]
     events = controller._dispatcher.drain()
     assert any("Custom addon entries cleared" in t for t in _log_texts(events))

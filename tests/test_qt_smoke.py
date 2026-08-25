@@ -247,7 +247,7 @@ def _wait_until(predicate, timeout_ms=4000):
 def test_construction_builds_full_app(qapp, app):
     win = app._window
     assert win.windowTitle() == "Nostalgia Launcher"
-    assert win._stack.count() == 5
+    assert win._stack.count() == len(mw.MainWindow.TABS)
     assert win._pages["UPDATE"] == mw.MainWindow.TABS.index("UPDATE")
     assert win._stack.currentIndex() == 0
     assert win._navButtons["NEWS"].isChecked()

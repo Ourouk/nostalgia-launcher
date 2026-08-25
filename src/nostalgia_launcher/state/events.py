@@ -63,6 +63,13 @@ class ModsLoaded(Event):
 
 
 @dataclass
+class AssetsLoaded(Event):
+    """ASSETS panel snapshot (state.models.AssetsState)."""
+
+    state: object | None = None
+
+
+@dataclass
 class AddonsLoaded(Event):
     """ADDONS panel snapshot (ui_state.AddonsState)."""
 

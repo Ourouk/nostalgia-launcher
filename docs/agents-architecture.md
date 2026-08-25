@@ -10,8 +10,8 @@ The libtorrent pitfall list lives in `docs/BITTORRENT_UPDATER_NOTES.md`.
 src/nostalgia_launcher/
   cli.py          # entry point: config wiring + window loop
   core/           # constants, config_store, launcher, security_http, filesystem, helpers, log_sink, platform_support, errors, themes
-  services/       # catalog, addons, mods, news, tweaks, self_update, server_index, umu, logo, update_backend/
-  controllers/    # update, news, mods, addons, settings, tweaks (toolkit-agnostic)
+  services/       # catalog, addons, mods, assets, news, tweaks, self_update, server_index, umu, logo, update_backend/
+  controllers/    # update, news, mods, assets, addons, settings, tweaks (toolkit-agnostic)
   state/          # models.py (state dataclasses), events.py (dispatcher)
   ui/qt/          # app, main_window, bridge, theme, panels, dialogs
 ```
@@ -126,11 +126,40 @@ declaring "already running", so the quitting parent never blocks them.
 NFS/network home dirs make flock unreliable (documented, acceptable);
 the QLocalServer guard remains authoritative there.
 
-## Catalogs (mods/addons)
+## Catalogs (mods/addons/assets)
 
-- The mods/addons lists come from remote JSON catalogs (`services/catalog.py`
-  holds the shared validation/merge logic; the fetch entry points live in
-  `services/mods.py` / `services/addons.py`). `mods.mods_registry()` is
+- **Import-time content split**: a launcher config may carry three inline
+  content sections — top-level `"mods"`, `"addons"` and `"assets"` lists
+  (same entry shapes as the remote catalogs). `launcher.persist()` /
+  `persist_text()` split them out on import: each lands in its own local
+  repo file `local_<kind>_repo.json` in the config dir, shaped
+  `{"server": […], "custom": […]}` — "server" mirrors the imported
+  document faithfully (a missing section writes `[]`, so re-imports
+  replace server content wholesale), "custom" holds user-added entries and
+  survives re-imports. The persisted launcher config itself has the three
+  sections **stripped** (the repos are the single authority); the
+  `validate_*` helpers stay side-effect-free — splitting happens only at
+  persist time, after the wizard's explicit Accept. The split is
+  transactional: any repo-write or config-write failure rolls every
+  already-written repo back to its prior bytes (freshly created files are
+  removed) before erroring, so an import is never half-applied. The legacy
+  per-user custom files (`nostalgia_launcher_<kind>_custom.json`) seed a
+  freshly created repo's "custom" list as a one-time migration and are then
+  left as backups **and no longer loaded** (`catalog.legacy_custom_layer`
+  returns empty once the repo exists) so stale copies can't shadow repo
+  edits; Settings' open/clear-custom buttons manage the repo files, and
+  clear wipes only "custom".
+- **Registry precedence per vertical** (later wins by id/folder): remote
+  catalog < repo "server" < embedded-in-config (only live for direct
+  ``--launcher-config`` runs, which never persist) < repo "custom" <
+  legacy custom file (active only until the local repo exists — see the
+  migration note above). Plumbing: `catalog.read_local_repo` /
+  `write_local_repo` / `add_custom_entry` / `clear_custom_entries`;
+  offline guards (`catalog_is_stale`) count repo entries as content.
+- The mods/addons/assets lists come from remote JSON catalogs
+  (`services/catalog.py` holds the shared validation/merge logic; the fetch
+  entry points live in `services/mods.py` / `services/addons.py` /
+  `services/assets.py`). `mods.mods_registry()` is
   network-free on non-forced calls (cache → empty list). Catalogs auto-refresh
   at most weekly (`catalog.CATALOG_TTL`): startup serves the persisted cache
   instantly (ADDONS via a preview snapshot posted before the verify scan) and
@@ -141,18 +170,54 @@ the QLocalServer guard remains authoritative there.
   the online catalog(s) AND rescans SHAs. Panel headers show a "Catalog
   updated …" age tag. Tests provide a registry by monkeypatching
   `mods.mods_registry()`.
-- **Mods may also be embedded directly in the launcher config** (top-level
-  `"mods": […]`, same entry shape as the remote catalog; see
+- **Custom entries are first-class**: MODS and ASSETS panels have an
+  "+ Add custom …" banner button (`custom_mod_dialog.py` covers every
+  registered source kind; `custom_asset_dialog.py` the full asset shape);
+  both validate with the catalog validators before accepting, persist into
+  the repo's "custom" list via `<controller>.add_custom_entry(entry)` and
+  republish instantly. The ADDONS dialog additionally persists its entry
+  (`AddonsController.add_custom_entry`) so a custom addon survives
+  restarts.
+- **Content may also be embedded directly in the launcher config**
+  (top-level `"mods"` / `"addons"` / `"assets"`; see
   `examples/community.example.json`). Entries are kept raw by
   `core/launcher._derive` (core must not import services) and sanitized by
-  `services.mods.embedded_mods()` with the exact same `validate_mod` rules.
-  Precedence by id: per-user custom file > embedded > remote catalog.
-  Embedded-only configs are fully offline-safe: when no catalog URL is
-  *explicitly* configured (`launcher.mods_registry_url_explicit()` — the
-  base_url-derived default does not count; see
-  `services.mods.has_remote_catalog()`), `catalog_is_stale()` stays False and
-  the MODS ⟳ / Settings → Reload republish silently instead of failing with
-  "Mod catalog URL is not configured."
+  the services with exactly the catalog validators (addons go through the
+  git-host allowlist too). Embedded-only configs are fully offline-safe:
+  when no catalog URL is *explicitly* configured
+  (`launcher.mods_registry_url_explicit()` — the base_url-derived default
+  does not count; see `services.mods.has_remote_catalog()`),
+  `catalog_is_stale()` stays False and the MODS ⟳ / Settings → Reload
+  republish silently instead of failing with "Mod catalog URL is not
+  configured."
+- **Assets are the third content vertical** (`services/assets.py`,
+  `controllers/assets.py`, `ui/qt/assets_panel.py`, state in
+  `AssetsState`) — single-file server content patches such as MPQs, kept
+  strictly separate from mods (DLLs) and addons (Lua/XML folders). The list
+  comes from the launcher config's top-level `"assets": […]` entries plus
+  the optional remote catalog at `server.assets_registry_url`
+  (**explicit-only** — no base_url-derived default), merged with the
+  per-user custom file; embedded ids override catalog ids, custom overrides
+  both. Every asset download URL and the registry URL join the security
+  allowlist (`LauncherConfig._all_urls`). An entry carries its own update
+  information — `{url, dest, version?, sha1?, size?, probe?}` — and the
+  staleness verdict (`assets.asset_update_available`) uses it in strict
+  precedence: version vs installed record → sha1 vs local hash → size vs
+  local file → opt-in HEAD probe (`etag`/`last_modified`/`size` compared
+  against the snapshot captured at install, cached under
+  `"asset_probe_cache"`; any probe failure is conservative: never stale) →
+  nothing provided ⇒ never stale. A missing file is an install decision,
+  not an update. Downloads stream through the hardened transport with the
+  SHA-1 computed on the fly and install via temp-file + rename. Essential
+  assets auto-install like essential mods
+  (`AssetsController.apply_essential_assets`), and a game-folder change
+  wipes the `"assets"`/`"asset_probe_cache"` config keys alongside
+  mods/addons records.
+- **realmlist.wtf**: `services/tweaks.write_realmlist_wtf(client_dir)`
+  writes `SET realmlist "<server.realm>"` into the client root wherever a
+  fresh `WTF/Config.wtf` is seeded (verify with overwrite/missing config,
+  torrent recovery, tweaks apply on a missing config) — vanilla clients
+  read both files.
 - The ADDONS list is sectioned, not flat: stale installs get a **NEED
   UPDATE** section rendered above **INSTALLED** (only when non-empty),
   followed by **AVAILABLE**; each header shows its count and collapses

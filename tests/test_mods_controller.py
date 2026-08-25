@@ -311,10 +311,9 @@ def apply_backends(monkeypatch, cfg):
         ),
     )
     monkeypatch.setattr(
-        mc.mods, "_fetch_release_cached", lambda mod: {"tag_name": "2.0"}
-    )
-    monkeypatch.setattr(
-        mc.mods, "_release_version", lambda mod, rel: rel["tag_name"]
+        mc.mods,
+        "_fetch_release_cached",
+        lambda mod: {"tag_name": "2.0", "assets": []},
     )
     monkeypatch.setattr(
         mc.mods, "fetch_mod_latest_version_cached", lambda mod: "2.0"

@@ -10,6 +10,7 @@ import pytest
 
 import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.services.addons as addons
+import nostalgia_launcher.services.sources.git_archive as git_archive
 
 
 def test_is_allowed_git_url():
@@ -31,7 +32,7 @@ def test_addon_host_allowlist_config_and_zip_rejection(tmp_path, monkeypatch):
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
     config_store.save_config({})
-    monkeypatch.setattr(addons, "ADDON_ZIP_HOSTS", {"github.com"})
+    monkeypatch.setattr(git_archive, "ADDON_ZIP_HOSTS", {"github.com"})
 
     assert not addons.is_allowed_git_url("https://evil.example/x/y")
 
@@ -54,7 +55,7 @@ def test_addon_host_allowlist_config_and_zip_rejection(tmp_path, monkeypatch):
 
 def test_git_parts_community_gitea():
     """Community-hosted repos are Gitea, API at <host>/git/api/v1."""
-    kind, repo_url, owner, repo, api = addons._git_parts(
+    kind, repo_url, owner, repo, api = git_archive.git_parts(
         "https://gitea.example.com/git/octocontr/ExampleCommunity"
     )
     assert kind == "gitea"
@@ -76,7 +77,7 @@ def test_addon_zip_url_community_gitea():
 
 
 def test_git_parts_github():
-    kind, repo_url, owner, repo, api = addons._git_parts(
+    kind, repo_url, owner, repo, api = git_archive.git_parts(
         "https://github.com/Otari98/_LazyPig"
     )
     assert kind == "github"
@@ -86,14 +87,16 @@ def test_git_parts_github():
 
 
 def test_git_parts_strips_git_suffix():
-    _k, repo_url, owner, repo, _api = addons._git_parts(
+    _k, repo_url, owner, repo, _api = git_archive.git_parts(
         "https://github.com/a/repo.git"
     )
     assert (owner, repo) == ("a", "repo")
 
 
 def test_git_parts_gitlab():
-    kind, repo_url, _o, _r, api = addons._git_parts("https://gitlab.com/a/b")
+    kind, repo_url, _o, _r, api = git_archive.git_parts(
+        "https://gitlab.com/a/b"
+    )
     assert kind == "gitlab"
     assert api == "https://gitlab.com/api/v4"
 
@@ -467,7 +470,7 @@ def test_addon_remote_sha_cached(tmp_path, monkeypatch):
     def fail(*a, **k):
         raise AssertionError("cached sha must not hit the network")
 
-    monkeypatch.setattr(addons, "_api_json", fail)
+    monkeypatch.setattr(git_archive, "_api_json", fail)
     assert addons.addon_remote_sha("https://github.com/a/b") == "f" * 40
 
 
@@ -481,7 +484,7 @@ def test_addon_remote_sha_resolves_and_caches(tmp_path, monkeypatch):
     def fake_api_json(url, timeout=10):
         return {"sha": sha} if "/commits/" in url else [{"sha": sha}]
 
-    monkeypatch.setattr(addons, "_api_json", fake_api_json)
+    monkeypatch.setattr(git_archive, "_api_json", fake_api_json)
     assert addons.addon_remote_sha("https://github.com/a/b") == sha
     assert addons.addon_cached_sha("https://github.com/a/b") == sha
 
@@ -493,8 +496,8 @@ def test_addon_remote_sha_gates_disallowed_host(tmp_path, monkeypatch):
     def boom(*a, **k):
         raise AssertionError("disallowed host must not be contacted")
 
-    monkeypatch.setattr(addons, "secure_urlopen", boom)
-    monkeypatch.setattr(addons.subprocess, "run", boom)
+    monkeypatch.setattr(git_archive, "secure_urlopen", boom)
+    monkeypatch.setattr(git_archive.subprocess, "run", boom)
 
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
@@ -514,7 +517,7 @@ def test_addon_remote_sha_allows_allowlisted_host(tmp_path, monkeypatch):
     def fake_api_json(url, timeout=10):
         return {"sha": sha} if "/commits/" in url else [{"sha": sha}]
 
-    monkeypatch.setattr(addons, "_api_json", fake_api_json)
+    monkeypatch.setattr(git_archive, "_api_json", fake_api_json)
     assert addons.addon_remote_sha("https://github.com/a/b.git") == sha
     assert addons.addon_cached_sha("https://github.com/a/b.git") == sha
 
@@ -534,10 +537,12 @@ def test_git_ls_remote_parses_head(monkeypatch):
     )
     calls = []
     monkeypatch.setattr(
-        addons.subprocess, "run", lambda *a, **k: calls.append((a, k)) or proc
+        git_archive.subprocess,
+        "run",
+        lambda *a, **k: calls.append((a, k)) or proc,
     )
     assert (
-        addons._git_ls_remote_sha("https://github.com/a/b", None) == "ab" * 20
+        git_archive.ls_remote_sha("https://github.com/a/b", None) == "ab" * 20
     )
     args, kwargs = calls[0]
     assert args[0] == ["git", "ls-remote", "https://github.com/a/b", "HEAD"]
@@ -553,22 +558,22 @@ def test_git_ls_remote_parses_branch_and_tag(monkeypatch):
             + "\trefs/tags/v1.0\n"
         )
     )
-    monkeypatch.setattr(addons.subprocess, "run", lambda *a, **k: proc)
+    monkeypatch.setattr(git_archive.subprocess, "run", lambda *a, **k: proc)
     assert (
-        addons._git_ls_remote_sha("https://github.com/a/b", "main")
+        git_archive.ls_remote_sha("https://github.com/a/b", "main")
         == "ab" * 20
     )
     assert (
-        addons._git_ls_remote_sha("https://github.com/a/b", "v1.0")
+        git_archive.ls_remote_sha("https://github.com/a/b", "v1.0")
         == "cd" * 20
     )
 
 
 def test_git_ls_remote_matches_short_ref(monkeypatch):
     proc = _FakeProc(stdout="ef" * 20 + "\trefs/remotes/origin/release\n")
-    monkeypatch.setattr(addons.subprocess, "run", lambda *a, **k: proc)
+    monkeypatch.setattr(git_archive.subprocess, "run", lambda *a, **k: proc)
     assert (
-        addons._git_ls_remote_sha("https://github.com/a/b", "release")
+        git_archive.ls_remote_sha("https://github.com/a/b", "release")
         == "ef" * 20
     )
 
@@ -577,23 +582,23 @@ def test_git_ls_remote_missing_git_returns_none(monkeypatch):
     def boom(*a, **k):
         raise FileNotFoundError("git not found")
 
-    monkeypatch.setattr(addons.subprocess, "run", boom)
-    assert addons._git_ls_remote_sha("https://github.com/a/b", None) is None
+    monkeypatch.setattr(git_archive.subprocess, "run", boom)
+    assert git_archive.ls_remote_sha("https://github.com/a/b", None) is None
 
 
 def test_git_ls_remote_failure_returns_none(monkeypatch):
     monkeypatch.setattr(
-        addons.subprocess, "run", lambda *a, **k: _FakeProc(returncode=2)
+        git_archive.subprocess, "run", lambda *a, **k: _FakeProc(returncode=2)
     )
-    assert addons._git_ls_remote_sha("https://github.com/a/b", "main") is None
+    assert git_archive.ls_remote_sha("https://github.com/a/b", "main") is None
     monkeypatch.setattr(
-        addons.subprocess,
+        git_archive.subprocess,
         "run",
         lambda *a, **k: (_ for _ in ()).throw(
-            addons.subprocess.TimeoutExpired("git", 15)
+            git_archive.subprocess.TimeoutExpired("git", 15)
         ),
     )
-    assert addons._git_ls_remote_sha("https://github.com/a/b", None) is None
+    assert git_archive.ls_remote_sha("https://github.com/a/b", None) is None
 
 
 def test_addon_remote_sha_falls_back_to_git_ls_remote_on_api_error(
@@ -608,8 +613,8 @@ def test_addon_remote_sha_falls_back_to_git_ls_remote_on_api_error(
     def api_boom(url, timeout=10):
         raise urllib.error.HTTPError(url, 403, "rate limited", {}, None)
 
-    monkeypatch.setattr(addons, "_api_json", api_boom)
-    monkeypatch.setattr(addons, "_git_ls_remote_sha", lambda url, pin: sha)
+    monkeypatch.setattr(git_archive, "_api_json", api_boom)
+    monkeypatch.setattr(git_archive, "ls_remote_sha", lambda url, pin: sha)
     assert addons.addon_remote_sha("https://github.com/a/b") == sha
     assert addons.addon_cached_sha("https://github.com/a/b") == sha
 
@@ -623,8 +628,8 @@ def test_addon_remote_sha_raises_when_both_paths_fail(tmp_path, monkeypatch):
     def api_boom(url, timeout=10):
         raise urllib.error.HTTPError(url, 403, "rate limited", {}, None)
 
-    monkeypatch.setattr(addons, "_api_json", api_boom)
-    monkeypatch.setattr(addons, "_git_ls_remote_sha", lambda url, pin: None)
+    monkeypatch.setattr(git_archive, "_api_json", api_boom)
+    monkeypatch.setattr(git_archive, "ls_remote_sha", lambda url, pin: None)
     with pytest.raises(RuntimeError, match="rate limit"):
         addons.addon_remote_sha("https://github.com/a/b", raise_errors=True)
 
@@ -640,11 +645,11 @@ def test_addon_remote_sha_logs_cause_when_unresolvable(tmp_path, monkeypatch):
     def api_boom(url, timeout=10):
         raise urllib.error.HTTPError(url, 403, "rate limited", {}, None)
 
-    monkeypatch.setattr(addons, "_api_json", api_boom)
-    monkeypatch.setattr(addons, "_git_ls_remote_sha", lambda url, pin: None)
+    monkeypatch.setattr(git_archive, "_api_json", api_boom)
+    monkeypatch.setattr(git_archive, "ls_remote_sha", lambda url, pin: None)
     logged = []
     monkeypatch.setattr(
-        addons, "log", lambda msg, tag="": logged.append((msg, tag))
+        git_archive, "log", lambda msg, tag="": logged.append((msg, tag))
     )
 
     assert addons.addon_remote_sha("https://github.com/a/b") is None
@@ -672,7 +677,7 @@ def test_install_addon_files_extracts(tmp_path, monkeypatch):
         }
     )
     monkeypatch.setattr(
-        addons,
+        git_archive,
         "secure_urlopen",
         lambda *a, **k: type(
             "R",
@@ -703,7 +708,7 @@ def test_install_addon_files_path_traversal_safe(tmp_path, monkeypatch):
         }
     )
     monkeypatch.setattr(
-        addons,
+        git_archive,
         "secure_urlopen",
         lambda *a, **k: type(
             "R",
@@ -746,3 +751,61 @@ def test_patch_pfui_installs_profile(tmp_path):
 def test_patch_pfui_missing_profile_returns_gracefully(tmp_path):
     client = tmp_path / "client"
     addons.patch_pfui_default_profile(str(client))  # no pfUI installed
+
+
+# ── local repo layer ─────────────────────────────────────────────────────────
+
+
+def _addon(name, git="https://github.com/example/repo"):
+    return {"name": name, "git": git}
+
+
+def _repo_redirect(tmp_path, monkeypatch):
+    from nostalgia_launcher.core import launcher
+
+    monkeypatch.setattr(
+        launcher,
+        "local_repo_path",
+        lambda kind: str(tmp_path / f"local_{kind}_repo.json"),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "legacy_custom_path",
+        lambda kind: str(tmp_path / f"legacy_{kind}.json"),
+    )
+
+
+def test_addons_catalog_from_cache_full_precedence(tmp_path, monkeypatch):
+    """cache < repo.server < embedded < repo.custom < legacy (by folder)."""
+    from nostalgia_launcher.core import launcher
+    from nostalgia_launcher.services import catalog as catalog_svc
+
+    _repo_redirect(tmp_path, monkeypatch)
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    url = addons.registry_urls()[0]
+    config_store.save_config(
+        {
+            "addons_catalog_cache": {
+                url: {
+                    "timestamp": 9999999999,
+                    "catalog": [_addon("X", "https://github.com/e/remote")],
+                }
+            }
+        }
+    )
+    catalog_svc.write_local_repo(
+        "addons",
+        [_addon("X", "https://github.com/e/reposrv")],
+        [_addon("X", "https://github.com/e/repocustom")],
+    )
+    launcher.reset()
+    launcher.configure_from_dict(
+        {
+            "server": {"base_url": "https://launcher.test"},
+            "addons": [_addon("X", "https://github.com/e/embedded")],
+        }
+    )
+    reg = {a["name"]: a["git"] for a in addons.catalog_from_cache()}
+    assert reg["X"] == "https://github.com/e/repocustom"

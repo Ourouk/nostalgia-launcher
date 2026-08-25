@@ -24,7 +24,7 @@ dist/
 !NostalgiaLauncher-macos.spec
 
 # Local planning notes (not part of the package)
-todo/*
+todo
 
 # Local editor / OS files
 .vscode/
@@ -33,4 +33,4 @@ Thumbs.db
 .DS_Store
 
 # Vendored reference source (third-party, not part of the package)
-context/*
+context

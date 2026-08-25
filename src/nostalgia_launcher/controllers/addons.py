@@ -18,7 +18,7 @@ from dataclasses import replace
 from ..core import config_store
 from ..core.errors import describe_install_error
 from ..core.helpers import same_git_repo
-from ..services import addons
+from ..services import addons, catalog
 from ..state.events import (
     AddonsLoaded,
     EventDispatcher,
@@ -69,7 +69,9 @@ class AddonsController:
     @property
     def git_hosts(self) -> tuple:
         """The allowed git hosts shown in the custom-addon dialog hint."""
-        return tuple(addons.ADDON_GIT_HOSTS)
+        from ..core.launcher import ADDON_GIT_HOSTS
+
+        return tuple(ADDON_GIT_HOSTS)
 
     def is_allowed_git_url(self, url: str) -> bool:
         return addons.is_allowed_git_url(url)
@@ -388,6 +390,14 @@ class AddonsController:
     def toggle(self, folder: str, enabled: bool):
         """Record a pending checkbox change for the addon."""
         self.state.pending[folder] = enabled
+
+    def add_custom_entry(self, entry: dict) -> str | None:
+        """Validate a user-built addon entry and persist it into the local
+        addons repo's "custom" list so it survives restarts. Returns an
+        error message, or None on success."""
+        if addons.validate_custom_entry(entry) is None:
+            return "This addon entry is not usable."
+        return catalog.add_custom_entry("addons", entry)
 
     def apply_pending(self) -> bool:
         """Install/update checked addons and remove unchecked ones.

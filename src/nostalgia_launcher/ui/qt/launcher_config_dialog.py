@@ -370,21 +370,31 @@ def _yes(no_value) -> str:
     return "no" if no_value else "yes"
 
 
-def _mods_catalog_summary(cfg) -> str:
-    """One-line description of where the config gets its mods from."""
-    embedded = len(cfg.embedded_mods)
-    if cfg.mods_registry_url_explicit and embedded:
+def _catalog_summary(explicit_url: bool, url_count: int, embedded: int) -> str:
+    """One-line description of where a content category comes from:
+    remote catalog URL(s), embedded entries, or both."""
+    if explicit_url and embedded:
         return f"url + {embedded} embedded"
-    if cfg.mods_registry_url_explicit:
+    if explicit_url:
         return "url"
     if embedded:
         return f"{embedded} embedded"
     return "no"
 
 
+def _addons_catalog_summary(urls: list, cfg) -> str:
+    """Addon catalogs always resolve to at least the derived default URL,
+    so this shows the configured count plus any embedded entries."""
+    embedded = len(cfg.embedded_addons)
+    if embedded:
+        return f"{len(urls)} (+{embedded} embedded)"
+    return str(len(urls))
+
+
 def _summary_text(kind: str, source: str, config) -> str:
     """Human-readable summary of a validated launcher configuration: what
-    it is, where it points, and every host the launcher would contact."""
+    it is, where it points, every host the launcher would contact, and
+    what will be stored locally on accept."""
     cfg = config
     hosts = sorted(h for h in cfg.download_hosts() if h)
     for url in (
@@ -406,10 +416,33 @@ def _summary_text(kind: str, source: str, config) -> str:
         "Client file updates: configured (can be disabled in Settings)",
         f"BitTorrent bulk downloads: {_yes(not cfg.has_torrent())}",
         f"News feed: {_yes(not cfg.news_url)}",
-        f"Mod catalog: {_mods_catalog_summary(cfg)}",
-        f"Addon catalog(s): {len(cfg.addons_registry_urls)}",
+        "Mod catalog: "
+        + _catalog_summary(
+            cfg.mods_registry_url_explicit,
+            1,
+            len(cfg.embedded_mods),
+        ),
+        "Addon catalog(s): "
+        + _addons_catalog_summary(cfg.addons_registry_urls, cfg),
         f"Mirrors: {len(cfg.mirrors)}",
     ]
+    if cfg.assets_registry_url or cfg.embedded_assets:
+        lines.append(
+            "Asset catalog: "
+            + _catalog_summary(
+                bool(cfg.assets_registry_url), 1, len(cfg.embedded_assets)
+            )
+        )
+    saved = []
+    for label, count in (
+        ("mod", len(cfg.embedded_mods)),
+        ("addon", len(cfg.embedded_addons)),
+        ("asset", len(cfg.embedded_assets)),
+    ):
+        if count:
+            saved.append(f"{count} {label}{'s' if count != 1 else ''}")
+    if saved:
+        lines.append("Will store locally: " + ", ".join(saved))
     if cfg.discord_url:
         lines.append(f"Discord button: {_host(cfg.discord_url)}")
     lines.append(

@@ -329,10 +329,36 @@ def write_config_wtf(client_dir: str, tweaks: dict | None = None):
         log(f"Could not write Config.wtf: {e}", "err")
 
 
+def write_realmlist_wtf(client_dir: str):
+    """Write the client-root ``realmlist.wtf`` from the configured realm.
+
+    Vanilla 1.12.1 reads the root realmlist.wtf (WTF/Config.wtf's
+    ``realmList`` usually wins after a first run, but a fresh client folder
+    only has the file — belt and braces, as private-server launchers do).
+    Never raises; best-effort like `write_config_wtf`.
+    """
+    try:
+        from ..core import launcher
+
+        srv = launcher.realm() or _host_of(launcher.server_url())
+        if not srv:
+            return
+        with open(
+            os.path.join(client_dir, "realmlist.wtf"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(f"SET realmlist {_wtf_str(srv)}\n")
+        log("realmlist.wtf written.", "ok")
+    except Exception as e:
+        log(f"Could not write realmlist.wtf: {e}", "err")
+
+
 def update_config_wtf(client_dir: str, tweaks: dict):
     cfg_path = os.path.join(client_dir, "WTF", "Config.wtf")
     if not os.path.exists(cfg_path):
         write_config_wtf(client_dir, tweaks)
+        write_realmlist_wtf(client_dir)
         return
 
     far_clip = tweaks.get("farClip", TWEAKS_DEFAULTS["farClip"])

@@ -3,38 +3,41 @@
 Addons are installed directly from Git hosts (GitHub, GitLab, Gitea,
 Codeberg, plus any community host a distribution lists in its launcher
 config) by downloading the repo archive pinned to a commit SHA — no git
-client needed. Also hosts the pfUI "Default" profile patch.
+client needed. Commit resolution and archive fetching are delegated to the
+shared ``git_archive`` source backend (`services/sources`); this module
+keeps the addon-specific catalog machinery, the folder unpacking call and
+the pfUI "Default" profile patch.
 
-There is no bundled addon list — the ADDONS tab comes entirely from the
-addon catalog (launcher-configured or user-set URL) merged with the per-user
-custom file, so a distribution decides what it ships.
+There is no hardcoded addon list — the ADDONS tab comes from the addon
+catalog URLs (launcher-configured or user-set), the local addons repo
+(`local_addons_repo.json`: server-imported entries written by the config
+import plus user-added customs), optional entries embedded in the launcher
+config, and the per-user custom file, so a distribution decides what it
+ships.
 """
 
-import io
 import json
 import os
-import shutil
-import subprocess
 import time
 import urllib.request
-import zipfile
-from urllib.parse import quote, urlsplit
 
 from ..core import config_store as _config_store
 from ..core import launcher
 from ..core.config_store import load_config, update_config
-from ..core.constants import GITHUB_API, UA
-from ..core.errors import describe_net_error
-from ..core.filesystem import rmtree_force
-from ..core.launcher import ADDON_GIT_HOSTS
+from ..core.constants import UA
 from ..core.log_sink import log
 from ..core.security_http import read_capped, secure_urlopen
 from . import catalog
+from .sources import deploy as _sources_deploy
+from .sources.git_archive import (
+    GitArchiveBackend,
+)
+
+_GIT_BACKEND = GitArchiveBackend()
 
 # Catalogs refresh at most weekly (shared catalog.CATALOG_TTL); the
 # per-URL timestamp lives in the config file.
 ADDONS_CATALOG_TTL = catalog.CATALOG_TTL
-ADDON_SHA_CACHE_TTL = 3600
 ADDONS_VERIFY_TTL = 300  # skip re-verify on tab switches within this
 
 # The per-user custom addon file (a JSON list, one entry per addon). Written
@@ -51,33 +54,16 @@ RECOMMENDED_ADDONS: dict = {}
 BLOCKED_ADDONS = set()
 
 
-# The base git-host allowlist is owned by `core/launcher.ADDON_GIT_HOSTS`.
-# The zip-archive hosts extend it with the Git hosts' archive CDNs so an
-# addon archive download (github.com → its codeload/asset CDN) is allowed.
-ADDON_ZIP_HOSTS = set(ADDON_GIT_HOSTS) | {
-    "codeload.githubusercontent.com",
-    "release-assets.githubusercontent.com",
-    "objects.githubusercontent.com",
-}
-
-
 def addons_path(client_dir: str) -> str:
     return os.path.join(client_dir, "Interface", "AddOns")
 
 
 def is_allowed_git_url(url: str) -> bool:
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return False
-    if parts.scheme != "https":
-        return False
-    host = (parts.hostname or "").lower()
-    hosts = set(ADDON_GIT_HOSTS)
-    cfg = launcher.config()
-    if cfg is not None:
-        hosts |= cfg.addon_git_host_set()
-    return any(host == h or host.endswith("." + h) for h in hosts)
+    """Whether the URL's host is on the git-host allowlist (base hosts plus
+    the launcher config's extras). Delegates to the git_archive backend."""
+    from .sources.git_archive import is_allowed_git_url as _allowed
+
+    return _allowed(url)
 
 
 def _custom_validator(entry: dict) -> dict | None:
@@ -88,6 +74,13 @@ def _custom_validator(entry: dict) -> dict | None:
     if cleaned["git"] and not is_allowed_git_url(cleaned["git"]):
         return None
     return cleaned
+
+
+def validate_custom_entry(entry: dict) -> dict | None:
+    """Public hook for controllers persisting user-built addon entries —
+    same rules as every other custom source (validate_addon + git-host
+    allowlist)."""
+    return _custom_validator(entry)
 
 
 def fetch_addons_catalog(force=False) -> list:
@@ -163,19 +156,48 @@ def _fetch_url_catalog(url: str, force: bool, now: float) -> list:
     return catalog_list
 
 
+def embedded_addons() -> list:
+    """Addons defined inline in the active launcher config (top-level
+    "addons": […]), sanitized through the same validator as remote entries
+    (including the git-host allowlist); unusable entries are skipped with a
+    logged warning. Network-free."""
+    return catalog.validate_entries(
+        launcher.embedded_addons(), _custom_validator, "launcher config"
+    )
+
+
 def addons_catalog(force=False) -> list:
-    """The effective addon catalog: the remote/cached catalogs merged in
-    registry order (later wins) and then merged with the per-user custom
-    file (custom entries override by folder name)."""
+    """The effective addon catalog, in override order (later wins by folder
+    name): the remote/cached catalogs < the local repo's server-imported
+    entries < the launcher config's embedded addons < the repo's
+    user-custom entries < the legacy per-user custom file."""
     remote = fetch_addons_catalog(force=force)
+    repo = catalog.read_local_repo("addons")
     return catalog.merge_addons(
-        remote, catalog.load_custom("addons", _custom_validator)
+        catalog.merge_addons(
+            catalog.merge_addons(
+                catalog.merge_addons(
+                    remote,
+                    catalog.validate_entries(
+                        repo["server"],
+                        _custom_validator,
+                        "local addons repo",
+                    ),
+                ),
+                embedded_addons(),
+            ),
+            catalog.validate_entries(
+                repo["custom"], _custom_validator, "local addons repo"
+            ),
+        ),
+        catalog.legacy_custom_layer("addons", _custom_validator),
     )
 
 
 def catalog_from_cache() -> list:
-    """The cached catalogs merged with the custom file, without any network —
-    used as the offline fallback when a fresh fetch fails."""
+    """Every local layer merged without any network — used as the offline
+    fallback when a fresh fetch fails. Same override order as
+    `addons_catalog`."""
     cache = _config_store.load_config().get("addons_catalog_cache", {}) or {}
     urls = registry_urls()
     parts = []
@@ -186,12 +208,23 @@ def catalog_from_cache() -> list:
                 parts.append(entry["catalog"])
     elif isinstance(cache, dict) and cache.get("catalog"):
         parts.append(cache["catalog"])
+    repo = catalog.read_local_repo("addons")
+    parts.append(
+        catalog.validate_entries(
+            repo["server"], _custom_validator, "local addons repo"
+        )
+    )
+    parts.append(embedded_addons())
+    parts.append(
+        catalog.validate_entries(
+            repo["custom"], _custom_validator, "local addons repo"
+        )
+    )
+    parts.append(catalog.legacy_custom_layer("addons", _custom_validator))
     merged = []
     for part in parts:
         merged = catalog.merge_addons(merged, part)
-    return catalog.merge_addons(
-        merged, catalog.load_custom("addons", _custom_validator)
-    )
+    return merged
 
 
 def catalog_last_updated() -> float | None:
@@ -235,7 +268,6 @@ def addons_registry_default_url() -> str:
 def addons_registry_default_urls() -> list[str]:
     """The launcher-configured addon catalog URLs, in override order ('' list
     when not configured)."""
-    from ..core import launcher
 
     return launcher.addons_registry_urls()
 
@@ -285,231 +317,40 @@ def read_toc_file(path: str) -> dict:
     return toc
 
 
-def _git_parts(git_url: str):
-    """→ (kind, repo_url, owner, repo, api_base); kind ∈ github/gitlab/gitea.
-    Handles path prefixes like <host>/git/<owner>/<repo>."""
-    parts = urlsplit(git_url)
-    host = (parts.hostname or "").lower()
-    segs = [s for s in parts.path.split("/") if s]
-    if len(segs) < 2:
-        raise ValueError(f"Unsupported git URL: {git_url}")
-    owner, repo = segs[-2], segs[-1]
-    if repo.endswith(".git"):
-        repo = repo[:-4]
-    prefix = "/".join(segs[:-2])
-    origin = f"https://{parts.netloc}"
-    repo_url = origin + (f"/{prefix}" if prefix else "") + f"/{owner}/{repo}"
-    if host == "github.com" or host.endswith(".github.com"):
-        return "github", repo_url, owner, repo, GITHUB_API
-    if host == "gitlab.com" or host.endswith(".gitlab.com"):
-        return "gitlab", repo_url, owner, repo, f"{origin}/api/v4"
-    api = origin + (f"/{prefix}" if prefix else "") + "/api/v1"
-    return "gitea", repo_url, owner, repo, api
-
-
-def _api_json(url: str, timeout=10):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with secure_urlopen(req, timeout=timeout) as r:
-        return json.load(r)
-
-
 def addon_remote_sha(
     git_url: str, branch=None, ref=None, force=False, raise_errors=False
 ) -> str | None:
     """Latest commit sha of a repo's branch (or pinned ref), cached in the
-    config file so repeated verifies don't burn API quota. Returns None on
-    failure — or raises with a readable cause when raise_errors is set.
-
-    The git hosts' REST APIs are rate-limited from shared IPs (GitHub in
-    particular), so when the API path fails the call falls back to the
-    smart-HTTP endpoint via ``git ls-remote`` — same result, no API quota.
-    Git itself remains optional: without it (or without a reachable remote)
-    the cached sha / None path still applies, so the packaged launcher never
-    hard-depends on a Git executable.
-    """
-    # Allowlist gate: never open an API connection nor spawn `git` for a
-    # host outside ADDON_GIT_HOSTS, whatever a catalog entry carries.
-    if not is_allowed_git_url(git_url):
-        return None
-    key = f"{git_url}#{ref or branch or ''}"
-    now = time.time()
-    if not force:
-        entry = load_config().get("addon_sha_cache", {}).get(key)
-        if entry and (now - entry.get("timestamp", 0)) < ADDON_SHA_CACHE_TTL:
-            return entry.get("sha")
-
-    kind, _repo_url, owner, repo, api = _git_parts(git_url)
-    pin = ref or branch  # explicit branch/ref when the caller has one
-    sha = None
-    api_error = None
-    try:
-        if kind == "github":
-            if pin:
-                sha = _api_json(
-                    f"{api}/repos/{owner}/{repo}/commits/{pin}"
-                ).get("sha")
-            else:
-                lst = _api_json(
-                    f"{api}/repos/{owner}/{repo}/commits?per_page=1"
-                )
-                sha = lst[0].get("sha") if lst else None
-        elif kind == "gitlab":
-            proj = quote(f"{owner}/{repo}", safe="")
-            if pin:
-                sha = _api_json(
-                    f"{api}/projects/{proj}/repository/commits/"
-                    f"{quote(pin, safe='')}"
-                ).get("id")
-            else:
-                lst = _api_json(
-                    f"{api}/projects/{proj}/repository/commits?per_page=1"
-                )
-                sha = lst[0].get("id") if lst else None
-        else:  # gitea / codeberg
-            q = f"?sha={pin}&limit=1" if pin else "?limit=1"
-            lst = _api_json(f"{api}/repos/{owner}/{repo}/commits{q}")
-            sha = lst[0].get("sha") if lst else None
-    except Exception as e:
-        api_error = e
-        sha = None
-
-    if not sha:
-        # API failed (rate limit, outage) or returned nothing — fall back to
-        # `git ls-remote` against the repo's smart-HTTP endpoint.
-        sha = _git_ls_remote_sha(git_url, pin)
-
-    if sha is None and raise_errors:
-        cause = api_error or RuntimeError(
-            f"could not resolve remote commit for {git_url}"
-        )
-        raise RuntimeError(describe_net_error(cause)) from cause
-
-    if sha is None and not raise_errors:
-        # Not an error for the caller (returns None), but worth a diagnostic
-        # line so a wall of "Failed to verify" isn't a silent mystery.
-        api_cause = (
-            describe_net_error(api_error)
-            if api_error
-            else "API returned no commits"
-        )
-        log(
-            f"  Could not resolve remote commit for {git_url} — {api_cause}; "
-            f"git ls-remote fallback also failed.",
-            "dim",
-        )
-
-    if sha:
-        update_config(
-            lambda c: c.setdefault("addon_sha_cache", {}).__setitem__(
-                key, {"timestamp": now, "sha": sha}
-            )
-        )
-    return sha
-
-
-def _git_ls_remote_sha(git_url: str, pin: str | None) -> str | None:
-    """Latest commit sha via ``git ls-remote`` — the smart-HTTP fallback that
-    sidesteps the git hosts' REST API quota. No clone, no worktree mutation.
-
-    Returns None when git is missing, the command fails/times out, or the
-    requested ref can't be resolved — never raises (a broken git must not
-    take down the addon scan).
-    """
-    args = ["git", "ls-remote", git_url]
-    args.append(pin if pin else "HEAD")
-    env = dict(os.environ)
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    try:
-        proc = subprocess.run(
-            args, capture_output=True, text=True, timeout=15, env=env
-        )
-    except (FileNotFoundError, subprocess.SubprocessError, OSError):
-        return None
-    if proc.returncode != 0:
-        return None
-    lines = [line.partition("\t") for line in proc.stdout.splitlines()]
-    if pin:
-        exact = [
-            sha
-            for sha, _, ref in lines
-            if ref in (f"refs/heads/{pin}", f"refs/tags/{pin}")
-        ]
-        if exact:
-            return exact[0]
-        # Loose match (e.g. a short branch/ref name resolving via remotes).
-        loose = [sha for sha, _, ref in lines if ref.endswith("/" + pin)]
-        return loose[0] if loose else None
-    for sha, _, ref in lines:
-        if ref == "HEAD":
-            return sha
-    return None
+    config file so repeated verifies don't burn API quota. Delegates to the
+    shared ``git_archive`` backend (API path with a ``git ls-remote``
+    fallback; the allowlist gate lives there)."""
+    return _GIT_BACKEND.remote_sha(
+        git_url,
+        branch=branch,
+        ref=ref,
+        force=force,
+        raise_errors=raise_errors,
+    )
 
 
 def addon_cached_sha(git_url: str, branch=None, ref=None):
     """Cached remote sha regardless of age — never touches the network."""
-    key = f"{git_url}#{ref or branch or ''}"
-    entry = load_config().get("addon_sha_cache", {}).get(key)
-    return entry.get("sha") if entry else None
+    return _GIT_BACKEND.cached_sha(git_url, branch=branch, ref=ref)
 
 
 def addon_zip_url(git_url: str, sha: str) -> str:
-    kind, repo_url, _owner, repo, _api = _git_parts(git_url)
-    if kind == "gitlab":
-        return f"{repo_url}/-/archive/{sha}/{repo}-{sha}.zip"
-    return f"{repo_url}/archive/{sha}.zip"
+    return _GIT_BACKEND.zip_url(git_url, sha)
 
 
 def install_addon_files(client_dir: str, folder: str, git_url: str, sha: str):
-    """Download the repo archive at `sha` and unpack it into
-    Interface/AddOns/<folder>, atomically replacing any existing copy."""
-    url = addon_zip_url(git_url, sha)
+    """Download the repo archive at `sha` via the git_archive backend and
+    unpack it into Interface/AddOns/<folder>, atomically replacing any
+    existing copy."""
     log(f"  Downloading {folder} @ {sha[:10]}…")
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    hosts = set(ADDON_ZIP_HOSTS)
-    cfg = launcher.config()
-    if cfg is not None:
-        hosts |= cfg.addon_git_host_set()
-    with secure_urlopen(req, timeout=120, allowed_hosts=hosts) as r:
-        data = r.read()
-
-    dest_root = os.path.join(addons_path(client_dir), folder)
-    tmp_root = dest_root + ".tmp_install"
-    tmp_abs = os.path.abspath(tmp_root)
-    if os.path.isdir(tmp_root):
-        rmtree_force(tmp_root)
-    try:
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            for info in zf.infolist():
-                if info.is_dir():
-                    continue
-                # Strip the archive's top-level "<repo>-<sha>/" directory and
-                # normalise separators (a zip entry may use "/" or "\").
-                parts = [
-                    p
-                    for p in info.filename.replace("\\", "/").split("/")[1:]
-                    if p not in ("", ".")
-                ]
-                if not parts or ".." in parts:
-                    continue
-                target = os.path.join(tmp_root, *parts)
-                # Defence in depth: never write outside the target folder even
-                # if the guards above are somehow bypassed.
-                if not os.path.abspath(target).startswith(tmp_abs + os.sep):
-                    continue
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                with zf.open(info) as src, open(target, "wb") as dst:
-                    shutil.copyfileobj(src, dst)
-        if os.path.isdir(dest_root):
-            rmtree_force(dest_root)
-        os.replace(tmp_root, dest_root)
-    except BaseException:
-        # Never leave a half-written ".tmp_install" behind on failure
-        if os.path.isdir(tmp_root):
-            try:
-                rmtree_force(tmp_root)
-            except Exception:
-                pass
-        raise
+    data = _GIT_BACKEND.fetch_archive(git_url, sha)
+    _sources_deploy.unpack_folder(
+        data, os.path.join(addons_path(client_dir), folder)
+    )
     log(f"  Installed addon {folder}")
 
 

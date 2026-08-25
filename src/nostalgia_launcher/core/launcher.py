@@ -30,6 +30,8 @@ other URL is derived from it unless overridden:
         ]
       },
       "mods": [],
+      "addons": [],
+      "assets": [],
       "discord_url": "https://discord.gg/example",
       "theme": {
         "C_GOLD": "#d4a02f",
@@ -66,7 +68,23 @@ The optional top-level ``mods`` list embeds mod catalog entries directly in
 the config (same shape the remote mod catalog uses). Entries are kept raw
 here and sanitized by `services/mods` with the same rules as remote entries;
 embedded ids override the remote catalog, and the per-user custom file
-overrides both.
+overrides both. ``addons`` works the same way (sanitized by `services/addons`,
+git-host allowlist included).
+
+The optional top-level ``assets`` list embeds asset entries (single-file
+server content patches such as MPQs) the same way, sanitized by
+`services/assets`; ``server.assets_registry_url`` optionally points at a
+remote assets catalog. Every embedded asset download URL and the registry
+URL join the security allowlist.
+
+**Import-time split**: `persist()` / `persist_text()` move the three content
+sections out of the document before it is stored. Each lands in its own
+local repo file (`local_<kind>_repo.json` in the config dir, shaped
+``{"server": […], "custom": […]}`` — "server" mirrors the imported doc,
+"custom" holds user-added entries that survive re-imports), and the
+persisted config keeps only server/mirrors/theme. The ``validate_*``
+helpers stay side-effect-free; a repo write failure aborts the whole
+import.
 
 A missing or invalid configuration is a hard startup error: the app has
 nothing to point at. This module is network-free; `core/security_http` builds
@@ -121,7 +139,10 @@ class LauncherConfig:
     realm: str
     addons_registry_urls: list[str] = field(default_factory=list)
     embedded_mods: list[dict] = field(default_factory=list)
+    embedded_addons: list[dict] = field(default_factory=list)
     mods_registry_url_explicit: bool = False
+    embedded_assets: list[dict] = field(default_factory=list)
+    assets_registry_url: str = ""
     mirrors: list["Mirror"] = field(default_factory=list)
     discord_url: str | None = None
     theme: dict | None = None
@@ -166,11 +187,18 @@ class LauncherConfig:
 
     def _all_urls(self) -> list[str]:
         """Every endpoint URL the app may contact: base URLs plus the
-        resolved manifest/client endpoints of the server and mirrors."""
+        resolved manifest/client endpoints of the server and mirrors, plus
+        every asset download URL (embedded entries and the asset registry
+        catalog) so the security allowlist covers them."""
         urls: list[str] = list(self.all_bases())
         urls += [self.manifest_url, self.client_url]
         if self.torrent_url:
             urls.append(self.torrent_url)
+        if self.assets_registry_url:
+            urls.append(self.assets_registry_url)
+        for a in self.embedded_assets:
+            if isinstance(a, dict) and isinstance(a.get("url"), str):
+                urls.append(a["url"])
         for m in self.mirrors:
             urls += [m.manifest_url, m.client_url]
             if m.torrent_url:
@@ -321,13 +349,34 @@ def _derive(data: dict) -> LauncherConfig:
         raw_mods_url.strip()
     )
 
+    # Asset registry URL — explicit-only (no base_url-derived default): a
+    # config without one simply has no remote asset catalog. Assets may
+    # also be embedded directly via the top-level "assets" list (kept raw;
+    # services/assets sanitizes with catalog.validate_asset).
+    raw_assets_url = server.get("assets_registry_url")
+    assets_registry_url = _https_url(raw_assets_url) or ""
+    raw_embedded_assets = data.get("assets")
+    embedded_assets: list[dict] = (
+        [e for e in raw_embedded_assets if isinstance(e, dict)]
+        if isinstance(raw_embedded_assets, list)
+        else []
+    )
+
     # Mods embedded directly in the config. Kept raw — services/mods
     # sanitizes each entry with catalog.validate_mod (allowlisted source
-    # kinds, https URLs, safe relative paths).
+    # kinds, https URLs, safe relative paths). Addons follow the same
+    # pattern via the top-level "addons" list (sanitized by services/addons
+    # with the git-host allowlist on top).
     raw_embedded_mods = data.get("mods")
     embedded_mods: list[dict] = (
         [e for e in raw_embedded_mods if isinstance(e, dict)]
         if isinstance(raw_embedded_mods, list)
+        else []
+    )
+    raw_embedded_addons = data.get("addons")
+    embedded_addons: list[dict] = (
+        [e for e in raw_embedded_addons if isinstance(e, dict)]
+        if isinstance(raw_embedded_addons, list)
         else []
     )
 
@@ -347,7 +396,10 @@ def _derive(data: dict) -> LauncherConfig:
         realm=(server.get("realm") or host).strip(),
         mirrors=mirrors,
         embedded_mods=embedded_mods,
+        embedded_addons=embedded_addons,
         mods_registry_url_explicit=mods_registry_url_explicit,
+        embedded_assets=embedded_assets,
+        assets_registry_url=assets_registry_url,
         discord_url=discord_url,
         theme=theme,
         torrent_url=_https_url(server.get("torrent_url")),
@@ -418,58 +470,210 @@ def _auto_path() -> str:
     return discover_path()
 
 
-def persist(path: str) -> tuple[str, str]:
-    """Copy a validated launcher config into the per-user directory, writing
-    atomically (temp file + rename). Only a semantically valid launcher
-    config (parseable JSON that passes `_derive`) is persisted. Returns
-    (destination, error); exactly one is set."""
-    dest = user_config_path()
+# Content categories a server document may carry inline. At import time
+# each one is split out of the persisted launcher config into its own
+# local repo file (`local_<kind>_repo.json`): the config stays small and
+# every category gets one authoritative on-disk home shaped as
+# ``{"server": [...], "custom": [...]}`` — "server" mirrors the imported
+# document, "custom" holds user-added entries and survives re-imports.
+CONTENT_KINDS = ("mods", "addons", "assets")
+
+
+def local_repo_path(kind: str) -> str:
+    """The local repo file for a content kind (one of `CONTENT_KINDS`),
+    living in the per-user config dir next to the launcher config."""
+    return os.path.join(config_dir(), f"local_{kind}_repo.json")
+
+
+def load_local_repo(kind: str) -> tuple[list, list]:
+    """Read the local repo file for a content kind. Returns
+    ``(server_entries, custom_entries)``; a missing file yields two empty
+    lists. Raises ValueError when the file exists but is not the expected
+    object with optional \"server\"/\"custom\" lists."""
     try:
-        with open(path, encoding="utf-8") as f:
-            raw = f.read()
-        _derive(json.loads(raw))  # don't persist truncated/invalid configs
+        with open(local_repo_path(kind), encoding="utf-8") as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        return [], []
+    except Exception as e:
+        raise ValueError(f"local {kind} repo is unreadable: {e}") from e
+
+    def _entries(key: str) -> list:
+        value = raw.get(key)
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError(f"local {kind} repo '{key}' must be a list")
+        return [e for e in value if isinstance(e, dict)]
+
+    if not isinstance(raw, dict):
+        raise ValueError(f"local {kind} repo must be a JSON object")
+    return _entries("server"), _entries("custom")
+
+
+def legacy_custom_path(kind: str) -> str:
+    """Path of the pre-repo per-user custom file (the hand-edit escape
+    hatch that predates the local repos). Kept as a backup after the
+    one-time migration into the repo's "custom" list."""
+    return os.path.join(config_dir(), f"nostalgia_launcher_{kind}_custom.json")
+
+
+def legacy_custom_entries(kind: str) -> list:
+    """The raw entries of the legacy per-user custom file, or [] when it
+    doesn't exist / isn't readable. Used to seed a freshly-created local
+    repo so pre-repo user additions survive the migration."""
+    try:
+        with open(legacy_custom_path(kind), encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return []
+    if not isinstance(raw, list):
+        return []
+    return [e for e in raw if isinstance(e, dict)]
+
+
+def store_local_repo(
+    kind: str, server_entries: list, custom_entries: list
+) -> None:
+    """Atomically write the local repo file for a content kind from its
+    server-imported and user-custom entry lists."""
+    dest = local_repo_path(kind)
+    directory = os.path.dirname(dest) or "."
+    os.makedirs(directory, exist_ok=True)
+    payload = (
+        json.dumps(
+            {
+                "server": list(server_entries),
+                "custom": list(custom_entries),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+    fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
+    try:
+        os.close(fd)
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, dest)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def _split_and_strip(data: dict, final=None) -> dict:
+    """Split the content sections of an import document out into their
+    local repo files — rewriting each repo's "server" list to mirror the
+    document faithfully while preserving its "custom" list — then return a
+    copy of the document with those sections removed (the stripped form
+    persisted as the launcher config).
+
+    The whole operation is transactional: `final` (the launcher-config
+    write, when the caller supplies one) runs after every repo write
+    succeeded, and any failure along the way rolls every already-written
+    repo back to its prior bytes (newly created files are removed) before
+    re-raising — an import is never half-applied."""
+    staged: list[tuple[str, bytes | None]] = []
+    try:
+        for kind in CONTENT_KINDS:
+            section = data.get(kind)
+            entries = (
+                [e for e in section if isinstance(e, dict)]
+                if isinstance(section, list)
+                else []
+            )
+            path = local_repo_path(kind)
+            existed = os.path.exists(path)
+            prior = None
+            if existed:
+                with open(path, "rb") as f:
+                    prior = f.read()
+                _prev_server, custom = load_local_repo(kind)
+            else:
+                # First-ever repo creation: seed "custom" from the legacy
+                # per-user custom file so pre-repo user additions survive.
+                custom = legacy_custom_entries(kind)
+            store_local_repo(kind, entries, custom)
+            staged.append((path, prior))
+        if final is not None:
+            final()
+        return {k: v for k, v in data.items() if k not in CONTENT_KINDS}
+    except Exception:
+        for path, prior in reversed(staged):
+            try:
+                if prior is None:
+                    if os.path.exists(path):
+                        os.remove(path)
+                else:
+                    with open(path, "wb") as f:
+                        f.write(prior)
+            except OSError as e:
+                log(f"  Could not roll back {path}: {e}", "err")
+        raise
+
+
+def _persist_data(data: dict) -> tuple[str, str]:
+    """Validate an import document, split its content sections into the
+    local repo files, and persist the stripped configuration into the
+    per-user directory. The repo writes and the config write commit or
+    roll back together. Returns (destination, error); exactly one is set."""
+    dest = user_config_path()
+
+    def write_config():
+        stripped_text = (
+            json.dumps(
+                {k: v for k, v in data.items() if k not in CONTENT_KINDS},
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
         directory = os.path.dirname(dest) or "."
         os.makedirs(directory, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
         try:
             os.close(fd)
             with open(tmp, "w", encoding="utf-8") as f:
-                f.write(raw)
+                f.write(stripped_text)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, dest)
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
+
+    try:
+        _derive(data)  # don't persist truncated/invalid configs
+        _split_and_strip(data, final=write_config)
     except Exception as e:
         return "", f"Could not save the launcher configuration: {e}"
     return dest, ""
+
+
+def persist(path: str) -> tuple[str, str]:
+    """Import a validated launcher-config file into the per-user directory:
+    its content sections (mods/addons/assets) are split into the local
+    repo files and the remaining configuration is written atomically.
+    Returns (destination, error); exactly one is set."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        return "", f"Could not save the launcher configuration: {e}"
+    return _persist_data(data)
 
 
 def persist_text(text: str) -> tuple[str, str]:
-    """Persist already-fetched, validated launcher config *text* into the
-    per-user directory, writing atomically (temp file + rename). Returns
-    (destination, error); exactly one is set. Used when the config was
-    obtained over the network rather than from a local file."""
-    dest = user_config_path()
+    """Import already-fetched, validated launcher config *text* obtained
+    over the network — same contract as `persist`."""
     try:
-        _derive(json.loads(text))  # don't persist truncated/invalid configs
-        directory = os.path.dirname(dest) or "."
-        os.makedirs(directory, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
-        try:
-            os.close(fd)
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write(text)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, dest)
-        finally:
-            if os.path.exists(tmp):
-                os.remove(tmp)
+        data = json.loads(text)
     except Exception as e:
         return "", f"Could not save the launcher configuration: {e}"
-    return dest, ""
+    return _persist_data(data)
 
 
 def validate_path(path: str) -> tuple["LauncherConfig | None", str]:
@@ -598,6 +802,27 @@ def embedded_mods() -> list[dict]:
     `services/mods`). Empty when the config has no usable \"mods\" list."""
     c = config()
     return list(c.embedded_mods) if c else []
+
+
+def embedded_addons() -> list[dict]:
+    """The addon entries embedded in the launcher config (raw; sanitized by
+    `services/addons`). Empty when the config has no usable \"addons\"
+    list."""
+    c = config()
+    return list(c.embedded_addons) if c else []
+
+
+def embedded_assets() -> list[dict]:
+    """The asset entries embedded in the launcher config (raw; sanitized by
+    `services/assets`). Empty when the config has no usable \"assets\" list."""
+    c = config()
+    return list(c.embedded_assets) if c else []
+
+
+def assets_registry_url() -> str:
+    """The launcher-configured remote asset catalog URL ('' when unset)."""
+    c = config()
+    return c.assets_registry_url if c else ""
 
 
 def mods_registry_url_explicit() -> bool:

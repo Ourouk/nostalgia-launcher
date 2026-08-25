@@ -12,7 +12,7 @@ import threading
 
 from ..core import config_store
 from ..core.errors import describe_install_error
-from ..services import mods
+from ..services import catalog, mods
 from ..state.events import (
     EventDispatcher,
     LogMessage,
@@ -107,15 +107,17 @@ class ModsController:
         failing."""
         if self._busy:
             return False
-        if not mods.has_remote_catalog() and mods.embedded_mods():
-            self._dispatcher.post(
-                LogMessage(
-                    "Using the mods embedded in the launcher config.\n",
-                    "dim",
-                )
-            )
-            self._dispatcher.post(ModsLoaded(self.state))
-            return True
+        if not mods.has_remote_catalog():
+            if mods.embedded_mods():
+                note = "Using the mods embedded in the launcher config.\n"
+            elif catalog.local_repo_has_entries("mods"):
+                note = "Using the local mods repo contents.\n"
+            else:
+                note = None
+            if note is not None:
+                self._dispatcher.post(LogMessage(note, "dim"))
+                self._dispatcher.post(ModsLoaded(self.state))
+                return True
 
         def worker():
             try:
@@ -132,6 +134,18 @@ class ModsController:
         self._busy = True
         threading.Thread(target=worker, daemon=True).start()
         return True
+
+    def add_custom_entry(self, entry: dict) -> str | None:
+        """Validate a user-built mod entry, store it in the local mods
+        repo's "custom" list and republish the snapshot. Returns an error
+        message, or None on success."""
+        if catalog.validate_mod(entry) is None:
+            return "This mod entry is not usable."
+        err = catalog.add_custom_entry("mods", entry)
+        if err:
+            return err
+        self._dispatcher.post(ModsLoaded(self.state))
+        return None
 
     def action_for(self, mod_id: str) -> str | None:
         """'retry' when the mod is in an error state, 'update' when a newer
@@ -375,16 +389,11 @@ class ModsController:
                             "github_release",
                             "codeberg_release",
                         ):
+                            # Reuse the slim release object for the install
+                            # itself; its version derives from the same
+                            # object (tag, or asset filename when pinned).
                             mod_release = mods._fetch_release_cached(mod)
-                            latest_ver = (
-                                mods._release_version(mod, mod_release)
-                                if mod_release
-                                else None
-                            )
-                        else:
-                            latest_ver = mods.fetch_mod_latest_version_cached(
-                                mod
-                            )
+                        latest_ver = mods.fetch_mod_latest_version_cached(mod)
                     except Exception:
                         pass
 
