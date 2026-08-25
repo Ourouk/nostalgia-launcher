@@ -415,7 +415,8 @@ def mod_installed_files_present(mod: dict, client_dir: str) -> bool:
             .get(mod["id"], {})
             .get("installed_files", [])
         )
-    regs = [d.lower() for d in registered_dlls(mod)]
+    regs_raw = registered_dlls(mod)
+    regs = [d.lower() for d in regs_raw]
     entries = read_dlls_entries(client_dir)
     if files:
         if not all(os.path.exists(os.path.join(client_dir, f)) for f in files):
@@ -424,10 +425,7 @@ def mod_installed_files_present(mod: dict, client_dir: str) -> bool:
     if (
         regs
         and all(reg in entries for reg in regs)
-        and all(
-            os.path.exists(os.path.join(client_dir, d))
-            for d in registered_dlls(mod)
-        )
+        and all(os.path.exists(os.path.join(client_dir, d)) for d in regs_raw)
     ):
         return True
     return bool(

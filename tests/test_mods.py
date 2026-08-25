@@ -651,7 +651,7 @@ def test_example_community_mods_catalog_validates():
     assert cleaned["source"]["repo"] == "example-tweak"
     assert cleaned["register_dll"] == ["ExampleTweak.dll"]
     assert cleaned["installation"] == "user_opt_in"
-    assert cleaned["clientVersions"] == ["1.12.1"]
+    assert cleaned["client_versions"] == ["1.12.1"]
     launcher_mod = catalog.validate_mod(by_id["example-loader"])
     assert launcher_mod is not None
     assert launcher_mod["type"] == "external-launcher"

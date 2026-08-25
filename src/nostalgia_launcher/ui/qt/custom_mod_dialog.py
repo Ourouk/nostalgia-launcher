@@ -250,6 +250,10 @@ class CustomModDialog(QDialog):
         external = self._type.currentText() == "external-launcher"
         for widget in (*self._external_caps, *self._external_edits):
             widget.setVisible(external)
+        if not external:
+            # Hidden fields must not leak stale text into the saved entry.
+            for edit in self._external_edits:
+                edit.clear()
 
     def _sync_kind_fields(self):
         kind = self._kind.currentText()
@@ -298,7 +302,7 @@ class CustomModDialog(QDialog):
             if v.strip()
         ]
         if client_versions:
-            entry["clientVersions"] = client_versions
+            entry["client_versions"] = client_versions
         repo_url = self._repo_url.text().strip()
         if repo_url:
             entry["repo_url"] = repo_url

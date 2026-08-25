@@ -18,7 +18,7 @@
     },
     "register_dll": ["ExampleTweak.dll"],
     "installed_files": ["ExampleTweak.dll"],
-    "clientVersions": ["1.12.1"]
+    "client_versions": ["1.12.1"]
   },
   {
     "id": "example-loader",

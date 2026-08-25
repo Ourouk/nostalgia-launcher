@@ -517,8 +517,10 @@ def test_validate_mod_external_launcher_fields():
     # An external-launcher without any register_dll is valid.
     assert "register_dll" not in cleaned
     assert cleaned["executable"] == "ExampleLoader.exe"
-    assert cleaned["clientVersions"] == ["1.12.1"]
     assert cleaned["type"] == "external-launcher"
+    # Legacy camelCase input is accepted and normalized to snake_case.
+    assert cleaned["client_versions"] == ["1.12.1"]
+    assert "clientVersions" not in cleaned
 
 
 def test_validate_mod_register_dll_list_normalization():

@@ -187,7 +187,9 @@ class ModsController:
     def apply_essential_mods(self) -> bool:
         """Install every required mod not already present. Returns True when
         an install actually started (a client is present and at least one
-        required mod is missing)."""
+        required mod is missing). An explicit user opt-out (an enabled=False
+        record) always wins: the catalog policy never force-reinstalls a mod
+        the user turned off."""
         if self._busy:
             return False
         out = (self._get_out_dir() or "").strip()
@@ -199,6 +201,8 @@ class ModsController:
             if mod.get("installation") != "required":
                 continue
             state = mods_cfg.get(mod["id"], {})
+            if state.get("enabled") is False:
+                continue  # user opted out — liberty beats policy
             if state.get(
                 "installed_version"
             ) and mods.mod_installed_files_present(mod, out):

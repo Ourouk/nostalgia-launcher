@@ -441,13 +441,15 @@ def validate_mod(entry: dict) -> dict | None:
         if not isinstance(executable, str) or not safe_relpath(executable):
             return None
         mod["executable"] = executable
-    client_versions = entry.get("clientVersions")
+    client_versions = entry.get("client_versions")
+    if client_versions is None:  # legacy camelCase alias
+        client_versions = entry.get("clientVersions")
     if client_versions is not None:
         if not isinstance(client_versions, list) or not all(
             isinstance(v, str) for v in client_versions
         ):
             return None
-        mod["clientVersions"] = list(client_versions)
+        mod["client_versions"] = list(client_versions)
     return mod
 
 
@@ -484,7 +486,7 @@ def merge_mods(remote: list, custom: list) -> list:
             "register_dll",
             "installed_files",
             "executable",
-            "clientVersions",
+            "client_versions",
         ):
             if entry.get(key) is not None:
                 base[key] = entry[key]

@@ -178,13 +178,21 @@ the QLocalServer guard remains authoritative there.
 - **Mod entry schema** (`catalog.validate_mod`): every validated mod carries
   `type` (`"mod"` = DLL drop-in, default; `"external-launcher"` = provides the
   game executable via `executable`) and `installation` (`"user_opt_in"`
-  default, `"required"` = auto-install + cannot disable). The legacy
-  `essential: true` boolean is silently translated to `installation:
-  "required"`. `register_dll` accepts `str | list[str]` and is normalized to
-  a list — one mod may wire several DLLs into `dlls.txt`
+  default, `"required"` = startup auto-install / "Install Required" target).
+  Required is a default, never an enforcement: the row checkbox stays free,
+  and an explicit user opt-out (an `enabled: false` record) persists —
+  startup will NOT force-reinstall a required mod the user turned off.
+  The legacy `essential: true` boolean is silently translated to
+  `installation: "required"`. `register_dll` accepts `str | list[str]` and is
+  normalized to a list — one mod may wire several DLLs into `dlls.txt`
   (`services.mods.registered_dlls`), and an external-launcher needs none.
-  `clientVersions` is optional metadata (no filtering yet). Game launch
-  prefers the first on-disk executable from
+  Entries must name real on-disk DLLs that need dlls.txt *injection*;
+  proxy-loaded files (e.g. a d3d9.dll picked up by the OS loader) are tracked
+  via `installed_files` alone — dlls.txt stays the client's injection list,
+  not launcher bookkeeping.
+  `client_versions` is optional metadata (no filtering yet; legacy catalogs
+  may still send camelCase `clientVersions`, normalized on ingest). Game
+  launch prefers the first on-disk executable from
   `mods.external_launcher_executables()` — active external launchers only:
   required ones always, opt-ins only when enabled in state, and only when the
   exe exists — else `WoW.exe` (`core/filesystem.pick_game_executable`). There
