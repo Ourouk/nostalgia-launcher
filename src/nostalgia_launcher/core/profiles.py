@@ -350,18 +350,32 @@ def resolve(override=None) -> Profile:
     name = override or load_index()["active"] or DEFAULT_PROFILE
     if name == DEFAULT_PROFILE:
         return DEFAULT
+    if not _clean_name(name):
+        raise ProfileError(f"Unknown profile: {name}")
     root = profile_root(name)
     if not os.path.isdir(root):
         raise ProfileError(
-            f"Unknown profile: {name} (no directory under {{}})".format(
-                profiles_root()
-            )
+            f"Unknown profile: {name} (no directory under {profiles_root()})"
         )
     return Profile(name, root)
 
 
+def _clean_name(name: str) -> bool:
+    """Plain directory name only: no path separators, no leading dot —
+    management APIs and the untrusted --profile override must never
+    address anything outside profiles/."""
+    return (
+        bool(name)
+        and "/" not in name
+        and "\\" not in name
+        and not name.startswith(".")
+    )
+
+
 def _existing_or_none(name) -> "Profile | None":
     """Profile for a known name (default included), else None."""
+    if name != DEFAULT_PROFILE and not _clean_name(name):
+        return None
     if name == DEFAULT_PROFILE:
         return DEFAULT
     if name and os.path.isdir(profile_root(name)):

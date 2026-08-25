@@ -505,3 +505,19 @@ def test_persist_text_splits_content_into_active_profile(
             assert repo == {"server": [], "custom": []}
     finally:
         launcher.set_profile_launcher_path("")
+
+
+# ── path-safety: names must never address outside profiles/ ────────────
+
+
+def test_path_like_names_are_not_addressable(prof_home):
+    """--profile overrides and management APIs refuse separator/dot
+    names instead of addressing directories outside profiles/."""
+    profiles.create("real")
+    for bad in ("../evil", "sub/dir", ".hidden", ".."):
+        with pytest.raises(profiles.ProfileError, match="Unknown profile"):
+            profiles.resolve(bad)
+        assert profiles.delete(bad) == f"Unknown profile: {bad}"
+        assert profiles.duplicate(bad, "dst") == f"Unknown profile: {bad}"
+        assert profiles.rename(bad, "dst") == f"Unknown profile: {bad}"
+    assert profiles.resolve("real").name == "real"

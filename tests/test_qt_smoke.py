@@ -10,6 +10,7 @@ writes outside tmp_path. run()/exec() is never called; QTest.qWait and the
 bridge's QTimer deliver dispatcher events exactly as in production.
 """
 
+import json
 import os
 import time
 
@@ -60,6 +61,30 @@ from nostalgia_launcher.ui.qt.settings_dialog import SettingsDialog
 @pytest.fixture(autouse=True)
 def _offscreen(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+
+# Real, profile-aware repo-path implementations (the autouse
+# _local_repos_env conftest fixture replaces these seams with flat tmp
+# redirects; individual tests restore them to verify genuine routing).
+_REAL_LOCAL_REPO_PATH = launcher.local_repo_path
+_REAL_LEGACY_CUSTOM_PATH = launcher.legacy_custom_path
+
+
+@pytest.fixture()
+def real_repo_seams(monkeypatch):
+    """Restore the real (profile-aware) repo-path resolution for tests
+    that exercise it."""
+    import nostalgia_launcher.services.catalog as catalog_module
+
+    monkeypatch.setattr(launcher, "local_repo_path", _REAL_LOCAL_REPO_PATH)
+    monkeypatch.setattr(
+        launcher, "legacy_custom_path", _REAL_LEGACY_CUSTOM_PATH
+    )
+    monkeypatch.setattr(
+        catalog_module,
+        "custom_file",
+        lambda kind: profiles.active().custom_catalog_path(kind),
+    )
 
 
 @pytest.fixture(scope="session")
@@ -978,3 +1003,96 @@ def test_delete_default_is_refused_inline(qapp, build_app, fake_home):
     finally:
         app.close()
         app._hub.close()
+
+
+def test_new_profile_wizard_scopes_repos_and_globals(
+    qapp, build_app, fake_home, monkeypatch, real_repo_seams
+):
+    """Settings → New… import: launcher.json AND content repos land in
+    the NEW profile while the ACTIVE profile's stores and the global
+    launcher config stay untouched."""
+    import nostalgia_launcher.services.catalog as catalog_module
+
+    prof, err = profiles.create("fresh2")
+    assert err == ""
+    sentinel = '{"server": [{"sentinel": true}], "custom": []}'
+    os.makedirs(platform_support.config_dir(), exist_ok=True)
+    with open(
+        os.path.join(platform_support.config_dir(), "local_mods_repo.json"),
+        "w",
+        encoding="utf-8",
+    ) as f:
+        f.write(sentinel)
+
+    raw = json.dumps(
+        {
+            "server": {"base_url": "https://fresh.test"},
+            "mods": [],
+        }
+    )
+
+    class _FakeWizard:
+        def __init__(self, initial_path=None):
+            pass
+
+        def exec(self):
+            return 1  # QDialog.DialogCode.Accepted
+
+        def selection(self):
+            return {
+                "kind": "url",
+                "config_url": "https://example.invalid/c.json",
+                "raw": raw,
+            }
+
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.launcher_config_dialog.LauncherConfigDialog",
+        _FakeWizard,
+    )
+    app = _open_settings_window(build_app)
+    try:
+        dlg = app._window._settingsDialog
+        dlg._configure_new_profile(prof)
+
+        # Repos landed in the NEW profile…
+        with open(prof.local_repo_path("mods"), encoding="utf-8") as f:
+            assert json.load(f) == {"server": [], "custom": []}
+        with open(prof.launcher_path(), encoding="utf-8") as f:
+            assert json.load(f)["server"]["base_url"] == "https://fresh.test"
+        # …the ACTIVE profile's store is untouched…
+        with open(
+            os.path.join(
+                platform_support.config_dir(), "local_mods_repo.json"
+            ),
+            encoding="utf-8",
+        ) as f:
+            assert f.read() == sentinel
+        # …and the running session's globals are exactly what they were.
+        assert profiles.active().name == "default"
+        assert profiles.load_index()["active"] == "default"
+        assert launcher.server_url() == "https://launcher.test"
+        assert catalog_module.custom_file("mods").startswith(
+            str(platform_support.config_dir())
+        )
+    finally:
+        app._window._settingsDialog.close()
+        app.close()
+        app._hub.close()
+
+
+def test_guard_serve_never_unlinks_live_server(qapp):
+    """Launch race: when AddressInUse hits because ANOTHER instance just
+    won, serve() refuses to removeServer() the live socket — the winner
+    stays raisable."""
+    from nostalgia_launcher.core import app_lock
+    from nostalgia_launcher.ui.qt import app_lock_qt
+
+    key = app_lock.state_key("race-test-state.json")
+    server1, _relay = app_lock_qt.serve(key)
+    try:
+        with pytest.raises(RuntimeError, match="just started"):
+            app_lock_qt.serve(key)
+        assert app_lock_qt.try_connect_existing(key) is not None
+    finally:
+        server1.close()
+        app_lock_qt.stop_server(key)

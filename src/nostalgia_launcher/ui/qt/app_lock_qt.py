@@ -82,12 +82,18 @@ def serve(key, on_message=None):
 
     server = QLocalServer()
     if not server.listen(key):
-        # Crashed instance left its socket behind → AddressInUse: clear
-        # it and retry ONCE.
+        # AddressInUse: a crashed instance left its socket behind (no
+        # live listener) → clear it and retry ONCE. If a live instance
+        # answers, it just won the launch race — never unlink its
+        # socket; fail this attempt instead (the store lock exits us 6).
         if (
             server.serverError()
             == QAbstractSocket.SocketError.AddressInUseError
         ):
+            if try_connect_existing(key, 100) is not None:
+                raise RuntimeError(
+                    "another instance of this profile just started"
+                )
             QLocalServer.removeServer(key)
             if not server.listen(key):
                 raise RuntimeError(

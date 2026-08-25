@@ -608,15 +608,19 @@ class SettingsDialog(QDialog):
         self._configure_new_profile(prof)
 
     def _configure_new_profile(self, prof):
-        """Open the first-launch wizard scoped to the fresh profile: with
-        the persist override pointed at it, an accepted selection lands in
-        the profile's own launcher.json. Skipping is acceptable — the
-        profile simply stays unconfigured."""
+        """Open the first-launch wizard scoped to the fresh profile: BOTH
+        the persist override and the process-active profile point at it
+        while the dialog runs, so an accepted selection lands its
+        launcher.json AND content repos into the new profile without ever
+        touching the running profile's stores or the global launcher
+        config. Skipping is acceptable — the profile simply stays
+        unconfigured."""
         from .launcher_config_dialog import LauncherConfigDialog
 
-        active = profiles.active()
+        prev_active = profiles.active()
         try:
             launcher.set_profile_launcher_path(prof.launcher_path())
+            profiles.activate(prof)
             dlg = LauncherConfigDialog(initial_path=launcher.discover_path())
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 return
@@ -624,41 +628,32 @@ class SettingsDialog(QDialog):
             if err:
                 self._profile_error(err)
         finally:
+            profiles.activate(prev_active)
             launcher.set_profile_launcher_path(
-                active.launcher_path() if active.root else ""
+                prev_active.launcher_path() if prev_active.root else ""
             )
 
     def _persist_profile_selection(self, sel) -> str:
-        """Mirror cli._first_launch's persistence (file or URL selection)
-        into the CURRENT persist override — without starting any backend.
-        Returns "" on success."""
-        from ..services import config_import
+        """Persist a wizard selection (file or URL) into the CURRENT
+        persist override / active-profile scope. Validation-only: never
+        mutates the process-global launcher config (`persist`/
+        `persist_text` re-validate internally; `validate_dict` is
+        side-effect-free). Returns "" on success."""
+        from ...services import config_import
 
         if sel["kind"] == "file":
-            _cfg, err = launcher.configure(sel["path"])
-            if err:
-                return err
-            dest, err = launcher.persist(sel["path"])
-            if err:
-                return err
-            if os.path.normpath(dest) != os.path.normpath(sel["path"]):
-                _cfg, err = launcher.configure(dest)
-                if err:
-                    return err
-            return ""
+            _dest, err = launcher.persist(sel["path"])
+            return err
         raw = sel.get("raw")
         if not raw:
             _data, raw, err = config_import.fetch_config_url(sel["config_url"])
             if err:
                 return err
-        cfg = launcher.configure_from_dict(json.loads(raw))
+        cfg, verr = launcher.validate_dict(json.loads(raw))
         if cfg is None:
-            return f"Invalid launcher configuration: {launcher.config_error()}"
-        dest, err = launcher.persist_text(raw)
-        if err:
-            return err
-        _cfg, err = launcher.configure(dest)
-        return err or ""
+            return f"Invalid launcher configuration: {verr}"
+        _dest, err = launcher.persist_text(raw)
+        return err
 
     def _on_profile_duplicate(self):
         src = self._selected_profile()
