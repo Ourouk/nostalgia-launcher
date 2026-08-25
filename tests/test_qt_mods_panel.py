@@ -417,8 +417,10 @@ def test_catalog_age_label_and_refresh_button(qapp, window, hub, monkeypatch):
 
     from PySide6.QtWidgets import QToolButton
 
+    from nostalgia_launcher.services import catalog as catalog_module
+
     monkeypatch.setattr(
-        mods_module,
+        catalog_module.config_store,
         "load_config",
         lambda: {
             "mods_catalog_cache": {
@@ -447,7 +449,9 @@ def test_catalog_age_label_and_refresh_button(qapp, window, hub, monkeypatch):
 def test_catalog_age_label_hidden_without_cache(
     qapp, window, hub, monkeypatch
 ):
-    monkeypatch.setattr(mods_module, "load_config", lambda: {})
+    from nostalgia_launcher.services import catalog as catalog_module
+
+    monkeypatch.setattr(catalog_module.config_store, "load_config", lambda: {})
     panel = _panel(window)
     panel._refresh_age_label()
     label = panel.findChild(QLabel, "modsCatalogAge")
