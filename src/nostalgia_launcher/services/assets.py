@@ -15,18 +15,16 @@ captured at install time. With no metadata an installed asset is never
 reported stale; a missing file is a missing install, not an update.
 """
 
-import json
 import os
 import time
 import urllib.request
 
-from ..core.config_store import load_config, update_config
+from ..core.config_store import update_config
 from ..core.constants import UA
 from ..core.filesystem import cached_sha1
 from ..core.log_sink import log
 from ..core.security_http import (
     allowed_download_hosts,
-    read_capped,
     secure_urlopen,
 )
 from . import catalog
@@ -46,9 +44,7 @@ def _checked_rel(dest_rel) -> str:
 
 def catalog_timestamp() -> float | None:
     """When the assets catalog cache was last fetched (epoch), or None."""
-    entry = load_config().get("assets_catalog_cache", {})
-    ts = entry.get("timestamp")
-    return ts if isinstance(ts, (int, float)) and ts > 0 else None
+    return catalog.catalog_timestamp("assets")
 
 
 def has_remote_catalog() -> bool:
@@ -102,42 +98,11 @@ def catalog_is_stale(now: float | None = None) -> bool:
 
 def fetch_assets_catalog(force=False) -> list | None:
     """Assets catalog, cached in the config file ({"assets_catalog_cache":
-    {"timestamp": epoch, "catalog": [...]}}).
-
-    Non-forced calls never hit the network when a cached copy exists, and
-    return None (→ an empty registry) when there is none yet, so a first run
-    is fully offline-safe. Forced calls always fetch and raise when the URL
-    is unset or the network fails with nothing cached.
-    """
-    now = time.time()
-    entry = load_config().get("assets_catalog_cache", {})
-    cached = entry.get("catalog")
-    if not force:
-        return cached if cached is not None else None
-    url = registry_url()
-    if not url:
-        raise RuntimeError("Assets catalog URL is not configured.")
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with secure_urlopen(req, timeout=10) as r:
-            raw = json.loads(read_capped(r, 2 * 1024 * 1024))
-    except Exception:
-        if cached is not None:
-            return cached
-        raise
-    validated = []
-    for e in raw if isinstance(raw, list) else []:
-        if not isinstance(e, dict):
-            continue
-        cleaned = catalog.validate_asset(e)
-        if cleaned is not None:
-            validated.append(cleaned)
-    update_config(
-        lambda c: c.__setitem__(
-            "assets_catalog_cache", {"timestamp": now, "catalog": validated}
-        )
+    {"timestamp": epoch, "catalog": [...]}}) — see
+    ``catalog.fetch_url_catalog`` for the caching/offline semantics."""
+    return catalog.fetch_url_catalog(
+        "assets", catalog.validate_asset, registry_url(), force=force
     )
-    return validated
 
 
 def registry_url() -> str:
@@ -153,31 +118,14 @@ def _configured_registry_url() -> str:
 
 
 def assets_registry(force=False) -> list:
-    """The effective asset registry, in override order (later wins by id):
-    the remote/cached catalog < the local repo's server-imported entries <
-    the launcher config's embedded assets < the repo's user-custom entries
-    < the legacy per-user custom file. Empty when nothing is configured."""
-    remote = fetch_assets_catalog(force=force)
-    base = [] if remote is None else remote
-    repo = catalog.read_local_repo("assets")
-    return catalog.merge_assets(
-        catalog.merge_assets(
-            catalog.merge_assets(
-                catalog.merge_assets(
-                    base,
-                    catalog.validate_entries(
-                        repo["server"],
-                        catalog.validate_asset,
-                        "local assets repo",
-                    ),
-                ),
-                embedded_assets(),
-            ),
-            catalog.validate_entries(
-                repo["custom"], catalog.validate_asset, "local assets repo"
-            ),
-        ),
-        catalog.legacy_custom_layer("assets", catalog.validate_asset),
+    """The effective asset registry — see ``catalog.layered_registry`` for
+    the layer order. Empty when nothing is configured."""
+    return catalog.layered_registry(
+        "assets",
+        catalog.validate_asset,
+        catalog.ASSET_MERGE_FIELDS,
+        embedded_assets(),
+        remote=fetch_assets_catalog(force=force),
     )
 
 
