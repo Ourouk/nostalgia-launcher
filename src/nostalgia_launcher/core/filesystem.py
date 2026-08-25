@@ -87,16 +87,19 @@ def get_client_version(out_dir: str) -> str:
         return ""
 
 
-def pick_game_executable(client_dir: str) -> tuple[str, str]:
+def pick_game_executable(
+    client_dir: str, external_executables: list[str] | None = None
+) -> tuple[str, str]:
     """Which binary to launch from the game folder.
 
-    Prefers the VanillaFixes loader mod's executable when present on disk
-    (the catalog ships it; launching through the wrapper is its documented
-    flow), falling back to WoW.exe. Returns ``(absolute_path, label)``.
+    Prefers the first external-launcher executable (declared by an
+    installed catalog mod and passed in by the caller) that exists on disk,
+    falling back to WoW.exe. Returns ``(absolute_path, label)``.
     """
-    loader = os.path.join(client_dir, "VanillaFixes.exe")
-    if os.path.exists(loader):
-        return loader, "VanillaFixes.exe"
+    for name in external_executables or []:
+        candidate = os.path.join(client_dir, name)
+        if os.path.exists(candidate):
+            return candidate, name
     return os.path.join(client_dir, "WoW.exe"), "WoW.exe"
 
 

@@ -175,6 +175,20 @@ the QLocalServer guard remains authoritative there.
   the online catalog(s) AND rescans SHAs. Panel headers show a "Catalog
   updated …" age tag. Tests provide a registry by monkeypatching
   `mods.mods_registry()`.
+- **Mod entry schema** (`catalog.validate_mod`): every validated mod carries
+  `type` (`"mod"` = DLL drop-in, default; `"external-launcher"` = provides the
+  game executable via `executable`) and `installation` (`"user_opt_in"`
+  default, `"required"` = auto-install + cannot disable). The legacy
+  `essential: true` boolean is silently translated to `installation:
+  "required"`. `register_dll` accepts `str | list[str]` and is normalized to
+  a list — one mod may wire several DLLs into `dlls.txt`
+  (`services.mods.registered_dlls`), and an external-launcher needs none.
+  `clientVersions` is optional metadata (no filtering yet). Game launch
+  prefers the first on-disk executable from
+  `mods.external_launcher_executables()` — active external launchers only:
+  required ones always, opt-ins only when enabled in state, and only when the
+  exe exists — else `WoW.exe` (`core/filesystem.pick_game_executable`). There
+  is NO hardcoded loader preference.
 - **Custom entries are first-class**: MODS and ASSETS panels have an
   "+ Add custom …" banner button (`custom_mod_dialog.py` covers every
   registered source kind; `custom_asset_dialog.py` the full asset shape);
@@ -297,7 +311,7 @@ the QLocalServer guard remains authoritative there.
   (`DownloadSource`/`_download_source`, re-exported by `http_update` so
   controllers/tests keep importing from there).
 - The launcher never binary-patches `WoW.exe` — runtime client fixes are left
-  to the VanillaFixes loader mod. The only tweak channel is `Config.wtf`.
+  to the catalog-declared loader mods (external launchers). The only tweak channel is `Config.wtf`.
 
 ## Update lifecycle & game launch
 
@@ -321,8 +335,9 @@ the QLocalServer guard remains authoritative there.
   True on Windows (native) and on Linux only when `umu.umu_available()` finds
   `umu-run` on PATH (or `~/.local/bin/umu-run`). `controllers/update.py`'s
   `launch_game()` splits into `_launch_game_windows()` (Popen, DXVK notice,
-  VanillaFixes.exe preference) and `_launch_game_via_umu()` (WoW.exe under
-  Proton in the launcher-wide `data_dir()/wineprefix`, no DXVK notice). All umu
+  external-launcher executable preference) and `_launch_game_via_umu()`
+  (WoW.exe under Proton in the launcher-wide `data_dir()/wineprefix`, no DXVK
+  notice). All umu
   settings live in the config's `"launch"` key and are edited via
   `SettingsController.set_umu_*`: `umu_proton` (defaults to `UMU-Proton`, the
   newest installed Proton — `services/umu.py` `DEFAULT_PROTON`/`default_proton()`),

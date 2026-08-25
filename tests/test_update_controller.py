@@ -924,17 +924,22 @@ def test_launch_game_linux_passes_skip_builtin_dxvk(
     assert launched["kw"]["skip_builtin_dxvk"] is True
 
 
-def test_launch_game_linux_prefers_vanillafixes(
+def test_launch_game_linux_prefers_external_launcher(
     controller, worker_cls, config, monkeypatch, tmp_path
 ):
     game = tmp_path / "game"
     game.mkdir()
     (game / "WoW.exe").write_text("")
-    (game / "VanillaFixes.exe").write_text("")
+    (game / "ExampleLoader.exe").write_text("")
     config["out_dir"] = str(game)
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
     monkeypatch.setattr(uc, "is_linux", lambda: True)
     monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
+    monkeypatch.setattr(
+        uc.mods,
+        "external_launcher_executables",
+        lambda client_dir: ["ExampleLoader.exe"],
+    )
     launched = {}
     monkeypatch.setattr(
         "nostalgia_launcher.services.umu.launch",
@@ -950,11 +955,11 @@ def test_launch_game_linux_prefers_vanillafixes(
     ok, _ = controller.launch_game()
 
     assert ok is True
-    assert launched["exe"] == str(game / "VanillaFixes.exe")
+    assert launched["exe"] == str(game / "ExampleLoader.exe")
     events = controller._dispatcher.drain()
     assert any(
         isinstance(e, LogMessage)
-        and "Launched VanillaFixes.exe via umu" in e.text
+        and "Launched ExampleLoader.exe via umu" in e.text
         for e in events
     )
 
@@ -1112,17 +1117,22 @@ def test_launch_game_linux_umu_failure(
     )
 
 
-def test_launch_game_windows_prefers_vanillafixes(
+def test_launch_game_windows_prefers_external_launcher(
     controller, worker_cls, config, monkeypatch, tmp_path
 ):
     game = tmp_path / "game"
     game.mkdir()
     (game / "WoW.exe").write_text("")
-    (game / "VanillaFixes.exe").write_text("")
+    (game / "ExampleLoader.exe").write_text("")
     config["out_dir"] = str(game)
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
     monkeypatch.setattr(uc, "is_linux", lambda: False)
     monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
+    monkeypatch.setattr(
+        uc.mods,
+        "external_launcher_executables",
+        lambda client_dir: ["ExampleLoader.exe"],
+    )
     popen = Mock()
     popen.return_value.stdout = None  # keep the drain thread a no-op
     monkeypatch.setattr(subprocess, "Popen", popen)
@@ -1132,7 +1142,7 @@ def test_launch_game_windows_prefers_vanillafixes(
     assert ok is True
     assert dxvk is False
     args, kwargs = popen.call_args
-    assert args[0] == [str(game / "VanillaFixes.exe")]
+    assert args[0] == [str(game / "ExampleLoader.exe")]
     assert kwargs["cwd"] == str(game)
 
 

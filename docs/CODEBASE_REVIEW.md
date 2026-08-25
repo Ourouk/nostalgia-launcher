@@ -479,7 +479,7 @@ the mirror-probe thread. All daemon threads. **[verified]**
   `terminate`), game launch (`_launch_game_windows`/`_launch_game_via_umu`),
   `_watch_game`, `terminate_game`, `poll()`.
 - `mods.py` (ModsController): registry, latest-version fetch, pending toggles,
-  `_apply_worker` install/uninstall/update sequence, essential-mods seeding,
+  `_apply_worker` install/uninstall/update sequence, required-mods seeding,
   unknown-mod removal.
 - `addons.py` (AddonsController): catalog merge, disk scan + `.toc` parse,
   sha-based update detection, `_apply_worker`/`_apply_pending_worker`.
@@ -626,7 +626,7 @@ stateDiagram-v2
 | `umu-run <exe>` (+ optional `gamemoderun`) | Linux launch | env-injected; cwd=out_dir; detached |
 | `explorer.exe <path>` / `open` / `xdg-open` | open folder | explorer chosen deliberately (see §6.4) |
 | `powershell.exe -Command "Add-MpPreference -ExclusionPath '<path>'"` | Windows Defender exclusion | **single-quote injection** (see §12) |
-| `WoW.exe` / `VanillaFixes.exe` | game launch (Windows) | DETACHED_PROCESS|CREATE_BREAKAWAY_FROM_JOB with retry |
+| `WoW.exe` / external-launcher exe | game launch (Windows) | DETACHED_PROCESS|CREATE_BREAKAWAY_FROM_JOB with retry |
 | `magick`/`convert`, `linuxdeploy`, `lipo`, `pyinstaller` | build-time only | not runtime |
 
 ---
@@ -1146,7 +1146,8 @@ events asserted via monkeypatched `QMessageBox`/signals; `conftest` autouse
 
 ### Workflow 7 — Game launch
 - **Windows:** `UpdateController._launch_game_windows` → `subprocess.Popen`
-  (`WoW.exe`/`VanillaFixes.exe`, detached flags).
+  (`WoW.exe` or the first active catalog-declared external-launcher
+  executable — `mods.external_launcher_executables()` — detached flags).
 - **Linux:** `_launch_game_via_umu` → `umu.launch` (forwards `wayland`, K1
   fixed) → `umu.kill_game` on terminate.
 - **Files:** `controllers/update.py`, `services/umu.py`,

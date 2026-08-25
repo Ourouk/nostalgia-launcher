@@ -38,7 +38,7 @@ src/nostalgia_launcher/
 - **There are no hardcoded server/mod/addon values.** Everything is configured
   by `core/launcher.py` reading `nostalgia_launcher.json`.
 - The launcher never binary-patches `WoW.exe` — runtime client fixes are left
-  to the VanillaFixes loader mod. The only tweak channel is `Config.wtf`.
+  to the catalog-declared loader mods (external launchers). The only tweak channel is `Config.wtf`.
 
 ## Launcher Configuration
 
@@ -207,7 +207,7 @@ The **TWEAKS** tab applies preferences via `Config.wtf` only
 (`services/tweaks.py`): field of view, render distance, nameplate range,
 camera distance, ground-clutter distance, and background sounds. The launcher
 **never binary-patches `WoW.exe`** — runtime client fixes are left to the
-VanillaFixes loader mod where installed. The `Config.wtf` writer is the only
+catalog-declared external-launcher mods where installed. The `Config.wtf` writer is the only
 tweak channel.
 
 ## Platform Support

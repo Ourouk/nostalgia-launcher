@@ -20,6 +20,7 @@ from ..core.filesystem import (
 )
 from ..core.log_sink import debug_emit, log
 from ..core.platform_support import can_launch_client, is_linux
+from ..services import mods
 from ..services.self_update import (
     fetch_updater_latest_tag,
     updater_update_available,
@@ -319,14 +320,16 @@ class UpdateController:
         return self._launch_game_windows(client_dir, cfg)
 
     def _launch_game_windows(self, client_dir: str, cfg: dict) -> tuple:
-        """Windows direct launch: prefer the loader mod's executable, then
-        WoW.exe, spawned detached from the caller's job object. Its merged
-        output is drained into the session log by a background thread."""
+        """Windows direct launch: prefer an installed external-launcher mod's
+        executable, then WoW.exe, spawned detached from the caller's job
+        object. Its merged output is drained into the session log by a
+        background thread."""
         import subprocess
 
-        # Prefer the loader mod's executable when it's present on disk
-        # (whatever the catalog called it).
-        exe, exe_lbl = pick_game_executable(client_dir)
+        exe, exe_lbl = pick_game_executable(
+            client_dir,
+            mods.external_launcher_executables(client_dir),
+        )
         if not os.path.exists(exe):
             self._dispatcher.post(
                 LogMessage(f"{exe_lbl} not found at: {exe}\n", "err")
@@ -379,15 +382,19 @@ class UpdateController:
 
     def _launch_game_via_umu(self, client_dir: str, cfg: dict) -> tuple:
         """Linux launch through umu-launcher: the client run under Proton in
-        a launcher-wide WINEPREFIX. Prefers the VanillaFixes loader like
-        Windows. No DXVK notice (shader-cache stutter is a Windows/DXVK-mod
-        concern). Records the running game and watches its exit — unless
-        close_on_launch fires, in which case the child's output goes to a
-        sidecar file and no watcher runs (the launcher exits right after
-        spawning, so nothing may depend on our pipes staying open)."""
+        a launcher-wide WINEPREFIX. Prefers an installed external-launcher
+        mod's executable like Windows. No DXVK notice (shader-cache stutter
+        is a Windows/DXVK-mod concern). Records the running game and watches
+        its exit — unless close_on_launch fires, in which case the child's
+        output goes to a sidecar file and no watcher runs (the launcher exits
+        right after spawning, so nothing may depend on our pipes staying
+        open)."""
         from ..services import umu
 
-        exe, exe_lbl = pick_game_executable(client_dir)
+        exe, exe_lbl = pick_game_executable(
+            client_dir,
+            mods.external_launcher_executables(client_dir),
+        )
         if not os.path.exists(exe):
             self._dispatcher.post(
                 LogMessage(f"{exe_lbl} not found at: {exe}\n", "err")
