@@ -12,7 +12,7 @@ import threading
 
 from ..core import config_store
 from ..core.errors import describe_install_error
-from ..services import assets, catalog
+from ..services import assets, catalog, mpq
 from ..state.events import (
     AssetsLoaded,
     EventDispatcher,
@@ -52,6 +52,19 @@ class AssetsController:
         """The full asset registry (id, name, url, dest, update metadata…)
         the panel renders from — the UI keeps its assets import-free."""
         return assets.assets_registry()
+
+    def client_dir(self) -> str:
+        """The current game folder ('' when unset)."""
+        return (self._get_out_dir() or "").strip()
+
+    def data_scan(self, version: str) -> dict:
+        """Classify every MPQ under the client's Data/ tree for `version`
+        (see `services.mpq.scan_custom_mpqs`); registry dests mark the
+        launcher-managed customs. Read-only; empty buckets when no game
+        folder is configured."""
+        return mpq.scan_custom_mpqs(
+            self.client_dir(), version, mpq.managed_dests(self.registry)
+        )
 
     @property
     def updates_count(self) -> int:

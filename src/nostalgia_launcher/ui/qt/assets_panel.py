@@ -8,24 +8,34 @@ are rebuilt from every AssetsLoaded snapshot the bridge forwards; user
 actions go straight into the toolkit-agnostic AssetsController. The list
 shell is shared with the mods/addons panels via
 `list_panel.ScrollListPanel`.
+
+A Data/ scan block sits above the asset rows: on every render the panel
+classifies the client folder's MPQs for the selected game version
+(`services.mpq`) into stock / launcher-managed / foreign, with confirmed
+removal offered for foreign files.
 """
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QToolButton,
     QWidget,
 )
 
+from ...core.log_sink import log
+from ...services import mpq
 from .list_panel import (
     ScrollListPanel,
     add_row_divider,
     add_row_error,
     add_row_link,
     add_star,
+    make_hairline,
     make_row_shell,
 )
 from .theme import Palette
@@ -171,6 +181,17 @@ class AssetsPanel(ScrollListPanel):
             banner_layout.addWidget(part)
         banner_layout.addStretch(1)
 
+        self._version = QComboBox(banner)
+        self._version.setObjectName("assetsScanVersion")
+        for v in mpq.SUPPORTED_VERSIONS:
+            self._version.addItem(v)
+        self._version.setToolTip(
+            "The client's game version — decides which Data/ archives "
+            "count as stock"
+        )
+        self._version.currentTextChanged.connect(self._on_version_changed)
+        banner_layout.addWidget(self._version)
+
         custom = QToolButton(banner)
         custom.setObjectName("assetsCustomAdd")
         custom.setText("+  Add custom asset")
@@ -226,6 +247,11 @@ class AssetsPanel(ScrollListPanel):
         if state is None:
             return
         self._clear_rows()
+        # The Data/ scan runs inside every render (init, AssetsLoaded,
+        # apply completion, version change) so its verdicts can never go
+        # stale — it is a single read-only walk of the client's Data/.
+        scan = self._assets.data_scan(self._version.currentText())
+        self._render_scan_block(scan)
         if not self._assets.registry:
             p = self._palette
             empty = QLabel(
@@ -290,6 +316,123 @@ class AssetsPanel(ScrollListPanel):
             and not self._running
             and not self._assets.busy
         )
+
+    # ── Data/ scan block ─────────────────────────────────────────────────
+
+    def _managed_by_basename(self) -> dict:
+        """dest basename (lowercased) → display name, so managed customs
+        parked inside a locale subfolder still resolve to their entry."""
+        index = {}
+        for entry in self._assets.registry or []:
+            dest = entry.get("dest") if isinstance(entry, dict) else None
+            if not dest:
+                continue
+            base = str(dest).replace("\\", "/").rsplit("/", 1)[-1]
+            index[base.lower()] = (
+                f"{entry.get('name', entry.get('id', '?'))} (launcher asset)"
+            )
+        return index
+
+    def _render_scan_block(self, scan: dict):
+        """The Data/ classification: a count line plus Foreign/managed
+        sections. Nothing renders when no game folder is configured —
+        except the hint telling the user how to get a scan."""
+        p = self._palette
+        client_dir = self._assets.client_dir()
+        head = QLabel(
+            "Set the game folder in Settings to scan its Data/ folder."
+            if not client_dir
+            else (
+                f"Data/ scan ({scan['version']}): "
+                f"{len(scan['stock'])} stock Blizzard archive(s), "
+                f"{len(scan['custom_managed'])} launcher-managed, "
+                f"{len(scan['custom_foreign'])} foreign/untracked."
+            ),
+            self._content,
+        )
+        head.setObjectName("mpqStockCount")
+        head.setWordWrap(True)
+        head.setStyleSheet(f"color: {p.text_dim.name()};")
+        head.setContentsMargins(0, 6, 0, 2)
+        self._add_row(head)
+        if client_dir and scan["data_dir"]:
+            self._add_row(make_hairline(self._content))
+        managed_names = self._managed_by_basename()
+        for kind, header in (
+            ("custom_foreign", "Foreign / untracked"),
+            ("custom_managed", "Launcher-managed custom"),
+        ):
+            entries = scan.get(kind) or []
+            if not client_dir or not entries:
+                continue
+            section = QLabel(header, self._content)
+            section.setObjectName(f"mpqHeader_{kind}")
+            color = p.err if kind == "custom_foreign" else p.gold
+            section.setStyleSheet(f"color: {color.name()}; font-weight: bold;")
+            section.setContentsMargins(0, 10, 0, 2)
+            self._add_row(section)
+            for info in entries:
+                self._add_scan_row(kind, info, managed_names)
+
+    def _add_scan_row(self, kind: str, info: dict, managed_names: dict):
+        p = self._palette
+        path = info["path"]
+        shell = QWidget(self._content)
+        shell.setObjectName(
+            f"mpq{'Foreign' if kind == 'custom_foreign' else 'Managed'}"
+            f"Row_{path}"
+        )
+        root, top, top_layout = make_row_shell(shell)
+
+        label = QLabel(path, shell)
+        label.setObjectName(f"mpqPath_{path}")
+        color = p.err if kind == "custom_foreign" else p.text
+        label.setStyleSheet(f"color: {color.name()};")
+        top_layout.addWidget(label, 0, Qt.AlignTop)
+
+        meta = mpq.human_size(info.get("size"))
+        if kind == "custom_managed":
+            base = path.rsplit("/", 1)[-1]
+            note = managed_names.get(base.lower(), "")
+            meta = "  ·  ".join(x for x in (meta, note) if x)
+        if meta:
+            meta_label = QLabel(meta, shell)
+            meta_label.setObjectName(f"mpqMeta_{path}")
+            meta_label.setStyleSheet(f"color: {p.text_dim.name()};")
+            top_layout.addWidget(meta_label, 0, Qt.AlignTop)
+
+        top_layout.addStretch(1)
+
+        if kind == "custom_foreign":
+            remove = QPushButton("Remove", shell)
+            remove.setObjectName(f"mpqForeignRemove_{path}")
+            remove.setProperty("variant", "outline")
+            remove.setCursor(Qt.PointingHandCursor)
+            remove.setToolTip("Delete this untracked MPQ from Data/")
+            remove.clicked.connect(
+                lambda checked=False, rel=path: self._on_remove_foreign(rel)
+            )
+            top_layout.addWidget(remove, 0, Qt.AlignTop)
+
+        root.addWidget(top)
+        add_row_divider(root, p)
+        self._add_row(shell)
+
+    def _on_remove_foreign(self, rel_path: str):
+        answer = QMessageBox.question(
+            self,
+            "Remove custom MPQ",
+            f"Delete {rel_path} from the client folder?",
+        )
+        if answer != QMessageBox.Yes:
+            return
+        error = mpq.remove_custom_mpq(self._assets.client_dir(), rel_path)
+        if error:
+            log(f"  {error}", "err")
+        self._render(self._assets.state)
+
+    def _on_version_changed(self, _text):
+        self._render(self._assets.state)
 
     # ── actions ──────────────────────────────────────────────────────────
 

@@ -218,6 +218,18 @@ the QLocalServer guard remains authoritative there.
   (`AssetsController.apply_essential_assets`), and a game-folder change
   wipes the `"assets"`/`"asset_probe_cache"` config keys alongside
   mods/addons records.
+- **Data/ MPQ scanner**: `services/mpq.py` classifies every MPQ under the
+  client's ``Data/`` tree for a caller-provided game version (no
+  auto-detection): **stock** (per-version Blizzard archive tables —
+  patch-chain names incl. locale `{L}` and numbered `{N}` patterns,
+  deliberately inclusive), **custom_managed** (non-stock but matching an
+  assets-registry `dest`, by full path or basename) or
+  **custom_foreign** (untracked). Read-only except
+  `remove_custom_mpq`, which refuses anything outside `Data/`;
+  `Data/Cache` is skipped. Surfaced inside the ASSETS tab
+  (`ui/qt/assets_panel.py`): the panel re-scans on every render (init,
+  AssetsLoaded, apply completion) for the version picked in its header
+  combo, and offers confirmed per-row removal of foreign files.
 - **realmlist.wtf**: `services/tweaks.write_realmlist_wtf(client_dir)`
   writes `SET realmlist "<server.realm>"` into the client root wherever a
   fresh `WTF/Config.wtf` is seeded (verify with overwrite/missing config,

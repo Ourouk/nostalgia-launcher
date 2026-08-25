@@ -18,7 +18,13 @@ pytest.importorskip("PySide6")
 from unittest.mock import Mock
 
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QWidget,
+)
 
 from nostalgia_launcher.state.events import AssetsLoaded
 from nostalgia_launcher.state.models import AssetsState, AssetState
@@ -214,3 +220,103 @@ def test_badge_receives_updates_count(qapp, window, hub):
     panel._on_badge = seen.append
     _post(hub, AssetsState(updates_count=1))
     assert seen and seen[-1] == 1
+
+
+# ── Data/ MPQ scan block ─────────────────────────────────────────────────────
+
+
+@pytest.fixture()
+def client_tree(tmp_path):
+    """A fake WoW install: stock dbc.MPQ, a registry-managed patch-3.MPQ
+    and a foreign MPQ parked in the locale subfolder."""
+    client = tmp_path / "client"
+    (client / "Data" / "enUS").mkdir(parents=True)
+    for rel in (
+        "Data/dbc.MPQ",
+        "Data/patch-3.MPQ",
+        "Data/enUS/stranger.mpq",
+    ):
+        (client / rel).write_bytes(b"x")
+    return client
+
+
+def _point_at_client(hub, client_tree):
+    hub.assets._get_out_dir = lambda: str(client_tree)
+
+
+def test_scan_block_renders_classified_rows(qapp, window, hub, client_tree):
+    _point_at_client(hub, client_tree)
+    _post(hub, AssetsState())
+    panel = _panel(window)
+
+    assert panel._version.currentText() == "1.12.1"
+    count = panel.findChild(QLabel, "mpqStockCount")
+    assert "1 stock" in count.text()
+    assert "1 launcher-managed" in count.text()
+    assert "1 foreign/untracked" in count.text()
+
+    # The managed row resolves back to its registry entry name.
+    meta = panel.findChild(QLabel, "mpqMeta_Data/patch-3.MPQ")
+    assert "Patch 3" in meta.text()
+
+    # Only foreign rows offer removal.
+    names = {b.objectName() for b in panel.findChildren(QPushButton)}
+    assert "mpqForeignRemove_Data/enUS/stranger.mpq" in names
+    assert not any(n.startswith("mpqForeignRemove_Data/dbc") for n in names)
+    assert not any(
+        n.startswith("mpqForeignRemove_Data/patch-3") for n in names
+    )
+
+
+def test_version_change_rescans(qapp, window, hub, client_tree):
+
+    _point_at_client(hub, client_tree)
+    _post(hub, AssetsState())
+    panel = _panel(window)
+    panel._version.setCurrentIndex(2)  # 3.3.5a
+    QTest.qWait(50)
+    count = panel.findChild(QLabel, "mpqStockCount")
+    assert "(3.3.5a)" in count.text()
+
+
+def test_foreign_remove_requires_confirmation_then_rescans(
+    qapp, window, hub, client_tree, monkeypatch
+):
+    import nostalgia_launcher.ui.qt.assets_panel as panel_module
+
+    target = client_tree / "Data" / "enUS" / "stranger.mpq"
+    _point_at_client(hub, client_tree)
+    _post(hub, AssetsState())
+    panel = _panel(window)
+
+    monkeypatch.setattr(
+        f"{panel_module.__name__}.QMessageBox.question",
+        lambda *a, **k: QMessageBox.No,
+    )
+    remove = [
+        b
+        for b in panel.findChildren(QPushButton)
+        if b.objectName() == "mpqForeignRemove_Data/enUS/stranger.mpq"
+    ][0]
+    remove.click()
+    assert target.exists()
+
+    monkeypatch.setattr(
+        f"{panel_module.__name__}.QMessageBox.question",
+        lambda *a, **k: QMessageBox.Yes,
+    )
+    remove.click()
+    assert not target.exists()
+    assert (
+        panel.findChild(QWidget, "mpqForeignRow_Data/enUS/stranger.mpq")
+        is None
+    )
+    count = panel.findChild(QLabel, "mpqStockCount")
+    assert "0 foreign/untracked" in count.text()
+
+
+def test_scan_block_hints_without_client_folder(qapp, window, hub):
+    _post(hub, AssetsState())
+    panel = _panel(window)
+    count = panel.findChild(QLabel, "mpqStockCount")
+    assert count.text().startswith("Set the game folder")
