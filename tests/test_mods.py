@@ -6,6 +6,7 @@ import os
 import pytest
 
 import nostalgia_launcher.core.config_store as config_store
+import nostalgia_launcher.services.catalog as catalog
 import nostalgia_launcher.services.mods as mods
 import nostalgia_launcher.services.self_update as self_update
 from nostalgia_launcher.controllers.mods import ModsController
@@ -28,7 +29,7 @@ def test_mods_registry_empty_when_nothing_configured(tmp_path, monkeypatch):
     def fail(*a, **k):
         raise AssertionError("no cache must not hit the network")
 
-    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     assert mods.mods_registry() == []
 
 
@@ -50,7 +51,7 @@ def test_fetch_mods_catalog_cached_never_network(tmp_path, monkeypatch):
     def fail(*a, **k):
         raise AssertionError("cached catalog must not hit the network")
 
-    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     assert mods.fetch_mods_catalog() == cached
     assert any(m["id"] == "RemoteMod" for m in mods.mods_registry())
 
@@ -89,7 +90,7 @@ def test_fetch_mods_catalog_force_fetches_and_validates(tmp_path, monkeypatch):
             self._data = b""
             return data
 
-    monkeypatch.setattr(mods, "secure_urlopen", lambda *a, **k: _R(payload))
+    monkeypatch.setattr(catalog, "secure_urlopen", lambda *a, **k: _R(payload))
 
     out = mods.fetch_mods_catalog(force=True)
     assert [m["id"] for m in out] == ["X"]
@@ -106,7 +107,7 @@ def test_fetch_mods_catalog_force_raises_offline_no_cache(
     def fail(*a, **k):
         raise ConnectionError("offline")
 
-    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     with pytest.raises(ConnectionError):
         mods.fetch_mods_catalog(force=True)
 
@@ -161,7 +162,7 @@ def test_embedded_mods_served_without_network(tmp_path, monkeypatch):
     def fail(*a, **k):
         raise AssertionError("embedded-only registry must not hit network")
 
-    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     reg = mods.mods_registry()
     # The invalid entry is skipped; the valid one needs no URL or fetch.
     assert [m["id"] for m in reg] == ["Emb"]
@@ -257,7 +258,7 @@ def test_reload_catalog_republishes_when_embedded_only(tmp_path, monkeypatch):
     def fail(*a, **k):
         raise AssertionError("embedded-only reload must not hit the network")
 
-    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     controller = ModsController(EventDispatcher(), get_out_dir=lambda: "")
     assert controller.reload_catalog() is True
     events = controller._dispatcher.drain()
@@ -759,7 +760,9 @@ def test_catalog_is_stale_branches(monkeypatch):
     for ts, expected in cases.items():
         entry = {} if ts is None else {"timestamp": ts, "catalog": []}
         monkeypatch.setattr(
-            mods_svc, "load_config", lambda e=entry: {"mods_catalog_cache": e}
+            catalog.config_store,
+            "load_config",
+            lambda e=entry: {"mods_catalog_cache": e},
         )
         assert mods_svc.catalog_is_stale(now=now) is expected, ts
 
@@ -767,10 +770,10 @@ def test_catalog_is_stale_branches(monkeypatch):
 def test_catalog_timestamp_roundtrip(monkeypatch):
     from nostalgia_launcher.services import mods as mods_svc
 
-    monkeypatch.setattr(mods_svc, "load_config", lambda: {})
+    monkeypatch.setattr(catalog.config_store, "load_config", lambda: {})
     assert mods_svc.catalog_timestamp() is None
     monkeypatch.setattr(
-        mods_svc,
+        catalog.config_store,
         "load_config",
         lambda: {"mods_catalog_cache": {"timestamp": 123.5, "catalog": []}},
     )
@@ -839,7 +842,7 @@ def test_mods_registry_full_precedence(tmp_path, repo_paths, monkeypatch):
     def fail(*a, **k):
         raise AssertionError("cached registry must not hit the network")
 
-    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     reg = {m["id"]: m["name"] for m in mods.mods_registry()}
     assert reg["X"] == "RepoCustom"
     assert reg["OnlyRemote"] == "OnlyRemote"

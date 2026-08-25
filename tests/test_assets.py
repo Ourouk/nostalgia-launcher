@@ -6,6 +6,7 @@ import pytest
 
 import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.services.assets as assets
+import nostalgia_launcher.services.catalog as catalog
 from nostalgia_launcher.core import launcher
 from nostalgia_launcher.services.catalog import merge_assets, validate_asset
 
@@ -144,7 +145,7 @@ def test_registry_embedded_offline_safe(tmp_path, monkeypatch):
     def fail(*a, **k):
         raise AssertionError("embedded-only assets must not hit network")
 
-    monkeypatch.setattr(assets, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     reg = assets.assets_registry()
     assert [a["id"] for a in reg] == ["patch3"]
     assert assets.catalog_is_stale() is False
@@ -184,7 +185,7 @@ def test_registry_force_fetch_validates_and_caches(tmp_path, monkeypatch):
     def fake_urlopen(req, **k):
         return _R(payload)
 
-    monkeypatch.setattr(assets, "secure_urlopen", fake_urlopen)
+    monkeypatch.setattr(catalog, "secure_urlopen", fake_urlopen)
     got = assets.fetch_assets_catalog(force=True)
     assert [a["id"] for a in got] == ["patch3"]
     # Cached copy now serves non-forced loads without network.
@@ -429,9 +430,11 @@ def test_verdict_uninstalled_asset_is_not_an_update(tmp_path):
 def test_probe_state_roundtrip_and_forget(tmp_path):
     _isolated_config(tmp_path)
     assets.remember_probe_state("p3", {"etag": '"e"'})
-    assert assets.recorded_probe_state("p3") == {"etag": '"e"'}
+    assert config_store.load_config()["asset_probe_cache"]["p3"] == {
+        "etag": '"e"'
+    }
     assets.forget_probe_state("p3")
-    assert assets.recorded_probe_state("p3") is None
+    assert "p3" not in config_store.load_config().get("asset_probe_cache", {})
 
 
 def test_remove_asset_files(tmp_path):

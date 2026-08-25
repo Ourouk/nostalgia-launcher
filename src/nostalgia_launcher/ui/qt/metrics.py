@@ -23,18 +23,9 @@ PT_TITLE = 17  # header wordmark / window titles
 PT_PAGE = 16  # big per-tab page titles ("CLIENT UPDATE")
 PT_DIALOG = 13  # dialog header titles
 PT_SECTION = 12  # panel section headers ("ANNOUNCEMENTS", gold headers)
-PT_BODY = 10  # default row/list text
-PT_HINT = 9  # dim explanatory hints
 PT_ICON = 14  # icon-only toolbuttons (⚙)
 PT_LINK_ICON = 15  # row website-link glyphs (⧉)
 PT_BADGE = 8  # tab count badges
-
-# Spacing scale — vertical rhythm and paddings across panels/dialogs.
-PAD_S = 4
-PAD_M = 8
-PAD_L = 16
-ROW_GAP = 6  # gap between rows inside a list panel
-SECTION_GAP = 18  # gap between sections in a form/settings layout
 
 
 def clamp(v, lo, hi):

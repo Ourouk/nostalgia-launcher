@@ -270,18 +270,6 @@ class AssetsController:
             os.path.exists(os.path.join(client_dir, f)) for f in files or []
         )
 
-    def _record_dict(self, aid: str) -> dict | None:
-        rec = self.state.records.get(aid)
-        if rec is None:
-            return None
-        return {
-            "enabled": rec.enabled,
-            "installed_version": rec.installed_version,
-            "installed_files": list(rec.installed_files),
-            "probe_state": dict(rec.probe_state),
-            "error": rec.error,
-        }
-
     def _refresh_updates_count(self):
         try:
             registry = assets.assets_registry()

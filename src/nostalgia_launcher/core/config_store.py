@@ -7,9 +7,10 @@ truncated file).
 """
 
 import json
-import os
 import sys
 import threading
+
+from .filesystem import atomic_write_text as _atomic_write
 
 _CONFIG_LOCK = threading.RLock()
 
@@ -26,19 +27,6 @@ def configure(
     global config_file, cache_file
     config_file = cfg_file
     cache_file = cache
-
-
-def _atomic_write(path: str, text: str):
-    """Write via a temp file + atomic rename so a crash mid-write can never
-    leave a truncated/corrupt file at `path`. Creates the parent directory so
-    the per-user data dirs work on first write."""
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
 
 
 def load_config() -> dict:

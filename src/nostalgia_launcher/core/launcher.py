@@ -94,11 +94,11 @@ its download allowlist from the configured hosts.
 import json
 import os
 import sys
-import tempfile
 import threading
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
+from .filesystem import atomic_write_text
 from .log_sink import log
 from .platform_support import config_dir, is_macos
 
@@ -545,9 +545,6 @@ def store_local_repo(
 ) -> None:
     """Atomically write the local repo file for a content kind from its
     server-imported and user-custom entry lists."""
-    dest = local_repo_path(kind)
-    directory = os.path.dirname(dest) or "."
-    os.makedirs(directory, exist_ok=True)
     payload = (
         json.dumps(
             {
@@ -559,17 +556,7 @@ def store_local_repo(
         )
         + "\n"
     )
-    fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
-    try:
-        os.close(fd)
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, dest)
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+    atomic_write_text(local_repo_path(kind), payload)
 
 
 def _split_and_strip(data: dict, final=None) -> dict:
@@ -639,19 +626,7 @@ def _persist_data(data: dict) -> tuple[str, str]:
             )
             + "\n"
         )
-        directory = os.path.dirname(dest) or "."
-        os.makedirs(directory, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
-        try:
-            os.close(fd)
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write(stripped_text)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, dest)
-        finally:
-            if os.path.exists(tmp):
-                os.remove(tmp)
+        atomic_write_text(dest, stripped_text)
 
     try:
         _derive(data)  # don't persist truncated/invalid configs
@@ -768,11 +743,6 @@ def config() -> "LauncherConfig | None":
 def config_error() -> str:
     with _LOCK:
         return _error
-
-
-def is_configured() -> bool:
-    c = config()
-    return bool(c and c.configured)
 
 
 def server_url() -> str:

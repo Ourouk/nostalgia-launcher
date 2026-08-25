@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 from ...core import profiles
 from ...core.constants import DOWNLOAD_TIMEOUT, UA
+from ...core.filesystem import atomic_write_bytes as _atomic_write_bytes
 from ...core.helpers import fmt_size, fmt_speed
 from ...core.security_http import allowed_download_hosts, secure_urlopen
 from .worker_base import WorkerBase
@@ -197,24 +198,8 @@ def resume_path(info_hash: str) -> str:
     return os.path.join(torrent_cache_dir(), f"{info_hash}.resume")
 
 
-def _atomic_write_bytes(path: str, data: bytes):
-    """Write via a temp file + atomic rename so a crash mid-write can never
-    leave a truncated file at `path`."""
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "wb") as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
-
-
 def write_torrent_atomically(info_hash: str, data: bytes):
     _atomic_write_bytes(torrent_path(info_hash), data)
-
-
-def write_resume_bytes(info_hash: str, buf: bytes):
-    _atomic_write_bytes(resume_path(info_hash), buf)
 
 
 def remove_resume_data(info_hash: str):
@@ -236,8 +221,6 @@ def _fetch_torrent(torrent_url: str, log) -> "TorrentSnapshot":
     The raw bytes are persisted under the launcher cache (keyed by info hash)
     on a best-effort basis so resume data always has a stable home.
     """
-    import libtorrent as lt
-
     log(f"  Fetching torrent: {torrent_url}", "dim")
     req = urllib.request.Request(torrent_url, headers={"User-Agent": UA})
     try:
@@ -275,6 +258,10 @@ def _fetch_torrent(torrent_url: str, log) -> "TorrentSnapshot":
         except OSError as e:
             raise TorrentDiskError(f"Failed to write torrent file: {e}") from e
         try:
+            # Imported only once parsing is actually reached: the fetch and
+            # its error wrapping must work on installs without libtorrent.
+            import libtorrent as lt
+
             ti = lt.torrent_info(tmp)
         except Exception as e:
             raise TorrentCorruptError(f"Failed to parse torrent: {e}") from e
@@ -505,6 +492,16 @@ def _release_handle(ses, h) -> None:
         pass
 
 
+def _wrap_session_error(fn, msg: str):
+    """Run a libtorrent session call, wrapping any failure in a
+    :class:`TorrentSessionError` (shared by session creation and
+    add_torrent on both the verifier and downloader paths)."""
+    try:
+        return fn()
+    except Exception as e:
+        raise TorrentSessionError(f"{msg}: {e}") from e
+
+
 class TorrentVerifier(WorkerBase):
     """Torrent-only integrity check (no manifest needed).
 
@@ -590,12 +587,9 @@ class TorrentVerifier(WorkerBase):
         piece_length = ti.piece_length()
         total_pieces = ti.num_pieces()
 
-        try:
-            ses = self._session()
-        except Exception as e:
-            raise TorrentSessionError(
-                f"Failed to create libtorrent session: {e}"
-            ) from e
+        ses = _wrap_session_error(
+            self._session, "Failed to create libtorrent session"
+        )
 
         h = None
         try:
@@ -610,12 +604,10 @@ class TorrentVerifier(WorkerBase):
             # DHT/LSD/UPnP/NAT-PMP off, no trackers), so max priority only
             # triggers a read-only hash check — no peer connections or writes.
             atp.file_priorities = [7] * files.num_files()
-            try:
-                h = ses.add_torrent(atp)
-            except Exception as e:
-                raise TorrentSessionError(
-                    f"Failed to add torrent to session: {e}"
-                ) from e
+            h = _wrap_session_error(
+                lambda: ses.add_torrent(atp),
+                "Failed to add torrent to session",
+            )
             h.force_recheck()
             # Deluge's proven pattern: resume() after force_recheck() so the
             # recheck actually proceeds even if the torrent was added paused
@@ -716,11 +708,7 @@ class TorrentVerifier(WorkerBase):
             if time.monotonic() - last_move > STALL_TIMEOUT:
                 raise TorrentStalledError(peers=s.num_peers)
             ses.wait_for_alert(ALERT_POLL_MS)
-        try:
-            h.cancel()
-        except Exception:
-            pass
-        raise RuntimeError("Cancelled")
+        self._raise_cancelled(h)
 
 
 class TorrentDownloader(WorkerBase):
@@ -810,12 +798,9 @@ class TorrentDownloader(WorkerBase):
         marker = root_marker or _configured_root_marker()
         _remap_torrent_to_out_dir(ti, self.out_dir, marker)
 
-        try:
-            ses = self._session()
-        except Exception as e:
-            raise TorrentSessionError(
-                f"Failed to create libtorrent session: {e}"
-            ) from e
+        ses = _wrap_session_error(
+            self._session, "Failed to create libtorrent session"
+        )
 
         h = None
         try:
@@ -831,12 +816,10 @@ class TorrentDownloader(WorkerBase):
                 if priorities[i] > 0
             )
             wanted_count = sum(1 for p in priorities if p > 0)
-            try:
-                h = ses.add_torrent(atp)
-            except Exception as e:
-                raise TorrentSessionError(
-                    f"Failed to add torrent to session: {e}"
-                ) from e
+            h = _wrap_session_error(
+                lambda: ses.add_torrent(atp),
+                "Failed to add torrent to session",
+            )
             # The binding adds the torrent paused; resume() starts it so it
             # checks the on-disk files and then downloads only the wanted
             # pieces (mirrors the verify path's force_recheck()+resume()).
@@ -940,8 +923,4 @@ class TorrentDownloader(WorkerBase):
             if elapsed > timeout:
                 raise TorrentStalledError(peers=s.num_peers)
             ses.wait_for_alert(ALERT_POLL_MS)
-        try:
-            h.cancel()
-        except Exception:
-            pass
-        raise RuntimeError("Cancelled")
+        self._raise_cancelled(h)

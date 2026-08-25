@@ -39,3 +39,12 @@ class WorkerBase:
         if not os.path.exists(dest):
             return False
         return cached_sha1(dest, self._cache) == expected_sha1
+
+    def _raise_cancelled(self, h):
+        """Best-effort cancel of the torrent handle, then abort the worker's
+        loop. Shared by the verifier recheck and downloader pump tails."""
+        try:
+            h.cancel()
+        except Exception:
+            pass
+        raise RuntimeError("Cancelled")

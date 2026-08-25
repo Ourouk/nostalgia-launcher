@@ -51,11 +51,9 @@ def test_lock_file_sits_beside_state_file():
 def test_acquire_release_reacquire(tmp_path):
     state = str(tmp_path / "state.json")
     app_lock.acquire_store_lock(state)
-    assert app_lock.holds_store_lock()
     # Idempotent within the process:
     app_lock.acquire_store_lock(state)
     app_lock.release_store_lock()
-    assert not app_lock.holds_store_lock()
     app_lock.acquire_store_lock(state)
 
 
@@ -149,7 +147,6 @@ def test_different_profiles_may_run_in_parallel(tmp_path):
     try:
         assert proc.stdout.readline().strip() == "READY"
         app_lock.acquire_store_lock(state_b)  # B while A held elsewhere
-        assert app_lock.holds_store_lock()
         app_lock.release_store_lock()
     finally:
         proc.kill()

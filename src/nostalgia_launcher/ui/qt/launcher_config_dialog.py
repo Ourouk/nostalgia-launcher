@@ -47,7 +47,6 @@ class LauncherConfigDialog(QDialog):
         super().__init__(parent)
         p = palette or Palette()
         self._palette = p
-        self._selected_path = ""
         self._selection = None
         self._fetching = False
         self._stage = "input"
@@ -337,7 +336,6 @@ class LauncherConfigDialog(QDialog):
             return
         kind, source, raw, _config = self._pending
         if kind == "file":
-            self._selected_path = source
             self._selection = {"kind": "file", "path": source, "raw": raw}
         else:
             self._selection = {
@@ -348,10 +346,6 @@ class LauncherConfigDialog(QDialog):
         self.accept()
 
     # ── results ──────────────────────────────────────────────────────────
-
-    def selected_path(self) -> str:
-        """The chosen local file path (file selection) or "" (url)."""
-        return self._selected_path
 
     def selection(self) -> dict | None:
         """The chosen selection: {"kind": "file", "path", "raw"} or

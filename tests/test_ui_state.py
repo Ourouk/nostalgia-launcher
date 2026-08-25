@@ -1,11 +1,9 @@
-"""Unit tests for the shared application-state models (ui_state)."""
+"""Unit tests for the shared application-state models (state.models)."""
 
 from nostalgia_launcher.state.models import (
     AddonError,
     AddonsState,
     AddonState,
-    AppState,
-    LogEntry,
     ModPending,
     ModsState,
     ModState,
@@ -58,7 +56,6 @@ def test_addons_state_defaults():
     assert a.errors == {}
     assert a.sections_open == {"INSTALLED": True, "AVAILABLE": True}
     assert a.updates_count == 0
-    assert a.out_of_date_count() == 0
 
 
 def test_settings_state_defaults():
@@ -68,17 +65,6 @@ def test_settings_state_defaults():
     assert s.first_run is False
     assert s.first_run_av_pending is False
     assert s.first_run_verify_pending is False
-
-
-def test_app_state_defaults():
-    st = AppState()
-    assert isinstance(st.update, UpdateState)
-    assert isinstance(st.news, NewsState)
-    assert isinstance(st.mods, ModsState)
-    assert isinstance(st.addons, AddonsState)
-    assert isinstance(st.settings, SettingsState)
-    assert st.log_buffer == []
-    assert st.log_lines() == []
 
 
 # ── update flow ───────────────────────────────────────────────────────────
@@ -211,38 +197,6 @@ def test_addon_state_round_trips_dict():
     assert rec.to_dict() == ADDON_REC
 
 
-def test_addons_state_from_and_to_status_dict():
-    status = {
-        "state": "done",
-        "addons": {
-            "pfUI": dict(ADDON_REC, status="outOfDate"),
-            "ShaguDPS": dict(ADDON_REC, folder="ShaguDPS"),
-        },
-        "available": [dict(ADDON_REC, folder="AtlasLoot", status="available")],
-    }
-    st = AddonsState.from_status_dict(status)
-    assert st.state == "done"
-    assert set(st.addons) == {"pfUI", "ShaguDPS"}
-    assert st.addons["pfUI"].status == "outOfDate"
-    assert st.addons["ShaguDPS"].folder == "ShaguDPS"
-    assert st.available[0].folder == "AtlasLoot"
-    assert st.available[0].status == "available"
-    assert st.to_status_dict() == status
-
-
-def test_addons_state_out_of_date_count():
-    st = AddonsState(
-        addons={
-            "pfUI": AddonState.from_dict(dict(ADDON_REC, status="outOfDate")),
-            "ShaguDPS": AddonState.from_dict(
-                dict(ADDON_REC, folder="ShaguDPS")
-            ),
-        }
-    )
-    assert st.out_of_date_count() == 1
-    assert AddonsState().out_of_date_count() == 0
-
-
 def test_addons_state_errors():
     st = AddonsState(
         errors={
@@ -256,7 +210,7 @@ def test_addons_state_errors():
     assert st.errors["pfUI"].git == "https://github.com/brues-code/pfUI"
 
 
-# ── settings / log ───────────────────────────────────────────────────────
+# ── settings ──────────────────────────────────────────────────────────────
 
 
 def test_settings_state_with_sample_data():
@@ -272,29 +226,3 @@ def test_settings_state_with_sample_data():
     assert s.first_run is True
     assert s.first_run_av_pending is True
     assert s.first_run_verify_pending is True
-
-
-def test_app_state_logging():
-    st = AppState()
-    st.add_log("Hello\n", "acct")
-    st.add_log("World\n")
-    assert len(st.log_buffer) == 2
-    assert st.log_buffer[0] == LogEntry("Hello\n", "acct")
-    assert st.log_buffer[1].tag == ""
-    assert st.log_lines() == [("Hello\n", "acct"), ("World\n", "")]
-
-
-def test_app_state_holds_realistic_snapshot():
-    st = AppState()
-    st.update.client_ready = True
-    st.news.featured = {"id": 1, "title": "x"}
-    st.mods.updates_count = 3
-    st.addons.state = "verifying"
-    st.settings.path = "C:/Games/WoW"
-    st.add_log("log line\n", "dim")
-    assert st.update.client_ready is True
-    assert st.news.featured["title"] == "x"
-    assert st.mods.updates_count == 3
-    assert st.addons.state == "verifying"
-    assert st.settings.path == "C:/Games/WoW"
-    assert st.log_lines() == [("log line\n", "dim")]

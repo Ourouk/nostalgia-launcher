@@ -620,8 +620,10 @@ def test_load_latest_versions_serves_fresh_catalog_from_cache(
 ):
     import time as time_mod
 
+    from nostalgia_launcher.services import catalog as catalog_module
+
     monkeypatch.setattr(
-        mc.mods,
+        catalog_module.config_store,
         "load_config",
         lambda: {
             "mods_catalog_cache": {

@@ -13,7 +13,6 @@ import functools
 import os
 import threading
 import urllib.request
-import webbrowser
 from urllib.error import HTTPError
 
 from ..core import config_store, filesystem, launcher, platform_support
@@ -410,17 +409,6 @@ class SettingsController:
         )
         return self.state.config
 
-    def prune_folder_records(self) -> dict:
-        """Drop stale mods/addons install records when the configured game
-        folder no longer exists (a folder that was deleted or never created)."""
-
-        def _wipe(c):
-            c.pop("mods", None)
-            c.pop("addons", None)
-
-        self.state.config = config_store.update_config(_wipe)
-        return self.state.config
-
     def open_client_folder(self):
         path = os.path.normpath(self.state.path.strip())
         if os.path.isdir(path):
@@ -437,9 +425,6 @@ class SettingsController:
             self._dispatcher.post(
                 LogMessage(f"Folder not found: {path}\n", "err")
             )
-
-    def open_url(self, url: str):
-        webbrowser.open(url)
 
     # ── catalog registries ──────────────────────────────────────────────────
 

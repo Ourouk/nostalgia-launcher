@@ -110,11 +110,6 @@ def release_store_lock():
     _unlock_and_close(fd)
 
 
-def holds_store_lock() -> bool:
-    """Whether THIS process currently holds the store lock."""
-    return _LOCK_FD is not None
-
-
 def acquire_with_grace(
     state_path: str, step_s: float = _GRACE_STEP_S, steps: int = _GRACE_STEPS
 ):

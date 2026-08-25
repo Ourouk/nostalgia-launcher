@@ -737,9 +737,10 @@ def _open_settings_window(build_app):
     return app
 
 
-def test_header_combo_shows_active_profile(qapp, build_app):
+def test_header_combo_shows_active_profile(qapp, build_app, fake_home):
     """The header selector lists every profile with the active one
-    preselected."""
+    preselected. fake_home keeps the listing hermetic (a real machine may
+    carry extra profile directories)."""
     from PySide6.QtWidgets import QComboBox
 
     app = build_app(startup=False)

@@ -22,6 +22,7 @@ import threading
 from dataclasses import dataclass
 
 from .constants import CACHE_FILE, CONFIG_FILE
+from .filesystem import atomic_write_text as _atomic_write_text
 from .launcher import CONTENT_KINDS, LAUNCHER_FILE
 from .platform_support import cache_dir, config_dir
 
@@ -138,19 +139,6 @@ def profiles_root() -> str:
 def index_path() -> str:
     """The profile registry: {"active": <name>, "order": [<names>]}."""
     return os.path.join(config_dir(), "profiles.json")
-
-
-def _atomic_write_text(path: str, text: str):
-    """Write via temp file + rename so a crash can't truncate the file;
-    creates the parent directory (first write into a fresh config dir)."""
-    directory = os.path.dirname(path) or "."
-    os.makedirs(directory, exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
 
 
 def profile_root(name: str) -> str:

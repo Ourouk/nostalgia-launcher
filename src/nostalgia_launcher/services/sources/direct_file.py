@@ -23,19 +23,7 @@ import urllib.request
 from ...core.constants import UA
 from ...core.security_http import allowed_download_hosts, secure_urlopen
 from .base import FetchResult, SourceBackend, StreamedFile, register
-from .safety import https_url, safe_relpath, valid_extract_map
-
-
-def _valid_sha1(value) -> str | None:
-    """A lowercase 40-hex SHA-1 digest, or None."""
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        return None
-    v = value.strip().lower()
-    if len(v) != 40 or any(c not in "0123456789abcdef" for c in v):
-        return None
-    return v
+from .safety import https_url, safe_relpath, valid_extract_map, valid_sha1
 
 
 def _fetch_headers(r) -> dict:
@@ -72,7 +60,7 @@ class DirectFileBackend(SourceBackend):
         # whole entry rather than being silently dropped.
         sha1 = source.get("sha1")
         if sha1 is not None:
-            normalized = _valid_sha1(sha1)
+            normalized = valid_sha1(sha1)
             if normalized is None:
                 return None
             cleaned["sha1"] = normalized

@@ -283,7 +283,6 @@ def test_cli_good_profile_routes_stores(fake_home, monkeypatch):
     assert cli.main(["--profile", "good"]) == 1
     assert seen["cfg"] == os.path.join(prof.root, "state.json")
     assert seen["cache"] == os.path.join(prof.root, "hash_cache.json")
-    assert launcher.is_configured()
     assert launcher.server_url() == "https://p.test"
 
 

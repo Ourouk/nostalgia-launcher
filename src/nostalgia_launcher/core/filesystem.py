@@ -27,6 +27,28 @@ def ensure_dir(path):
     Path(path).mkdir(parents=True, exist_ok=True)
 
 
+def atomic_write_bytes(path: str, data: bytes):
+    """Write via a temp file + atomic rename so a crash mid-write can never
+    leave a truncated/corrupt file at `path`. Creates the parent directory
+    so the per-user data dirs work on first write."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def atomic_write_text(path: str, text: str):
+    """atomic_write_bytes for str payloads (UTF-8 encoded)."""
+    atomic_write_bytes(path, text.encode("utf-8"))
+
+
 def sha1_file(path) -> str:
     h = hashlib.sha1()
     with open(path, "rb") as f:

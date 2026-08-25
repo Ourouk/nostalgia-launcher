@@ -11,15 +11,11 @@ Payload acquisition is delegated to the shared source backends
 by entry shape, dll registration and post-install hooks.
 """
 
-import json
 import os
 import time
-import urllib.request
 
-from ..core.config_store import load_config, update_config
-from ..core.constants import UA
+from ..core.config_store import load_config
 from ..core.log_sink import log
-from ..core.security_http import read_capped, secure_urlopen
 from . import catalog
 from .sources import deploy
 from .sources import get as _source_get
@@ -36,14 +32,11 @@ def _checked_rel(dest_rel) -> str:
 
 # The per-user custom mod file (a JSON list, one entry per mod, using the
 # same shape the mod catalog uses). Written empty on first use via Settings.
-CUSTOM_FILE_TEMPLATE = "[\n]\n"
 
 
 def catalog_timestamp() -> float | None:
     """When the mod catalog cache was last fetched (epoch), or None."""
-    entry = load_config().get("mods_catalog_cache", {})
-    ts = entry.get("timestamp")
-    return ts if isinstance(ts, (int, float)) and ts > 0 else None
+    return catalog.catalog_timestamp("mods")
 
 
 def has_remote_catalog() -> bool:
@@ -97,70 +90,22 @@ def catalog_is_stale(now: float | None = None) -> bool:
 
 def fetch_mods_catalog(force=False) -> list | None:
     """Mod catalog, cached in the config file ({"mods_catalog_cache":
-    {"timestamp": epoch, "catalog": […]}}).
-
-    Non-forced calls never hit the network when a cached copy exists, and
-    return None (→ an empty registry) when there is none yet, so a first run
-    is fully offline-safe. Forced calls (Settings → Reload) always fetch and
-    raise when the URL is unset or the network fails with nothing cached.
-    """
-    now = time.time()
-    entry = load_config().get("mods_catalog_cache", {})
-    cached = entry.get("catalog")
-    if not force:
-        return cached if cached is not None else None
-    url = registry_url()
-    if not url:
-        raise RuntimeError("Mod catalog URL is not configured.")
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with secure_urlopen(req, timeout=10) as r:
-            raw = json.loads(read_capped(r, 2 * 1024 * 1024))
-    except Exception:
-        if cached is not None:
-            return cached
-        raise
-    validated = []
-    for e in raw if isinstance(raw, list) else []:
-        if not isinstance(e, dict):
-            continue
-        cleaned = catalog.validate_mod(e)
-        if cleaned is not None:
-            validated.append(cleaned)
-    update_config(
-        lambda c: c.__setitem__(
-            "mods_catalog_cache", {"timestamp": now, "catalog": validated}
-        )
+    {"timestamp": epoch, "catalog": [...]}}) — see
+    ``catalog.fetch_url_catalog`` for the caching/offline semantics."""
+    return catalog.fetch_url_catalog(
+        "mods", catalog.validate_mod, registry_url(), force=force
     )
-    return validated
 
 
 def mods_registry(force=False) -> list:
-    """The effective mod registry, in override order (later wins by id):
-    the remote/cached catalog < the local repo's server-imported entries <
-    the launcher config's embedded mods < the repo's user-custom entries <
-    the legacy per-user custom file. Empty when nothing is configured."""
-    remote = fetch_mods_catalog(force=force)
-    base = [] if remote is None else remote
-    repo = catalog.read_local_repo("mods")
-    return catalog.merge_mods(
-        catalog.merge_mods(
-            catalog.merge_mods(
-                catalog.merge_mods(
-                    base,
-                    catalog.validate_entries(
-                        repo["server"],
-                        catalog.validate_mod,
-                        "local mods repo",
-                    ),
-                ),
-                embedded_mods(),
-            ),
-            catalog.validate_entries(
-                repo["custom"], catalog.validate_mod, "local mods repo"
-            ),
-        ),
-        catalog.legacy_custom_layer("mods", catalog.validate_mod),
+    """The effective mod registry — see ``catalog.layered_registry`` for
+    the layer order. Empty when nothing is configured."""
+    return catalog.layered_registry(
+        "mods",
+        catalog.validate_mod,
+        catalog.MOD_MERGE_FIELDS,
+        embedded_mods(),
+        remote=fetch_mods_catalog(force=force),
     )
 
 
@@ -186,21 +131,6 @@ def set_registry_url(url: str) -> str | None:
 def reset_registry_url():
     """Drop the per-user override so the launcher-configured URL is used."""
     catalog.reset_registry_url("mods")
-
-
-def custom_file() -> str:
-    """Path of the per-user custom mod JSON file."""
-    return catalog.custom_file("mods")
-
-
-def open_custom_file() -> bool:
-    """Create the custom mod file (with the template) when missing."""
-    return catalog.write_custom_template("mods", CUSTOM_FILE_TEMPLATE)
-
-
-def clear_custom_file() -> bool:
-    """Delete the custom mod file. True when something was removed."""
-    return catalog.clear_custom("mods")
 
 
 # ── version lookup / install ─────────────────────────────────────────────────
