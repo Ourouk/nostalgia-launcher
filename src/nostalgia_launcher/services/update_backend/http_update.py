@@ -62,6 +62,16 @@ def _torrent_identity(snapshot) -> dict:
     }
 
 
+def _safe_identity(snapshot) -> "dict | None":
+    """``_torrent_identity`` that never raises: a snapshot with malformed
+    metadata yields ``None`` so callers can route to their failure path
+    instead of dying mid-fallback."""
+    try:
+        return _torrent_identity(snapshot)
+    except Exception:
+        return None
+
+
 def _torrent_available() -> bool:
     """Whether the BitTorrent backend can run (libtorrent installed)."""
     try:
@@ -137,6 +147,17 @@ class VerifyWorker(WorkerBase):
             src = _download_source()
             if src is None:
                 raise RuntimeError("No download source configured.")
+            # Config.wtf isn't part of the manifest — it's user game config.
+            # Create it when missing, or overwrite it when the user
+            # committed to this folder. realmlist.wtf rides along so a
+            # fresh client folder points at the configured realm too.
+            # Deliberately done *before* the manifest fetch: a manifest-less
+            # (torrent-verified or play-only) setup must still get its
+            # realm configuration.
+            cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
+            if self.overwrite_config or not os.path.exists(cfg_wtf):
+                write_config_wtf(self.out_dir)
+                write_realmlist_wtf(self.out_dir)
             req = urllib.request.Request(
                 src.manifest_url, headers={"User-Agent": UA}
             )
@@ -157,15 +178,6 @@ class VerifyWorker(WorkerBase):
             # sweep over the whole client.
             self.progress(0.0, "", phase="Verified")
             save_cache(self._cache)
-
-            # Config.wtf isn't part of the manifest — it's user game config.
-            # Create it when missing, or overwrite it when the user
-            # committed to this folder. realmlist.wtf rides along so a
-            # fresh client folder points at the configured realm too.
-            cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
-            if self.overwrite_config or not os.path.exists(cfg_wtf):
-                write_config_wtf(self.out_dir)
-                write_realmlist_wtf(self.out_dir)
 
             if stale_nodes:
                 self.log("Update available.", "acct")
@@ -276,7 +288,16 @@ class VerifyWorker(WorkerBase):
                     "unavailable via BitTorrent.",
                 )
 
-            identity = _torrent_identity(snapshot)
+            identity: dict | None = _safe_identity(snapshot)
+            if identity is None:
+                # Metadata oddities must not escape into VerifyWorker.run():
+                # an exception raised this far down would kill the worker
+                # thread mid-fallback (run() already consumed the manifest
+                # failure). Degrade to a posted verify-failure instead so
+                # the controller gets a coherent verdict.
+                return self._torrent_recheck_failed(
+                    RuntimeError("snapshot metadata could not be parsed")
+                )
 
             same_content = (
                 cached.get("content_hash") == identity["content_hash"]
@@ -313,7 +334,7 @@ class VerifyWorker(WorkerBase):
                     "out_dir": os.path.abspath(self.out_dir),
                     "stale": stale,
                 }
-                save_cache(self._cache)
+                self._persist_torrent_validation()
                 self.log(
                     "[torrent] Validation verdict reused from cache.", "dim"
                 )
@@ -325,7 +346,15 @@ class VerifyWorker(WorkerBase):
             # say why the re-scan runs, then run the full recheck (reusing
             # the already-fetched snapshot so it isn't downloaded twice).
             if old_hash and new_hash and old_hash != new_hash:
-                remove_resume_data(old_hash)
+                try:
+                    remove_resume_data(old_hash)
+                except Exception as e:
+                    # Cleanup is best-effort: a leftover resume blob only
+                    # costs disk space, it must not abort the re-scan.
+                    self.log(
+                        f"[torrent] Could not discard old resume data: {e}",
+                        "dim",
+                    )
                 self.log(
                     "[torrent] Snapshot changed at URL — discarding old "
                     f"validation state and resume data ({old_hash[:12]}… "
@@ -416,7 +445,16 @@ class VerifyWorker(WorkerBase):
         if identity is None:
             snapshot = getattr(verifier, "snapshot", None)
             if snapshot is not None:
-                identity = _torrent_identity(snapshot)
+                # A malformed post-recheck snapshot must not discard an
+                # otherwise valid verdict — cache it without identity, so
+                # the next verify re-scans instead of trusting a reuse.
+                identity = _safe_identity(snapshot) or {}
+                if not identity.get("info_hash"):
+                    self.log(
+                        "[torrent] Snapshot identity unavailable — "
+                        "verdict cached without it.",
+                        "dim",
+                    )
         identity = identity or {}
         self._cache[TORRENT_VALIDATION_CACHE_KEY] = {
             **identity,
@@ -424,10 +462,32 @@ class VerifyWorker(WorkerBase):
             "out_dir": os.path.abspath(self.out_dir),
             "stale": sorted(stale),
         }
-        save_cache(self._cache)
+        self._persist_torrent_validation()
         self.log("[torrent] Validation verdict cached.", "dim")
         self._post_torrent_verdict(stale)
         return True
+
+    def _torrent_recheck_failed(self, err) -> bool:
+        """Generic-Exception landing for steps that run outside the recheck
+        ladder (snapshot-identity parsing). Same message + marker pairing
+        as the ladder tail so every failure posts a coherent verdict."""
+        return self._torrent_verify_failed(
+            err,
+            markers.TORRENT_VERIFY_FAILED,
+            f"BitTorrent verification failed: {err}",
+            "Torrent snapshot fetched but verification failed — "
+            "update unavailable via BitTorrent.",
+        )
+
+    def _persist_torrent_validation(self):
+        """Best-effort cache flush: a failing disk must not kill an
+        otherwise finished (or reused) verification verdict."""
+        try:
+            save_cache(self._cache)
+        except Exception as e:
+            self.log(
+                f"[torrent] Could not persist validation cache: {e}", "err"
+            )
 
     def _post_torrent_error(
         self, marker, err, err_log: str, notice: str

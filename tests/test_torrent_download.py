@@ -1548,6 +1548,120 @@ def test_verify_worker_uses_torrent_when_manifest_down(tmp_path, monkeypatch):
     assert "__DIFF_TREE__" not in msgs
 
 
+def test_verify_worker_identity_crash_degrades_to_verify_failed(
+    tmp_path, monkeypatch
+):
+    """A snapshot whose metadata explodes during the cached-verdict identity
+    comparison must degrade to a posted verify-failure — never kill the
+    worker thread mid-fallback (run() already consumed the manifest
+    failure)."""
+    client = _mk_client(tmp_path)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    seed = {
+        client_update.TORRENT_VALIDATION_CACHE_KEY: {
+            "content_hash": "c1",
+            "info_hash": "oldhash",
+            "out_dir": os.path.abspath(str(client)),
+            "stale": [],
+        }
+    }
+    monkeypatch.setattr(client_update, "load_cache", lambda: seed)
+    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: DownloadSource(
+            "https://srv/manifest.json",
+            "https://srv/client",
+            "https://srv/client.torrent",
+        ),
+    )
+    monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
+
+    class BoomSnapshot:
+        info_hash = "newhash"
+
+        @property
+        def content_hash(self):
+            raise RuntimeError("corrupt metadata")
+
+    monkeypatch.setattr(td, "_fetch_torrent", lambda url, log: BoomSnapshot())
+
+    def down(req, timeout=10, allowed_hosts=None):
+        raise ConnectionError("manifest down")
+
+    monkeypatch.setattr(client_update, "secure_urlopen", down)
+
+    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    vw.run()
+
+    msgs = [m[0] for m in log_q.queue]
+    assert "__TORRENT_VERIFY_FAILED__" in msgs
+    assert "__MANIFEST_UNAVAILABLE__" not in msgs
+
+
+def test_verify_worker_resume_data_failure_does_not_abort(
+    tmp_path, monkeypatch
+):
+    """Discarding resume data for a replaced snapshot is best-effort: an
+    OSError there must not abort the re-scan — the verify still posts its
+    verdict."""
+    client = _mk_client(tmp_path)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    seed = {
+        client_update.TORRENT_VALIDATION_CACHE_KEY: {
+            "content_hash": "c1",
+            "info_hash": "oldhash",
+            "out_dir": os.path.abspath(str(client)),
+            "stale": ["Data/a.bin"],
+        }
+    }
+    monkeypatch.setattr(client_update, "load_cache", lambda: seed)
+    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: DownloadSource(
+            "https://srv/manifest.json",
+            "https://srv/client",
+            "https://srv/client.torrent",
+        ),
+    )
+    monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
+
+    class FreshSnapshot:
+        content_hash = "c2"
+        info_hash = "newhash"
+
+    monkeypatch.setattr(td, "_fetch_torrent", lambda url, log: FreshSnapshot())
+
+    def boom_remove(info_hash):
+        raise OSError("disk angry")
+
+    monkeypatch.setattr(td, "remove_resume_data", boom_remove)
+
+    class FakeVerifier:
+        def __init__(self, out_dir, log_q, prog_q):
+            pass
+
+        def verify(self, url, snapshot=None):
+            return []
+
+    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+
+    def down(req, timeout=10, allowed_hosts=None):
+        raise ConnectionError("manifest down")
+
+    monkeypatch.setattr(client_update, "secure_urlopen", down)
+
+    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    vw.run()
+
+    msgs = [m[0] for m in log_q.queue]
+    assert "__TORRENT_UP_TO_DATE__" in msgs
+    assert "__TORRENT_VERIFY_FAILED__" not in msgs
+
+
 def test_verify_worker_torrent_up_to_date(tmp_path, monkeypatch):
     """Manifest down but the torrent verify finds nothing stale → the
     up-to-date marker is posted, not manifest-unavailable."""

@@ -163,6 +163,30 @@ def test_verify_worker_config_wtf_created_when_missing(tmp_path, monkeypatch):
     assert (client / "WTF" / "Config.wtf").exists()
 
 
+def test_verify_worker_seeds_wtf_even_when_manifest_fails(
+    tmp_path, monkeypatch
+):
+    """Config.wtf/realmlist.wtf are seeded BEFORE the manifest fetch, so a
+    fresh client folder still gets its realm configuration when the server
+    serves no manifest (torrent-verified / play-only setups)."""
+    client = _mk_client(tmp_path)
+
+    def boom(*a, **k):
+        raise urllib.error.HTTPError(
+            "https://srv.example/m.json", 404, "not found", {}, None
+        )
+
+    monkeypatch.setattr(client_update, "secure_urlopen", boom)
+
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    vw = VerifyWorker(str(client), log_q, prog_q)
+    vw.run()
+
+    assert (client / "WTF" / "Config.wtf").exists()
+    msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
+    assert "__MANIFEST_UNAVAILABLE__" in msgs
+
+
 def test_update_worker_downloads_and_verifies(tmp_path, monkeypatch):
     client = _mk_client(tmp_path)
     payload = b"hello world"

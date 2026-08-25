@@ -659,16 +659,38 @@ class UpdateController:
                 )
             if self.state.torrent_error and not self.state.torrent_stale:
                 # Torrent reachable but had an error (stalled, session, disk,
-                # verify failed). Offer recovery so the user can retry.
+                # verify failed). Offer recovery so the user can retry — but
+                # never at the cost of stranding an installed client: with a
+                # game executable on disk, PLAY wins (Force recheck remains
+                # the repair path).
+                if self._playable_client_present():
+                    return Readiness(
+                        "play",
+                        "PLAY",
+                        "Verification failed — playing installed client",
+                    )
                 return Readiness(
                     "update",
                     "UPDATE",
                     f"Download via BitTorrent ({self.state.torrent_error})",
                 )
             if not self.state.client_ready and torrent_recovery_available():
+                if self._playable_client_present():
+                    return Readiness(
+                        "play",
+                        "PLAY",
+                        "Manifest unavailable — playing unverified client",
+                    )
                 return Readiness("update", "UPDATE", "Download via BitTorrent")
             if not can_launch_client():
-                return Readiness("disabled", "UPDATE", "Manifest unavailable")
+                reason = (
+                    "umu-run not found"
+                    if is_linux()
+                    else "launching unsupported on this platform"
+                )
+                return Readiness(
+                    "disabled", "UPDATE", f"Manifest unavailable — {reason}"
+                )
             if not self.state.client_ready:
                 return Readiness("play", "PLAY", "Manifest unavailable")
             return Readiness("play", "PLAY", "Everything up to date!")
@@ -681,6 +703,19 @@ class UpdateController:
         return Readiness("play", "PLAY", "Everything up to date!")
 
     # ── internals ───────────────────────────────────────────────────────────
+
+    def _playable_client_present(self) -> bool:
+        """Whether the configured game folder holds a launchable executable —
+        the same pick ``launch_game`` makes, so a PLAY readiness can trust
+        the click to actually start something."""
+        client_dir = (self._get_out_dir() or "").strip()
+        if not client_dir:
+            return False
+        exe, _ = pick_game_executable(
+            client_dir,
+            mods.external_launcher_executables(client_dir),
+        )
+        return os.path.isfile(exe)
 
     def _client_updates_enabled(self) -> bool:
         return bool(load_config().get("client_update_enabled", True))
