@@ -80,3 +80,13 @@ def valid_extract_map(emap) -> dict | None:
         ):
             out[pattern] = dest
     return out or None
+
+
+def valid_sha1(value) -> str | None:
+    """A lowercase 40-hex SHA-1 digest, or None when absent/invalid."""
+    if value is None or not isinstance(value, str):
+        return None
+    v = value.strip().lower()
+    if len(v) != 40 or any(c not in "0123456789abcdef" for c in v):
+        return None
+    return v

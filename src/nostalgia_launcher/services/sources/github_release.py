@@ -150,6 +150,7 @@ def _validate_release_source(source: dict) -> dict | None:
 
 class GitHubReleaseBackend(SourceBackend):
     KIND = "github_release"
+    HOST = "GitHub"
 
     def validate(self, source: dict) -> dict | None:
         cleaned = _validate_release_source(source)
@@ -179,7 +180,7 @@ class GitHubReleaseBackend(SourceBackend):
         src = entry["source"]
         rel = release if release is not None else self.latest_release(src)
         if not rel:
-            raise RuntimeError("no release found on GitHub")
+            raise RuntimeError(f"no release found on {self.HOST}")
         asset = pick_asset(
             rel.get("assets", []), src["asset_pattern"], src.get("prefer_no")
         )

@@ -35,7 +35,13 @@ from ..core import config_store, launcher, profiles
 from ..core.log_sink import log
 from .sources import hooks as _hooks
 from .sources import kinds as _source_kinds
-from .sources.safety import safe_folder, safe_relpath  # noqa: F401 (re-export)
+from .sources.safety import (  # noqa: F401 (safe_folder re-exported)
+    safe_folder,
+    safe_relpath,
+)
+from .sources.safety import (
+    valid_sha1 as _valid_sha1,
+)
 
 # Allowlisted mod source kinds / post-install hooks. A remote or custom mod
 # entry can only reference these — it cannot name arbitrary code. Both come
@@ -415,18 +421,6 @@ def merge_mods(remote: list, custom: list) -> list:
 
 
 # ── asset entries ────────────────────────────────────────────────────────────
-
-
-def _valid_sha1(value) -> str | None:
-    """A lowercase 40-hex SHA-1 digest, or None when absent/invalid."""
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        return None
-    v = value.strip().lower()
-    if len(v) != 40 or any(c not in "0123456789abcdef" for c in v):
-        return None
-    return v
 
 
 def validate_asset(entry: dict) -> dict | None:

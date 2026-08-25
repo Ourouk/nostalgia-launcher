@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 from ..core import profiles
 from ..core.constants import UA
+from ..core.filesystem import atomic_write_bytes
 from ..core.log_sink import log
 from ..core.security_http import (
     allowed_download_hosts,
@@ -62,11 +63,7 @@ def fetch_logo(url: str) -> str | None:
             data = read_capped(r, 8 * 1024 * 1024)
         if not data:
             raise RuntimeError("empty logo response")
-        os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
-        tmp = dest + ".tmp"
-        with open(tmp, "wb") as f:
-            f.write(data)
-        os.replace(tmp, dest)
+        atomic_write_bytes(dest, data)
         log(f"  Downloaded launcher logo ({len(data) // 1024} KB).")
         return dest
     except Exception as e:
