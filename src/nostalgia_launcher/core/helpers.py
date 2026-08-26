@@ -6,6 +6,7 @@ No global state, no I/O — deterministic and easy to test in isolation.
 import html as html_mod
 import re
 from datetime import datetime
+from urllib.parse import urlsplit
 
 
 def fmt_size(num_bytes: float) -> str:
@@ -22,11 +23,12 @@ def fmt_speed(bytes_per_sec: float) -> str:
 
 
 def parse_version(v: str) -> tuple:
-    """'v1.2.0' → (1, 2, 0); non-numeric parts become 0."""
+    """'v1.2.0' → (1, 2, 0); each dot-part contributes its LEADING digit run
+    ('2rc1' → 2, 'rc1' → 0) so qualifiers can't splice digits together."""
     parts = []
     for p in (v or "").strip().lstrip("vV").split("."):
-        digits = "".join(ch for ch in p if ch.isdigit())
-        parts.append(int(digits) if digits else 0)
+        m = re.match(r"\d+", p)
+        parts.append(int(m.group(0)) if m else 0)
     return tuple(parts) or (0,)
 
 
@@ -38,6 +40,24 @@ def same_git_repo(a, b) -> bool:
         return (u[:-4] if u.endswith(".git") else u).lower()
 
     return norm(a) == norm(b)
+
+
+def redact_url(url: str) -> str:
+    """Mask any userinfo (user:token@) in a URL before it reaches the
+    session log — credentials embedded in configured endpoints must not be
+    persisted to disk or shown in the GUI log window."""
+    if not isinstance(url, str) or "@" not in url:
+        return url
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    if not parts.username:
+        return url
+    netloc = f"***@{parts.hostname}"
+    if parts.port:
+        netloc += f":{parts.port}"
+    return url.replace(f"{parts.netloc}@", netloc, 1)
 
 
 def parse_wow_colored(text: str):

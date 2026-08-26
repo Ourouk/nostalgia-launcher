@@ -112,9 +112,15 @@ class SettingsController:
         session controller and re-verifies the new folder (overwriting
         Config.wtf, which also supersedes the first-run settings-close
         verify). Returns True when a change was applied, so the UI can skip
-        its own re-renders on a no-op.
+        its own re-renders on a no-op. An empty submission is a no-op: ""
+        means "unconfirmed", never the CWD.
         """
-        new_val = os.path.normpath((new_path or "").strip() or ".")
+        raw = (new_path or "").strip()
+        if not raw or os.path.normpath(raw) == ".":
+            # An empty (or CWD) path would wipe the confirmed-folder state
+            # for nothing — refuse instead of persisting out_dir=".".
+            return False
+        new_val = os.path.normpath(raw)
         if os.path.normpath(self.state.path.strip() or ".") == new_val:
             return False
         if self._updater.running:
@@ -127,8 +133,6 @@ class SettingsController:
             )
             return False
         self.state.path = new_val
-        if not new_val:
-            return False
 
         try:
             if os.path.exists(config_store.cache_file):

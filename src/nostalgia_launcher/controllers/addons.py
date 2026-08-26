@@ -18,6 +18,7 @@ from dataclasses import replace
 from ..core import config_store
 from ..core.errors import describe_install_error
 from ..core.helpers import same_git_repo
+from ..core.log_sink import log
 from ..services import addons, catalog
 from ..state.events import (
     AddonsLoaded,
@@ -121,95 +122,98 @@ class AddonsController:
                 catalog = addons.addons_catalog(force=force)
             except Exception:
                 # offline — fall back to whatever the config still holds
-                catalog = addons.catalog_from_cache()
+                try:
+                    catalog = addons.catalog_from_cache()
+                except Exception:
+                    catalog = []
 
-            available = self._available_from_catalog(catalog)
+            try:
+                self._verify_worker_body(catalog, client, force, remote_checks)
+            except Exception as e:
+                # A crashed scan thread would leave state.busy stuck True
+                # forever (ADDONS wedged on "Checking…" until restart) —
+                # always report the outcome instead.
+                log(f"Add-on verification failed: {e}", "err")
+                self.state.busy = False
+                self.state.installing = False
+                self._dispatcher.post(OperationFinished("addons", False))
 
-            installed = {}
-            records = config_store.load_config().get("addons", {})
-            ap = addons.addons_path(client) if client else ""
-            if ap and os.path.isdir(ap):
-                for name in sorted(os.listdir(ap)):
-                    if name.startswith(("Blizzard_", "Turtle_")):
-                        continue
-                    dirp = os.path.join(ap, name)
-                    if not os.path.isdir(dirp):
-                        continue
-                    rec = {
-                        "folder": name,
-                        "status": "unknown",
-                        "git": None,
-                        "branch": None,
-                        "ref": None,
-                        "toc": {},
-                        "description": None,
-                        "error": None,
-                    }
-                    toc_path = os.path.join(dirp, f"{name}.toc")
-                    if not os.path.exists(toc_path):
-                        rec.update(status="invalid", error="Missing .toc file")
-                        installed[name] = rec
-                        continue
-                    rec["toc"] = addons.read_toc_file(toc_path)
-                    avail = next(
-                        (a for a in available if a["folder"] == name), None
+        threading.Thread(target=worker, daemon=True).start()
+        return True
+
+    def _verify_worker_body(self, catalog_list, client, force, remote_checks):
+        """The filesystem/catalog scan of verify()'s worker thread; runs
+        inside the caller's exception guard."""
+        available = self._available_from_catalog(catalog_list)
+
+        installed = {}
+        records = config_store.load_config().get("addons", {})
+        if not isinstance(records, dict):
+            records = {}
+        ap = addons.addons_path(client) if client else ""
+        if ap and os.path.isdir(ap):
+            for name in sorted(os.listdir(ap)):
+                if name.startswith(("Blizzard_", "Turtle_")):
+                    continue
+                dirp = os.path.join(ap, name)
+                if not os.path.isdir(dirp):
+                    continue
+                rec = {
+                    "folder": name,
+                    "status": "unknown",
+                    "git": None,
+                    "branch": None,
+                    "ref": None,
+                    "toc": {},
+                    "description": None,
+                    "error": None,
+                }
+                toc_path = os.path.join(dirp, f"{name}.toc")
+                if not os.path.exists(toc_path):
+                    rec.update(status="invalid", error="Missing .toc file")
+                    installed[name] = rec
+                    continue
+                rec["toc"] = addons.read_toc_file(toc_path)
+                avail = next(
+                    (a for a in available if a["folder"] == name), None
+                )
+                if avail:
+                    rec["description"] = avail["description"]
+                saved = records.get(name)
+                override = addons.RECOMMENDED_ADDONS.get(name)
+                if (
+                    saved
+                    and saved.get("git")
+                    and override
+                    and not same_git_repo(saved["git"], override)
+                ):
+                    # Installed from a different repo than the curated
+                    # fork — offer an update that migrates to the fork.
+                    rec.update(
+                        git=override,
+                        branch=None,
+                        ref=None,
+                        status="outOfDate",
                     )
-                    if avail:
-                        rec["description"] = avail["description"]
-                    saved = records.get(name)
-                    override = addons.RECOMMENDED_ADDONS.get(name)
-                    if (
-                        saved
-                        and saved.get("git")
-                        and override
-                        and not same_git_repo(saved["git"], override)
-                    ):
-                        # Installed from a different repo than the curated
-                        # fork — offer an update that migrates to the fork.
+                elif saved and saved.get("git") and avail:
+                    # The launcher catalog is authoritative for the addon's
+                    # source. A saved repo that differs means the addon was
+                    # installed from elsewhere — offer an update that
+                    # migrates to the catalog's repo. Even when the repos
+                    # match, verify against the catalog's branch/ref (the
+                    # saved record may predate a catalog branch change).
+                    if not same_git_repo(saved["git"], avail["git"]):
                         rec.update(
-                            git=override,
-                            branch=None,
-                            ref=None,
+                            git=avail["git"],
+                            branch=avail["branch"],
+                            ref=avail["ref"],
                             status="outOfDate",
                         )
-                    elif saved and saved.get("git") and avail:
-                        # The launcher catalog is authoritative for the addon's
-                        # source. A saved repo that differs means the addon was
-                        # installed from elsewhere — offer an update that
-                        # migrates to the catalog's repo. Even when the repos
-                        # match, verify against the catalog's branch/ref (the
-                        # saved record may predate a catalog branch change).
-                        if not same_git_repo(saved["git"], avail["git"]):
-                            rec.update(
-                                git=avail["git"],
-                                branch=avail["branch"],
-                                ref=avail["ref"],
-                                status="outOfDate",
-                            )
-                        else:
-                            rec.update(
-                                git=avail["git"],
-                                branch=avail["branch"],
-                                ref=avail["ref"],
-                            )
-                            remote = self._resolve_remote_sha(
-                                rec["git"],
-                                rec["branch"],
-                                rec["ref"],
-                                force=force,
-                                remote_checks=remote_checks,
-                                fallback_sha=saved.get("sha"),
-                            )
-                            self._apply_remote_status(
-                                rec, remote, saved.get("sha")
-                            )
-                    elif saved and saved.get("git"):
-                        # Installed addon not in the catalog (a custom entry) —
-                        # keep tracking the saved source.
+                    else:
                         rec.update(
-                            git=saved.get("git"),
-                            branch=saved.get("branch"),
-                            ref=saved.get("ref"),
+                            git=avail["git"],
+                            branch=avail["branch"],
+                            ref=avail["ref"],
                         )
                         remote = self._resolve_remote_sha(
                             rec["git"],
@@ -222,61 +226,73 @@ class AddonsController:
                         self._apply_remote_status(
                             rec, remote, saved.get("sha")
                         )
-                    elif avail:
-                        # Installed addon the launcher has never recorded (a
-                        # folder set up elsewhere, or addons pre-dating the
-                        # launcher). Adopt it silently: record its catalog
-                        # source and resolve its current remote sha as the
-                        # baseline, so it's tracked like any launcher-installed
-                        # addon from now on — no re-download and no "update"
-                        # flag on every pre-existing addon. Offline/rate-limited
-                        # resolution leaves it retryable, never "out of date".
-                        remote = self._resolve_remote_sha(
-                            avail["git"],
-                            avail["branch"],
-                            avail["ref"],
-                            force=force,
-                            remote_checks=remote_checks,
-                        )
-                        rec.update(
-                            git=avail["git"],
-                            branch=avail["branch"],
-                            ref=avail["ref"],
-                        )
-                        if remote:
-                            rec["status"] = "upToDate"
-                            config_store.update_config(
-                                lambda c, f=name, g=avail["git"], b=avail["branch"], r=avail["ref"], s=remote: (
-                                    c.setdefault("addons", {}).__setitem__(
-                                        f,
-                                        {
-                                            "git": g,
-                                            "branch": b,
-                                            "ref": r,
-                                            "sha": s,
-                                        },
-                                    )
+                elif saved and saved.get("git"):
+                    # Installed addon not in the catalog (a custom entry) —
+                    # keep tracking the saved source.
+                    rec.update(
+                        git=saved.get("git"),
+                        branch=saved.get("branch"),
+                        ref=saved.get("ref"),
+                    )
+                    remote = self._resolve_remote_sha(
+                        rec["git"],
+                        rec["branch"],
+                        rec["ref"],
+                        force=force,
+                        remote_checks=remote_checks,
+                        fallback_sha=saved.get("sha"),
+                    )
+                    self._apply_remote_status(rec, remote, saved.get("sha"))
+                elif avail:
+                    # Installed addon the launcher has never recorded (a
+                    # folder set up elsewhere, or addons pre-dating the
+                    # launcher). Adopt it silently: record its catalog
+                    # source and resolve its current remote sha as the
+                    # baseline, so it's tracked like any launcher-installed
+                    # addon from now on — no re-download and no "update"
+                    # flag on every pre-existing addon. Offline/rate-limited
+                    # resolution leaves it retryable, never "out of date".
+                    remote = self._resolve_remote_sha(
+                        avail["git"],
+                        avail["branch"],
+                        avail["ref"],
+                        force=force,
+                        remote_checks=remote_checks,
+                    )
+                    rec.update(
+                        git=avail["git"],
+                        branch=avail["branch"],
+                        ref=avail["ref"],
+                    )
+                    if remote:
+                        rec["status"] = "upToDate"
+                        config_store.update_config(
+                            lambda c, f=name, g=avail["git"], b=avail["branch"], r=avail["ref"], s=remote: (
+                                c.setdefault("addons", {}).__setitem__(
+                                    f,
+                                    {
+                                        "git": g,
+                                        "branch": b,
+                                        "ref": r,
+                                        "sha": s,
+                                    },
                                 )
                             )
-                        else:
-                            rec.update(
-                                status="unknown", error=C_COULD_NOT_CHECK
-                            )
-                    installed[name] = rec
+                        )
+                    else:
+                        rec.update(status="unknown", error=C_COULD_NOT_CHECK)
+                installed[name] = rec
 
-            # Overlay install failures from this session: the rescan drops
-            # them (a failed install leaves no folder on disk), so re-attach
-            # errors to the matching available row — or synthesize one for a
-            # failed custom addon. Errors for now-installed folders are stale
-            # and dropped.
-            for folder in [f for f in self.state.errors if f in installed]:
-                self.state.errors.pop(folder, None)
-            self._overlay_errors(available)
+        # Overlay install failures from this session: the rescan drops
+        # them (a failed install leaves no folder on disk), so re-attach
+        # errors to the matching available row — or synthesize one for a
+        # failed custom addon. Errors for now-installed folders are stale
+        # and dropped.
+        for folder in [f for f in self.state.errors if f in installed]:
+            self.state.errors.pop(folder, None)
+        self._overlay_errors(available)
 
-            self._finish_verify(installed, available)
-
-        threading.Thread(target=worker, daemon=True).start()
-        return True
+        self._finish_verify(installed, available)
 
     def _available_from_catalog(self, catalog_list: list) -> list:
         """Map catalog entries to AVAILABLE row dicts: curated blocked/
@@ -443,35 +459,6 @@ class AddonsController:
             if rec.status == "outOfDate"
         ]
 
-    def remove(self, folder: str):
-        """Delete an installed addon folder and drop its config record (the
-        confirmation dialog lives in the UI layer)."""
-        client = (self._get_out_dir() or "").strip()
-        if not client or self.state.busy:
-            return
-        try:
-            dirp = os.path.join(addons.addons_path(client), folder)
-            if os.path.isdir(dirp):
-                shutil.rmtree(dirp)
-            config_store.update_config(
-                lambda c: c.get("addons", {}).pop(folder, None)
-            )
-            self._dispatcher.post(
-                LogMessage(f"Removed addon {folder}\n", "dim")
-            )
-        except Exception as e:
-            self._dispatcher.post(
-                LogMessage(f"Failed to remove addon {folder}: {e}\n", "err")
-            )
-        self.state.addons.pop(folder, None)
-        self.state.errors.pop(folder, None)
-        self.state.updates_count = sum(
-            1
-            for rec in self.state.addons.values()
-            if rec.status == "outOfDate"
-        )
-        self._dispatcher.post(AddonsLoaded(self.state))
-
     def apply_recommended_addons(self) -> bool:
         """Install every recommended addon (from catalog + constant) not yet
         present. Returns True when an install actually started."""
@@ -515,8 +502,9 @@ class AddonsController:
         self._dispatcher.post(
             LogMessage("\nInstalling recommended addons...\n", "acct")
         )
-        self.apply(recs)
-        return True
+        # Propagate the worker's verdict: a refused start must not report
+        # success (the panel keys its busy chrome off this boolean).
+        return self.apply(recs)
 
     def reset(self):
         """Drop the session verify TTL/content (called when the game folder
@@ -548,11 +536,15 @@ class AddonsController:
     def _ensure_catalog_loaded(self):
         """Force a catalog fetch and populate _recommended and state.available.
         Used by apply_recommended_addons on first run when the catalog hasn't
-        been fetched yet."""
+        been fetched yet. Never raises — this runs on the GUI thread, and an
+        escaping exception would abort the caller's Qt slot mid-install."""
         try:
             catalog = addons.addons_catalog(force=True)
         except Exception:
-            catalog = addons.catalog_from_cache()
+            try:
+                catalog = addons.catalog_from_cache()
+            except Exception:
+                catalog = []
         available = self._available_from_catalog(catalog)
         self.state.available = [AddonState.from_dict(rec) for rec in available]
 

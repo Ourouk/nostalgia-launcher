@@ -238,17 +238,6 @@ def test_merge_addons_custom_overrides_and_appends():
     assert merged["C"]["git"] == "https://github.com/x/C"
 
 
-def test_merge_mods_custom_overrides_and_appends():
-    remote = [{"id": "A", "name": "A", "installation": "user_opt_in"}]
-    custom = [
-        {"id": "A", "installation": "required"},
-        {"id": "B", "name": "B"},
-    ]
-    merged = {m["id"]: m for m in catalog.merge_mods(remote, custom)}
-    assert merged["A"]["installation"] == "required"
-    assert merged["B"]["name"] == "B"
-
-
 # ── registry URL storage ─────────────────────────────────────────────────────
 
 
@@ -538,3 +527,29 @@ def test_validate_mod_register_dll_list_normalization():
     assert (
         catalog.validate_mod({**base, "register_dll": ["../evil.dll"]}) is None
     )
+
+
+# ── hostile-entry containment (regression tests) ─────────────────────────
+
+
+def test_validate_mod_non_string_fields_are_rejected_not_raised():
+    """A truthy non-string (e.g. `"id": 123`) must drop the entry, not
+    crash the validator with AttributeError."""
+    assert catalog.validate_mod({"id": 123, "source": {"kind": "x"}}) is None
+    assert catalog.validate_addon({"name": 5}) is None
+    assert catalog.validate_asset({"id": 7}) is None
+
+
+def test_validate_entries_contains_validator_crash():
+    """One poisoned repo/embedded entry must not take down a whole layer
+    load — the entry is skipped with a log line instead."""
+
+    def boom(entry):
+        if entry.get("id") == "bad":
+            raise RuntimeError("validator blew up")
+        return {"id": entry["id"]}
+
+    out = catalog.validate_entries(
+        [{"id": "good"}, {"id": "bad"}], boom, "test"
+    )
+    assert [e["id"] for e in out] == ["good"]

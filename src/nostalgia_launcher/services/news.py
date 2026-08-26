@@ -18,10 +18,17 @@ def fetch_news_items() -> list:
     )
     with secure_urlopen(req, timeout=NEWS_TIMEOUT) as r:
         data = json.loads(read_capped(r, 1 * 1024 * 1024))
-    items = data.get("items", [])
+    # A shape-broken feed degrades to "no news" — never a crash in the
+    # fetch path that the controller would misreport as a network failure.
+    items = (
+        [it for it in data.get("items", []) if isinstance(it, dict)]
+        if isinstance(data, dict)
+        else []
+    )
     # news.json lists topics in forum order — show newest first (ISO dates
-    # with a fixed offset sort correctly as strings).
-    items.sort(key=lambda it: it.get("date", ""), reverse=True)
+    # with a fixed offset sort correctly as strings; non-string dates are
+    # normalized so mixed types can't blow up mid-sort).
+    items.sort(key=lambda it: str(it.get("date", "")), reverse=True)
     return items
 
 

@@ -15,6 +15,7 @@ import os
 import time
 
 from ..core.config_store import load_config
+from ..core.filesystem import atomic_write_text as _atomic_write
 from ..core.log_sink import log
 from . import catalog
 from .sources import deploy
@@ -231,7 +232,13 @@ def uninstall_mod(mod: dict, client_dir: str):
     cfg = load_config()
     state = cfg.get("mods", {}).get(mod["id"], {})
     files = state.get("installed_files", mod.get("installed_files", []))
+    if not isinstance(files, list):
+        files = []
     for rel in files:
+        # Recorded paths are bookkeeping data — re-validate before they are
+        # ever joined onto the client dir (same gate as install).
+        if not isinstance(rel, str) or not catalog.safe_relpath(rel):
+            continue
         full = os.path.join(client_dir, rel)
         if os.path.exists(full):
             os.remove(full)
@@ -248,7 +255,7 @@ def read_dlls_entries(client_dir: str) -> set:
     try:
         with open(_dlls_txt_path(client_dir), encoding="utf-8") as f:
             return {line.strip().lower() for line in f if line.strip()}
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return set()
 
 
@@ -280,16 +287,24 @@ def remove_unknown_mod(client_dir: str, name: str):
         return
     path = _dlls_txt_path(client_dir)
     if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+        except (OSError, UnicodeDecodeError):
+            return
         lines = [
             line
-            for line in open(path).read().splitlines()
+            for line in content.splitlines()
             if line.strip().lower() != name.lower()
         ]
-        if lines:
-            with open(path, "w") as f:
-                f.write("\n".join(lines) + "\n")
-        else:
-            os.remove(path)
+        try:
+            if lines:
+                _atomic_write(path, "\n".join(lines) + "\n")
+            else:
+                os.remove(path)
+        except OSError as e:
+            log(f"  Could not update dlls.txt: {e}", "err")
+            return
     # dlls.txt is mod-written, so its entries are untrusted: never resolve
     # one to a path outside client_dir.
     if catalog.safe_relpath(name):
@@ -301,31 +316,47 @@ def remove_unknown_mod(client_dir: str, name: str):
 
 def add_dll(client_dir: str, name: str):
     path = _dlls_txt_path(client_dir)
-    lines = open(path).read().splitlines() if os.path.exists(path) else []
+    lines = []
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except (OSError, UnicodeDecodeError) as e:
+            log(f"  Could not read dlls.txt: {e}", "err")
+            return
     if any(line.strip().lower() == name.lower() for line in lines):
         return
     if not catalog.safe_relpath(name.strip()):
         log(f"  Refusing unsafe dlls.txt entry: {name!r}")
         return
     lines = [line for line in lines if line.strip()] + [name]
-    with open(path, "w") as f:
-        f.write("\n".join(lines) + "\n")
+    try:
+        _atomic_write(path, "\n".join(lines) + "\n")
+    except OSError as e:
+        log(f"  Could not update dlls.txt: {e}", "err")
 
 
 def remove_dll(client_dir: str, name: str):
     path = _dlls_txt_path(client_dir)
     if not os.path.exists(path):
         return
-    lines = [
-        line
-        for line in open(path).read().splitlines()
-        if line.strip().lower() != name.lower()
-    ]
-    if not lines:
-        os.remove(path)
-    else:
-        with open(path, "w") as f:
-            f.write("\n".join(lines) + "\n")
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = [
+                line
+                for line in f.read().splitlines()
+                if line.strip().lower() != name.lower()
+            ]
+    except (OSError, UnicodeDecodeError) as e:
+        log(f"  Could not read dlls.txt: {e}", "err")
+        return
+    try:
+        if not lines:
+            os.remove(path)
+        else:
+            _atomic_write(path, "\n".join(lines) + "\n")
+    except OSError as e:
+        log(f"  Could not update dlls.txt: {e}", "err")
 
 
 def mod_installed_files_present(mod: dict, client_dir: str) -> bool:

@@ -11,6 +11,7 @@ import os
 import re
 
 from ..core.config_store import load_config, update_config
+from ..core.filesystem import atomic_write_text as _atomic_write
 from ..core.filesystem import ensure_dir
 from ..core.log_sink import log
 
@@ -20,6 +21,20 @@ def _wtf_str(v) -> str:
     newlines and NULs would let a hostile launcher config inject extra
     Config.wtf directives."""
     return re.sub(r'[\r\n\x00"]', "", str(v))
+
+
+def _wtf_num(v, default):
+    """Coerce a state-file value to a finite number for numeric SET lines;
+    anything else (a string with quotes, NaN, a dict…) falls back to the
+    default so it can never break out of the quoted value. Whole numbers
+    stay ints so the written file matches the historical formatting."""
+    try:
+        num = float(v)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(num) or math.isinf(num):
+        return default
+    return int(num) if num.is_integer() else num
 
 
 def _host_of(url: str) -> str:
@@ -216,10 +231,16 @@ def write_config_wtf(client_dir: str, tweaks: dict | None = None):
     locked by a running game, or an unwritable folder)."""
     if tweaks is None:
         tweaks = load_tweaks_config()
-    far_clip = tweaks.get("farClip", TWEAKS_DEFAULTS["farClip"])
-    cam_dist = tweaks.get("cameraDistance", TWEAKS_DEFAULTS["cameraDistance"])
-    nameplate = tweaks.get("nameplateRange", TWEAKS_DEFAULTS["nameplateRange"])
-    fov_deg = tweaks.get("fieldOfView", TWEAKS_DEFAULTS["fieldOfView"])
+    far_clip = _wtf_num(tweaks.get("farClip"), TWEAKS_DEFAULTS["farClip"])
+    cam_dist = _wtf_num(
+        tweaks.get("cameraDistance"), TWEAKS_DEFAULTS["cameraDistance"]
+    )
+    nameplate = _wtf_num(
+        tweaks.get("nameplateRange"), TWEAKS_DEFAULTS["nameplateRange"]
+    )
+    fov_deg = _wtf_num(
+        tweaks.get("fieldOfView"), TWEAKS_DEFAULTS["fieldOfView"]
+    )
     fov_rad = round(fov_deg * math.pi / 180.0, 6)
     bg_sound = (
         1
@@ -361,10 +382,16 @@ def update_config_wtf(client_dir: str, tweaks: dict):
         write_realmlist_wtf(client_dir)
         return
 
-    far_clip = tweaks.get("farClip", TWEAKS_DEFAULTS["farClip"])
-    cam_dist = tweaks.get("cameraDistance", TWEAKS_DEFAULTS["cameraDistance"])
-    nameplate = tweaks.get("nameplateRange", TWEAKS_DEFAULTS["nameplateRange"])
-    fov_deg = tweaks.get("fieldOfView", TWEAKS_DEFAULTS["fieldOfView"])
+    far_clip = _wtf_num(tweaks.get("farClip"), TWEAKS_DEFAULTS["farClip"])
+    cam_dist = _wtf_num(
+        tweaks.get("cameraDistance"), TWEAKS_DEFAULTS["cameraDistance"]
+    )
+    nameplate = _wtf_num(
+        tweaks.get("nameplateRange"), TWEAKS_DEFAULTS["nameplateRange"]
+    )
+    fov_deg = _wtf_num(
+        tweaks.get("fieldOfView"), TWEAKS_DEFAULTS["fieldOfView"]
+    )
     fov_rad = round(fov_deg * math.pi / 180.0, 6)
     bg_sound = (
         1
@@ -402,8 +429,13 @@ def update_config_wtf(client_dir: str, tweaks: dict):
         if key not in updated_keys:
             new_lines.append("SET " + key + ' "' + val + '"\n')
 
-    with open(cfg_path, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
+    # Atomic rewrite: a crash mid-write must not truncate the user's live
+    # Config.wtf (same discipline as the config store).
+    try:
+        _atomic_write(cfg_path, "".join(new_lines))
+    except OSError as e:
+        log(f"  Could not update Config.wtf: {e}", "err")
+        return
 
     log(
         f"  Config.wtf updated: farClip={far_clip}, CameraDistanceMax={cam_dist}, "

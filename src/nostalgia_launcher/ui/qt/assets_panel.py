@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...core.log_sink import log
 from ...services import mpq
 from .content_panel import ContentListPanel, ContentRow
 from .list_panel import add_row_divider, make_hairline, make_row_shell
@@ -140,8 +139,8 @@ class AssetsPanel(ContentListPanel):
             parent=self._content,
         )
 
-    def _apply_one(self, eid):
-        self._content_ctrl.apply(only_asset_id=eid)
+    def _apply_one(self, eid) -> bool:
+        return self._content_ctrl.apply(only_asset_id=eid)
 
     def _install_essential(self) -> bool:
         return self._content_ctrl.apply_essential_assets()
@@ -255,11 +254,9 @@ class AssetsPanel(ContentListPanel):
         )
         if answer != QMessageBox.Yes:
             return
-        error = mpq.remove_custom_mpq(
-            self._content_ctrl.client_dir(), rel_path
-        )
-        if error:
-            log(f"  {error}", "err")
+        self._content_ctrl.remove_foreign_mpq(rel_path)
+        # Immediate rescan of the Data/ block (the republish event also
+        # refreshes badges on the next poll tick).
         self._render(self._content_ctrl.state)
 
     def _on_version_changed(self, _text):

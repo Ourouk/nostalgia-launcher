@@ -537,3 +537,43 @@ def test_catalog_is_stale_false_with_repo_content_only(tmp_path, monkeypatch):
     catalog_svc.write_local_repo("assets", [_asset("Local")], [])
     assert not assets.has_remote_catalog()
     assert assets.catalog_is_stale() is False
+
+
+def test_remove_asset_files_skips_unsafe_recorded_paths(tmp_path):
+    """Recorded paths are bookkeeping data: a tampered state file entry
+    like "../important.doc" must never be joined onto the client dir."""
+    outside = tmp_path / "important.doc"
+    outside.write_bytes(b"x")
+    client = tmp_path / "client"
+    (client / "Data").mkdir(parents=True)
+    inside = client / "Data" / "patch.mpq"
+    inside.write_bytes(b"x")
+
+    assets.remove_asset_files(
+        ["../important.doc", "Data/patch.mpq", 42],
+        str(client),
+    )
+    assert outside.exists()
+    assert not inside.exists()
+
+
+def test_verdict_probe_skipped_when_not_allowed(monkeypatch, tmp_path):
+    """allow_probe=False must short-circuit before any network call — the
+    GUI-thread render path relies on that."""
+    calls = []
+
+    def fail_probe(url):
+        calls.append(url)
+        return None
+
+    monkeypatch.setattr(assets, "remote_probe_state", fail_probe)
+    asset = {"id": "a", "url": "https://x.test/a.mpq", "probe": True}
+    rec = {
+        "installed_files": [str(tmp_path / "a.mpq")],
+        "probe_state": {"size": 1},
+    }
+    stale, _reason = assets.asset_update_available(
+        asset, rec, str(tmp_path), allow_probe=False
+    )
+    assert stale is False
+    assert calls == []

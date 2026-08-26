@@ -609,19 +609,26 @@ def test_fetch_updater_latest_tag_stores_result(tmp_path, monkeypatch):
     config_store.save_config({})
 
     payload = json.dumps({"tag_name": "v3.0.0"}).encode()
-    monkeypatch.setattr(
-        self_update,
-        "secure_urlopen",
-        lambda *a, **k: type(
-            "R",
-            (),
-            {
-                "__enter__": lambda s: s,
-                "__exit__": lambda *x: False,
-                "read": lambda s=0: payload,
-            },
-        )(),
-    )
+    buf = bytearray(payload)
+
+    class _R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *x):
+            return False
+
+        @staticmethod
+        def read(n=-1):
+            # Chunked reads (the capped transfer layer reads 64 KiB).
+            if n is None or n < 0:
+                chunk, buf[:] = bytes(buf), b""
+            else:
+                chunk = bytes(buf[:n])
+                del buf[:n]
+            return chunk
+
+    monkeypatch.setattr(self_update, "secure_urlopen", lambda *a, **k: _R())
 
     assert self_update.fetch_updater_latest_tag() == "v3.0.0"
     cache = config_store.load_config()["updater_release_cache"]

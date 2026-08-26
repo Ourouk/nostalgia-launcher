@@ -74,3 +74,13 @@ def test_fetch_config_url_rejects_bad_json(monkeypatch):
     )
     assert data is None and raw is None
     assert err
+
+
+def test_check_config_url_malformed_raises_config_url_error():
+    """A URL urllib itself can't parse (broken IPv6 literal) surfaces as
+    ConfigUrlError — the type every caller's except-clause catches —
+    never as a raw ValueError."""
+    import pytest
+
+    with pytest.raises(config_import.ConfigUrlError):
+        config_import.check_config_url("https://[::1")

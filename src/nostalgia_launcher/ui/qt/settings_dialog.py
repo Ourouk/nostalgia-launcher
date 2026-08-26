@@ -653,7 +653,8 @@ class SettingsDialog(QDialog):
         persist override / active-profile scope. Validation-only: never
         mutates the process-global launcher config (`persist`/
         `persist_text` re-validate internally; `validate_dict` is
-        side-effect-free). Returns "" on success."""
+        side-effect-free). Returns "" on success, an error message
+        otherwise — never raises into the Qt slot."""
         from ...services import config_import
 
         if sel["kind"] == "file":
@@ -664,7 +665,10 @@ class SettingsDialog(QDialog):
             _data, raw, err = config_import.fetch_config_url(sel["config_url"])
             if err:
                 return err
-        cfg, verr = launcher.validate_dict(json.loads(raw))
+        try:
+            cfg, verr = launcher.validate_dict(json.loads(raw))
+        except (ValueError, TypeError) as e:
+            return f"Invalid configuration JSON: {e}"
         if cfg is None:
             return f"Invalid launcher configuration: {verr}"
         _dest, err = launcher.persist_text(raw)
@@ -796,8 +800,11 @@ class SettingsDialog(QDialog):
         )
         if chosen:
             chosen = os.path.normpath(chosen)
-            self._settings.set_path(chosen)
-            self._path_edit.setText(chosen)
+            # Only mirror the picker result into the field when the change
+            # was actually applied — a refused change (update running)
+            # must not display a folder the config never accepted.
+            if self._settings.set_path(chosen):
+                self._path_edit.setText(chosen)
 
     def _on_refresh_mirror(self):
         p = self._palette

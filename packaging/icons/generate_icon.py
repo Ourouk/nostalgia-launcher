@@ -3,10 +3,10 @@
 
 Renders an ORIGINAL text monogram (a stylized gold "N" on a dark rounded
 purple square) completely offscreen using PySide6 (QImage + QPainter), so no
-display server is required. Produces:
+display server is required. Produces (into the repo root, where the specs/scripts read them):
 
+  NostalgiaLauncher.ico  (256x256 PNG-in-ICO, Win Vista+)
   packaging/icons/NostalgiaLauncher.png  (256x256, also 512x512 capable)
-  packaging/icons/NostalgiaLauncher.ico  (256x256 PNG-in-ICO, Win Vista+)
 
 The art is intentionally a flat rounded square with a letterform — there is no
 medallion, gem, or any World-of-Warcraft-style "W" branding.
@@ -135,11 +135,6 @@ def main() -> None:
     with open(PNG_PATH, "wb") as fh:
         fh.write(png_bytes)
     write_ico(png_bytes, ICO_PATH)
-
-    # Optionally also emit a 512x512 PNG.
-    png512 = render_png(512)
-    with open(os.path.join(HERE, "NostalgiaLauncher@512.png"), "wb") as fh:
-        fh.write(png512)
 
     app.quit()
     print(f"==> wrote {PNG_PATH} and {ICO_PATH}")

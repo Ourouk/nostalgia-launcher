@@ -147,8 +147,8 @@ class ModsPanel(ContentListPanel):
         self._render_unknown(state)
         super()._after_render(state)
 
-    def _apply_one(self, eid):
-        self._content_ctrl.apply(only_mod_id=eid)
+    def _apply_one(self, eid) -> bool:
+        return self._content_ctrl.apply(only_mod_id=eid)
 
     def _install_essential(self) -> bool:
         return self._content_ctrl.apply_essential_mods()

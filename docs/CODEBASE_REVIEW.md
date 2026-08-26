@@ -40,7 +40,7 @@ binary-era Windows game, re-targeted at private servers.
 (optional, lazily imported BitTorrent backend), and otherwise **pure
 standard-library** business logic. Packaging via **hatchling** + **PyInstaller**;
 dependency management via **uv**; tests via **pytest**; lint/format gate via
-**ruff** (local-only, no CI step).
+**ruff** (enforced in CI via `.github/workflows/tests.yml`).
 
 **Architecture.** Strict three-layer separation:
 - **Toolkit-agnostic controllers** (`controllers/`) own all business logic and
@@ -701,9 +701,9 @@ precedence custom > embedded > remote — see `docs/agents-architecture.md`).
 
 **Lint / format (verified):**
 - `uv run ruff format .` (79-col, `target-version=py310`).
-- `uv run ruff check .` selects `E4/E7/E9/F/I/W/UP/B`. **This is the only
-  lint/format gate and it runs LOCALLY — there is NO ruff step in CI**
-  (`ci.yml` only runs `pytest`).** `pyproject` notes this explicitly.
+- `uv run ruff check .` selects `E4/E7/E9/F/I/W/UP/B`. Both gates run in CI
+  via the reusable `.github/workflows/tests.yml` (called by `ci.yml` and
+  `release.yml`).
 
 **Packaging / deploy (verified):**
 - Three PyInstaller specs freeze the package from `packaging/pyinstaller_entry.py`

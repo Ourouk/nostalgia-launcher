@@ -22,10 +22,14 @@ from ...core.config_store import load_config, update_config
 from ...core.constants import GITHUB_API, UA
 from ...core.errors import describe_net_error
 from ...core.log_sink import log
-from ...core.security_http import secure_urlopen
+from ...core.security_http import read_capped, secure_urlopen
 from .base import FetchResult, SourceBackend, register
 
 ADDON_SHA_CACHE_TTL = 3600
+# Repo-archive zips buffer in memory for extraction — cap them like every
+# other transfer; API responses are small JSON documents.
+_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024
+_API_MAX_BYTES = 2 * 1024 * 1024
 
 
 def is_allowed_git_url(url: str) -> bool:
@@ -73,7 +77,7 @@ def git_parts(git_url: str):
 def _api_json(url: str, timeout=10):
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with secure_urlopen(req, timeout=timeout) as r:
-        return json.load(r)
+        return json.loads(read_capped(r, _API_MAX_BYTES))
 
 
 def _config_git_hosts() -> set | None:
@@ -277,7 +281,7 @@ class GitArchiveBackend(SourceBackend):
         hosts = set(ADDON_ZIP_HOSTS) | (_config_git_hosts() or set())
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with secure_urlopen(req, timeout=120, allowed_hosts=hosts) as r:
-            return r.read()
+            return read_capped(r, _ARCHIVE_MAX_BYTES)
 
 
 # The zip-archive hosts extend the git-host allowlist with the Git hosts'

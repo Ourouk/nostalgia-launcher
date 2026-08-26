@@ -179,9 +179,14 @@ class AddonState:
 
     @classmethod
     def from_dict(cls, rec: dict) -> "AddonState":
-        return cls(
-            **{name: rec.get(name) for name in cls.__dataclass_fields__}
-        )
+        if not isinstance(rec, dict):
+            rec = {}
+        values = {name: rec.get(name) for name in cls.__dataclass_fields__}
+        # `folder` is the identity key every consumer indexes by — never
+        # let it be None despite its str annotation.
+        if not isinstance(values["folder"], str):
+            values["folder"] = ""
+        return cls(**values)
 
     def to_dict(self) -> dict:
         return {
@@ -253,12 +258,18 @@ class LaunchSettings:
     @classmethod
     def from_config(cls, cfg: dict) -> "LaunchSettings":
         data = cfg.get("launch") or {}
+        if not isinstance(data, dict):
+            # A corrupted state file must not crash SettingsController
+            # construction at startup.
+            data = {}
         return cls(
             umu_proton=data.get("umu_proton", "UMU-Proton"),
             umu_binary_path=data.get("umu_binary_path", ""),
             umu_game_id=data.get("umu_game_id", "umu-nostalgia-launcher"),
             umu_renderer=data.get("umu_renderer", "auto"),
-            umu_gamemode=data.get("umu_gamemode", True),
-            umu_wayland=data.get("umu_wayland", True),
-            umu_skip_builtin_dxvk=data.get("umu_skip_builtin_dxvk", False),
+            umu_gamemode=bool(data.get("umu_gamemode", True)),
+            umu_wayland=bool(data.get("umu_wayland", True)),
+            umu_skip_builtin_dxvk=bool(
+                data.get("umu_skip_builtin_dxvk", False)
+            ),
         )

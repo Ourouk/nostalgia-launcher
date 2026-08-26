@@ -19,6 +19,12 @@ on:
   push:
     tags: ['v*']
 
+# Re-pushing the same tag must not race a second release job against
+# `gh release create`.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -41,7 +47,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Verify tag matches pyproject.toml version
         run: |
-          version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n1)"
+          # Anchored at end-of-value so a trailing comment can't leak in.
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n1)"
           tag="${GITHUB_REF_NAME#v}"
           if [ -z "$version" ] || [ "$tag" != "$version" ]; then
             echo "::error::Tag '$GITHUB_REF_NAME' does not match pyproject.toml version '$version'" >&2
@@ -66,9 +73,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # setup-uv stopped publishing major tags in v8 — pin the full version.
+      # python-version is pinned to the CPython the release ships (3.12):
+      # an unpinned resolution (3.14+) has no libtorrent wheel, which
+      # breaks the spec's collect_all("libtorrent").
       - uses: astral-sh/setup-uv@v10.0.1
         with:
-          enable-cache: true
+          enable-cache: auto
+          python-version: "3.12"
       - name: Sync dependencies
         run: uv sync --dev
       - name: Build (Windows)
@@ -103,9 +114,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # setup-uv stopped publishing major tags in v8 — pin the full version.
+      # See build-windows for the python-version rationale (libtorrent
+      # wheels only exist for CPython 3.10-3.13).
       - uses: astral-sh/setup-uv@v10.0.1
         with:
-          enable-cache: true
+          enable-cache: auto
+          python-version: "3.12"
       - name: Install Qt runtime dependencies (Linux)
         run: sudo apt-get update && sudo apt-get install -y libegl1
       - name: Install ImageMagick (Linux)
@@ -151,9 +165,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # setup-uv stopped publishing major tags in v8 — pin the full version.
+      # enable-cache stays "auto" (not forced): this job holds id-token/
+      # attestation scopes, so caches from untrusted refs must not restore.
       - uses: astral-sh/setup-uv@v10.0.1
         with:
-          enable-cache: true
+          enable-cache: auto
 
       # macos-14 runners are Apple Silicon (arm64). The build still targets
       # universal2 thanks to the *universal2* CPython installed here: PySide6
@@ -218,6 +234,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" artifacts/* \
-            --title "Nostalgia Launcher $TAG" \
-            --generate-notes
+          # Idempotent on job re-runs: a partial earlier attempt may have
+          # created the release already; upload --clobber refreshes assets.
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "Nostalgia Launcher $TAG" \
+              --generate-notes
+          gh release upload "$TAG" artifacts/* --clobber

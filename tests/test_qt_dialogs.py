@@ -83,16 +83,22 @@ def _text(win: LogWindow) -> str:
 
 def test_log_window_appends_ok_line(qapp):
     win = LogWindow(Palette())
-    win.append("hello ok\n", "ok")
-    assert "hello ok" in _text(win)
-    assert win.objectName() == "logWindow"
+    try:
+        win.append("hello ok\n", "ok")
+        assert "hello ok" in _text(win)
+        assert win.objectName() == "logWindow"
+    finally:
+        win.close()
 
 
 def test_log_window_seed_renders_buffer(qapp):
     win = LogWindow(Palette())
-    win.seed([("one\n", "ok"), ("two\n", "err"), ("three\n", "")])
-    text = _text(win)
-    assert "one\ntwo\nthree" in text
+    try:
+        win.seed([("one\n", "ok"), ("two\n", "err"), ("three\n", "")])
+        text = _text(win)
+        assert "one\ntwo\nthree" in text
+    finally:
+        win.close()
 
 
 # ── MainWindow session log ────────────────────────────────────────────────

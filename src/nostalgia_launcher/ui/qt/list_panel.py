@@ -45,7 +45,9 @@ class ClickableLabel(QLabel):
 
 
 class LinkLabel(ClickableLabel):
-    """A QLabel that opens a URL on left-click."""
+    """A QLabel that opens a URL on left-click. Only web links are opened:
+    server-supplied URLs must not reach OS protocol handlers (file://,
+    smb://, registered app schemes)."""
 
     def __init__(self, text, url, parent=None):
         super().__init__(text, parent)
@@ -54,7 +56,8 @@ class LinkLabel(ClickableLabel):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self._url:
-            webbrowser.open(self._url)
+            if self._url.lower().startswith(("http://", "https://")):
+                webbrowser.open(self._url)
         super().mouseReleaseEvent(event)
 
 

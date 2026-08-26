@@ -3,11 +3,12 @@
 A small, toolkit-agnostic event bus that worker threads use to talk to the
 interface. Standard library only — no GUI toolkit. The UI thread drains
 events once per event-loop tick and forwards them to the registered
-handlers; `qt_bridge.ControllerBridge` converts them into Qt signals.
+handlers; `ui.qt.bridge.ControllerBridge` converts them into Qt signals.
 """
 
 import queue
 import threading
+import traceback
 from dataclasses import dataclass, field
 
 
@@ -169,19 +170,32 @@ class EventDispatcher:
     def dispatch_all(self, handler=None) -> list:
         """Drain the pending events and deliver each to `handler`, or to
         every subscribed handler when omitted. Events posted during delivery
-        stay queued for the next call. Returns the dispatched events."""
+        stay queued for the next call. Returns the dispatched events. A
+        raising handler never strands its siblings: each event/handler pair
+        is delivered independently and the failure is logged."""
+        from ..core.log_sink import log
+
         events = self.drain()
         if not events:
             return events
-        if handler is not None:
-            for event in events:
-                handler(event)
-        else:
+
+        if handler is None:
             with self._lock:
                 handlers = list(self._handlers)
-            for event in events:
+
+        def _safe_call(fn, event):
+            try:
+                fn(event)
+            except Exception as e:
+                log(f"Event handler failed for {event!r}: {e}", "err")
+                traceback.print_exc()
+
+        for event in events:
+            if handler is not None:
+                _safe_call(handler, event)
+            else:
                 for h in handlers:
-                    h(event)
+                    _safe_call(h, event)
         return events
 
     def __len__(self) -> int:

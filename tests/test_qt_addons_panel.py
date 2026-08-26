@@ -563,3 +563,39 @@ def test_check_for_updates_refetches_online_catalogs(
     # Service-level: a forced addons_catalog propagates force to the fetch.
     addons_module.addons_catalog(force=True)
     assert fetch_calls == [True]
+
+
+def test_update_label_installs_that_addon(qapp, window, hub, monkeypatch):
+    """The gold 'Update' label on a NEED-UPDATE row must start that addon's
+    update — routing it through the checkbox toggle was a no-op (for an
+    installed addon checked==installed just clears a pending entry)."""
+    window.switch_tab("ADDONS")
+    _post(hub, _make_state(addons=MIX_ADDONS))
+    panel = _panel(window)
+    status = panel.findChild(QLabel, "addonsStatus_SellValue")
+    assert status.text() == "Update"
+
+    apply = Mock(return_value=True)
+    monkeypatch.setattr(hub.addons, "apply", apply)
+    QTest.mouseClick(status, Qt.LeftButton)
+    assert apply.call_count == 1
+    (recs,), _kw = apply.call_args
+    assert [r["folder"] for r in recs] == ["SellValue"]
+
+
+def test_update_label_refused_start_keeps_panel_enabled(
+    qapp, window, hub, monkeypatch
+):
+    """When the controller refuses the update (busy / no game folder) the
+    busy chrome must not engage — nothing would ever re-enable it."""
+    window.switch_tab("ADDONS")
+    _post(hub, _make_state(addons=MIX_ADDONS))
+    panel = _panel(window)
+    status = panel.findChild(QLabel, "addonsStatus_SellValue")
+
+    apply = Mock(return_value=False)
+    monkeypatch.setattr(hub.addons, "apply", apply)
+    QTest.mouseClick(status, Qt.LeftButton)
+    apply.assert_called_once()
+    assert panel._running is False
+    assert panel.findChild(QPushButton, "addonsApply").isEnabled()

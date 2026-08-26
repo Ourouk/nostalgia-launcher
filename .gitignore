@@ -18,10 +18,10 @@ tests/tmp/*
 build/
 dist/
 *.AppImage
-*.spec
-!NostalgiaLauncher.spec
-!NostalgiaLauncher-linux.spec
-!NostalgiaLauncher-macos.spec
+
+# Generated macOS icons (packaging/macos/build-icons.sh)
+packaging/macos/NostalgiaLauncher.icns
+*.iconset/
 
 # Local planning notes (not part of the package)
 todo

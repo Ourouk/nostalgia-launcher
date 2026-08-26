@@ -23,12 +23,10 @@ import nostalgia_launcher.services.update_backend.torrent_update as tu
 
 MINIMAL_CFG = {"server": {"name": "P", "base_url": "https://p.test"}}
 
-# Real, profile-aware implementations — the autouse _local_repos_env
-# conftest fixture replaces the launcher/catalog seam attributes with
-# flat tmp redirects; these let individual tests exercise the genuine
-# routing.
-_REAL_LOCAL_REPO_PATH = launcher.local_repo_path
-_REAL_LEGACY_CUSTOM_PATH = launcher.legacy_custom_path
+
+def _write_index(path, payload):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(payload))
 
 
 @pytest.fixture()
@@ -43,32 +41,10 @@ def prof_home(tmp_path, monkeypatch):
     return root
 
 
-@pytest.fixture()
-def real_repo_seams(monkeypatch):
-    """Undo the autouse _local_repos_env redirect for tests verifying the
-    real (profile-aware) path resolution."""
-    import nostalgia_launcher.services.catalog as catalog
-
-    monkeypatch.setattr(launcher, "local_repo_path", _REAL_LOCAL_REPO_PATH)
-    monkeypatch.setattr(
-        launcher, "legacy_custom_path", _REAL_LEGACY_CUSTOM_PATH
-    )
-    monkeypatch.setattr(
-        catalog,
-        "custom_file",
-        lambda kind: profiles.active().custom_catalog_path(kind),
-    )
-
-
-def _write_index(path, payload):
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(json.dumps(payload))
-
-
 # ── default-profile back-compat ──────────────────────────────────────────
 
 
-def test_default_maps_legacy_paths_byte_identically():
+def test_default_maps_legacy_paths_byte_identically(prof_home):
     prof = profiles.resolve()
     assert prof.name == "default"
     assert prof.root == ""
@@ -520,3 +496,26 @@ def test_path_like_names_are_not_addressable(prof_home):
         assert profiles.duplicate(bad, "dst") == f"Unknown profile: {bad}"
         assert profiles.rename(bad, "dst") == f"Unknown profile: {bad}"
     assert profiles.resolve("real").name == "real"
+
+
+def test_duplicate_failure_rolls_back_new_profile(prof_home, monkeypatch):
+    """A mid-copy failure must not leave a half-populated profile dir
+    behind (the registry would list a broken profile)."""
+    src, _ = profiles.create("src", json.dumps(MINIMAL_CFG))
+    (prof_home / "src" / "state.json").write_text("{}", encoding="utf-8")
+    # A content repo so duplicate() actually reaches its copy step.
+    (prof_home / "src" / "local_mods_repo.json").write_text(
+        '{"server": [], "custom": []}', encoding="utf-8"
+    )
+
+    def boom(src_path, dst_path):
+        raise OSError("disk full")
+
+    import nostalgia_launcher.core.profiles as profiles_module
+
+    monkeypatch.setattr(profiles_module.shutil, "copyfile", boom)
+    err = profiles.duplicate("src", "dst")
+    assert "disk full" in err
+    with pytest.raises(profiles.ProfileError):
+        profiles.resolve("dst")
+    assert not (prof_home / "dst").exists()

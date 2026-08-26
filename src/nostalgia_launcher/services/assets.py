@@ -28,15 +28,14 @@ from ..core.security_http import (
     secure_urlopen,
 )
 from . import catalog
+from .sources import deploy
 
 
 def _checked_rel(dest_rel) -> str:
     """Validate a client-dir-relative install target before it is joined
     onto `client_dir` (a compromised catalog must not write outside the
-    client folder)."""
-    if not catalog.safe_relpath(dest_rel):
-        raise RuntimeError(f"Refusing unsafe install path: {dest_rel!r}")
-    return dest_rel
+    client folder). Delegates to the shared deploy validator."""
+    return deploy.checked_rel(dest_rel)
 
 
 # ── registry loading ─────────────────────────────────────────────────────────
@@ -167,8 +166,12 @@ def install_asset(asset: dict, client_dir: str) -> dict:
 
 
 def remove_asset_files(installed_files: list, client_dir: str):
-    """Delete previously installed asset files (best-effort per file)."""
+    """Delete previously installed asset files (best-effort per file).
+    Recorded paths are re-validated before joining onto the client dir —
+    they are bookkeeping data, not trusted input."""
     for rel in installed_files or []:
+        if not isinstance(rel, str) or not catalog.safe_relpath(rel):
+            continue
         full = os.path.join(client_dir, rel)
         try:
             if os.path.exists(full):
@@ -247,7 +250,7 @@ def resolved_version(asset: dict) -> str:
 
 
 def asset_update_available(
-    asset: dict, rec: dict | None, client_dir: str
+    asset: dict, rec: dict | None, client_dir: str, *, allow_probe: bool = True
 ) -> tuple[bool, str]:
     """Whether an installed asset is stale, judged ONLY by the update
     information the entry provides — strict precedence:
@@ -257,7 +260,9 @@ def asset_update_available(
     3. ``size``      → compare the local file size.
     4. ``probe``     → HEAD the URL and compare against the install-time
                        snapshot (only comparable headers count; any probe
-                       failure is conservative: never stale).
+                       failure is conservative: never stale). Skipped when
+                       ``allow_probe`` is False — a live network call must
+                       never run on the GUI thread's render path.
     5. none provided → never stale.
 
     Returns (stale, reason). A record without installed files means the
@@ -288,7 +293,7 @@ def asset_update_available(
         stale = os.path.getsize(path) != declared_size
         return stale, "size changed" if stale else ""
 
-    if asset.get("probe"):
+    if asset.get("probe") and allow_probe:
         current = remote_probe_state(asset["url"])
         old = rec.get("probe_state") or {}
         if not current or not old:

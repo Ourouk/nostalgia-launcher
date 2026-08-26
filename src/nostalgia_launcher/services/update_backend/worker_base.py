@@ -22,6 +22,9 @@ class WorkerBase:
         self.log_q = log_q
         self.prog_q = prog_q
         self._cancel = False
+        # Verify/update hash cache; subclasses load the real store. Kept
+        # here so WorkerBase methods never depend on subclass init order.
+        self._cache: dict = {}
 
     def cancel(self):
         self._cancel = True

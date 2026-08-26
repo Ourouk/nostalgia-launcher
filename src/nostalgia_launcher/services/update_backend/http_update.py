@@ -1,16 +1,18 @@
 """HTTP client update backend: manifest verification and incremental update.
 
-`VerifyWorker` fetches the manifest from the selected download source and
-reports which files differ. `UpdateWorker` downloads (resumably) the changed
-files, verifies SHA-1s, and clears the WDB cache. When the manifest cannot be
-files over HTTPS. `UpdateWorker` downloads (resumably) the changed files,
-verifies SHA-1s, and clears the WDB cache. When the manifest cannot be
-fetched but the active source advertises a BitTorrent snapshot (an HTTPS
-``torrent_url`` or a ``torrent_magnet``, with libtorrent available) the
-update falls back to a full BitTorrent recovery download of the client
-files, verified against the torrent's piece hashes. Both speak to the GUI
-exclusively through the log/progress queues using the documented message
-protocol.
+`VerifyWorker` fetches the manifest from the selected download source over
+HTTPS and reports which files differ. `UpdateWorker` downloads (resumably)
+the changed files, verifies SHA-1s, and clears the WDB cache. When the
+manifest cannot be fetched but the active source advertises a BitTorrent
+snapshot (an HTTPS ``torrent_url`` or a ``torrent_magnet``, with libtorrent
+available) the update falls back to a full BitTorrent recovery download of
+the client files, verified against the torrent's piece hashes. Both speak to
+the GUI exclusively through the log/progress queues using the documented
+message protocol.
+
+Every destination path rebuilt from manifest nodes passes through
+`_checked_node_rel` — a hostile manifest must not be able to write or
+delete outside the selected game folder.
 """
 
 import hashlib
@@ -32,12 +34,13 @@ from ...core.filesystem import (
     remove_wdb,
     sha1_file,
 )
-from ...core.helpers import fmt_size, fmt_speed
+from ...core.helpers import fmt_size, fmt_speed, redact_url
 from ...core.security_http import (
     allowed_download_hosts,
     read_capped,
     secure_urlopen,
 )
+from ..sources.safety import safe_relpath
 from ..tweaks import write_config_wtf, write_realmlist_wtf
 from . import markers
 from .sources import DownloadSource, _download_source
@@ -55,6 +58,30 @@ __all__ = [
 
 
 TORRENT_VALIDATION_CACHE_KEY = "__torrent_validation__"
+
+# Generous ceiling for one manifest-delivered file; a hostile or broken
+# manifest must not be able to promise absurd sizes into the progress bar.
+_MAX_NODE_SIZE = 64 * 1024 * 1024 * 1024
+
+
+def _checked_node_rel(parts: list, name: str, ext: str = "") -> str | None:
+    """The client-relative path of a manifest node, or None when the rebuilt
+    path would escape the game folder (absolute, traversal, NUL). The
+    manifest is untrusted input: it names every file the updater writes AND
+    deletes, so this gate runs before any filesystem touch."""
+    rel = "/".join([*parts, name + ext])
+    return rel if safe_relpath(rel) else None
+
+
+def _checked_node_size(size) -> int:
+    """The node's declared byte size coerced to a sane non-negative int
+    (0 when unusable — progress math must never see junk)."""
+    if isinstance(size, bool) or not isinstance(size, (int, float)):
+        return 0
+    size = int(size)
+    if size < 0:
+        return 0
+    return min(size, _MAX_NODE_SIZE)
 
 
 def _torrent_identity(snapshot) -> dict:
@@ -126,18 +153,28 @@ class VerifyWorker(WorkerBase):
             ]
             return {**node, "files": stale} if stale else None
 
-        dest = os.path.join(self.out_dir, os.path.join(*cur))
-
         if t == "del":
+            rel = _checked_node_rel(path_parts, name)
+            if rel is None:
+                self.log(f"  Refusing unsafe manifest path: {name!r}", "err")
+                return None
+            dest = os.path.join(self.out_dir, rel)
             return node if os.path.exists(dest) else None
 
         if t == "file":
+            rel = _checked_node_rel(path_parts, name)
+            if rel is None:
+                self.log(f"  Refusing unsafe manifest path: {name!r}", "err")
+                return None
+            dest = os.path.join(self.out_dir, rel)
             return None if self._file_ok(dest, node["hash"]) else node
 
         if t == "mpq":
-            mpq_dest = os.path.join(
-                self.out_dir, os.path.join(*(path_parts + [name + ".mpq"]))
-            )
+            rel = _checked_node_rel(path_parts, name, ".mpq")
+            if rel is None:
+                self.log(f"  Refusing unsafe manifest path: {name!r}", "err")
+                return None
+            mpq_dest = os.path.join(self.out_dir, rel)
             return None if self._file_ok(mpq_dest, node["hash"]) else node
 
         return None
@@ -164,8 +201,18 @@ class VerifyWorker(WorkerBase):
             req = urllib.request.Request(
                 src.manifest_url, headers={"User-Agent": UA}
             )
-            with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
+            with secure_urlopen(
+                req,
+                timeout=DOWNLOAD_TIMEOUT,
+                allowed_hosts=allowed_download_hosts(),
+            ) as r:
                 manifest = json.loads(read_capped(r, 16 * 1024 * 1024))
+            # Shape-check BEFORE flipping manifest_ok: syntactically valid
+            # JSON with a wrong shape must route to the "manifest
+            # unavailable" path (torrent fallback), not to a bogus
+            # "update needed" verdict.
+            if not isinstance(manifest.get("root"), dict):
+                raise ValueError("malformed manifest: 'root' is not an object")
             manifest_ok = True
             self.log_q.put((markers.MANIFEST_AVAILABLE, ""))
             self.progress(0.0, "Verifying…", phase="Verifying")
@@ -571,6 +618,9 @@ class UpdateWorker(WorkerBase):
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         tmp = dest + ".tmp"
         name = name or os.path.basename(dest)
+        # A manifest carrying a junk size must not crash the transfer math;
+        # coerce to a sane int (0 → unknown-size semantics).
+        size = _checked_node_size(size)
         total_str = fmt_size(size) if size else "?"
 
         for attempt in range(1, DOWNLOAD_RETRY + 1):
@@ -717,7 +767,8 @@ class UpdateWorker(WorkerBase):
                     self.log(f"  Retrying in {wait} s…", "dim")
                     time.sleep(wait)
         raise RuntimeError(
-            f"Download failed after {DOWNLOAD_RETRY} attempts: {url}"
+            f"Download failed after {DOWNLOAD_RETRY} attempts: "
+            f"{redact_url(url)}"
         )
 
     def _skip_download(self, node, dest) -> bool:
@@ -779,12 +830,22 @@ class UpdateWorker(WorkerBase):
             for child in node.get("files", []):
                 self._collect_wanted(child, cur, wanted)
         elif t == "file":
-            rel = "/".join(cur)
+            rel = _checked_node_rel(path_parts, node["name"])
+            if rel is None:
+                self.log(
+                    f"  Refusing unsafe manifest path: {node['name']!r}", "err"
+                )
+                return
             dest = os.path.join(self.out_dir, rel)
             if not self._skip_download(node, dest):
                 wanted.add(rel)
         elif t == "mpq":
-            rel = "/".join(cur) + ".mpq"
+            rel = _checked_node_rel(path_parts, node["name"], ".mpq")
+            if rel is None:
+                self.log(
+                    f"  Refusing unsafe manifest path: {node['name']!r}", "err"
+                )
+                return
             dest = os.path.join(self.out_dir, rel)
             if not self._skip_download(node, dest):
                 wanted.add(rel)
@@ -821,7 +882,9 @@ class UpdateWorker(WorkerBase):
         for child in nodes:
             walk(child, [])
 
-        self._total = sum(node["size"] for node, _ in suspects)
+        self._total = sum(
+            _checked_node_size(node["size"]) for node, _ in suspects
+        )
         self._downloaded = 0
         self.log(
             f"[torrent] Re-verifying {len(suspects)} file(s) against "
@@ -859,15 +922,20 @@ class UpdateWorker(WorkerBase):
                 for child in node.get("files", []):
                     walk(child, cur)
             elif t == "file":
-                dest = os.path.join(self.out_dir, os.path.join(*cur))
+                rel = _checked_node_rel(path_parts, node["name"])
+                if rel is None:
+                    return
+                dest = os.path.join(self.out_dir, rel)
                 if not self._skip_download(node, dest):
-                    total += node["size"]
+                    total += _checked_node_size(node["size"])
             elif t == "mpq":
-                dest = os.path.join(
-                    self.out_dir, os.path.join(*cur, node["name"] + ".mpq")
-                )
+                # MPQ nodes sit at <name>.mpq — same rebuild as traverse().
+                rel = _checked_node_rel(path_parts, node["name"], ".mpq")
+                if rel is None:
+                    return
+                dest = os.path.join(self.out_dir, rel)
                 if not self._skip_download(node, dest):
-                    total += node["size"]
+                    total += _checked_node_size(node["size"])
 
         for n in nodes:
             walk(n, [])
@@ -924,20 +992,22 @@ class UpdateWorker(WorkerBase):
         name = node["name"]
         cur = path_parts + [name]
 
-        rel = os.path.join(*cur)
-        dest = os.path.join(self.out_dir, rel)
-
         if t == "dir":
             for child in node.get("files", []):
                 self.traverse(child, cur)
+            return
 
-        elif t in ("file", "mpq"):
+        if t in ("file", "mpq"):
             # MPQ nodes sit at <name>.mpq regardless of their tree name.
             fname = f"{name}.mpq" if t == "mpq" else name
-            cur = path_parts + [fname]
-            rel = os.path.join(*cur)
+            rel = _checked_node_rel(path_parts, fname)
+            if rel is None:
+                # A hostile manifest must not aim downloads (or deletes)
+                # outside the game folder — skip the node entirely.
+                self.log(f"  Refusing unsafe manifest path: {fname!r}", "err")
+                return
             dest = os.path.join(self.out_dir, rel)
-            url = f"{src.client_url}/{'/'.join(cur)}"
+            url = f"{src.client_url}/{rel}"
             self.log(f"[{t}]".ljust(7) + f"{rel}", "acct")
 
             if self._skip_download(node, dest):
@@ -946,9 +1016,20 @@ class UpdateWorker(WorkerBase):
             self._download_verified(node, url, dest, rel)
 
         elif t == "del":
+            rel = _checked_node_rel(path_parts, name)
+            if rel is None:
+                self.log(f"  Refusing unsafe manifest path: {name!r}", "err")
+                return
             self.log(f"[del]  {rel}", "dim")
+            dest = os.path.join(self.out_dir, rel)
             if os.path.exists(dest):
-                os.remove(dest)
+                try:
+                    os.remove(dest)
+                except OSError as e:
+                    # One undeletable file (locked/AV) must not abort the
+                    # remaining deletes and downloads; the next verify will
+                    # flag it again.
+                    self.log(f"  Could not remove {rel}: {e}", "err")
 
     def _recovery_download(self, wanted: set[str] | None = None):
         """Manifest-less recovery: download the client via BitTorrent.
@@ -1058,7 +1139,12 @@ class UpdateWorker(WorkerBase):
             write_realmlist_wtf(self.out_dir)
         self.progress(1.0, "")
         snapshot = getattr(dl, "snapshot", None)
-        identity = _torrent_identity(snapshot) if snapshot is not None else {}
+        # _safe_identity: a snapshot with malformed metadata must not turn a
+        # finished recovery into a reported failure (same defence as the
+        # verify path).
+        identity = (
+            _safe_identity(snapshot) if snapshot is not None else None
+        ) or {}
         self._cache[TORRENT_VALIDATION_CACHE_KEY] = {
             **identity,
             "url": self._source.torrent_locator,
@@ -1127,6 +1213,12 @@ class UpdateWorker(WorkerBase):
                         allowed_hosts=allowed_download_hosts(),
                     ) as r:
                         manifest = json.loads(read_capped(r, 16 * 1024 * 1024))
+                    # Same shape gate as the verify path: JSON that isn't a
+                    # manifest is "unavailable", not "update needed".
+                    if not isinstance(manifest.get("root"), dict):
+                        raise ValueError(
+                            "malformed manifest: 'root' is not an object"
+                        )
                 except Exception:
                     # Manifest unavailable — fall back to a BitTorrent
                     # recovery download instead of failing outright.

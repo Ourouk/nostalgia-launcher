@@ -11,8 +11,8 @@ import urllib.request
 
 from ...core.constants import UA
 from ...core.errors import describe_net_error
-from ...core.security_http import secure_urlopen
-from .github_release import GitHubReleaseBackend
+from ...core.security_http import read_capped, secure_urlopen
+from .github_release import _API_MAX_BYTES, GitHubReleaseBackend
 
 
 def codeberg_latest(owner: str, repo: str, raise_errors=False) -> dict | None:
@@ -23,7 +23,7 @@ def codeberg_latest(owner: str, repo: str, raise_errors=False) -> dict | None:
     try:
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with secure_urlopen(req, timeout=10) as r:
-            releases = json.load(r)
+            releases = json.loads(read_capped(r, _API_MAX_BYTES))
         for rel in releases:
             if not rel.get("prerelease", False) and not rel.get(
                 "draft", False

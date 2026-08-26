@@ -21,10 +21,6 @@ from ..core.security_http import (
     secure_urlopen,
 )
 
-# The cached logo filename in the cache directory. Content-agnostic (any
-# pixmap format Qt can read); a new fetch replaces it wholesale.
-LOGO_FILE = "launcher_logo.img"
-
 
 def logo_cache_path() -> str:
     """Where the downloaded logo is cached (active profile's cache)."""

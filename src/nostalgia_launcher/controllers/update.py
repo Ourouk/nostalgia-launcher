@@ -175,7 +175,7 @@ class UpdateController:
             self._dispatcher.post(
                 LogMessage("✗  Please set the game folder first.\n", "err")
             )
-            return
+            return False
         if (
             self.state.diff_nodes is not None
             and self.state.verify_out_dir != out
@@ -323,7 +323,8 @@ class UpdateController:
         """Windows direct launch: prefer an installed external-launcher mod's
         executable, then WoW.exe, spawned detached from the caller's job
         object. Its merged output is drained into the session log by a
-        background thread."""
+        watcher thread that also records the exit (same bookkeeping as the
+        umu path, so the one-game-at-a-time guard holds on Windows too)."""
         import subprocess
 
         exe, exe_lbl = pick_game_executable(
@@ -367,14 +368,23 @@ class UpdateController:
                     creationflags=flags,
                     close_fds=True,
                 )
+            pid = proc.pid
+            pgid = getattr(proc, "pgid", None) or pid
+            self.state.game_running = True
+            self.state.game_pid = pid
+            self.state.game_pgid = pgid
+            self._dispatcher.post(GameLaunched(pid, pgid))
             threading.Thread(
-                target=self._drain_child_output,
-                args=(proc, "game"),
+                target=self._watch_game,
+                args=(proc, pid, "game"),
                 daemon=True,
             ).start()
             self._dispatcher.post(LogMessage(f"Launched {exe_lbl}!\n", "ok"))
             return True, dxvk_notice
         except Exception as e:
+            self.state.game_running = False
+            self.state.game_pid = None
+            self.state.game_pgid = None
             self._dispatcher.post(
                 LogMessage(f"Failed to launch {exe_lbl}: {e}\n", "err")
             )
@@ -467,11 +477,11 @@ class UpdateController:
             )
             return False, False
 
-    def _watch_game(self, proc, pid: int):
-        """Background watcher: drains umu/Wine output into the session log
+    def _watch_game(self, proc, pid: int, source: str = "umu"):
+        """Background watcher: drains the game's output into the session log
         until EOF (the process exited), then clears the running state and
         publishes GameExited."""
-        self._drain_child_output(proc)
+        self._drain_child_output(proc, source)
         try:
             code = proc.wait()
         except Exception:
@@ -537,7 +547,9 @@ class UpdateController:
     def terminate_game(self) -> bool:
         """Request termination of the running game (umu + WoW.exe process
         group). Returns True when a game was running; the actual exit is
-        reported asynchronously via GameExited from the watcher."""
+        reported asynchronously via GameExited from the watcher. The kill
+        itself runs off-thread: its grace wait (up to ~2 s) must not freeze
+        the GUI."""
         if not self.state.game_running:
             return False
         pid = self.state.game_pid
@@ -545,14 +557,18 @@ class UpdateController:
         self._dispatcher.post(
             LogMessage(f"Terminating game (PID {pid})…\n", "acct")
         )
-        from ..services import umu
 
-        try:
-            umu.kill_game(pid, pgid)
-        except Exception as e:
-            self._dispatcher.post(
-                LogMessage(f"Failed to terminate game: {e}\n", "err")
-            )
+        def _killer():
+            from ..services import umu
+
+            try:
+                umu.kill_game(pid, pgid)
+            except Exception as e:
+                self._dispatcher.post(
+                    LogMessage(f"Failed to terminate game: {e}\n", "err")
+                )
+
+        threading.Thread(target=_killer, daemon=True).start()
         return True
 
     def poll(self):

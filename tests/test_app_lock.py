@@ -100,7 +100,7 @@ def test_sigkilled_holder_frees_lock(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX flock")
-def test_grace_window_waits_for_relaunching_parent(tmp_path):
+def test_grace_window_waits_for_relaunching_parent(tmp_path, monkeypatch):
     state = str(tmp_path / "state.json")
     # Holder releases after ~300 ms (simulates the quitting parent).
     proc = _spawn_holder(state, hold_s=0.3)
@@ -108,13 +108,12 @@ def test_grace_window_waits_for_relaunching_parent(tmp_path):
         assert proc.stdout.readline().strip() == "READY"
     finally:
         pass
-    os.environ["NOSTALGIA_RELAUNCH"] = "1"
+    monkeypatch.setenv("NOSTALGIA_RELAUNCH", "1")
     try:
         start = time.monotonic()
         app_lock.acquire_with_grace(state)
         elapsed = time.monotonic() - start
     finally:
-        os.environ.pop("NOSTALGIA_RELAUNCH", None)
         proc.wait()
     assert elapsed < 4.0
 

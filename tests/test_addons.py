@@ -680,19 +680,26 @@ def test_install_addon_files_extracts(tmp_path, monkeypatch):
             "pfUI-master/lib/x.lua": "-- lib",
         }
     )
-    monkeypatch.setattr(
-        git_archive,
-        "secure_urlopen",
-        lambda *a, **k: type(
-            "R",
-            (),
-            {
-                "__enter__": lambda s: s,
-                "__exit__": lambda *x: False,
-                "read": lambda s=0: payload,
-            },
-        )(),
-    )
+    buf = bytearray(payload)
+
+    class R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *x):
+            return False
+
+        @staticmethod
+        def read(n=-1):
+            # Chunked reads (the capped transfer layer reads 64 KiB).
+            if n is None or n < 0:
+                chunk, buf[:] = bytes(buf), b""
+            else:
+                chunk = bytes(buf[:n])
+                del buf[:n]
+            return chunk
+
+    monkeypatch.setattr(git_archive, "secure_urlopen", lambda *a, **k: R())
 
     addons.install_addon_files(
         str(client), "pfUI", "https://github.com/brues-code/pfUI", "abcd" * 10
@@ -711,19 +718,26 @@ def test_install_addon_files_path_traversal_safe(tmp_path, monkeypatch):
             "x-master/../../escape.txt": "evil",
         }
     )
-    monkeypatch.setattr(
-        git_archive,
-        "secure_urlopen",
-        lambda *a, **k: type(
-            "R",
-            (),
-            {
-                "__enter__": lambda s: s,
-                "__exit__": lambda *x: False,
-                "read": lambda s=0: payload,
-            },
-        )(),
-    )
+    buf = bytearray(payload)
+
+    class R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *x):
+            return False
+
+        @staticmethod
+        def read(n=-1):
+            # Chunked reads (the capped transfer layer reads 64 KiB).
+            if n is None or n < 0:
+                chunk, buf[:] = bytes(buf), b""
+            else:
+                chunk = bytes(buf[:n])
+                del buf[:n]
+            return chunk
+
+    monkeypatch.setattr(git_archive, "secure_urlopen", lambda *a, **k: R())
 
     addons.install_addon_files(
         str(client), "x", "https://github.com/a/x", "abcd" * 10

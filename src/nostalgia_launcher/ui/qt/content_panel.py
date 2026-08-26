@@ -270,12 +270,15 @@ class ContentListPanel(ScrollListPanel):
         self._refresh_apply_visibility()
 
     def _on_action(self, eid):
-        self._set_running(True)
-        self._apply_one(eid)
+        # Only engage the busy chrome when the controller accepted the
+        # operation — a refusal (busy / no game folder) logs its reason but
+        # posts no finish event, which would leave the panel stuck disabled.
+        if self._apply_one(eid):
+            self._set_running(True)
 
     def _apply(self):
-        self._set_running(True)
-        self._content_ctrl.apply()
+        if self._content_ctrl.apply():
+            self._set_running(True)
 
     def _on_install_essential(self):
         if self._install_essential():
@@ -316,7 +319,9 @@ class ContentListPanel(ScrollListPanel):
     def _make_row(self, entry, state, action) -> ContentRow:
         raise NotImplementedError
 
-    def _apply_one(self, eid):
+    def _apply_one(self, eid) -> bool:
+        """Start updating one entry; True when the operation actually
+        started (the panel shows its busy state only then)."""
         raise NotImplementedError
 
     def _install_essential(self) -> bool:

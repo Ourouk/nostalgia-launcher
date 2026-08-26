@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from ...core import profiles
 from ...core.constants import DOWNLOAD_TIMEOUT, UA
 from ...core.filesystem import atomic_write_bytes as _atomic_write_bytes
-from ...core.helpers import fmt_size, fmt_speed
+from ...core.helpers import fmt_size, fmt_speed, redact_url
 from ...core.security_http import allowed_download_hosts, secure_urlopen
 from .worker_base import WorkerBase
 
@@ -202,12 +202,12 @@ def _info_hash_hex(ti) -> str | None:
         return None
 
 
-# ── torrent metadata persistence (identity + resume data) ──────────────────
+# ── torrent metadata persistence (identity reuse) ──────────────────────────
 
 
 def torrent_cache_dir() -> str:
     """Per-profile cache directory for torrent metadata. Kept out of the
-    game folder so reinstall/move never wipes the resume state."""
+    game folder so reinstall/move never wipes it."""
     return profiles.active().torrents_dir()
 
 
@@ -252,7 +252,8 @@ def _fetch_torrent(
     resolution loop; raising matches the workers' cancellation semantics.
 
     The raw bytes are persisted under the launcher cache (keyed by info hash)
-    on a best-effort basis so resume data always has a stable home.
+    on a best-effort basis, so re-verifying the same snapshot can skip the
+    fetch.
     """
     if torrent_locator.startswith("magnet:"):
         return _resolve_magnet(torrent_locator, log, cancel=cancel)
@@ -262,7 +263,7 @@ def _fetch_torrent(
 def _fetch_torrent_url(torrent_url: str, log) -> "TorrentSnapshot":
     """Fetch the ``.torrent`` at ``torrent_url`` over HTTPS, parse it with
     libtorrent, and return a :class:`TorrentSnapshot`."""
-    log(f"  Fetching torrent: {torrent_url}", "dim")
+    log(f"  Fetching torrent: {redact_url(torrent_url)}", "dim")
     req = urllib.request.Request(torrent_url, headers={"User-Agent": UA})
     try:
         with secure_urlopen(
@@ -421,6 +422,7 @@ def _wait_for_metadata(ses, h, log, cancel=None):
     STALL_TIMEOUT once peers exist but stop talking."""
     last_move = time.monotonic()
     transfer_started = False
+    best_peer_count = 0
     while True:
         if cancel is not None and cancel():
             raise RuntimeError("Cancelled")
@@ -434,10 +436,15 @@ def _wait_for_metadata(ses, h, log, cancel=None):
                 ti = None
             if ti is not None:
                 return ti
-        if getattr(s, "num_peers", 0) > 0:
+        # Only NEW connections push the stall timer out: a single zombie
+        # peer that connects and then sends nothing must not pin the loop
+        # forever — no metadata progress means the magnet is unreachable.
+        peers_now = getattr(s, "num_peers", 0)
+        if peers_now > best_peer_count:
+            best_peer_count = peers_now
             transfer_started = True
             last_move = time.monotonic()
-        peers = getattr(s, "num_peers", 0)
+        peers = peers_now
         log(f"  Resolving magnet… {peers} peers", "dim")
         elapsed = time.monotonic() - last_move
         timeout = STALL_TIMEOUT if transfer_started else DISCOVERY_TIMEOUT
@@ -932,15 +939,16 @@ class TorrentDownloader(WorkerBase):
         root_marker: str | None = None,
     ) -> list[str]:
         """Download the wanted files from the torrent at ``torrent_url`` into
-        ``out_dir``. ``wanted=None`` downloads the whole torrent. Returns the
-        an empty list on success and raises RuntimeError on failure or
+        ``out_dir``. ``wanted=None`` downloads the whole torrent. Returns an
+        empty list on success and raises RuntimeError on failure or
         cancellation. The caller already knows the wanted paths. Completed
         files are still rechecked against the update manifest by the HTTP
         update worker.
 
-        Resume data for the snapshot's info hash is loaded before the torrent
-        is added and saved again before the handle is removed. The fetched
-        :class:`TorrentSnapshot` is stored on ``self.snapshot``."""
+        Resume data is intentionally not persisted — libtorrent re-derives
+        piece state from disk on add (see BITTORRENT_UPDATER_NOTES.md P5).
+        The fetched :class:`TorrentSnapshot` is stored on ``self.snapshot``
+        so its identity can be cached for later verifies."""
         import libtorrent as lt
 
         if wanted is not None and not wanted:
@@ -1029,9 +1037,9 @@ class TorrentDownloader(WorkerBase):
                 last_wanted_done = wanted_done
                 last_move = time.monotonic()
                 transfer_started = True
-            # Reset stall timer when peers connect — the session is alive.
-            if s.num_peers > 0:
-                last_move = time.monotonic()
+            # Deliberately NOT refreshed by peer count alone: a swarm that
+            # accepts connections but never delivers bytes is dead, and the
+            # stall timeout must fire so the HTTP fallback can take over.
             # While libtorrent is hashing the on-disk files (the initial
             # recheck that re-derives piece state now that resume data is not
             # loaded), keep the stall timer alive so a slow multi-GB recheck

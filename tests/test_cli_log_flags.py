@@ -84,7 +84,7 @@ def test_print_log_tail_spans_rotation(tmp_path, monkeypatch, capsys):
 
 
 def test_main_constructs_backend_with_open_log_true(
-    monkeypatch, launcher_file
+    hermetic_cli, monkeypatch, launcher_file
 ):
     seen = {}
 
@@ -105,7 +105,7 @@ def test_main_constructs_backend_with_open_log_true(
 
 
 def test_main_constructs_backend_with_open_log_false(
-    monkeypatch, launcher_file
+    hermetic_cli, monkeypatch, launcher_file
 ):
     seen = {}
 

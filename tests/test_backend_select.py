@@ -59,7 +59,7 @@ def test_qt_backend_error_message_is_friendly():
 
 
 def test_main_returns_1_when_qt_import_fails(
-    monkeypatch, capsys, launcher_file
+    monkeypatch, capsys, launcher_file, hermetic_cli
 ):
     import sys
 
@@ -74,7 +74,7 @@ def test_unknown_backend_returns_none():
 
 
 def test_main_returns_1_for_unknown_backend(
-    monkeypatch, capsys, launcher_file
+    monkeypatch, capsys, launcher_file, hermetic_cli
 ):
     monkeypatch.setenv("NOSTALGIA_UI_BACKEND", "bogus")
     assert cli.main(["--launcher-config", launcher_file]) == 1
@@ -92,7 +92,12 @@ def test_main_returns_1_without_launcher_config(
 
 
 def test_main_wizard_selection_runs_backend(
-    monkeypatch, capsys, launcher_file, tmp_path, no_persisted_config
+    monkeypatch,
+    capsys,
+    launcher_file,
+    tmp_path,
+    no_persisted_config,
+    hermetic_cli,
 ):
     calls = []
 
@@ -228,7 +233,7 @@ def test_main_wizard_qt_import_failure(
 
 @pytest.mark.parametrize("backend", ["qt", "pyside6"])
 def test_main_constructs_shows_and_runs_qt_backend(
-    monkeypatch, backend, launcher_file
+    monkeypatch, backend, launcher_file, hermetic_cli
 ):
     calls = []
 
@@ -247,3 +252,16 @@ def test_main_constructs_shows_and_runs_qt_backend(
     monkeypatch.setattr(cli, "resolve_backend", lambda name: FakeQtApp)
     assert cli.main(["--launcher-config", launcher_file]) == 0
     assert calls == ["constructed", "shown", "run"]
+
+
+def test_main_unknown_backend_releases_guard_server(
+    hermetic_cli, monkeypatch, capsys, launcher_file
+):
+    """Early exits after the single-instance handshake must still release
+    this instance's guard server — a leaked QLocalServer would make the
+    next launch see a stale 'already running' for the profile."""
+    from nostalgia_launcher.ui.qt import app_lock_qt
+
+    monkeypatch.setenv("NOSTALGIA_UI_BACKEND", "bogus")
+    assert cli.main(["--launcher-config", launcher_file]) == 1
+    assert app_lock_qt._SERVERS == {}

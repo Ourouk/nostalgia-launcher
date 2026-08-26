@@ -63,30 +63,6 @@ def _offscreen(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
 
-# Real, profile-aware repo-path implementations (the autouse
-# _local_repos_env conftest fixture replaces these seams with flat tmp
-# redirects; individual tests restore them to verify genuine routing).
-_REAL_LOCAL_REPO_PATH = launcher.local_repo_path
-_REAL_LEGACY_CUSTOM_PATH = launcher.legacy_custom_path
-
-
-@pytest.fixture()
-def real_repo_seams(monkeypatch):
-    """Restore the real (profile-aware) repo-path resolution for tests
-    that exercise it."""
-    import nostalgia_launcher.services.catalog as catalog_module
-
-    monkeypatch.setattr(launcher, "local_repo_path", _REAL_LOCAL_REPO_PATH)
-    monkeypatch.setattr(
-        launcher, "legacy_custom_path", _REAL_LEGACY_CUSTOM_PATH
-    )
-    monkeypatch.setattr(
-        catalog_module,
-        "custom_file",
-        lambda kind: profiles.active().custom_catalog_path(kind),
-    )
-
-
 @pytest.fixture(scope="session")
 def qapp():
     return create_qt_app()
@@ -662,10 +638,12 @@ def test_raise_message_raises_window(qapp, app, monkeypatch):
 
 
 def test_run_backend_second_instance_returns_0_without_app(
-    qapp, fake_home, monkeypatch, capsys
+    hermetic_cli, monkeypatch, capsys
 ):
     """Pre-existing server for the profile key: main() forwards the raise
-    and exits 0 WITHOUT constructing the Qt app shell."""
+    and exits 0 WITHOUT constructing the Qt app shell. hermetic_cli keeps
+    the guard key off the real HOME (a dev machine running a default-
+    profile launcher must not receive this test's raise-op)."""
     from nostalgia_launcher.core import app_lock
     from nostalgia_launcher.ui.qt import app_lock_qt
 

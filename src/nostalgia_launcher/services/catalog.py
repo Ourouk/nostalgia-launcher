@@ -234,20 +234,40 @@ def local_repo_has_entries(kind: str) -> bool:
 
 def validate_entries(entries: list, validator, label: str) -> list:
     """Sanitize raw repo/embedded entries with a kind validator, skipping
-    unusable ones with a logged warning rather than failing the load."""
+    unusable ones with a logged warning rather than failing the load. A
+    validator crash on a poisoned entry is contained the same way."""
     out = []
     for entry in entries:
-        cleaned = validator(entry) if isinstance(entry, dict) else None
-        if cleaned is None:
-            log(f"  {label}: skipping invalid entry {entry!r}", "err")
-            continue
-        out.append(cleaned)
+        cleaned = _validate_entry_safe(entry, validator, label)
+        if cleaned is not None:
+            out.append(cleaned)
     return out
+
+
+def _validate_entry_safe(entry, validator, label: str):
+    """`validator(entry)` with log-and-skip on any failure: one malformed
+    entry must never take down a whole catalog/repo load."""
+    try:
+        cleaned = validator(entry) if isinstance(entry, dict) else None
+    except Exception as e:
+        log(f"  {label}: skipping invalid entry {entry!r} ({e})", "err")
+        return None
+    if cleaned is None:
+        log(f"  {label}: skipping invalid entry {entry!r}", "err")
+        return None
+    return cleaned
 
 
 # ── shared validation helpers ────────────────────────────────────────────────
 # safe_folder / safe_relpath are re-exported from sources.safety (imported
 # above) so every consumer keeps its historical dotted path.
+
+
+def _text(v) -> str:
+    """A catalog string field coerced to a stripped str: truthy non-strings
+    (numbers, bools) become "" so the `or` fallbacks below stay effective
+    instead of crashing on .strip()."""
+    return v.strip() if isinstance(v, str) else ""
 
 
 def safe_ref(v) -> str | None:
@@ -279,7 +299,7 @@ def validate_addon(entry: dict) -> dict | None:
     vetted by the addons service (which owns the host allowlist), so they
     are only length-checked here.
     """
-    name = ((entry.get("name") or entry.get("folder")) or "").strip()
+    name = _text(entry.get("name") or entry.get("folder"))
     if not safe_folder(name):
         return None
     rec = {
@@ -345,10 +365,10 @@ def validate_mod(entry: dict) -> dict | None:
     """
     if not isinstance(entry, dict):
         return None
-    mid = (entry.get("id") or "").strip()
+    mid = _text(entry.get("id"))
     if not safe_folder(mid):
         return None
-    name = (entry.get("name") or mid).strip()
+    name = _text(entry.get("name") or mid)
     if not name:
         return None
     source = entry.get("source")
@@ -361,7 +381,8 @@ def validate_mod(entry: dict) -> dict | None:
     mod = {
         "id": mid,
         "name": name,
-        "type": entry.get("type", "mod"),
+        # Explicit null behaves like absence (the documented "default mod").
+        "type": entry.get("type") or "mod",
         "installation": _mod_installation(entry),
         "description": (
             entry.get("description")
@@ -493,11 +514,6 @@ def merge_by_key(remote: list, custom: list, fields) -> list:
     return list(by_id.values())
 
 
-def merge_mods(remote: list, custom: list) -> list:
-    """Custom mod entries override remote ones by id; new ids are appended."""
-    return merge_by_key(remote, custom, MOD_MERGE_FIELDS)
-
-
 # ── asset entries ────────────────────────────────────────────────────────────
 
 
@@ -513,10 +529,10 @@ def validate_asset(entry: dict) -> dict | None:
     """
     if not isinstance(entry, dict):
         return None
-    aid = (entry.get("id") or "").strip()
+    aid = _text(entry.get("id"))
     if not safe_folder(aid):
         return None
-    name = (entry.get("name") or aid).strip()
+    name = _text(entry.get("name") or aid)
     if not name:
         return None
     url = _https_url(entry.get("url"))
@@ -572,7 +588,9 @@ def fetch_url_catalog(
     """
     now = time.time()
     key = f"{kind}_catalog_cache"
-    entry = config_store.load_config().get(key, {})
+    entry = config_store.load_config().get(key)
+    if not isinstance(entry, dict):
+        entry = {}
     cached = entry.get("catalog")
     if not force:
         return cached if cached is not None else None
@@ -590,9 +608,7 @@ def fetch_url_catalog(
         raise
     validated = []
     for e in raw if isinstance(raw, list) else []:
-        if not isinstance(e, dict):
-            continue
-        cleaned = validator(e)
+        cleaned = _validate_entry_safe(e, validator, kind)
         if cleaned is not None:
             validated.append(cleaned)
     config_store.update_config(
@@ -630,6 +646,8 @@ def layered_registry(
 
 def catalog_timestamp(kind: str) -> float | None:
     """When the kind's catalog cache was last fetched (epoch), or None."""
-    entry = config_store.load_config().get(f"{kind}_catalog_cache", {})
+    entry = config_store.load_config().get(f"{kind}_catalog_cache")
+    if not isinstance(entry, dict):
+        return None
     ts = entry.get("timestamp")
     return ts if isinstance(ts, (int, float)) and ts > 0 else None

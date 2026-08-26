@@ -57,7 +57,7 @@ def safe_slug(s) -> str | None:
     s = s.strip()
     if not s or len(s) > 100 or any(ch.isspace() for ch in s):
         return None
-    if not all(ch.isalnum() or ch in "._-" for ch in s):
+    if not s.isascii() or not all(ch.isalnum() or ch in "._-" for ch in s):
         return None
     return s
 

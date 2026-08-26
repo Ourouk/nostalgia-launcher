@@ -6,9 +6,9 @@ import urllib.error
 import urllib.request
 
 from ..core.config_store import load_config, update_config
-from ..core.constants import GITHUB_API, MOD_UA, UPDATER_VERSION
+from ..core.constants import GITHUB_API, UA, UPDATER_VERSION
 from ..core.helpers import parse_version
-from ..core.security_http import secure_urlopen
+from ..core.security_http import read_capped, secure_urlopen
 
 # Self-update: the updater checks its own GitHub releases once a day.
 UPDATER_REPO = "Ourouk/nostalgia-launcher"
@@ -41,10 +41,10 @@ def fetch_updater_latest_tag(force: bool = False) -> str | None:
     try:
         req = urllib.request.Request(
             f"{GITHUB_API}/repos/{UPDATER_REPO}/releases/latest",
-            headers={"User-Agent": MOD_UA},
+            headers={"User-Agent": UA},
         )
         with secure_urlopen(req, timeout=10) as r:
-            tag = json.load(r).get("tag_name")
+            tag = json.loads(read_capped(r, 2 * 1024 * 1024)).get("tag_name")
     except urllib.error.HTTPError as e:
         # A 404 means the repo has no releases yet: clear any stale cache
         # entry so a later in-TTL read can't resurrect an old tag.

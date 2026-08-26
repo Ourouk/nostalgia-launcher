@@ -4,10 +4,11 @@
 process-level mutex on the active profile's store so a second launcher
 instance can never silently race it (even via exotic launch paths that
 bypass the Qt single-instance guard). The lock file sits next to the
-state file as ``<stem>.lock`` (e.g. ``state.json`` ->
-``nostalgia_launcher.lock``) and is NEVER written to — only its byte 0 is
-locked. The OS releases both the flock and the handle on process death,
-so there is no pidfile rot and no cleanup-file semantics.
+state file as ``<stem>.lock`` (e.g. ``state.json`` -> ``state.lock``,
+``nostalgia_launcher_config.json`` -> ``nostalgia_launcher_config.lock``)
+and is NEVER written to — only its byte 0 is locked. The OS releases both
+the flock and the handle on process death, so there is no pidfile rot and
+no cleanup-file semantics.
 
 Windows uses ``msvcrt.locking(LK_NBLCK)`` on byte 0; every other platform
 uses ``fcntl.flock(LOCK_EX | LOCK_NB)``. UI-free and PySide6-free.

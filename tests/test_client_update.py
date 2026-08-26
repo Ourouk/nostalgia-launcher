@@ -666,3 +666,162 @@ def test_update_progress_spans_needed_files_only(tmp_path, monkeypatch):
     agg = [it for it in items if len(it) == 3 and it[2].get("total") == size]
     assert agg, "expected an aggregate progress item for the needed file"
     assert all(it[2].get("transport") == "HTTP" for it in agg)
+
+
+# ── hostile-manifest hardening (regression tests) ────────────────────────
+
+
+def test_verify_refuses_unsafe_manifest_paths(tmp_path, monkeypatch):
+    """A manifest naming traversal/absolute paths must not flag them stale:
+    the update would otherwise write (or delete) outside the game folder."""
+    client = _mk_client(tmp_path)
+    outside = tmp_path / "evil.txt"
+    outside.write_bytes(b"old")
+
+    manifest = {
+        "root": {
+            "files": [
+                {
+                    "type": "file",
+                    "name": "../../../evil.txt",
+                    "hash": "A" * 40,
+                    "size": 3,
+                },
+                {
+                    "type": "file",
+                    "name": "C:\\Users\\v\\AppData\\evil.js",
+                    "hash": "B" * 40,
+                    "size": 3,
+                },
+            ]
+        }
+    }
+    fake_resp = _BodyResp(json.dumps(manifest).encode())
+    monkeypatch.setattr(
+        client_update, "secure_urlopen", lambda *a, **k: fake_resp
+    )
+
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    vw = VerifyWorker(str(client), log_q, prog_q)
+    vw.run()
+
+    msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
+    assert "__UP_TO_DATE__" in msgs
+    assert "__DIFF_TREE__" not in msgs
+    assert outside.read_bytes() == b"old"
+
+
+def test_update_traverse_never_writes_outside_out_dir(tmp_path, monkeypatch):
+    """The download path enforces the same gate: a hostile manifest node
+    is skipped, not written relative to out_dir."""
+    import hashlib
+
+    client = _mk_client(tmp_path)
+    data = b"pwn"
+    h = hashlib.sha1(data).hexdigest().upper()
+    nodes = [
+        {
+            "type": "file",
+            "name": "../../escape.bin",
+            "hash": h,
+            "size": len(data),
+        }
+    ]
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = UpdateWorker(str(client), log_q, prog_q)
+    # A usable-looking source: if the unsafe node were not rejected, the
+    # flow would proceed to _skip_download/_download_verified.
+    worker._source = type("S", (), {"client_url": "https://x.test/client"})()
+    worker.traverse(nodes[0], [])
+    assert not (client.parent / "escape.bin").exists()
+    assert not (client / ".." / "escape.bin").exists()
+
+
+def test_sum_needed_bytes_nested_mpq_uses_mpq_suffix(tmp_path, monkeypatch):
+    """Nested MPQ nodes are checked at <dir>/<name>.mpq — a doubled
+    <dir>/<name>/<name>.mpq path made every current MPQ count into the
+    progress denominator (bar never reached 100%)."""
+    import hashlib
+
+    client = _mk_client(tmp_path)
+    (client / "Data").mkdir()
+    f = client / "Data" / "patch.mpq"
+    f.write_bytes(b"x")
+    sha = hashlib.sha1(b"x").hexdigest().upper()
+    monkeypatch.setattr(client_update, "load_cache", lambda: {})
+    worker = UpdateWorker(str(client), queue.Queue(), queue.Queue())
+    nodes = [
+        {
+            "type": "dir",
+            "name": "Data",
+            "files": [
+                {"type": "mpq", "name": "patch", "hash": sha, "size": 1}
+            ],
+        }
+    ]
+    assert worker._sum_needed_bytes(nodes) == 0
+
+
+def test_traverse_delete_failure_does_not_abort_update(tmp_path, monkeypatch):
+    """One undeletable file (locked/AV) must not abort the remaining
+    deletes and downloads."""
+    import hashlib
+
+    client = _mk_client(tmp_path)
+    locked = client / "locked.bin"
+    locked.write_bytes(b"x")
+    victim = client / "gone.bin"
+    victim.write_bytes(b"x")
+    data = b"fresh"
+    h = hashlib.sha1(data).hexdigest().upper()
+
+    real_remove = os.remove
+
+    def failing_remove(path, *a, **kw):
+        if str(path) == str(locked):
+            raise PermissionError("locked by antivirus")
+        return real_remove(path, *a, **kw)
+
+    monkeypatch.setattr(client_update.os, "remove", failing_remove)
+    monkeypatch.setattr(client_update, "_download_source", lambda: None)
+
+    def fake_download(url, dest, size, name=""):
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "wb") as fh:
+            fh.write(data)
+        return h
+
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    worker = UpdateWorker(str(client), log_q, prog_q)
+    worker.download = fake_download
+    worker._source = type("S", (), {"client_url": "https://x.test/client"})()
+    nodes = [
+        {"type": "del", "name": "locked.bin"},
+        {"type": "del", "name": "gone.bin"},
+        {"type": "file", "name": "new.bin", "hash": h, "size": len(data)},
+    ]
+    for node in nodes:
+        worker.traverse(node, [])
+    assert locked.exists()  # removal failed but was contained
+    assert not victim.exists()  # later deletes still ran
+    assert (client / "new.bin").read_bytes() == data
+
+
+def test_verify_malformed_manifest_shape_reports_unavailable(
+    tmp_path, monkeypatch
+):
+    """Valid JSON that isn't a manifest routes to MANIFEST_UNAVAILABLE
+    (torrent fallback), never to a bogus UPDATE_NEEDED verdict."""
+    client = _mk_client(tmp_path)
+    fake_resp = _BodyResp(json.dumps({"root": None}).encode())
+    monkeypatch.setattr(
+        client_update, "secure_urlopen", lambda *a, **k: fake_resp
+    )
+
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    vw = VerifyWorker(str(client), log_q, prog_q)
+    vw.run()
+
+    msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
+    assert "__MANIFEST_UNAVAILABLE__" in msgs
+    assert "__UPDATE_NEEDED__" not in msgs

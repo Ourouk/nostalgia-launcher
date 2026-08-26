@@ -108,6 +108,7 @@ from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlsplit
 
 from .filesystem import atomic_write_text
+from .helpers import redact_url
 from .log_sink import log
 from .platform_support import config_dir, is_macos
 
@@ -341,9 +342,14 @@ def _derive(data: dict) -> LauncherConfig:
         if mb is None:
             continue
         mhost = urlsplit(mb).hostname or ""
+        m_name = m.get("name")
         mirrors.append(
             Mirror(
-                name=(m.get("name") or mhost).strip(),
+                name=(
+                    m_name.strip()
+                    if isinstance(m_name, str) and m_name.strip()
+                    else mhost
+                ),
                 base_url=mb,
                 manifest_url=_https_url(m.get("manifest_url"))
                 or _default_manifest(mb),
@@ -414,8 +420,16 @@ def _derive(data: dict) -> LauncherConfig:
     addon_git_hosts = _parse_git_hosts(data.get("addon_git_hosts"))
     torrent_root_marker = _parse_root_marker(server.get("torrent_root_marker"))
 
+    def _name_or_host(value) -> str:
+        """A config-supplied display name, or the host fallback. Truthy
+        non-strings (e.g. a numeric name) fall back like absent ones
+        instead of crashing _derive with an AttributeError."""
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return host
+
     return LauncherConfig(
-        server_name=(server.get("name") or host).strip(),
+        server_name=_name_or_host(server.get("name")),
         server_url=base,
         manifest_url=manifest_url,
         client_url=client_url,
@@ -424,7 +438,7 @@ def _derive(data: dict) -> LauncherConfig:
         mods_registry_url=_url("mods_registry_url", "/api/mods.json"),
         addons_registry_url=addons_registry_url,
         addons_registry_urls=addons_registry_urls,
-        realm=(server.get("realm") or host).strip(),
+        realm=_name_or_host(server.get("realm")),
         mirrors=mirrors,
         embedded_mods=embedded_mods,
         embedded_addons=embedded_addons,
@@ -741,7 +755,7 @@ def configure(path: str | None = None) -> tuple["LauncherConfig | None", str]:
             )
             return None, _error
         _config, _path, _error = config, path, ""
-        log(f"Launcher configuration loaded: {config.server_url}")
+        log(f"Launcher configuration loaded: {redact_url(config.server_url)}")
         return config, ""
 
 

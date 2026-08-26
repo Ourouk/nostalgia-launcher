@@ -4,8 +4,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
-  # Covers pyproject.toml + uv.lock (Dependabot understands uv lockfiles).
-  - package-ecosystem: pip
+  # The dedicated uv ecosystem (GA since 2025-03) updates pyproject.toml +
+  # uv.lock together; the legacy "pip" entry ignored the lockfile.
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly

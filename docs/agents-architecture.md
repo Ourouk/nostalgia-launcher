@@ -9,15 +9,17 @@ The libtorrent pitfall list lives in `docs/BITTORRENT_UPDATER_NOTES.md`.
 ```
 src/nostalgia_launcher/
   cli.py          # entry point: config wiring + window loop
-  core/           # constants, config_store, launcher, security_http, filesystem, helpers, log_sink, platform_support, errors, themes
-  services/       # catalog, addons, mods, assets, news, tweaks, self_update, server_index, umu, logo, update_backend/
+  core/           # constants, config_store, launcher, security_http, filesystem, helpers, log_sink, platform_support, profiles, app_lock, errors, themes
+  services/       # catalog, addons, mods, assets, news, tweaks, self_update, umu, logo, mpq, config_import, update_backend/, sources/
   controllers/    # update, news, mods, assets, addons, settings, tweaks (toolkit-agnostic)
   state/          # models.py (state dataclasses), events.py (dispatcher)
   ui/qt/          # app, main_window, bridge, theme, panels, dialogs
 ```
 
-- `core/constants.py` computes `APP_DIR`: repo root (3 dirs up from the file)
-  when run from source, exe dir when frozen. Config and cache live in separate
+- Config discovery: `launcher.discover_path()` looks next to the exe when
+  frozen (macOS also one level above the `.app`), at the **repo root** (4
+  dirs up from `core/launcher.py`) when run from source, then in the CWD.
+  Config and cache live in separate
   per-user dirs via `platform_support.config_dir()/cache_dir()`: Linux config
   `~/.nostalgia-launcher`, Windows `%APPDATA%\NostalgiaLauncher`, macOS
   `~/Library/Application Support`; cache is Linux XDG / `%LOCALAPPDATA%` /
@@ -264,7 +266,7 @@ the QLocalServer guard remains authoritative there.
   AssetsLoaded, apply completion) for the version picked in its header
   combo, and offers confirmed per-row removal of foreign files.
 - **realmlist.wtf**: `services/tweaks.write_realmlist_wtf(client_dir)`
-  writes `SET realmlist "<server.realm>"` into the client root wherever a
+  writes `SET realmlist <server.realm>` (value sanitized, unquoted) into the client root wherever a
   fresh `WTF/Config.wtf` is seeded (verify with overwrite/missing config,
   torrent recovery, tweaks apply on a missing config) — vanilla clients
   read both files.
@@ -299,11 +301,13 @@ the QLocalServer guard remains authoritative there.
   manifest-less recovery path there is no manifest to check — the piece
   hashes of the TLS-fetched `.torrent` (or of magnet metadata that must
   hash to the configured btih) are the guarantee.
-- The torrent root is **auto-detected** from the unique `WoW.exe` position in
-  the torrent: the parent of `WoW.exe` (case-insensitive) is the root prefix
-  stripped from every torrent path when mapping to the selected WoW folder
-  (e.g. `client/WoW.exe` → `<wow_folder>/WoW.exe`). A `TorrentLayoutError`
-  is raised when `WoW.exe` is missing, duplicated, or any file escapes the root.
+- The torrent root is **auto-detected** from the unique marker-file position
+  in the torrent: the parent of the marker (case-insensitive) is the root
+  prefix stripped from every torrent path when mapping to the selected WoW
+  folder (default marker `WoW.exe`, configurable via
+  `server.torrent_root_marker`; e.g. `client/WoW.exe` →
+  `<wow_folder>/WoW.exe`). A `TorrentLayoutError`
+  is raised when the marker is missing, duplicated, or any file escapes the root.
   **This stripping is applied to the actual read/write target** via
   `_remap_torrent_to_out_dir()` (in both `verify()` and `download()`), which
   remaps the torrent's file paths to `out_dir/local` with `torrent_info.remap_files`.

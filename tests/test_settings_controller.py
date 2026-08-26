@@ -955,3 +955,14 @@ def test_clear_custom_addons_logs(controller, monkeypatch):
     assert cleared == ["addons"]
     events = controller._dispatcher.drain()
     assert any("Custom addon entries cleared" in t for t in _log_texts(events))
+
+
+def test_set_path_empty_is_a_no_op(controller, cfg):
+    """An empty submission must not persist out_dir="." or wipe the
+    install records — "" means "unconfirmed", never the CWD."""
+    cfg["out_dir"] = "/some/game"
+    cfg["mods"] = {"m": {"installed_files": ["a.dll"]}}
+    assert controller.set_path("") is False
+    assert controller.set_path("   ") is False
+    assert cfg["out_dir"] == "/some/game"
+    assert "mods" in cfg

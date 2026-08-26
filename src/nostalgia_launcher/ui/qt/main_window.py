@@ -773,14 +773,13 @@ class MainWindow(QMainWindow):
         panel = self._stack.widget(self._pages["UPDATE"])
         panel.operation_finished(kind, ok, message)
         updater = self._hub.updater
-        if kind in ("update", "verify"):
+        if kind in ("update", "verify") and ok:
             # The update worker reports the (post-patch) client version just
-            # before finishing; surface it when a fresh one arrived. The
-            # panels re-render their own kinds themselves.
-            if ok and updater.state.client_version:
+            # before finishing; surface it when a fresh one arrived.
+            if updater.state.client_version:
                 self._versionLabel.setText(updater.state.client_version)
-            elif not ok:
-                self._statusLabel.setText("Update available!")
+        # Readiness owns the status line — it renders the accurate verdict
+        # for both success and failure right below.
         self._refresh_ready_state()
 
     def _onOperationFailed(self, kind: str, message: str):

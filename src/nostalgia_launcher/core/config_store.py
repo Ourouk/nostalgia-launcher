@@ -32,7 +32,7 @@ def configure(
 
 def load_config() -> dict:
     try:
-        with open(config_file) as f:
+        with open(config_file, encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         return {}
@@ -97,7 +97,7 @@ def apply_confirmed_out_dir(path: str, out_dir: str) -> None:
 
 def load_cache() -> dict:
     try:
-        with open(cache_file) as f:
+        with open(cache_file, encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         return {}
