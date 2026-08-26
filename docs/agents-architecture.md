@@ -287,14 +287,18 @@ the QLocalServer guard remains authoritative there.
   widgets. The Qt side (`ui/qt/bridge.py`) converts events to Qt signals on the
   main thread.
 - Client updates get a second download backend: when the active download
-  source advertises a `torrent_url` (launcher config, server or mirror) and
-  libtorrent is importable, `UpdateWorker` bulk-downloads the stale files via
+  source advertises a torrent snapshot — a `torrent_url` (launcher config,
+  server or mirror) or the server-only `torrent_magnet` (`magnet:?xt=…`;
+  a torrent has one swarm, so mirrors never carry magnets; an HTTPS URL
+  wins when both are set) and libtorrent is importable,
+  `UpdateWorker` bulk-downloads the stale files via
   `services/update_backend/torrent_update.py`, then re-verifies exactly the
   delivered files against the manifest's SHA-1 (`_reverify_torrent_files`)
   and HTTP-refetches any mismatch; the whole-client per-file HTTP
   `traverse()` runs only when the torrent backend wasn't used. In the
-  manifest-less recovery path there is no manifest to check — the TLS-fetched
-  torrent's piece hashes are the guarantee.
+  manifest-less recovery path there is no manifest to check — the piece
+  hashes of the TLS-fetched `.torrent` (or of magnet metadata that must
+  hash to the configured btih) are the guarantee.
 - The torrent root is **auto-detected** from the unique `WoW.exe` position in
   the torrent: the parent of `WoW.exe` (case-insensitive) is the root prefix
   stripped from every torrent path when mapping to the selected WoW folder
@@ -316,12 +320,18 @@ the QLocalServer guard remains authoritative there.
 - **Torrent verification is offline**: the verification session uses an empty
   `listen_interfaces` and disables DHT/LSD/UPnP/NAT-PMP and all peer
   connections. No P2P activity occurs before the user presses UPDATE. Only the
-  download session enables networking.
+  download session enables networking. The one exception is a magnet source:
+  `_resolve_magnet` must join the swarm (DHT + the magnet's trackers) once to
+  download the metadata — into a throwaway save path, upload-mode when the
+  binding exposes it — before the same offline recheck runs; peers cannot
+  forge metadata that doesn't hash to the magnet's configured btih.
 - When the manifest itself can't be fetched, the update falls back to a
   manifest-less **BitTorrent recovery**: if the active source advertises a
-  `torrent_url` and libtorrent is importable, `UpdateWorker._recovery_download()`
-  downloads the *whole* torrent (`TorrentDownloader.download(url, None)`), whose
-  piece hashes (the `.torrent` arrived over TLS) stand in for the manifest's
+  torrent snapshot (`torrent_url` / server `torrent_magnet`) and libtorrent is
+  importable, `UpdateWorker._recovery_download()`
+  downloads the *whole* torrent (`TorrentDownloader.download(url, None)`),
+  whose piece hashes (the `.torrent` arrived over TLS, or the metadata hashed
+  to the magnet's btih) stand in for the manifest's
   per-file SHA-1. It posts `markers.TORRENT_RECOVERY_DONE` (controller keeps
   `manifest_available=False`); a failed verify offers this via an enabled
   UPDATE button when `torrent_recovery_available()` (`LauncherConfig.has_torrent()`

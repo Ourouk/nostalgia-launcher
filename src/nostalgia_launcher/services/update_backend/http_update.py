@@ -3,10 +3,13 @@
 `VerifyWorker` fetches the manifest from the selected download source and
 reports which files differ. `UpdateWorker` downloads (resumably) the changed
 files, verifies SHA-1s, and clears the WDB cache. When the manifest cannot be
-fetched but the active source advertises a ``torrent_url`` (and libtorrent is
-available) the update falls back to a full BitTorrent recovery download of the
-client files, verified against the torrent's piece hashes. Both speak to the
-GUI exclusively through the log/progress queues using the documented message
+files over HTTPS. `UpdateWorker` downloads (resumably) the changed files,
+verifies SHA-1s, and clears the WDB cache. When the manifest cannot be
+fetched but the active source advertises a BitTorrent snapshot (an HTTPS
+``torrent_url`` or a ``torrent_magnet``, with libtorrent available) the
+update falls back to a full BitTorrent recovery download of the client
+files, verified against the torrent's piece hashes. Both speak to the GUI
+exclusively through the log/progress queues using the documented message
 protocol.
 """
 
@@ -84,9 +87,9 @@ def _torrent_available() -> bool:
 
 def torrent_recovery_available() -> bool:
     """Whether a manifest-less full re-download via BitTorrent is possible:
-    some configured source advertises a ``torrent_url`` and libtorrent is
-    importable. Network-free (no mirror probing) so it's safe to call from
-    the readiness path."""
+    some configured source advertises a torrent snapshot (HTTPS URL or
+    server magnet) and libtorrent is importable. Network-free (no mirror
+    probing) so it's safe to call from the readiness path."""
     from ...core import launcher
 
     cfg = launcher.config()
@@ -238,7 +241,7 @@ class VerifyWorker(WorkerBase):
         * verification stalled → ``__TORRENT_STALLED__``
         * session error → ``__TORRENT_SESSION_ERROR__``
         * disk I/O error → ``__TORRENT_DISK_ERROR__``"""
-        if src is None or not src.torrent_url:
+        if src is None or not src.torrent_locator:
             return False
         if not _torrent_available():
             return False
@@ -271,7 +274,11 @@ class VerifyWorker(WorkerBase):
             # against the cached verdict. Fetch failures here are reported as
             # snapshot-availability outcomes (corrupt / unreachable).
             try:
-                snapshot = _fetch_torrent(src.torrent_url, self.log)
+                snapshot = _fetch_torrent(
+                    src.torrent_locator,
+                    self.log,
+                    cancel=lambda: self._cancel,
+                )
             except TorrentCorruptError as e:
                 return self._post_torrent_error(
                     markers.TORRENT_CORRUPT,
@@ -330,7 +337,7 @@ class VerifyWorker(WorkerBase):
                 stale = sorted(cached.get("stale", []))
                 self._cache[TORRENT_VALIDATION_CACHE_KEY] = {
                     **identity,
-                    "url": src.torrent_url,
+                    "url": src.torrent_locator,
                     "out_dir": os.path.abspath(self.out_dir),
                     "stale": stale,
                 }
@@ -393,9 +400,9 @@ class VerifyWorker(WorkerBase):
                 "acct",
             )
             if snapshot is None:
-                stale = verifier.verify(src.torrent_url)
+                stale = verifier.verify(src.torrent_locator)
             else:
-                stale = verifier.verify(src.torrent_url, snapshot)
+                stale = verifier.verify(src.torrent_locator, snapshot)
         except TorrentCorruptError as e:
             return self._post_torrent_error(
                 markers.TORRENT_CORRUPT,
@@ -458,7 +465,7 @@ class VerifyWorker(WorkerBase):
         identity = identity or {}
         self._cache[TORRENT_VALIDATION_CACHE_KEY] = {
             **identity,
-            "url": src.torrent_url,
+            "url": src.torrent_locator,
             "out_dir": os.path.abspath(self.out_dir),
             "stale": sorted(stale),
         }
@@ -720,15 +727,16 @@ class UpdateWorker(WorkerBase):
 
     def _torrent_download(self, nodes) -> bool:
         """Bulk-download the stale files via BitTorrent when the active source
-        advertises a ``torrent_url`` and libtorrent is available. Returns True
+        advertises a torrent snapshot (HTTPS ``.torrent`` URL or server
+        magnet) and libtorrent is available. Returns True
         when the torrent backend ran; the delivered paths are remembered in
         ``_torrent_wanted`` for the caller's manifest SHA-1 re-check
         (``_reverify_torrent_files``). Returns False when the torrent backend
-        was not used (no ``torrent_url``, libtorrent missing, or the download
-        failed), in which case the caller falls back to ``traverse()`` for
-        HTTP downloads with manifest re-verification."""
+        was not used (no snapshot advertised, libtorrent missing, or the
+        download failed), in which case the caller falls back to
+        ``traverse()`` for HTTP downloads with manifest re-verification."""
         src = self._source
-        if src is None or not src.torrent_url:
+        if src is None or not src.torrent_locator:
             return False
         if not _torrent_available():
             self.log("  libtorrent not available — using HTTP.", "dim")
@@ -749,7 +757,7 @@ class UpdateWorker(WorkerBase):
             from .torrent_update import TorrentDownloader
 
             dl = TorrentDownloader(self.out_dir, self.log_q, self.prog_q)
-            dl.download(src.torrent_url, wanted)
+            dl.download(src.torrent_locator, wanted)
             self._torrent_wanted = wanted
             self.log("[torrent] BitTorrent download complete.", "ok")
             return True
@@ -964,7 +972,7 @@ class UpdateWorker(WorkerBase):
         scope = "full client" if wanted is None else f"{len(wanted)} file(s)"
         self.log(f"[torrent] Starting recovery download ({scope}).", "acct")
         try:
-            dl.download(self._source.torrent_url, wanted)
+            dl.download(self._source.torrent_locator, wanted)
         except TorrentCorruptError as e:
             self._recovery_failed(
                 e, markers.TORRENT_CORRUPT, f"Torrent file corrupt: {e}"
@@ -1023,7 +1031,7 @@ class UpdateWorker(WorkerBase):
                     "err",
                 )
                 try:
-                    dl.download(self._source.torrent_url, None)
+                    dl.download(self._source.torrent_locator, None)
                 except (RuntimeError, OSError) as e:
                     self._recovery_failed(
                         e,
@@ -1053,7 +1061,7 @@ class UpdateWorker(WorkerBase):
         identity = _torrent_identity(snapshot) if snapshot is not None else {}
         self._cache[TORRENT_VALIDATION_CACHE_KEY] = {
             **identity,
-            "url": self._source.torrent_url,
+            "url": self._source.torrent_locator,
             "out_dir": os.path.abspath(self.out_dir),
             "stale": [],
         }
@@ -1096,7 +1104,7 @@ class UpdateWorker(WorkerBase):
                 )
                 self.log("\nStarting BitTorrent update…\n", "acct")
                 self._source = _download_source()
-                if self._source is None or not self._source.torrent_url:
+                if self._source is None or not self._source.torrent_locator:
                     raise RuntimeError("No BitTorrent source configured.")
                 self._recovery_download(torrent_wanted)
                 return
@@ -1122,7 +1130,7 @@ class UpdateWorker(WorkerBase):
                 except Exception:
                     # Manifest unavailable — fall back to a BitTorrent
                     # recovery download instead of failing outright.
-                    if self._source.torrent_url and _torrent_available():
+                    if self._source.torrent_locator and _torrent_available():
                         self.log(
                             "\nManifest unavailable — downloading the client "
                             "via BitTorrent…",

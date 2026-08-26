@@ -357,8 +357,10 @@ the mirror-probe thread. All daemon threads. **[verified]**
 - **Important behavior.** Only `server.base_url` is required; everything else
   is derived (e.g. `/api/file/latest/manifest.json`, `/client/latest`). All
   URLs must be **HTTPS** (`_https_url` rejects otherwise → `RuntimeError`).
-  Downloads/mirrors may add `torrent_url`. `has_torrent()` / `download_hosts()`
-  feed the security allowlist. Auto-discovery order: per-user
+  Downloads/mirrors may add `torrent_url`; the server may alternatively set
+  `torrent_magnet` (a `magnet:?xt=…` URI; URL wins when both are set).
+  `has_torrent()` / `download_hosts()`
+  feed the security allowlist (magnets never join it — they have no host). Auto-discovery order: per-user
   `<config_dir>/nostalgia_launcher.json` → exe/repo-root → cwd.
 - **Tests:** `tests/test_launcher.py`, `tests/test_launcher_firstrun.py`.
 
@@ -603,7 +605,8 @@ stateDiagram-v2
 ### 8.3 Network endpoints (all HTTPS, configured by `nostalgia_launcher.json`)
 - Server base + derived (`/api/file/latest/manifest.json`, `/client/latest`,
   `/forum/octonews.php?…`, `/api/mods.json`, `/api/addons.json`, torrent).
-- Mirrors (same shape, optional `torrent_url`).
+- Mirrors (same shape, optional `torrent_url`; the server-only
+  `torrent_magnet` is swarm-based and not mirrored).
 - `servers.json` at `LAUNCHER_SERVERS_INDEX_URL`
   (`raw.githubusercontent.com/Ourouk/nostalgia-launcher/main/servers.json`).
 - GitHub/Codeberg/GitLab/Gitea REST API (addon commit SHAs, mod releases).
@@ -637,7 +640,8 @@ stateDiagram-v2
 (HTTPS). Without it and without `--launcher-config`, the first-launch wizard
 is shown (which itself fetches `servers.json` over HTTPS). **[verified]**
 
-**Optional.** `mirrors[]`, `torrent_url` (server/mirror), `theme`
+**Optional.** `mirrors[]`, `torrent_url` (server/mirror), `torrent_magnet`
+(server only; alternative to `torrent_url`), `theme`
 (`C_*` colors + `logo` URL), `discord_url`, `addons_registry_urls`,
 `realm`, `*_news_url`, `*_registry_url` overrides, top-level `mods[]`
 (embedded mod catalog entries; sanitized by `services.mods.embedded_mods()`,

@@ -20,6 +20,7 @@ other URL is derived from it unless overridden:
         "manifest_url": "https://server.example/api/file/latest/manifest.json",
         "client_url": "https://server.example/client/latest",
         "torrent_url": "https://server.example/client/latest/client.torrent",
+        "torrent_magnet": "magnet:?xt=urn:btih:EXAMPLEINFOHASH&dn=client",
         "news_url": "https://server.example/news",
         "featured_news_url": "https://server.example/news/featured",
         "mods_registry_url": "https://server.example/api/mods.json",
@@ -57,6 +58,14 @@ BitTorrent snapshot of the client files for the update backend: the launcher
 fetches the ``.torrent`` over HTTPS and bulk-downloads the stale files via
 libtorrent when it is available, falling back to per-file HTTP downloads
 otherwise. A mirror's ``torrent_url`` takes precedence over the server's.
+
+The optional server-only ``torrent_magnet`` is an alternative to
+``torrent_url``: a ``magnet:?xt=urn:btih:…`` URI whose swarm serves the same
+client snapshot. A torrent has one swarm, so mirrors — an HTTP-download
+concept — do not apply: the field is accepted on the server object only.
+libtorrent resolves the metadata from the swarm once; peers cannot forge it
+because it must hash to the magnet's info-hash. When both are configured,
+the HTTPS ``.torrent`` wins.
 
 The optional ``theme`` object overrides the app's color theme per server:
 color slots named like ``C_GOLD`` (each a ``#rrggbb`` hex value) plus an
@@ -96,7 +105,7 @@ import os
 import sys
 import threading
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from .filesystem import atomic_write_text
 from .log_sink import log
@@ -147,6 +156,7 @@ class LauncherConfig:
     discord_url: str | None = None
     theme: dict | None = None
     torrent_url: str | None = None
+    torrent_magnet: str | None = None
     addon_git_hosts: list[str] = field(default_factory=list)
     torrent_root_marker: str = "WoW.exe"
 
@@ -176,8 +186,9 @@ class LauncherConfig:
 
     def has_torrent(self) -> bool:
         """Whether any configured source (server or mirror) advertises a
-        ``torrent_url``. Static — no network probing."""
-        if self.torrent_url:
+        ``torrent_url``, or the server a ``torrent_magnet``. Static — no
+        network probing."""
+        if self.torrent_url or self.torrent_magnet:
             return True
         return any(m.torrent_url for m in self.mirrors)
 
@@ -255,6 +266,26 @@ def _https_url(value: str) -> str | None:
     if parts.scheme != "https" or not parts.hostname:
         return None
     return url
+
+
+def _magnet_uri(value: str) -> str | None:
+    """Validate a ``magnet:`` URI: the scheme must be magnet and the query
+    must carry at least one ``xt`` topic of ``urn:btih:`` (v1) or
+    ``urn:btmh:`` (v2) — the info-hash that authenticates swarm-served
+    metadata. Anything else is dropped (same silent-drop convention as
+    non-HTTPS URLs)."""
+    uri = (value or "").strip()
+    if not uri:
+        return None
+    parts = urlsplit(uri)
+    if parts.scheme != "magnet" or not parts.query:
+        return None
+    topics = [t.strip().lower() for t in parse_qs(parts.query).get("xt", [])]
+    if not any(
+        t.startswith("urn:btih:") or t.startswith("urn:btmh:") for t in topics
+    ):
+        return None
+    return uri
 
 
 def _default_manifest(base: str) -> str:
@@ -403,6 +434,7 @@ def _derive(data: dict) -> LauncherConfig:
         discord_url=discord_url,
         theme=theme,
         torrent_url=_https_url(server.get("torrent_url")),
+        torrent_magnet=_magnet_uri(server.get("torrent_magnet")),
         addon_git_hosts=addon_git_hosts,
         torrent_root_marker=torrent_root_marker,
     )

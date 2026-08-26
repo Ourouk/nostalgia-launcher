@@ -117,7 +117,7 @@ def _patch_fetch(monkeypatch, content_hash=None, info_hash=None):
     recorded identity without recomputing it."""
     captured = []
 
-    def fake(url, log):
+    def fake(url, log, cancel=None):
         snap = _local_snapshot(
             url, log, content_hash=content_hash, info_hash=info_hash
         )

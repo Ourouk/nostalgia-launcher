@@ -1,17 +1,20 @@
 """BitTorrent update backend for client updates (libtorrent).
 
 `TorrentDownloader` fetches a ``.torrent`` over HTTPS (through the same
-hardened, allowlisted transport as the HTTP downloads) and uses libtorrent to
-bulk-download the files the manifest flagged as stale. Peers in the swarm are
-untrusted — a malicious peer can only inject data that fails the piece hashes
-embedded in the ``.torrent`` (which itself came over TLS).
+hardened, allowlisted transport as the HTTP downloads) or resolves a
+``magnet:`` URI from its swarm, and uses libtorrent to bulk-download the
+files the manifest flagged as stale. Peers in the swarm are untrusted — a
+malicious peer can only inject data that fails the piece hashes embedded in
+the ``.torrent`` (which itself came over TLS) or in magnet-resolved metadata
+(which libtorrent only accepts when its info section hashes to the info-hash
+embedded in the configured magnet URI).
 
 Integrity layering: when a manifest diff tree exists, the caller re-verifies
 the delivered files' SHA-1s against the manifest and re-fetches any mismatch
 over HTTPS, so the torrent backend cannot weaken the manifest's guarantee. In
 the manifest-less recovery path there is no per-file hash list to check
-against — there, the TLS-fetched torrent's piece hashes are the integrity
-guarantee by themselves.
+against — there, the torrent's piece hashes are the integrity guarantee by
+themselves.
 
 The session otherwise follows libtorrent's default storage and connection
 configuration. The torrent is paused and removed from the session once every
@@ -21,6 +24,7 @@ wanted piece is in place.
 import hashlib
 import os
 import queue
+import shutil
 import tempfile
 import time
 import urllib.error
@@ -70,6 +74,23 @@ VERIFIER_ALERT_MASK = (
     | 8  # storage_notification
     | 64  # status_notification
 )
+
+
+def _network_session_settings() -> dict:
+    """Settings for a networked libtorrent session, shared by the magnet
+    resolver and the downloader: ephemeral listen port, DHT bootstrap
+    nodes, UPnP/NAT-PMP, and the full alert mask."""
+    return {
+        "listen_interfaces": LISTEN_INTERFACES,
+        "user_agent": UA,
+        "upload_rate_limit": UPLOAD_RATE_LIMIT,
+        "enable_dht": True,
+        "dht_bootstrap_nodes": DHT_BOOTSTRAP_NODES,
+        "enable_lsd": False,
+        "enable_upnp": True,
+        "enable_natpmp": True,
+        "alert_mask": ALERT_MASK,
+    }
 
 
 def available() -> bool:
@@ -209,18 +230,38 @@ def remove_resume_data(info_hash: str):
         pass
 
 
-def _fetch_torrent(torrent_url: str, log) -> "TorrentSnapshot":
-    """Fetch the ``.torrent`` over the allowlisted HTTPS transport, parse it
-    with libtorrent, and return a :class:`TorrentSnapshot` carrying the raw
-    bytes, their SHA-256 content hash, and the torrent's info hash.
+def _fetch_torrent(
+    torrent_locator: str,
+    log,
+    cancel=None,
+) -> "TorrentSnapshot":
+    """Fetch or resolve the configured BitTorrent snapshot locator.
+
+    An HTTPS locator fetches the ``.torrent`` over the allowlisted
+    transport; a ``magnet:`` locator resolves its metadata from the swarm
+    (see :func:`_resolve_magnet`). Either way the returned
+    :class:`TorrentSnapshot` carries the raw bytes (empty when
+    serialization is unavailable), their SHA-256 content hash, and the
+    torrent's info hash.
 
     Network/security failures (HTTP errors, connection refused, DNS, TLS,
     allowlist rejection) are wrapped in :class:`TorrentFetchError` so the
     caller can distinguish a *missing* snapshot from a *failed* verification.
 
+    ``cancel`` is an optional zero-arg callable polled by the magnet
+    resolution loop; raising matches the workers' cancellation semantics.
+
     The raw bytes are persisted under the launcher cache (keyed by info hash)
     on a best-effort basis so resume data always has a stable home.
     """
+    if torrent_locator.startswith("magnet:"):
+        return _resolve_magnet(torrent_locator, log, cancel=cancel)
+    return _fetch_torrent_url(torrent_locator, log)
+
+
+def _fetch_torrent_url(torrent_url: str, log) -> "TorrentSnapshot":
+    """Fetch the ``.torrent`` at ``torrent_url`` over HTTPS, parse it with
+    libtorrent, and return a :class:`TorrentSnapshot`."""
     log(f"  Fetching torrent: {torrent_url}", "dim")
     req = urllib.request.Request(torrent_url, headers={"User-Agent": UA})
     try:
@@ -281,6 +322,128 @@ def _fetch_torrent(torrent_url: str, log) -> "TorrentSnapshot":
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
+
+
+def _resolve_magnet(
+    magnet_uri: str,
+    log,
+    cancel=None,
+) -> "TorrentSnapshot":
+    """Resolve a ``magnet:`` URI into a :class:`TorrentSnapshot`.
+
+    A magnet carries no metadata — libtorrent joins the swarm (DHT plus the
+    trackers embedded in the URI) and downloads it via ut_metadata. That
+    exchange is safe even though peers are untrusted: the metadata is only
+    accepted when its info section hashes to the ``xt`` info-hash embedded
+    in the configured URI, so the launcher-config origin of the magnet is
+    what authenticates it (the same guarantee class as a TLS-fetched
+    ``.torrent``'s piece hashes). Once resolved, verification and download
+    run exactly as with an HTTPS-fetched snapshot — only this one-time
+    metadata step uses networking.
+
+    A throwaway save path backs the session so nothing is ever written into
+    the game folder while resolving; upload mode (when the binding exposes
+    it) additionally keeps libtorrent from writing payload at all. The
+    resolved metadata is serialized back to ``.torrent`` bytes on a
+    best-effort basis and persisted under the launcher cache keyed by info
+    hash; identity reuse then keys on the info-hash alone (peers cannot
+    alter metadata that must hash to the magnet's btih).
+
+    Raises :class:`TorrentCorruptError` for an unparseable URI,
+    :class:`TorrentSessionError` for session failures,
+    :class:`TorrentStalledError` when the swarm yields nothing, and
+    ``RuntimeError("Cancelled")`` when ``cancel`` fires.
+    """
+    import libtorrent as lt
+
+    try:
+        atp = lt.parse_magnet_uri(magnet_uri)
+    except Exception as e:
+        raise TorrentCorruptError(f"Failed to parse magnet URI: {e}") from e
+
+    # Throwaway storage root: metadata resolution never targets the game
+    # folder, and whatever stray bytes landed there are wiped below.
+    tmp_dir = tempfile.mkdtemp(prefix="nostalgia-magnet-")
+    try:
+        ses = _wrap_session_error(
+            lambda: lt.session(_network_session_settings()),
+            "Failed to create libtorrent session",
+        )
+        h = None
+        try:
+            atp.save_path = tmp_dir
+            h = _wrap_session_error(
+                lambda: ses.add_torrent(atp),
+                "Failed to add magnet to session",
+            )
+            # Upload mode (when available) makes the torrent read-only: peers
+            # may deliver metadata, but no payload is ever written to disk.
+            try:
+                h.set_flags(lt.torrent_flags.upload_mode)
+            except Exception:
+                pass
+            # The binding adds the torrent paused; resume() starts announce
+            # and peer connections so the metadata can actually arrive.
+            h.resume()
+            log(f"  Resolving magnet: {magnet_uri}", "dim")
+            ti = _wait_for_metadata(ses, h, log, cancel=cancel)
+        finally:
+            if h is not None:
+                _release_handle(ses, h)
+        info_hash = _info_hash_hex(ti)
+        data = b""
+        try:
+            data = lt.bencode(lt.create_torrent(ti).generate())
+        except Exception as e:
+            log(f"  Could not serialize resolved metadata: {e}", "dim")
+        if info_hash and data:
+            try:
+                write_torrent_atomically(info_hash, data)
+            except OSError as e:
+                log(f"  Failed to cache torrent metadata: {e}", "dim")
+        return TorrentSnapshot(
+            url=magnet_uri,
+            content_hash=hashlib.sha256(data).hexdigest() if data else "",
+            info_hash=info_hash,
+            torrent_bytes=data,
+            torrent_info=ti,
+        )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _wait_for_metadata(ses, h, log, cancel=None):
+    """Block until the handle's metadata has been downloaded from the swarm;
+    returns the parsed :class:`libtorrent.torrent_info`.
+
+    Shares the downloader's stall discipline: DISCOVERY_TIMEOUT while no
+    peer has connected (DHT bootstrap and tracker announces are slow),
+    STALL_TIMEOUT once peers exist but stop talking."""
+    last_move = time.monotonic()
+    transfer_started = False
+    while True:
+        if cancel is not None and cancel():
+            raise RuntimeError("Cancelled")
+        _drain_alerts(ses, log)
+        s = h.status()
+        if getattr(s, "has_metadata", False):
+            ti = None
+            try:
+                ti = h.torrent_file()
+            except Exception:
+                ti = None
+            if ti is not None:
+                return ti
+        if getattr(s, "num_peers", 0) > 0:
+            transfer_started = True
+            last_move = time.monotonic()
+        peers = getattr(s, "num_peers", 0)
+        log(f"  Resolving magnet… {peers} peers", "dim")
+        elapsed = time.monotonic() - last_move
+        timeout = STALL_TIMEOUT if transfer_started else DISCOVERY_TIMEOUT
+        if elapsed > timeout:
+            raise TorrentStalledError(peers=peers)
+        ses.wait_for_alert(ALERT_POLL_MS)
 
 
 class TorrentLayoutError(TorrentCorruptError):
@@ -578,7 +741,9 @@ class TorrentVerifier(WorkerBase):
         import libtorrent as lt
 
         if snapshot is None:
-            snapshot = _fetch_torrent(torrent_url, self.log)
+            snapshot = _fetch_torrent(
+                torrent_url, self.log, cancel=lambda: self._cancel
+            )
         self.snapshot = snapshot
         ti = snapshot.torrent_info
         marker = root_marker or _configured_root_marker()
@@ -758,19 +923,7 @@ class TorrentDownloader(WorkerBase):
     def _session(self):
         import libtorrent as lt
 
-        return lt.session(
-            {
-                "listen_interfaces": LISTEN_INTERFACES,
-                "user_agent": UA,
-                "upload_rate_limit": UPLOAD_RATE_LIMIT,
-                "enable_dht": True,
-                "dht_bootstrap_nodes": DHT_BOOTSTRAP_NODES,
-                "enable_lsd": False,
-                "enable_upnp": True,
-                "enable_natpmp": True,
-                "alert_mask": ALERT_MASK,
-            }
-        )
+        return lt.session(_network_session_settings())
 
     def download(
         self,
@@ -792,7 +945,9 @@ class TorrentDownloader(WorkerBase):
 
         if wanted is not None and not wanted:
             return []
-        snapshot = _fetch_torrent(torrent_url, self.log)
+        snapshot = _fetch_torrent(
+            torrent_url, self.log, cancel=lambda: self._cancel
+        )
         self.snapshot = snapshot
         ti = snapshot.torrent_info
         marker = root_marker or _configured_root_marker()

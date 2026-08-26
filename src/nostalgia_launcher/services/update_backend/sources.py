@@ -21,6 +21,16 @@ class DownloadSource(NamedTuple):
     manifest_url: str
     client_url: str
     torrent_url: str | None = None
+    # Server-only alternative to torrent_url (a torrent has one swarm, so
+    # mirrors — an HTTP-download concept — never carry a magnet).
+    torrent_magnet: str | None = None
+
+    @property
+    def torrent_locator(self) -> "str | None":
+        """The advertised torrent snapshot locator: the HTTPS ``.torrent``
+        URL when one exists (the stronger guarantee), else the server's
+        ``magnet:`` URI."""
+        return self.torrent_url or self.torrent_magnet
 
 
 def _source_reachable(url: str) -> bool:
@@ -69,13 +79,18 @@ def _download_source() -> "DownloadSource | None":
             # Fall back to the server's torrent snapshot when the chosen mirror
             # doesn't advertise one, so the resolved source still exposes a
             # torrent even though the recovery UI keys off the whole config.
+            # The magnet is a server-only field and rides along unchanged.
             return DownloadSource(
                 mirror.manifest_url,
                 mirror.client_url,
                 mirror.torrent_url or cfg.torrent_url,
+                cfg.torrent_magnet,
             )
     debug_emit(
         f"[torrent] selected server {cfg.server_name} "
-        f"(torrent={'yes' if cfg.torrent_url else 'no'})"
+        f"(torrent={'yes' if cfg.torrent_url else 'no'}, "
+        f"magnet={'yes' if cfg.torrent_magnet else 'no'})"
     )
-    return DownloadSource(cfg.manifest_url, cfg.client_url, cfg.torrent_url)
+    return DownloadSource(
+        cfg.manifest_url, cfg.client_url, cfg.torrent_url, cfg.torrent_magnet
+    )

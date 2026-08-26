@@ -143,6 +143,33 @@ verdict; a different snapshot at the same URL must invalidate the cached verdict
 Resume data is no longer persisted between launches (see P5), so there is no
 resume cache to discard — the on-disk recheck on add handles staleness.
 
+### P10 — magnet snapshots (`server.torrent_magnet`)
+A `magnet:?xt=urn:btih:…` carries no metadata: libtorrent must join the swarm
+(DHT + the trackers embedded in the URI) once and fetch it via ut_metadata.
+Practical points, as implemented in `_resolve_magnet`:
+
+- **The btih authenticates the metadata.** libtorrent only accepts an info
+  section that hashes to the requested `xt`, so swarm-served metadata is as
+  trustworthy as a TLS-fetched `.torrent` whose piece hashes you check —
+  provided the magnet itself comes from the trusted launcher config (it does:
+  it is a config field, never user input).
+- **Metadata needs networking** — the offline-verify session cannot resolve a
+  magnet. Use downloader-style session settings (DHT bootstrap nodes, UPnP/
+  NAT-PMP); after resolution, run the usual offline recheck on the resolved
+  `torrent_info`.
+- **Never write payload while resolving.** Back the handle with a throwaway
+  save path, set upload mode when the binding exposes it
+  (`h.set_flags(lt.torrent_flags.upload_mode)`; guarded — fakes lack it), and
+  remove the handle as soon as `status().has_metadata` is true.
+- **Serialize for reuse.** `lt.bencode(lt.create_torrent(ti).generate())`
+  turns the resolved metadata back into `.torrent` bytes so the per-profile
+  cache (keyed by info-hash) keeps working; identity reuse then keys on the
+  info-hash alone. Guard serialization — not every binding exposes
+  `create_torrent`.
+- **Stall discipline mirrors `_pump`:** DISCOVERY_TIMEOUT until the first peer
+  connects (DHT bootstrap + tracker announces are slow), STALL_TIMEOUT after;
+  honour the worker's cancel flag every poll iteration.
+
 ## Testing strategy (so the bugs don't come back)
 
 - **Unit tests** replace `libtorrent` via
