@@ -599,11 +599,13 @@ class MainWindow(QMainWindow):
         finally:
             combo.blockSignals(False)
 
-    def _on_profile_combo_activated(self, name: str):
+    def _on_profile_combo_activated(self, index: int):
         """User picked a profile in the header: confirm, then restart into
-        it. A declined confirmation or failed relaunch reverts the combo
-        to the still-active profile."""
-        if name == profiles.active().name:
+        it. Qt6's activated signal only delivers the item index, so the
+        name is resolved here. A declined confirmation or failed relaunch
+        reverts the combo to the still-active profile."""
+        name = self._profileCombo.itemText(index)
+        if not name or name == profiles.active().name:
             return
         from .profiles_ui import confirm_switch, switch_profile
 
@@ -623,6 +625,9 @@ class MainWindow(QMainWindow):
                 self._hub.settings, self._hub.bridge, self._palette, self
             )
             dialog.logsToggleRequested.connect(self._on_logs_toggle_requested)
+            # Profile mutations inside Settings (new/duplicate/rename/
+            # delete) must reach the header switcher without a restart.
+            dialog.profilesChanged.connect(self._fill_profile_combo)
             dialog.set_logs_open(self._logWindow is not None)
             dialog.finished.connect(self._on_settings_finished)
             self._settingsDialog = dialog

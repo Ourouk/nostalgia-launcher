@@ -112,6 +112,10 @@ class SettingsDialog(QDialog):
     """
 
     logsToggleRequested = Signal()
+    # Fired whenever the profiles registry view is rebuilt after a
+    # mutation (new/duplicate/rename/delete) so live consumers — the
+    # header profile switcher — can reload without a restart.
+    profilesChanged = Signal()
 
     def __init__(
         self,
@@ -566,7 +570,8 @@ class SettingsDialog(QDialog):
 
     def _refresh_profiles_combo(self, select=None):
         """Rebuild the combo from the registry; preselect `select` (or the
-        active profile)."""
+        active profile). Every mutation path lands here, so this is also
+        where `profilesChanged` is announced."""
         combo = self._profiles_combo
         current = select or profiles.active().name
         combo.blockSignals(True)
@@ -578,6 +583,7 @@ class SettingsDialog(QDialog):
                 combo.setCurrentIndex(idx)
         finally:
             combo.blockSignals(False)
+        self.profilesChanged.emit()
 
     def _selected_profile(self) -> str:
         return self._profiles_combo.currentText()

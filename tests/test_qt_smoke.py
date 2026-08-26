@@ -802,6 +802,50 @@ def test_settings_profiles_section_is_editor_only(qapp, build_app, fake_home):
         app._hub.close()
 
 
+def test_settings_profile_add_refreshes_header_combo(
+    qapp, build_app, fake_home, monkeypatch
+):
+    """Creating a profile in Settings → PROFILES reloads the header
+    switcher live — no restart needed (profilesChanged → _fill_profile_combo)."""
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QInputDialog.getText",
+        lambda *a, **kw: ("delta", True),
+    )
+
+    class _SkippedWizard:
+        """The post-create wizard runs modally; reject it so the test
+        only exercises the registry mutation + refresh wiring."""
+
+        def __init__(self, *a, **kw):
+            pass
+
+        def exec(self):  # QDialog.DialogCode.Rejected == 0
+            return 0
+
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.launcher_config_dialog.LauncherConfigDialog",
+        _SkippedWizard,
+    )
+
+    app = _open_settings_window(build_app)
+    try:
+        win = app._window
+        dlg = win._settingsDialog
+        try:
+            assert win._profileCombo.findText("delta") < 0
+            dlg._on_profile_new()
+
+            assert win._profileCombo.findText("delta") >= 0
+            assert dlg._profiles_combo.currentText() == "delta"
+            # The still-active profile stays preselected up top.
+            assert win._profileCombo.currentText() == "default"
+        finally:
+            dlg.close()
+    finally:
+        app.close()
+        app._hub.close()
+
+
 def test_header_switch_persists_pointer_and_quits(
     qapp, build_app, monkeypatch, fake_home
 ):
@@ -828,7 +872,8 @@ def test_header_switch_persists_pointer_and_quits(
         win = app._window
         idx = win._profileCombo.findText("beta")
         win._profileCombo.setCurrentIndex(idx)
-        win._on_profile_combo_activated("beta")
+        # Drive the real Qt signal: Qt6 delivers the item INDEX, not text.
+        win._profileCombo.activated.emit(idx)
 
         assert profiles.load_index()["active"] == "beta"
         assert detached.called
@@ -856,7 +901,8 @@ def test_header_switch_declined_reverts_and_keeps_pointer(
         win = app._window
         idx = win._profileCombo.findText("beta")
         win._profileCombo.setCurrentIndex(idx)
-        win._on_profile_combo_activated("beta")
+        # Drive the real Qt signal: Qt6 delivers the item INDEX, not text.
+        win._profileCombo.activated.emit(idx)
 
         # Nothing happened: pointer unchanged, combo reverted.
         assert profiles.load_index()["active"] == "default"
@@ -886,7 +932,8 @@ def test_header_switch_failure_keeps_pointer_but_shows_selection(
         win = app._window
         idx = win._profileCombo.findText("gamma")
         win._profileCombo.setCurrentIndex(idx)
-        win._on_profile_combo_activated("gamma")
+        # Drive the real Qt signal: Qt6 delivers the item INDEX, not text.
+        win._profileCombo.activated.emit(idx)
 
         assert profiles.load_index()["active"] == "gamma"
         assert win._profileCombo.currentText() == "default"

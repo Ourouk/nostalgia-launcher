@@ -361,7 +361,11 @@ def _clean_name(name: str) -> bool:
 
 
 def _existing_or_none(name) -> "Profile | None":
-    """Profile for a known name (default included), else None."""
+    """Profile for a known name (default included), else None. Non-string
+    names (a caller passing an index instead of a name) resolve to None so
+    set_active raises its clean ProfileError."""
+    if not isinstance(name, str):
+        return None
     if name != DEFAULT_PROFILE and not _clean_name(name):
         return None
     if name == DEFAULT_PROFILE:
