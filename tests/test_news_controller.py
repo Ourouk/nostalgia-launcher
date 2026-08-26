@@ -11,6 +11,7 @@ import time
 import pytest
 
 import nostalgia_launcher.controllers.news as nc
+import nostalgia_launcher.core.launcher as launcher
 from nostalgia_launcher.controllers.news import NewsController
 from nostalgia_launcher.state.events import (
     EventDispatcher,
@@ -60,6 +61,9 @@ def feed(monkeypatch):
 
     monkeypatch.setattr(nc, "fetch_featured_post", fake_featured)
     monkeypatch.setattr(nc, "fetch_news_items", fake_items)
+    # Mock explicit URL checks to return True so tests can run with fake fetchers
+    monkeypatch.setattr(launcher, "featured_news_url_explicit", lambda: True)
+    monkeypatch.setattr(launcher, "news_url_explicit", lambda: True)
     return FakeFeed
 
 

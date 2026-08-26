@@ -12,7 +12,13 @@ from ..core.security_http import read_capped, secure_urlopen
 
 
 def fetch_news_items() -> list:
-    """news.json → [{id, title, date, body, url?, author?}, …]"""
+    """news.json → [{id, title, date, body, url?, author?}, …]
+
+    Returns empty list when the news URL was not explicitly configured
+    (i.e., only the derived default exists).
+    """
+    if not launcher.news_url_explicit():
+        return []
     req = urllib.request.Request(
         launcher.news_url(), headers={"User-Agent": UA}
     )
@@ -33,7 +39,13 @@ def fetch_news_items() -> list:
 
 
 def fetch_featured_post() -> dict | None:
-    """Latest announcements-forum post → {id, title, author?, date, url, html}"""
+    """Latest announcements-forum post → {id, title, author?, date, url, html}
+
+    Returns None when the featured news URL was not explicitly configured
+    (i.e., only the derived default exists).
+    """
+    if not launcher.featured_news_url_explicit():
+        return None
     req = urllib.request.Request(
         launcher.featured_news_url(), headers={"User-Agent": UA}
     )

@@ -200,6 +200,16 @@ def build_app(qapp, monkeypatch, qt_env):
                     "addons": {},
                 }
             )
+        # Explicitly configure news URLs so the news controller fetches them
+        launcher.configure_from_dict(
+            {
+                "server": {
+                    "base_url": "https://launcher.test",
+                    "news_url": "https://launcher.test/news.json",
+                    "featured_news_url": "https://launcher.test/news/featured.json",
+                }
+            }
+        )
         app = QtNostalgiaLauncherApp()
         app._window.show()
         hub = app._hub

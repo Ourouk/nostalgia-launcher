@@ -26,6 +26,7 @@ from .list_panel import LinkLabel, clear_layout, make_hairline
 
 _LOADING = "Loading…"
 _ERROR = "Couldn't reach the news feed."
+_NO_FEEDS = "No news feeds configured."
 _EMPTY = "No news yet — check back later."
 _BODY_LIMIT = 260
 
@@ -116,16 +117,23 @@ class FeaturedPanel(QWidget):
 
         self.render(None, loading=True)
 
-    def render(self, post, loading=False, error=""):
+    def render(self, post, loading=False, error="", configured=True):
         """Render the featured post snapshot (post dict, or None)."""
         title = (post or {}).get("title", "")
         self.title_label.setText(title.upper() if title else "NEWS")
         self.link_label._url = post.get("url", "") if post else ""
 
         if not post:
-            self.status_label.setText(
-                error or (_LOADING if loading else _EMPTY)
-            )
+            if not configured:
+                # Feed not explicitly configured
+                self.status_label.setText(
+                    error or (_LOADING if loading else _NO_FEEDS)
+                )
+            else:
+                # Feed configured but no post available
+                self.status_label.setText(
+                    error or (_LOADING if loading else _EMPTY)
+                )
             self.status_label.show()
             self.body.hide()
             self.link_label.hide()
@@ -228,9 +236,21 @@ class AnnouncementsPanel(QWidget):
 
         self.render(None, loading=True)
 
-    def render(self, items, loading=False, error=""):
+    def render(self, items, loading=False, error="", configured=True):
         """Render the announcements snapshot (items list, or None)."""
-        if items is None or error:
+        if items is None:
+            if not configured:
+                # Not explicitly configured
+                self.status_label.setText(_NO_FEEDS)
+            else:
+                # Explicitly configured but no data (e.g., error or empty)
+                self.status_label.setText(
+                    error or (_LOADING if loading else _EMPTY)
+                )
+            self.status_label.show()
+            self.scroll.hide()
+            return
+        if error:
             self.status_label.setText(
                 error or (_LOADING if loading else _ERROR)
             )
@@ -335,6 +355,7 @@ class NewsPanel(QWidget):
                 event.data.data,
                 loading=event.data.loading,
                 error=event.data.error,
+                configured=event.data.configured,
             )
         else:
             self._items = event.data
@@ -342,4 +363,5 @@ class NewsPanel(QWidget):
                 event.data.data,
                 loading=event.data.loading,
                 error=event.data.error,
+                configured=event.data.configured,
             )

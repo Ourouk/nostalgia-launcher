@@ -160,6 +160,11 @@ class LauncherConfig:
     torrent_magnet: str | None = None
     addon_git_hosts: list[str] = field(default_factory=list)
     torrent_root_marker: str = "WoW.exe"
+    # News feed explicit configuration flags
+    news_url_explicit: bool = False
+    featured_news_url_explicit: bool = False
+    # Server-specific trusted hosts for downloads (beyond auto-derived ones)
+    trusted_hosts: set[str] = field(default_factory=set)
 
     @property
     def configured(self) -> bool:
@@ -168,12 +173,14 @@ class LauncherConfig:
     def download_hosts(self) -> set[str]:
         """Every host the configured server and mirrors may serve from —
         the base URLs plus any custom manifest/client endpoints (e.g. a
-        separate CDN host)."""
+        separate CDN host), plus any server-specific trusted hosts."""
         hosts: set[str] = set()
         for url in self._all_urls():
             host = urlsplit(url).hostname
             if host:
                 hosts.add(host)
+        # Add server-specific trusted hosts (explicitly configured)
+        hosts |= self.trusted_hosts
         return hosts
 
     def addon_git_host_set(self) -> set[str]:
@@ -246,6 +253,17 @@ def _parse_git_hosts(value) -> list[str]:
         if all(c.isalnum() or c in ".-" for c in h):
             out.append(h)
     return out
+
+
+def _valid_host(host: str) -> bool:
+    """Validate a hostname: non-empty, no path separators, no traversal."""
+    if not host:
+        return False
+    if any(ch in host for ch in "/\\:"):
+        return False
+    if ".." in host:
+        return False
+    return True
 
 
 def _parse_root_marker(value) -> str:
@@ -386,6 +404,26 @@ def _derive(data: dict) -> LauncherConfig:
         raw_mods_url.strip()
     )
 
+    # News URLs explicit flags: true when explicitly provided in config
+    raw_news_url = server.get("news_url")
+    news_url_explicit = isinstance(raw_news_url, str) and bool(
+        raw_news_url.strip()
+    )
+    raw_featured_news_url = server.get("featured_news_url")
+    featured_news_url_explicit = isinstance(
+        raw_featured_news_url, str
+    ) and bool(raw_featured_news_url.strip())
+
+    # Server-specific trusted hosts for downloads (beyond auto-derived ones)
+    raw_trusted_hosts = server.get("trusted_hosts")
+    trusted_hosts: set[str] = set()
+    if isinstance(raw_trusted_hosts, list):
+        for h in raw_trusted_hosts:
+            if isinstance(h, str):
+                host = h.strip().lower()
+                if host and _valid_host(host):
+                    trusted_hosts.add(host)
+
     # Asset registry URL — explicit-only (no base_url-derived default): a
     # config without one simply has no remote asset catalog. Assets may
     # also be embedded directly via the top-level "assets" list (kept raw;
@@ -451,6 +489,9 @@ def _derive(data: dict) -> LauncherConfig:
         torrent_magnet=_magnet_uri(server.get("torrent_magnet")),
         addon_git_hosts=addon_git_hosts,
         torrent_root_marker=torrent_root_marker,
+        news_url_explicit=news_url_explicit,
+        featured_news_url_explicit=featured_news_url_explicit,
+        trusted_hosts=trusted_hosts,
     )
 
 
@@ -854,6 +895,20 @@ def mods_registry_url_explicit() -> bool:
     derived base_url default does not count)."""
     c = config()
     return bool(c and c.mods_registry_url_explicit)
+
+
+def news_url_explicit() -> bool:
+    """Whether server.news_url was explicitly configured (the
+    derived base_url default does not count)."""
+    c = config()
+    return bool(c and c.news_url_explicit)
+
+
+def featured_news_url_explicit() -> bool:
+    """Whether server.featured_news_url was explicitly configured (the
+    derived base_url default does not count)."""
+    c = config()
+    return bool(c and c.featured_news_url_explicit)
 
 
 def addons_registry_urls() -> list[str]:
