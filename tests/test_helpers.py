@@ -17,10 +17,11 @@ from nostalgia_launcher.core.helpers import (
 @pytest.mark.parametrize(
     "num,expected",
     [
-        (0, "0 KB"),
+        (0, "0 B"),
         (1024, "1 KB"),
         (1024 * 1024, "1.0 MB"),
         (5 * 1024 * 1024, "5.0 MB"),
+        (3 * 1024 * 1024 * 1024, "3.0 GB"),
     ],
 )
 def test_fmt_size(num, expected):
@@ -30,9 +31,10 @@ def test_fmt_size(num, expected):
 @pytest.mark.parametrize(
     "bps,expected",
     [
-        (0, "0 KB/s"),
+        (0, "0 B/s"),
         (1024 * 512, "512 KB/s"),
         (2 * 1024 * 1024, "2.0 MB/s"),
+        (3 * 1024 * 1024 * 1024, "3.0 GB/s"),
     ],
 )
 def test_fmt_speed(bps, expected):

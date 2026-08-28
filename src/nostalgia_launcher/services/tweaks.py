@@ -400,6 +400,11 @@ def update_config_wtf(client_dir: str, tweaks: dict):
         )
         else 0
     )
+    from ..core import launcher as _launcher
+
+    srv = _launcher.realm() or _host_of(_launcher.server_url()) or "localhost"
+    srv = _wtf_str(srv)
+
     updates = {
         "farClip": str(far_clip),
         "CameraDistanceMax": str(cam_dist),
@@ -407,6 +412,8 @@ def update_config_wtf(client_dir: str, tweaks: dict):
         "FoV": str(fov_rad),
         "NameplateRange": str(nameplate),
         "BackgroundSound": str(bg_sound),
+        "realmList": srv,
+        "patchList": srv,
     }
 
     with open(cfg_path, encoding="utf-8") as f:
@@ -437,9 +444,15 @@ def update_config_wtf(client_dir: str, tweaks: dict):
         log(f"  Could not update Config.wtf: {e}", "err")
         return
 
+    # Always keep realmlist.wtf in sync with the configured realm.
+    try:
+        write_realmlist_wtf(client_dir)
+    except Exception:
+        pass
+
     log(
         f"  Config.wtf updated: farClip={far_clip}, CameraDistanceMax={cam_dist}, "
         f"NameplateRange={nameplate}, NP_NameplateDistance={nameplate}, "
-        f"FoV={fov_rad}",
+        f"FoV={fov_rad}, realmList={srv}",
         "dim",
     )

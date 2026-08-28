@@ -1130,13 +1130,20 @@ class UpdateWorker(WorkerBase):
             return
         self.log("  BitTorrent recovery download complete.", "ok")
         remove_wdb(self.out_dir)
-        # A fresh recovery install has no Config.wtf — create it (a regular
-        # update never touches user config, but this path has no verify step
-        # to seed it). realmlist.wtf rides along for the same reason.
-        cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
-        if not os.path.exists(cfg_wtf):
-            write_config_wtf(self.out_dir)
+        # Always inject the current realm after a successful recovery —
+        # Config.wtf may already exist (existing install) and must be
+        # refreshed, not only created for fresh installs.
+        try:
+            cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
+            if not os.path.exists(cfg_wtf):
+                write_config_wtf(self.out_dir)
+            else:
+                from ..tweaks import load_tweaks_config, update_config_wtf
+
+                update_config_wtf(self.out_dir, load_tweaks_config())
             write_realmlist_wtf(self.out_dir)
+        except Exception as e:
+            self.log(f"Could not inject realm: {e}", "err")
         self.progress(1.0, "")
         snapshot = getattr(dl, "snapshot", None)
         # _safe_identity: a snapshot with malformed metadata must not turn a
@@ -1268,6 +1275,22 @@ class UpdateWorker(WorkerBase):
 
             self.log("\nDownload complete.", "ok")
             remove_wdb(self.out_dir)
+            # Always inject the current realm after a successful update —
+            # Config.wtf may already exist (existing install) and must be
+            # refreshed so a changed server.realm is not missed.
+            try:
+                from ..tweaks import load_tweaks_config, update_config_wtf
+                from ..tweaks import write_config_wtf as _wcf
+                from ..tweaks import write_realmlist_wtf as _wrl
+
+                cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
+                if not os.path.exists(cfg_wtf):
+                    _wcf(self.out_dir)
+                else:
+                    update_config_wtf(self.out_dir, load_tweaks_config())
+                _wrl(self.out_dir)
+            except Exception as e:
+                self.log(f"Could not inject realm: {e}", "err")
 
             self.progress(1.0, "")
             save_cache(self._cache)
