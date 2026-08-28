@@ -18,7 +18,7 @@ from .platform_support import (
     config_dir,
 )
 
-UPDATER_VERSION = "0.0.1"
+UPDATER_VERSION = "0.0.2"
 UA = f"NostalgiaLauncher/{UPDATER_VERSION}"
 DOWNLOAD_RETRY = 5
 DOWNLOAD_TIMEOUT = 10  # seconds without any data before a transfer aborts
