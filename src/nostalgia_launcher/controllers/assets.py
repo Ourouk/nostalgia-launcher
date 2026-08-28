@@ -37,6 +37,10 @@ class AssetsController:
         self._dispatcher = dispatcher
         self.state = AssetsState()
         self._busy = False
+        # Per-asset staleness verdicts from the latest background refresh
+        # (refresh_verdicts). The render path (action_for) reads these
+        # instead of running live HEAD probes on the GUI thread.
+        self._verdict_cache: dict[str, bool] = {}
         if get_out_dir is None:
 
             def get_out_dir():
@@ -66,6 +70,16 @@ class AssetsController:
             self.client_dir(), version, mpq.managed_dests(self.registry)
         )
 
+    def remove_foreign_mpq(self, rel_path: str) -> None:
+        """Delete one untracked MPQ from Data/ (confirmed in the UI) and
+        republish the snapshot. Routed through the controller — like every
+        other mutation — so the panel never touches services directly."""
+        error = mpq.remove_custom_mpq(self.client_dir(), rel_path)
+        if error:
+            self._dispatcher.post(LogMessage(f"  {error}", "err"))
+        else:
+            self._dispatcher.post(AssetsLoaded(self.state))
+
     @property
     def updates_count(self) -> int:
         return self.state.updates_count
@@ -93,10 +107,14 @@ class AssetsController:
                     registry = []
             out = (self._get_out_dir() or "").strip()
             count = 0
+            verdicts: dict[str, bool] = {}
             for asset in registry:
-                stale, _reason = self._verdict(asset, out)
+                # Probes are allowed here: this runs off the GUI thread.
+                stale, _reason = self._verdict(asset, out, allow_probe=True)
+                verdicts[asset["id"]] = stale
                 if stale:
                     count += 1
+            self._verdict_cache = verdicts
             self.state.updates_count = count
             self._dispatcher.post(AssetsLoaded(self.state))
 
@@ -156,17 +174,24 @@ class AssetsController:
 
     def action_for(self, asset_id: str) -> str | None:
         """'retry' when the asset is in an error state, 'update' when a
-        staleness verdict fired, else None."""
+        staleness verdict fired, else None. Runs on the GUI thread during
+        panel renders: it consults the cached background verdict when one
+        exists and otherwise computes a probe-free verdict — never a live
+        HEAD request."""
         rec = self.state.records.get(asset_id)
         if rec is not None and rec.error:
             return "retry"
+        if asset_id in self._verdict_cache:
+            return "update" if self._verdict_cache[asset_id] else None
         asset = next(
             (a for a in assets.assets_registry() if a["id"] == asset_id),
             None,
         )
         if asset is None:
             return None
-        stale, _ = self._verdict(asset, (self._get_out_dir() or "").strip())
+        stale, _ = self._verdict(
+            asset, (self._get_out_dir() or "").strip(), allow_probe=False
+        )
         return "update" if stale else None
 
     def apply(self, only_asset_id: str | None = None) -> bool:
@@ -222,9 +247,12 @@ class AssetsController:
 
     # ── internals ───────────────────────────────────────────────────────────
 
-    def _verdict(self, asset: dict, client_dir: str) -> tuple[bool, str]:
+    def _verdict(
+        self, asset: dict, client_dir: str, *, allow_probe: bool = True
+    ) -> tuple[bool, str]:
         """The staleness verdict for one asset against its stored record;
-        (False, '') when uninstalled or undeterminable."""
+        (False, '') when uninstalled or undeterminable. ``allow_probe``
+        gates the live HEAD probe (off for the GUI-thread render path)."""
         rec = config_store.load_config().get("assets", {}).get(asset["id"])
         if rec is None:
             stored = self.state.records.get(asset["id"])
@@ -239,7 +267,9 @@ class AssetsController:
                 else None
             )
         try:
-            return assets.asset_update_available(asset, rec, client_dir)
+            return assets.asset_update_available(
+                asset, rec, client_dir, allow_probe=allow_probe
+            )
         except Exception:
             return False, ""
 
@@ -247,6 +277,7 @@ class AssetsController:
         """Config "assets" records reconciled against the filesystem: a
         record whose declared files are all present counts as installed."""
         records = {}
+        out = (self._get_out_dir() or "").strip()
         for aid, rec in config_store.load_config().get("assets", {}).items():
             state = AssetState(
                 enabled=rec.get("enabled", False),
@@ -255,7 +286,6 @@ class AssetsController:
                 probe_state=dict(rec.get("probe_state") or {}),
                 error=rec.get("error"),
             )
-            out = (self._get_out_dir() or "").strip()
             state.present = bool(
                 out
                 and state.installed_files
@@ -269,18 +299,6 @@ class AssetsController:
         return all(
             os.path.exists(os.path.join(client_dir, f)) for f in files or []
         )
-
-    def _record_dict(self, aid: str) -> dict | None:
-        rec = self.state.records.get(aid)
-        if rec is None:
-            return None
-        return {
-            "enabled": rec.enabled,
-            "installed_version": rec.installed_version,
-            "installed_files": list(rec.installed_files),
-            "probe_state": dict(rec.probe_state),
-            "error": rec.error,
-        }
 
     def _refresh_updates_count(self):
         try:

@@ -45,7 +45,9 @@ mkdir -p "$APPDIR/usr/bin"
 cp -a "dist/${APP_NAME}/." "$APPDIR/usr/bin/"
 
 mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
-"$RENDER" 'NostalgiaLauncher.ico[8]' -resize 256x256 \
+# The committed .ico is single-frame — scene index must be [0] ([8] only
+# works with multi-frame icons and silently misbehaves on ImageMagick 6).
+"$RENDER" 'NostalgiaLauncher.ico[0]' -resize 256x256 \
   "$APPDIR/usr/share/icons/hicolor/256x256/apps/${APP_NAME}.png"
 
 install -m 0755 packaging/linux/AppRun "$APPDIR/AppRun"
@@ -54,6 +56,10 @@ install -m 0644 packaging/linux/NostalgiaLauncher.desktop "$APPDIR/NostalgiaLaun
 # 3. Run linuxdeploy (bundles missing Qt/system libs, validates the desktop
 #    entry, and builds the final AppImage)
 echo "==> Running linuxdeploy"
+# Snapshot the pre-existing AppImages so the relocation below can't pick up
+# a stale file (e.g. the linuxdeploy AppImage itself) when linuxdeploy
+# fails to produce output.
+pre_existing="$(ls ./*.AppImage 2>/dev/null || true)"
 [[ -x "$LINUXDEPLOY" ]] || chmod +x "$LINUXDEPLOY"
 "$LINUXDEPLOY" --appdir "$APPDIR" \
   --desktop-file "$APPDIR/NostalgiaLauncher.desktop" \
@@ -63,7 +69,10 @@ echo "==> Running linuxdeploy"
 # linuxdeploy names the AppImage after the desktop entry's Name with spaces
 # replaced by underscores and leaves it in the current directory — relocate it
 # to the canonical dist/NostalgiaLauncher-<arch>.AppImage path.
-produced="$(ls -t ./*.AppImage 2>/dev/null | head -n 1 || true)"
+produced="$(comm -13 \
+  <(printf '%s\n' "$pre_existing" | sort) \
+  <(ls ./*.AppImage 2>/dev/null | sort) \
+  | head -n 1 || true)"
 if [[ -z "$produced" ]]; then
   echo "linuxdeploy did not produce an AppImage" >&2
   exit 1

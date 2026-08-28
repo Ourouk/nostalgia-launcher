@@ -3,14 +3,16 @@
 Deployment is chosen by the *entry shape*, not by the content type, which is
 what lets every download backend serve every vertical:
 
-* plain ``dest``            → `install_plain` (single file, atomic rename)
+* plain ``dest``            → `install_plain` (single file)
 * ``extract_map`` + zip     → `extract_zip_map`
 * ``extract_map`` + tar.gz  → `extract_tar_map`
 * addon folder target       → `unpack_folder` (strip the archive's top-level
                               dir into Interface/AddOns/<folder>)
 
 All paths are validated against `safety.safe_relpath`; a compromised
-upstream must not be able to write outside the client folder.
+upstream must not be able to write outside the client folder. Extracted
+members are also size-capped so a small compressed bomb cannot fill the
+disk (the archives themselves are capped by the fetch layer).
 """
 
 import io
@@ -21,6 +23,10 @@ import zipfile
 from ...core.filesystem import rmtree_force
 from ...core.log_sink import log
 from . import safety
+
+# Per-member uncompressed ceiling: far above any legitimate game file,
+# far below disk-filling territory.
+_MAX_MEMBER_BYTES = 1 * 1024 * 1024 * 1024
 
 
 def checked_rel(dest_rel) -> str:
@@ -68,11 +74,19 @@ def extract_zip_map(
             written = []
             for zip_path, dest_rel in extract_map.items():
                 try:
-                    zip_data = zf.read(zip_path)
+                    info = zf.getinfo(zip_path)
                 except KeyError:
                     log(f"  Warning: {zip_path} not in zip, skipping")
                     continue
-                written.append(install_plain(client_dir, zip_data, dest_rel))
+                if info.file_size > _MAX_MEMBER_BYTES:
+                    log(
+                        f"  Warning: {zip_path} exceeds the extraction "
+                        "size cap, skipping"
+                    )
+                    continue
+                written.append(
+                    install_plain(client_dir, zf.read(zip_path), dest_rel)
+                )
             return written
     finally:
         if os.path.exists(tmp_path):
@@ -104,8 +118,20 @@ def extract_tar_map(
                     f"  Warning: no file matching '{pattern}' in tar, skipping"
                 )
                 continue
-            tar_data = tf.extractfile(tf.getmember(matched)).read()
-            written.append(install_plain(client_dir, tar_data, dest_rel))
+            member = tf.getmember(matched)
+            fh = tf.extractfile(member)
+            if fh is None:
+                # Directories / special members have no payload — a pattern
+                # that matches one is unsatisfiable, not fatal.
+                log(f"  Warning: '{matched}' has no file content, skipping")
+                continue
+            if member.size > _MAX_MEMBER_BYTES:
+                log(
+                    f"  Warning: {matched} exceeds the extraction size "
+                    "cap, skipping"
+                )
+                continue
+            written.append(install_plain(client_dir, fh.read(), dest_rel))
         return written
 
 
@@ -124,9 +150,21 @@ def unpack_folder(data: bytes, dest_root: str) -> None:
         rmtree_force(tmp_root)
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            total_written = 0
             for info in zf.infolist():
                 if info.is_dir():
                     continue
+                if info.file_size > _MAX_MEMBER_BYTES:
+                    log(
+                        f"  Warning: {info.filename} exceeds the "
+                        "extraction size cap, skipping"
+                    )
+                    continue
+                total_written += info.file_size
+                if total_written > _MAX_MEMBER_BYTES * 4:
+                    raise RuntimeError(
+                        "archive exceeds the total extraction budget"
+                    )
                 parts = [
                     p
                     for p in info.filename.replace("\\", "/").split("/")[1:]

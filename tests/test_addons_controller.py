@@ -839,56 +839,6 @@ def test_update_all_only_collects_out_of_date(controller):
     assert [r["folder"] for r in recs] == ["A", "C"]
 
 
-def test_remove_deletes_folder_and_cleans(
-    controller, cfg, tmp_path, monkeypatch
-):
-    client = str(tmp_path)
-    _install_folder(client, "Foo")
-    cfg["out_dir"] = client
-    cfg["addons"]["Foo"] = {"git": "https://github.com/x/y", "sha": "S"}
-    controller.state.addons["Foo"] = AddonState(
-        folder="Foo", status="outOfDate"
-    )
-    controller.state.errors["Foo"] = AddonError(
-        "oops", "https://github.com/x/y"
-    )
-    deleted = []
-    monkeypatch.setattr(ac.shutil, "rmtree", lambda path: deleted.append(path))
-
-    controller.remove("Foo")
-
-    assert deleted
-    assert "Foo" not in cfg["addons"]
-    assert "Foo" not in controller.state.addons
-    assert "Foo" not in controller.state.errors
-    events = controller._dispatcher.drain()
-    assert any(
-        isinstance(e, LogMessage) and "Removed addon Foo" in e.text
-        for e in events
-    )
-    assert any(isinstance(e, AddonsLoaded) for e in events)
-
-
-def test_remove_logs_failure(controller, cfg, tmp_path, monkeypatch):
-    client = str(tmp_path)
-    _install_folder(client, "Foo")
-    cfg["out_dir"] = client
-    cfg["addons"]["Foo"] = {"git": "https://github.com/x/y", "sha": "S"}
-
-    def boom(path):
-        raise OSError("locked")
-
-    monkeypatch.setattr(ac.shutil, "rmtree", boom)
-
-    controller.remove("Foo")
-
-    assert any(
-        isinstance(e, LogMessage)
-        and "Failed to remove addon Foo: locked" in e.text
-        for e in controller._dispatcher.drain()
-    )
-
-
 # ── footer / badge data ─────────────────────────────────────────────────
 
 
@@ -978,3 +928,33 @@ def test_verify_posts_cached_preview_before_scan(controller, monkeypatch):
     # First snapshot is the cache preview; the scan supersedes it.
     assert [a.folder for a in loaded[0].state.available] == ["CachedAddon"]
     assert [a.folder for a in loaded[-1].state.available] == ["FreshAddon"]
+
+
+# ── worker-crash containment (regression) ────────────────────────────────
+
+
+def test_verify_worker_crash_resets_busy_and_reports(
+    controller, cfg, tmp_path, monkeypatch
+):
+    """An exception mid-scan (permissions, poisoned records…) used to kill
+    the worker thread silently, wedging the panel on 'Checking…' with
+    busy=True until restart. The guard must reset busy and post a
+    finished event."""
+    cfg["out_dir"] = str(tmp_path)
+    _install_folder(str(tmp_path), "Foo")
+
+    def boom(path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(ac.addons, "read_toc_file", boom)
+
+    controller.verify()
+    events = _drain_for(
+        controller._dispatcher,
+        lambda e: isinstance(e, OperationFinished),
+    )
+    assert any(
+        isinstance(e, OperationFinished) and e.kind == "addons" and not e.ok
+        for e in events
+    )
+    assert not controller.state.busy

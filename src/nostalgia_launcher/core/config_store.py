@@ -11,6 +11,8 @@ import os
 import sys
 import threading
 
+from .filesystem import atomic_write_text as _atomic_write
+
 _CONFIG_LOCK = threading.RLock()
 
 # Set by configure() at import time.
@@ -28,22 +30,9 @@ def configure(
     cache_file = cache
 
 
-def _atomic_write(path: str, text: str):
-    """Write via a temp file + atomic rename so a crash mid-write can never
-    leave a truncated/corrupt file at `path`. Creates the parent directory so
-    the per-user data dirs work on first write."""
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
-
-
 def load_config() -> dict:
     try:
-        with open(config_file) as f:
+        with open(config_file, encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         return {}
@@ -74,9 +63,41 @@ def update_config(mutator):
         return cfg
 
 
+def apply_confirmed_out_dir(path: str, out_dir: str) -> None:
+    """Record a user-confirmed game folder into an explicit state file:
+    ``out_dir`` + the ``out_dir_user_set`` flag, wiping the folder-scoped
+    install records (mods/addons/assets + probe cache) — the same key
+    semantics as SettingsController.set_path's reset. Takes an explicit
+    file path so it works before configure() bound the module globals
+    (the first-run wizard writes the active profile's state directly) and
+    for writing ANOTHER profile's store (Settings → New…). Failures are
+    reported on stderr, never raised: the user can still confirm a folder
+    through Settings."""
+    out_val = os.path.normpath((out_dir or "").strip())
+    if not out_val or out_val == ".":
+        return
+    with _CONFIG_LOCK:
+        try:
+            with open(path, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except FileNotFoundError:
+            cfg = {}
+        except Exception as e:
+            sys.stderr.write(f"[config] failed to read {path}: {e}\n")
+            return
+        cfg["out_dir"] = out_val
+        cfg["out_dir_user_set"] = True
+        for key in ("mods", "addons", "assets", "asset_probe_cache"):
+            cfg.pop(key, None)
+        try:
+            _atomic_write(path, json.dumps(cfg, indent=2))
+        except Exception as e:
+            sys.stderr.write(f"[config] failed to write {path}: {e}\n")
+
+
 def load_cache() -> dict:
     try:
-        with open(cache_file) as f:
+        with open(cache_file, encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         return {}

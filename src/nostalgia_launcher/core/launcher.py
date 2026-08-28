@@ -20,6 +20,7 @@ other URL is derived from it unless overridden:
         "manifest_url": "https://server.example/api/file/latest/manifest.json",
         "client_url": "https://server.example/client/latest",
         "torrent_url": "https://server.example/client/latest/client.torrent",
+        "torrent_magnet": "magnet:?xt=urn:btih:EXAMPLEINFOHASH&dn=client",
         "news_url": "https://server.example/news",
         "featured_news_url": "https://server.example/news/featured",
         "mods_registry_url": "https://server.example/api/mods.json",
@@ -58,6 +59,14 @@ fetches the ``.torrent`` over HTTPS and bulk-downloads the stale files via
 libtorrent when it is available, falling back to per-file HTTP downloads
 otherwise. A mirror's ``torrent_url`` takes precedence over the server's.
 
+The optional server-only ``torrent_magnet`` is an alternative to
+``torrent_url``: a ``magnet:?xt=urn:btih:…`` URI whose swarm serves the same
+client snapshot. A torrent has one swarm, so mirrors — an HTTP-download
+concept — do not apply: the field is accepted on the server object only.
+libtorrent resolves the metadata from the swarm once; peers cannot forge it
+because it must hash to the magnet's info-hash. When both are configured,
+the HTTPS ``.torrent`` wins.
+
 The optional ``theme`` object overrides the app's color theme per server:
 color slots named like ``C_GOLD`` (each a ``#rrggbb`` hex value) plus an
 optional ``logo`` URL shown as the header wordmark (see `core/themes`). It
@@ -94,11 +103,12 @@ its download allowlist from the configured hosts.
 import json
 import os
 import sys
-import tempfile
 import threading
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
+from .filesystem import atomic_write_text
+from .helpers import redact_url
 from .log_sink import log
 from .platform_support import config_dir, is_macos
 
@@ -147,8 +157,14 @@ class LauncherConfig:
     discord_url: str | None = None
     theme: dict | None = None
     torrent_url: str | None = None
+    torrent_magnet: str | None = None
     addon_git_hosts: list[str] = field(default_factory=list)
     torrent_root_marker: str = "WoW.exe"
+    # News feed explicit configuration flags
+    news_url_explicit: bool = False
+    featured_news_url_explicit: bool = False
+    # Server-specific trusted hosts for downloads (beyond auto-derived ones)
+    trusted_hosts: set[str] = field(default_factory=set)
 
     @property
     def configured(self) -> bool:
@@ -157,12 +173,14 @@ class LauncherConfig:
     def download_hosts(self) -> set[str]:
         """Every host the configured server and mirrors may serve from —
         the base URLs plus any custom manifest/client endpoints (e.g. a
-        separate CDN host)."""
+        separate CDN host), plus any server-specific trusted hosts."""
         hosts: set[str] = set()
         for url in self._all_urls():
             host = urlsplit(url).hostname
             if host:
                 hosts.add(host)
+        # Add server-specific trusted hosts (explicitly configured)
+        hosts |= self.trusted_hosts
         return hosts
 
     def addon_git_host_set(self) -> set[str]:
@@ -176,8 +194,9 @@ class LauncherConfig:
 
     def has_torrent(self) -> bool:
         """Whether any configured source (server or mirror) advertises a
-        ``torrent_url``. Static — no network probing."""
-        if self.torrent_url:
+        ``torrent_url``, or the server a ``torrent_magnet``. Static — no
+        network probing."""
+        if self.torrent_url or self.torrent_magnet:
             return True
         return any(m.torrent_url for m in self.mirrors)
 
@@ -236,6 +255,17 @@ def _parse_git_hosts(value) -> list[str]:
     return out
 
 
+def _valid_host(host: str) -> bool:
+    """Validate a hostname: non-empty, no path separators, no traversal."""
+    if not host:
+        return False
+    if any(ch in host for ch in "/\\:"):
+        return False
+    if ".." in host:
+        return False
+    return True
+
+
 def _parse_root_marker(value) -> str:
     """Validate `server.torrent_root_marker` — the filename used to detect
     the torrent root. Must be a single unsafe-free name. Defaults to
@@ -255,6 +285,26 @@ def _https_url(value: str) -> str | None:
     if parts.scheme != "https" or not parts.hostname:
         return None
     return url
+
+
+def _magnet_uri(value: str) -> str | None:
+    """Validate a ``magnet:`` URI: the scheme must be magnet and the query
+    must carry at least one ``xt`` topic of ``urn:btih:`` (v1) or
+    ``urn:btmh:`` (v2) — the info-hash that authenticates swarm-served
+    metadata. Anything else is dropped (same silent-drop convention as
+    non-HTTPS URLs)."""
+    uri = (value or "").strip()
+    if not uri:
+        return None
+    parts = urlsplit(uri)
+    if parts.scheme != "magnet" or not parts.query:
+        return None
+    topics = [t.strip().lower() for t in parse_qs(parts.query).get("xt", [])]
+    if not any(
+        t.startswith("urn:btih:") or t.startswith("urn:btmh:") for t in topics
+    ):
+        return None
+    return uri
 
 
 def _default_manifest(base: str) -> str:
@@ -310,9 +360,14 @@ def _derive(data: dict) -> LauncherConfig:
         if mb is None:
             continue
         mhost = urlsplit(mb).hostname or ""
+        m_name = m.get("name")
         mirrors.append(
             Mirror(
-                name=(m.get("name") or mhost).strip(),
+                name=(
+                    m_name.strip()
+                    if isinstance(m_name, str) and m_name.strip()
+                    else mhost
+                ),
                 base_url=mb,
                 manifest_url=_https_url(m.get("manifest_url"))
                 or _default_manifest(mb),
@@ -349,6 +404,26 @@ def _derive(data: dict) -> LauncherConfig:
         raw_mods_url.strip()
     )
 
+    # News URLs explicit flags: true when explicitly provided in config
+    raw_news_url = server.get("news_url")
+    news_url_explicit = isinstance(raw_news_url, str) and bool(
+        raw_news_url.strip()
+    )
+    raw_featured_news_url = server.get("featured_news_url")
+    featured_news_url_explicit = isinstance(
+        raw_featured_news_url, str
+    ) and bool(raw_featured_news_url.strip())
+
+    # Server-specific trusted hosts for downloads (beyond auto-derived ones)
+    raw_trusted_hosts = server.get("trusted_hosts")
+    trusted_hosts: set[str] = set()
+    if isinstance(raw_trusted_hosts, list):
+        for h in raw_trusted_hosts:
+            if isinstance(h, str):
+                host = h.strip().lower()
+                if host and _valid_host(host):
+                    trusted_hosts.add(host)
+
     # Asset registry URL — explicit-only (no base_url-derived default): a
     # config without one simply has no remote asset catalog. Assets may
     # also be embedded directly via the top-level "assets" list (kept raw;
@@ -383,8 +458,16 @@ def _derive(data: dict) -> LauncherConfig:
     addon_git_hosts = _parse_git_hosts(data.get("addon_git_hosts"))
     torrent_root_marker = _parse_root_marker(server.get("torrent_root_marker"))
 
+    def _name_or_host(value) -> str:
+        """A config-supplied display name, or the host fallback. Truthy
+        non-strings (e.g. a numeric name) fall back like absent ones
+        instead of crashing _derive with an AttributeError."""
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return host
+
     return LauncherConfig(
-        server_name=(server.get("name") or host).strip(),
+        server_name=_name_or_host(server.get("name")),
         server_url=base,
         manifest_url=manifest_url,
         client_url=client_url,
@@ -393,7 +476,7 @@ def _derive(data: dict) -> LauncherConfig:
         mods_registry_url=_url("mods_registry_url", "/api/mods.json"),
         addons_registry_url=addons_registry_url,
         addons_registry_urls=addons_registry_urls,
-        realm=(server.get("realm") or host).strip(),
+        realm=_name_or_host(server.get("realm")),
         mirrors=mirrors,
         embedded_mods=embedded_mods,
         embedded_addons=embedded_addons,
@@ -403,8 +486,12 @@ def _derive(data: dict) -> LauncherConfig:
         discord_url=discord_url,
         theme=theme,
         torrent_url=_https_url(server.get("torrent_url")),
+        torrent_magnet=_magnet_uri(server.get("torrent_magnet")),
         addon_git_hosts=addon_git_hosts,
         torrent_root_marker=torrent_root_marker,
+        news_url_explicit=news_url_explicit,
+        featured_news_url_explicit=featured_news_url_explicit,
+        trusted_hosts=trusted_hosts,
     )
 
 
@@ -545,9 +632,6 @@ def store_local_repo(
 ) -> None:
     """Atomically write the local repo file for a content kind from its
     server-imported and user-custom entry lists."""
-    dest = local_repo_path(kind)
-    directory = os.path.dirname(dest) or "."
-    os.makedirs(directory, exist_ok=True)
     payload = (
         json.dumps(
             {
@@ -559,17 +643,7 @@ def store_local_repo(
         )
         + "\n"
     )
-    fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
-    try:
-        os.close(fd)
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, dest)
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+    atomic_write_text(local_repo_path(kind), payload)
 
 
 def _split_and_strip(data: dict, final=None) -> dict:
@@ -639,19 +713,7 @@ def _persist_data(data: dict) -> tuple[str, str]:
             )
             + "\n"
         )
-        directory = os.path.dirname(dest) or "."
-        os.makedirs(directory, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
-        try:
-            os.close(fd)
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write(stripped_text)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, dest)
-        finally:
-            if os.path.exists(tmp):
-                os.remove(tmp)
+        atomic_write_text(dest, stripped_text)
 
     try:
         _derive(data)  # don't persist truncated/invalid configs
@@ -734,7 +796,7 @@ def configure(path: str | None = None) -> tuple["LauncherConfig | None", str]:
             )
             return None, _error
         _config, _path, _error = config, path, ""
-        log(f"Launcher configuration loaded: {config.server_url}")
+        log(f"Launcher configuration loaded: {redact_url(config.server_url)}")
         return config, ""
 
 
@@ -768,11 +830,6 @@ def config() -> "LauncherConfig | None":
 def config_error() -> str:
     with _LOCK:
         return _error
-
-
-def is_configured() -> bool:
-    c = config()
-    return bool(c and c.configured)
 
 
 def server_url() -> str:
@@ -838,6 +895,20 @@ def mods_registry_url_explicit() -> bool:
     derived base_url default does not count)."""
     c = config()
     return bool(c and c.mods_registry_url_explicit)
+
+
+def news_url_explicit() -> bool:
+    """Whether server.news_url was explicitly configured (the
+    derived base_url default does not count)."""
+    c = config()
+    return bool(c and c.news_url_explicit)
+
+
+def featured_news_url_explicit() -> bool:
+    """Whether server.featured_news_url was explicitly configured (the
+    derived base_url default does not count)."""
+    c = config()
+    return bool(c and c.featured_news_url_explicit)
 
 
 def addons_registry_urls() -> list[str]:

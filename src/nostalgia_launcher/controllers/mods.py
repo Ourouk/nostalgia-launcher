@@ -185,9 +185,11 @@ class ModsController:
         self.state.latest_versions = {}
 
     def apply_essential_mods(self) -> bool:
-        """Install every essential mod not already present. Returns True when
+        """Install every required mod not already present. Returns True when
         an install actually started (a client is present and at least one
-        essential mod is missing)."""
+        required mod is missing). An explicit user opt-out (an enabled=False
+        record) always wins: the catalog policy never force-reinstalls a mod
+        the user turned off."""
         if self._busy:
             return False
         out = (self._get_out_dir() or "").strip()
@@ -196,9 +198,11 @@ class ModsController:
         mods_cfg = config_store.load_config().get("mods", {})
         pending = False
         for mod in mods.mods_registry():
-            if not mod.get("essential", False):
+            if mod.get("installation") != "required":
                 continue
             state = mods_cfg.get(mod["id"], {})
+            if state.get("enabled") is False:
+                continue  # user opted out — liberty beats policy
             if state.get(
                 "installed_version"
             ) and mods.mod_installed_files_present(mod, out):
@@ -208,7 +212,7 @@ class ModsController:
         if not pending:
             return False
         self._dispatcher.post(
-            LogMessage("\nInstalling essential mods...\n", "acct")
+            LogMessage("\nInstalling required mods...\n", "acct")
         )
         return self.apply()
 
@@ -277,7 +281,7 @@ class ModsController:
             ):
                 continue
             declared = list(mod.get("installed_files") or []) or (
-                [mod["register_dll"]] if mod.get("register_dll") else []
+                mods.registered_dlls(mod)
             )
             records[mid] = ModState(
                 enabled=True,
@@ -439,8 +443,8 @@ class ModsController:
                         written = mods.install_mod(
                             mod, client_dir, release=mod_release
                         )
-                        if mod.get("register_dll"):
-                            mods.add_dll(client_dir, mod["register_dll"])
+                        for dll in mods.registered_dlls(mod):
+                            mods.add_dll(client_dir, dll)
                         resolved_ver = (
                             mod.pop("_resolved_version", None)
                             or latest_ver
@@ -463,8 +467,8 @@ class ModsController:
                             LogMessage(f"\nUninstalling {mod['name']}...")
                         )
                         mods.uninstall_mod(mod, client_dir)
-                        if mod.get("register_dll"):
-                            mods.remove_dll(client_dir, mod["register_dll"])
+                        for dll in mods.registered_dlls(mod):
+                            mods.remove_dll(client_dir, dll)
                         mods_cfg[mid] = {
                             "enabled": False,
                             "installed_version": None,
@@ -486,8 +490,8 @@ class ModsController:
                         written = mods.install_mod(
                             mod, client_dir, release=mod_release
                         )
-                        if mod.get("register_dll"):
-                            mods.add_dll(client_dir, mod["register_dll"])
+                        for dll in mods.registered_dlls(mod):
+                            mods.add_dll(client_dir, dll)
                         mods_cfg[mid] = {
                             "enabled": True,
                             "installed_version": latest_ver,

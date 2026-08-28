@@ -7,6 +7,7 @@ import unittest.mock as mock
 
 import pytest
 
+import nostalgia_launcher.core.platform_support as platform_support
 from nostalgia_launcher.core.platform_support import (
     cache_dir,
     can_launch_client,
@@ -70,18 +71,14 @@ def test_capabilities_macos(fake_platform):
 
 def test_capabilities_linux_without_umu(fake_platform, monkeypatch):
     fake_platform("linux")
-    monkeypatch.setattr(
-        "nostalgia_launcher.services.umu.umu_available", lambda: False
-    )
+    monkeypatch.setattr(platform_support, "_UMU_PROBE", lambda: False)
     assert not can_launch_client()
     assert not can_manage_antivirus()
 
 
 def test_capabilities_linux_with_umu(fake_platform, monkeypatch):
     fake_platform("linux")
-    monkeypatch.setattr(
-        "nostalgia_launcher.services.umu.umu_available", lambda: True
-    )
+    monkeypatch.setattr(platform_support, "_UMU_PROBE", lambda: True)
     assert can_launch_client()
     assert not can_manage_antivirus()
 

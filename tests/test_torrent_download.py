@@ -10,6 +10,7 @@ import importlib.util
 import os
 import queue
 import sys
+import tempfile
 import time
 import urllib.error
 from types import SimpleNamespace
@@ -163,6 +164,50 @@ def test_config_rejects_non_https_torrent_url():
     assert cfg.mirrors[0].torrent_url is None
 
 
+def test_config_parses_server_torrent_magnet():
+    launcher.configure_from_dict(
+        {
+            "server": {
+                "base_url": "https://srv.example",
+                "torrent_magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
+            }
+        }
+    )
+    cfg = launcher.config()
+    assert cfg.torrent_magnet == "magnet:?xt=urn:btih:" + "ab" * 20
+    assert cfg.torrent_url is None
+    assert cfg.mirrors == []
+
+
+def test_config_rejects_invalid_torrent_magnet():
+    for bad in (
+        "https://srv.example/client.torrent",  # not a magnet at all
+        "magnet:?dn=client",  # magnet without an xt topic
+        "magnet:?xt=urn:sha1:NOPE",  # unsupported topic scheme
+    ):
+        launcher.configure_from_dict(
+            {
+                "server": {
+                    "base_url": "https://srv.example",
+                    "torrent_magnet": bad,
+                }
+            }
+        )
+        assert launcher.config().torrent_magnet is None
+
+
+def test_has_torrent_true_for_magnet_only_config():
+    launcher.configure_from_dict(
+        {
+            "server": {
+                "base_url": "https://srv.example",
+                "torrent_magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
+            }
+        }
+    )
+    assert launcher.config().has_torrent() is True
+
+
 def test_torrent_hosts_join_download_allowlist():
     launcher.configure_from_dict(
         {
@@ -222,6 +267,78 @@ def test_download_source_falls_back_to_server_torrent_url(monkeypatch):
     monkeypatch.setattr(client_update, "secure_urlopen", down)
     src = client_update._download_source()
     assert src.torrent_url == "https://dl.example/client.torrent"
+
+
+def test_download_source_locator_prefers_url_over_magnet(monkeypatch):
+    launcher.configure_from_dict(
+        {
+            "server": {
+                "base_url": "https://srv.example",
+                "torrent_url": "https://dl.example/client.torrent",
+                "torrent_magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
+            }
+        }
+    )
+    monkeypatch.setattr(
+        update_sources,
+        "secure_urlopen",
+        lambda req, timeout=5, allowed_hosts=None: _resp(b"{}"),
+    )
+    src = client_update._download_source()
+    assert src.torrent_locator == "https://dl.example/client.torrent"
+
+
+def test_download_source_falls_back_to_server_magnet(monkeypatch):
+    """A mirror without its own torrent_url still exposes the server's
+    magnet as the resolved locator — the magnet is a server-only field that
+    rides along regardless of which HTTP source was probed."""
+    launcher.configure_from_dict(
+        {
+            "server": {
+                "base_url": "https://srv.example",
+                "torrent_magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
+            },
+            "mirrors": [{"name": "A", "base_url": "https://a.example"}],
+        }
+    )
+
+    def up(req, timeout=5, allowed_hosts=None):
+        return _resp(b"{}")
+
+    monkeypatch.setattr(update_sources, "secure_urlopen", up)
+    src = client_update._download_source()
+    assert src.torrent_url is None
+    assert src.torrent_magnet == "magnet:?xt=urn:btih:" + "ab" * 20
+    assert src.torrent_locator == "magnet:?xt=urn:btih:" + "ab" * 20
+
+
+def test_download_source_mirror_url_beats_server_magnet(monkeypatch):
+    """A mirror's own torrent_url wins the locator; the server's magnet is
+    still carried on the field (URL-first preference)."""
+    launcher.configure_from_dict(
+        {
+            "server": {
+                "base_url": "https://srv.example",
+                "torrent_magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
+            },
+            "mirrors": [
+                {
+                    "name": "A",
+                    "base_url": "https://a.example",
+                    "torrent_url": "https://a.example/client.torrent",
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        update_sources,
+        "secure_urlopen",
+        lambda req, timeout=5, allowed_hosts=None: _resp(b"{}"),
+    )
+    src = client_update._download_source()
+    assert src.torrent_url == "https://a.example/client.torrent"
+    assert src.torrent_magnet == "magnet:?xt=urn:btih:" + "ab" * 20
+    assert src.torrent_locator == "https://a.example/client.torrent"
 
 
 # ── TorrentDownloader unit tests (fake libtorrent) ──────────────────────────
@@ -1548,6 +1665,124 @@ def test_verify_worker_uses_torrent_when_manifest_down(tmp_path, monkeypatch):
     assert "__DIFF_TREE__" not in msgs
 
 
+def test_verify_worker_identity_crash_degrades_to_verify_failed(
+    tmp_path, monkeypatch
+):
+    """A snapshot whose metadata explodes during the cached-verdict identity
+    comparison must degrade to a posted verify-failure — never kill the
+    worker thread mid-fallback (run() already consumed the manifest
+    failure)."""
+    client = _mk_client(tmp_path)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    seed = {
+        client_update.TORRENT_VALIDATION_CACHE_KEY: {
+            "content_hash": "c1",
+            "info_hash": "oldhash",
+            "out_dir": os.path.abspath(str(client)),
+            "stale": [],
+        }
+    }
+    monkeypatch.setattr(client_update, "load_cache", lambda: seed)
+    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: DownloadSource(
+            "https://srv/manifest.json",
+            "https://srv/client",
+            "https://srv/client.torrent",
+        ),
+    )
+    monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
+
+    class BoomSnapshot:
+        info_hash = "newhash"
+
+        @property
+        def content_hash(self):
+            raise RuntimeError("corrupt metadata")
+
+    monkeypatch.setattr(
+        td, "_fetch_torrent", lambda url, log, cancel=None: BoomSnapshot()
+    )
+
+    def down(req, timeout=10, allowed_hosts=None):
+        raise ConnectionError("manifest down")
+
+    monkeypatch.setattr(client_update, "secure_urlopen", down)
+
+    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    vw.run()
+
+    msgs = [m[0] for m in log_q.queue]
+    assert "__TORRENT_VERIFY_FAILED__" in msgs
+    assert "__MANIFEST_UNAVAILABLE__" not in msgs
+
+
+def test_verify_worker_resume_data_failure_does_not_abort(
+    tmp_path, monkeypatch
+):
+    """Discarding resume data for a replaced snapshot is best-effort: an
+    OSError there must not abort the re-scan — the verify still posts its
+    verdict."""
+    client = _mk_client(tmp_path)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    seed = {
+        client_update.TORRENT_VALIDATION_CACHE_KEY: {
+            "content_hash": "c1",
+            "info_hash": "oldhash",
+            "out_dir": os.path.abspath(str(client)),
+            "stale": ["Data/a.bin"],
+        }
+    }
+    monkeypatch.setattr(client_update, "load_cache", lambda: seed)
+    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: DownloadSource(
+            "https://srv/manifest.json",
+            "https://srv/client",
+            "https://srv/client.torrent",
+        ),
+    )
+    monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
+
+    class FreshSnapshot:
+        content_hash = "c2"
+        info_hash = "newhash"
+
+    monkeypatch.setattr(
+        td, "_fetch_torrent", lambda url, log, cancel=None: FreshSnapshot()
+    )
+
+    def boom_remove(info_hash):
+        raise OSError("disk angry")
+
+    monkeypatch.setattr(td, "remove_resume_data", boom_remove)
+
+    class FakeVerifier:
+        def __init__(self, out_dir, log_q, prog_q):
+            pass
+
+        def verify(self, url, snapshot=None):
+            return []
+
+    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+
+    def down(req, timeout=10, allowed_hosts=None):
+        raise ConnectionError("manifest down")
+
+    monkeypatch.setattr(client_update, "secure_urlopen", down)
+
+    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    vw.run()
+
+    msgs = [m[0] for m in log_q.queue]
+    assert "__TORRENT_UP_TO_DATE__" in msgs
+    assert "__TORRENT_VERIFY_FAILED__" not in msgs
+
+
 def test_verify_worker_torrent_up_to_date(tmp_path, monkeypatch):
     """Manifest down but the torrent verify finds nothing stale → the
     up-to-date marker is posted, not manifest-unavailable."""
@@ -1580,6 +1815,77 @@ def test_verify_worker_torrent_up_to_date(tmp_path, monkeypatch):
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
 
+    msgs = [m[0] for m in log_q.queue]
+    assert "__TORRENT_UP_TO_DATE__" in msgs
+    assert "__MANIFEST_UNAVAILABLE__" not in msgs
+
+
+def test_verify_worker_uses_server_magnet(tmp_path, monkeypatch):
+    """Manifest down + magnet-only source: the torrent verify runs against
+    the server's magnet URI — the locator flows through to the resolver and
+    the verifier."""
+    client = _mk_client(tmp_path)
+    log_q, prog_q = queue.Queue(), queue.Queue()
+    magnet = "magnet:?xt=urn:btih:" + "ab" * 20
+    fetch_calls, verify_calls = [], []
+    # A stale verdict for this folder forces Step 1 of _torrent_verify to
+    # fetch the snapshot for an identity comparison before the recheck.
+    # Patched before worker construction: __init__ loads the cache.
+    monkeypatch.setattr(
+        client_update,
+        "load_cache",
+        lambda: {
+            client_update.TORRENT_VALIDATION_CACHE_KEY: {
+                "content_hash": "c0",
+                "info_hash": "oldhash",
+                "out_dir": os.path.abspath(str(client)),
+                "stale": [],
+            }
+        },
+    )
+    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
+    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+
+    monkeypatch.setattr(
+        client_update,
+        "_download_source",
+        lambda: DownloadSource(
+            "https://srv/manifest.json",
+            "https://srv/client",
+            None,
+            magnet,
+        ),
+    )
+    monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
+
+    class FreshSnapshot:
+        content_hash = "c1"
+        info_hash = "ih-magnet"
+
+    def fake_fetch(locator, log, cancel=None):
+        fetch_calls.append(locator)
+        return FreshSnapshot()
+
+    monkeypatch.setattr(td, "_fetch_torrent", fake_fetch)
+
+    def down(req, timeout=10, allowed_hosts=None):
+        raise ConnectionError("manifest down")
+
+    monkeypatch.setattr(client_update, "secure_urlopen", down)
+
+    class FakeVerifier:
+        def __init__(self, out_dir, log_q, prog_q):
+            pass
+
+        def verify(self, url, snapshot=None):
+            verify_calls.append(url)
+            return []
+
+    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    vw.run()
+
+    assert fetch_calls == [magnet]
+    assert verify_calls == [magnet]
     msgs = [m[0] for m in log_q.queue]
     assert "__TORRENT_UP_TO_DATE__" in msgs
     assert "__MANIFEST_UNAVAILABLE__" not in msgs
@@ -1630,7 +1936,9 @@ def test_verify_worker_skips_rescan_when_torrent_unchanged(
         torrent_bytes=b"",
         torrent_info=None,
     )
-    monkeypatch.setattr(td, "_fetch_torrent", lambda url, log: snapshot)
+    monkeypatch.setattr(
+        td, "_fetch_torrent", lambda url, log, cancel=None: snapshot
+    )
 
     verifier_calls = []
 
@@ -1702,7 +2010,9 @@ def test_verify_worker_skips_when_metadata_changes_but_identity_same(
         torrent_bytes=b"",
         torrent_info=None,
     )
-    monkeypatch.setattr(td, "_fetch_torrent", lambda url, log: snapshot)
+    monkeypatch.setattr(
+        td, "_fetch_torrent", lambda url, log, cancel=None: snapshot
+    )
 
     verifier_calls = []
 
@@ -1770,7 +2080,9 @@ def test_verify_worker_skips_when_url_rotates_same_snapshot(
         torrent_bytes=b"",
         torrent_info=None,
     )
-    monkeypatch.setattr(td, "_fetch_torrent", lambda url, log: snapshot)
+    monkeypatch.setattr(
+        td, "_fetch_torrent", lambda url, log, cancel=None: snapshot
+    )
 
     verifier_calls = []
 
@@ -1826,7 +2138,9 @@ def test_verify_worker_logs_full_rescan_reason_without_record(
         torrent_bytes=b"",
         torrent_info=None,
     )
-    monkeypatch.setattr(td, "_fetch_torrent", lambda url, log: snapshot)
+    monkeypatch.setattr(
+        td, "_fetch_torrent", lambda url, log, cancel=None: snapshot
+    )
 
     class FakeVerifier:
         def __init__(self, out_dir, log_q, prog_q):
@@ -1884,7 +2198,9 @@ def test_verify_worker_runs_recheck_when_snapshot_changed(
         torrent_bytes=b"",
         torrent_info=None,
     )
-    monkeypatch.setattr(td, "_fetch_torrent", lambda url, log: snapshot)
+    monkeypatch.setattr(
+        td, "_fetch_torrent", lambda url, log, cancel=None: snapshot
+    )
 
     verifier_calls = []
 
@@ -2074,15 +2390,212 @@ def test_torrent_corrupt_error_on_malformed_torrent(tmp_path, monkeypatch):
         "secure_urlopen",
         lambda *a, **k: io.BytesIO(b"not a real torrent file"),
     )
-    monkeypatch.setattr(
-        "libtorrent.torrent_info",
-        lambda *_: (_ for _ in ()).throw(RuntimeError("invalid torrent")),
+
+    def _bad_torrent_info(*_):
+        raise RuntimeError("invalid torrent")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "libtorrent",
+        SimpleNamespace(torrent_info=_bad_torrent_info),
     )
 
     with pytest.raises(
         td.TorrentCorruptError, match="Failed to parse torrent"
     ):
         td._fetch_torrent("https://srv/client.torrent", lambda m, t="": None)
+
+
+# ── magnet snapshots ────────────────────────────────────────────────────────
+
+
+def _make_magnet_lt(metadata_poll=1, peers=3):
+    """A fake libtorrent module exposing just what _resolve_magnet uses.
+
+    ``metadata_poll`` is the poll iteration after which status() reports
+    has_metadata; ``peers`` is the reported peer count. Returns
+    ``(fake_module, holder)`` where ``holder["h"]``/``holder["ses"]`` are
+    the created handle/session for assertions."""
+
+    class FakeTI:
+        def info_hashes(self):
+            return SimpleNamespace(v1="cd" * 20, v2="")
+
+    class FakeCreated:
+        def generate(self):
+            return {"info": "section"}
+
+    class FakeStatus:
+        def __init__(self, polls):
+            self.has_metadata = polls >= metadata_poll
+            self.num_peers = peers
+            self.name = "client"
+
+    class FakeHandle:
+        def __init__(self):
+            self.polls = 0
+            self.resumed = False
+            self.upload_mode = False
+
+        def set_flags(self, flags):
+            self.upload_mode = bool(flags)
+
+        def resume(self):
+            self.resumed = True
+
+        def pause(self):
+            pass
+
+        def status(self):
+            self.polls += 1
+            return FakeStatus(self.polls)
+
+        def torrent_file(self):
+            return FakeTI()
+
+    class FakeSession:
+        def __init__(self, settings):
+            self.settings = settings
+            self.atp = None
+
+        def add_torrent(self, atp):
+            self.atp = atp
+            return holder["h"]
+
+        def pop_alerts(self):
+            return []
+
+        def wait_for_alert(self, ms):
+            pass
+
+    class FakeFlags:
+        upload_mode = "upload-mode-flag"
+
+    class FakeLT:
+        torrent_flags = FakeFlags()
+        last_session = None
+
+        @staticmethod
+        def parse_magnet_uri(uri):
+            if not uri.startswith("magnet:?xt="):
+                raise ValueError("bad magnet")
+            return SimpleNamespace(save_path="", url=uri)
+
+        @staticmethod
+        def session(settings):
+            FakeLT.last_session = FakeSession(settings)
+            holder["ses"] = FakeLT.last_session
+            return FakeLT.last_session
+
+        @staticmethod
+        def create_torrent(ti):
+            return FakeCreated()
+
+        @staticmethod
+        def bencode(entry):
+            return b"resolved-metadata"
+
+    holder = {"h": FakeHandle()}
+    return FakeLT(), holder
+
+
+def _quiet_log():
+    return lambda m, t="": None
+
+
+def test_fetch_torrent_routes_magnet_to_resolver(monkeypatch):
+    sentinel = td.TorrentSnapshot(
+        url="m",
+        content_hash="c",
+        info_hash="i",
+        torrent_bytes=b"",
+        torrent_info=object(),
+    )
+    seen = {}
+
+    def fake_resolve(uri, log, cancel=None):
+        seen["uri"] = uri
+        seen["cancel"] = cancel
+        return sentinel
+
+    monkeypatch.setattr(td, "_resolve_magnet", fake_resolve)
+    out = td._fetch_torrent(
+        "magnet:?xt=urn:btih:" + "ab" * 20,
+        _quiet_log(),
+        cancel=lambda: False,
+    )
+    assert out is sentinel
+    assert seen["uri"] == "magnet:?xt=urn:btih:" + "ab" * 20
+    assert seen["cancel"] is not None
+
+
+def test_fetch_torrent_https_skips_resolver(monkeypatch, tmp_path):
+    cache_root = tmp_path / "cache"
+    cache_root.mkdir()
+    _redirect_torrent_cache(monkeypatch, cache_root)
+    _install_snapshot_fake(monkeypatch, info_hash="aa" * 20)
+
+    def boom(*a, **k):
+        raise AssertionError("resolver must not run for https URLs")
+
+    monkeypatch.setattr(td, "_resolve_magnet", boom)
+    snap = td._fetch_torrent(
+        "https://srv.example/client.torrent", _quiet_log()
+    )
+    assert snap.info_hash == "aa" * 20
+
+
+def test_resolve_magnet_builds_snapshot_and_persists(monkeypatch, tmp_path):
+    cache_root = tmp_path / "cache"
+    cache_root.mkdir()
+    _redirect_torrent_cache(monkeypatch, cache_root)
+    fake, holder = _make_magnet_lt(metadata_poll=1)
+    monkeypatch.setitem(sys.modules, "libtorrent", fake)
+    magnet = "magnet:?xt=urn:btih:" + "cd" * 20
+
+    snap = td._resolve_magnet(magnet, _quiet_log())
+
+    assert snap.url == magnet
+    assert snap.info_hash == "cd" * 20
+    assert snap.torrent_bytes == b"resolved-metadata"
+    assert (
+        snap.content_hash == hashlib.sha256(b"resolved-metadata").hexdigest()
+    )
+    assert snap.torrent_info is not None
+    h = holder["h"]
+    assert h.resumed is True
+    assert h.upload_mode is True
+    ses = holder["ses"]
+    assert ses.atp.save_path.startswith(tempfile.gettempdir())
+    assert ses.settings["enable_dht"] is True
+    persisted = cache_root / "torrents" / f"{'cd' * 20}.torrent"
+    assert persisted.read_bytes() == b"resolved-metadata"
+
+
+def test_resolve_magnet_raises_when_swarm_dead(monkeypatch):
+    fake, _holder = _make_magnet_lt(metadata_poll=10**9, peers=0)
+    monkeypatch.setitem(sys.modules, "libtorrent", fake)
+    monkeypatch.setattr(td, "DISCOVERY_TIMEOUT", 0.05)
+    with pytest.raises(td.TorrentStalledError):
+        td._resolve_magnet("magnet:?xt=urn:btih:" + "cd" * 20, _quiet_log())
+
+
+def test_resolve_magnet_rejects_unparseable_uri(monkeypatch):
+    fake, _holder = _make_magnet_lt()
+    monkeypatch.setitem(sys.modules, "libtorrent", fake)
+    with pytest.raises(td.TorrentCorruptError, match="magnet"):
+        td._resolve_magnet("not-a-magnet", _quiet_log())
+
+
+def test_resolve_magnet_honours_cancel(monkeypatch):
+    fake, _holder = _make_magnet_lt(metadata_poll=10**9)
+    monkeypatch.setitem(sys.modules, "libtorrent", fake)
+    with pytest.raises(RuntimeError, match="Cancelled"):
+        td._resolve_magnet(
+            "magnet:?xt=urn:btih:" + "cd" * 20,
+            _quiet_log(),
+            cancel=lambda: True,
+        )
 
 
 def test_torrent_stalled_error_includes_peers():
@@ -2102,6 +2615,9 @@ def test_torrent_session_error_on_session_fail(tmp_path, monkeypatch):
         raise RuntimeError("address already in use")
 
     q = queue.Queue()
+    # verify() imports libtorrent before it reaches the session; a fake
+    # keeps the session-failure path testable without the real binding.
+    monkeypatch.setitem(sys.modules, "libtorrent", SimpleNamespace())
     v = td.TorrentVerifier(str(tmp_path), q, q)
 
     class FakeTI:
@@ -2121,7 +2637,7 @@ def test_torrent_session_error_on_session_fail(tmp_path, monkeypatch):
     monkeypatch.setattr(
         td,
         "_fetch_torrent",
-        lambda url, log: td.TorrentSnapshot(
+        lambda url, log, cancel=None: td.TorrentSnapshot(
             url=url,
             content_hash="c",
             info_hash=None,
@@ -2545,7 +3061,7 @@ def test_downloader_resumes_torrent_and_ignores_stale_cache(
     _redirect_torrent_cache(monkeypatch, cache_root)
     info_hash = "aa" * 20
     # A stale resume file from a prior run — must be ignored now.
-    td.write_resume_bytes(info_hash, b"stale")
+    td._atomic_write_bytes(td.resume_path(info_hash), b"stale")
     fake = _install_snapshot_fake(monkeypatch, info_hash=info_hash)
     d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
     d.download("https://srv.example/client.torrent", {"Data/a.bin"})

@@ -20,8 +20,6 @@ class UpdateState:
     status: str = "Ready to update"
     progress: float = 0.0
     progress_label: str = ""
-    progress_phase: str = ""
-    progress_transport: str = ""
     progress_file: str = ""
     progress_downloaded: int = 0
     progress_total: int = 0
@@ -181,9 +179,14 @@ class AddonState:
 
     @classmethod
     def from_dict(cls, rec: dict) -> "AddonState":
-        return cls(
-            **{name: rec.get(name) for name in cls.__dataclass_fields__}
-        )
+        if not isinstance(rec, dict):
+            rec = {}
+        values = {name: rec.get(name) for name in cls.__dataclass_fields__}
+        # `folder` is the identity key every consumer indexes by — never
+        # let it be None despite its str annotation.
+        if not isinstance(values["folder"], str):
+            values["folder"] = ""
+        return cls(**values)
 
     def to_dict(self) -> dict:
         return {
@@ -218,36 +221,6 @@ class AddonsState:
         default_factory=lambda: {"INSTALLED": True, "AVAILABLE": True}
     )
     updates_count: int = 0
-
-    @classmethod
-    def from_status_dict(cls, status: dict) -> "AddonsState":
-        """Build from an app._addons_status dict ({state, addons, available})."""
-        return cls(
-            state=status.get("state", "idle"),
-            addons={
-                folder: AddonState.from_dict(rec)
-                for folder, rec in status.get("addons", {}).items()
-            },
-            available=[
-                AddonState.from_dict(rec)
-                for rec in status.get("available", [])
-            ],
-        )
-
-    def to_status_dict(self) -> dict:
-        """The app._addons_status dict shape ({state, addons, available})."""
-        return {
-            "state": self.state,
-            "addons": {
-                folder: rec.to_dict() for folder, rec in self.addons.items()
-            },
-            "available": [rec.to_dict() for rec in self.available],
-        }
-
-    def out_of_date_count(self) -> int:
-        return sum(
-            1 for rec in self.addons.values() if rec.status == "outOfDate"
-        )
 
 
 # ── settings / path ───────────────────────────────────────────────────────────
@@ -285,46 +258,18 @@ class LaunchSettings:
     @classmethod
     def from_config(cls, cfg: dict) -> "LaunchSettings":
         data = cfg.get("launch") or {}
+        if not isinstance(data, dict):
+            # A corrupted state file must not crash SettingsController
+            # construction at startup.
+            data = {}
         return cls(
             umu_proton=data.get("umu_proton", "UMU-Proton"),
             umu_binary_path=data.get("umu_binary_path", ""),
             umu_game_id=data.get("umu_game_id", "umu-nostalgia-launcher"),
             umu_renderer=data.get("umu_renderer", "auto"),
-            umu_gamemode=data.get("umu_gamemode", True),
-            umu_wayland=data.get("umu_wayland", True),
-            umu_skip_builtin_dxvk=data.get("umu_skip_builtin_dxvk", False),
+            umu_gamemode=bool(data.get("umu_gamemode", True)),
+            umu_wayland=bool(data.get("umu_wayland", True)),
+            umu_skip_builtin_dxvk=bool(
+                data.get("umu_skip_builtin_dxvk", False)
+            ),
         )
-
-
-# ── log ───────────────────────────────────────────────────────────────────────
-
-
-@dataclass
-class LogEntry:
-    """One session-log line (the _log_buffer (text, tag) pairs)."""
-
-    text: str
-    tag: str = ""
-
-
-# ── app container ─────────────────────────────────────────────────────────────
-
-
-@dataclass
-class AppState:
-    """Everything the interface needs, in one object the controllers share."""
-
-    update: UpdateState = field(default_factory=UpdateState)
-    news: NewsState = field(default_factory=NewsState)
-    mods: ModsState = field(default_factory=ModsState)
-    assets: AssetsState = field(default_factory=AssetsState)
-    addons: AddonsState = field(default_factory=AddonsState)
-    settings: SettingsState = field(default_factory=SettingsState)
-    log_buffer: list[LogEntry] = field(default_factory=list)
-
-    def add_log(self, text: str, tag: str = "") -> None:
-        self.log_buffer.append(LogEntry(text, tag))
-
-    def log_lines(self) -> list[tuple[str, str]]:
-        """The _log_buffer list of (text, tag) tuples for rendering."""
-        return [(entry.text, entry.tag) for entry in self.log_buffer]

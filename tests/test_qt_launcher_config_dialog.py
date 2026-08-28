@@ -21,8 +21,10 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QWidget,
 )
 
+from nostalgia_launcher.core.platform_support import default_game_folder
 from nostalgia_launcher.ui.qt.app import create_qt_app
 from nostalgia_launcher.ui.qt.launcher_config_dialog import (
     LauncherConfigDialog,
@@ -63,6 +65,21 @@ def test_dialog_widgets_present(qapp, tmp_path):
         assert isinstance(
             dlg.findChild(QPushButton, "launcherConfigBrowse"), QPushButton
         )
+        # Install-folder stage widgets exist but stay hidden until a
+        # configuration validated (input stage).
+        assert isinstance(
+            dlg.findChild(QLabel, "launcherConfigFolderTitle"), QLabel
+        )
+        folder_edit = dlg.findChild(QLineEdit, "launcherConfigFolder")
+        assert isinstance(folder_edit, QLineEdit)
+        assert not folder_edit.isReadOnly()
+        assert isinstance(
+            dlg.findChild(QPushButton, "launcherConfigFolderBrowse"),
+            QPushButton,
+        )
+        assert not dlg.findChild(
+            QWidget, "launcherConfigFolderGroup"
+        ).isVisible()
         assert isinstance(
             dlg.findChild(QPushButton, "launcherConfigOk"), QPushButton
         )
@@ -98,33 +115,120 @@ def test_ok_with_valid_file_accepts_after_summary(qapp, tmp_path):
         dlg.findChild(QLineEdit, "launcherConfigPath").setText(
             _write_config(path)
         )
-        # First submit validates and shows the summary stage.
+        # First submit validates and shows the install-folder stage.
+        dlg.findChild(QPushButton, "launcherConfigOk").click()
+        assert dlg._stage == "folder"
+        assert dlg.findChild(QWidget, "launcherConfigFolderGroup").isVisible()
+        folder = dlg.findChild(QLineEdit, "launcherConfigFolder")
+        assert folder.text() == default_game_folder("launcher.test")
+        # Second submit confirms the folder and shows the summary stage.
         dlg.findChild(QPushButton, "launcherConfigOk").click()
         assert dlg._stage == "summary"
-        assert dlg.findChild(QLabel, "launcherConfigSummary").isVisible()
         summary = dlg.findChild(QLabel, "launcherConfigSummary").text()
         assert "launcher.test" in summary
-        # Second submit (Accept) closes the dialog with the selection.
+        assert f"Install folder: {folder.text()}" in summary
+        # Third submit (Accept) closes the dialog with the selection.
         dlg.findChild(QPushButton, "launcherConfigOk").click()
         assert dlg.result() == QDialog.DialogCode.Accepted
-        assert dlg.selected_path() == str(path)
         assert dlg.selection()["kind"] == "file"
+        assert dlg.selection()["path"] == str(path)
+        assert dlg.selection()["install_dir"] == folder.text()
     finally:
         dlg.close()
 
 
-def test_summary_back_returns_to_input(qapp, tmp_path):
+def test_folder_stage_requires_a_choice(qapp, tmp_path):
+    """The install folder is REQUIRED: an empty field disables Continue
+    and a manual empty submit keeps the dialog on the folder stage."""
     path = tmp_path / "nostalgia_launcher.json"
     dlg = LauncherConfigDialog()
+    dlg.show()
     try:
         dlg.findChild(QLineEdit, "launcherConfigPath").setText(
             _write_config(path)
         )
-        dlg.findChild(QPushButton, "launcherConfigOk").click()
-        assert dlg._stage == "summary"
+        ok = dlg.findChild(QPushButton, "launcherConfigOk")
+        ok.click()
+        assert dlg._stage == "folder"
+        folder = dlg.findChild(QLineEdit, "launcherConfigFolder")
+        folder.clear()
+        assert not ok.isEnabled()  # live gating on the empty field
+        ok.setEnabled(True)  # bypass the gate to exercise the guard
+        ok.click()
+        error = dlg.findChild(QLabel, "launcherConfigError")
+        assert error.isVisible()
+        assert "install" in error.text().lower()
+        assert dlg._stage == "folder"
+        assert dlg.selection() is None
+    finally:
+        dlg.close()
+
+
+def test_folder_stage_browse_updates_field(qapp, tmp_path, monkeypatch):
+    import nostalgia_launcher.ui.qt.launcher_config_dialog as dialog_module
+
+    game_dir = tmp_path / "Games" / "WoW"
+    game_dir.mkdir(parents=True)
+    monkeypatch.setattr(
+        dialog_module.QFileDialog,
+        "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(game_dir)),
+    )
+    path = tmp_path / "nostalgia_launcher.json"
+    dlg = LauncherConfigDialog()
+    dlg.show()
+    try:
+        dlg._submit_file(_write_config(path))
+        assert dlg._stage == "folder"
+        dlg.findChild(QPushButton, "launcherConfigFolderBrowse").click()
+        folder = dlg.findChild(QLineEdit, "launcherConfigFolder")
+        assert folder.text() == str(game_dir)
+    finally:
+        dlg.close()
+
+
+def test_folder_stage_back_returns_to_input(qapp, tmp_path):
+    path = tmp_path / "nostalgia_launcher.json"
+    dlg = LauncherConfigDialog()
+    try:
+        dlg._submit_file(_write_config(path))
+        assert dlg._stage == "folder"
         dlg.findChild(QPushButton, "launcherConfigBack").click()
         assert dlg._stage == "input"
+        # The validated config was dropped: continuing re-validates.
+        assert dlg._validated is None
+        assert not dlg.findChild(
+            QWidget, "launcherConfigFolderGroup"
+        ).isVisible()
+    finally:
+        dlg.close()
+
+
+def test_summary_back_returns_to_folder_stage(qapp, tmp_path):
+    path = tmp_path / "nostalgia_launcher.json"
+    dlg = LauncherConfigDialog()
+    try:
+        dlg._submit_file(_write_config(path))
+        dlg._confirm_folder()
+        assert dlg._stage == "summary"
+        dlg.findChild(QPushButton, "launcherConfigBack").click()
+        assert dlg._stage == "folder"
         assert not dlg.findChild(QLabel, "launcherConfigSummary").isVisible()
+    finally:
+        dlg.close()
+
+
+def test_install_dir_is_expanded_and_normalized(qapp, tmp_path):
+    path = tmp_path / "nostalgia_launcher.json"
+    dlg = LauncherConfigDialog(initial_path=_write_config(path))
+    try:
+        dlg._submit_file(str(path))
+        folder = dlg.findChild(QLineEdit, "launcherConfigFolder")
+        folder.setText(str(tmp_path / "sub" / ".." / "game"))
+        dlg._confirm_folder()
+        dlg._accept_pending()
+        expected = os.path.normpath(str(tmp_path / "sub" / ".." / "game"))
+        assert dlg.selection()["install_dir"] == expected
     finally:
         dlg.close()
 
@@ -205,16 +309,22 @@ def test_url_submission_reaches_summary(qapp, monkeypatch):
             "https://example.invalid/community.json"
         )
         dlg.findChild(QPushButton, "launcherConfigOk").click()
-        assert _wait_until(qapp, lambda: dlg._stage == "summary")
+        # Fetch done → install-folder stage (pre-filled suggestion).
+        assert _wait_until(qapp, lambda: dlg._stage == "folder")
+        folder = dlg.findChild(QLineEdit, "launcherConfigFolder")
+        assert folder.text() == default_game_folder("x.example")
+        assert dlg.selection() is None  # not yet accepted
+        dlg.findChild(QPushButton, "launcherConfigOk").click()
+        assert dlg._stage == "summary"
         summary = dlg.findChild(QLabel, "launcherConfigSummary").text()
         assert "x.example" in summary
-        assert dlg.selection() is None  # not yet accepted
         dlg.findChild(QPushButton, "launcherConfigOk").click()
         assert dlg.result() == QDialog.DialogCode.Accepted
         sel = dlg.selection()
         assert sel["kind"] == "url"
         assert sel["config_url"] == "https://example.invalid/community.json"
         assert sel["raw"] == payload
+        assert sel["install_dir"] == default_game_folder("x.example")
     finally:
         dlg.close()
 
@@ -316,6 +426,7 @@ def test_summary_lists_embedded_and_local_store(qapp, tmp_path):
     )
     dlg = LauncherConfigDialog(initial_path=str(path))
     dlg._submit_file(str(path))
+    dlg._confirm_folder()  # pre-filled suggestion stands in as the choice
     text = dlg.findChild(QLabel, "launcherConfigSummary").text()
     assert "Will store locally: 1 mod, 1 addon, 1 asset" in text
     assert "+1 embedded" in text
@@ -330,6 +441,7 @@ def test_summary_omits_asset_line_when_unconfigured(qapp, tmp_path):
     )
     dlg = LauncherConfigDialog(initial_path=str(path))
     dlg._submit_file(str(path))
+    dlg._confirm_folder()  # pre-filled suggestion stands in as the choice
     text = dlg.findChild(QLabel, "launcherConfigSummary").text()
     assert "Asset catalog:" not in text
     assert "Will store locally" not in text

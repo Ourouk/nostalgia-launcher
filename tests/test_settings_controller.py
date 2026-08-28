@@ -441,7 +441,7 @@ def test_set_path_resets_for_new_folder(
     game = tmp_path / "game"
     game.mkdir()
     (game / "WoW.exe").write_bytes(b"MZ")
-    cfg["mods"] = {"VanillaFixes": {"enabled": True}}
+    cfg["mods"] = {"ExampleLoader": {"enabled": True}}
     cfg["addons"] = {"pfUI": {"git": "x"}}
     wdb_calls = []
     monkeypatch.setattr(
@@ -490,7 +490,7 @@ def test_set_path_rejected_while_update_running(
     monkeypatch.setattr(sc.config_store, "cache_file", str(cache))
     game = tmp_path / "game"
     game.mkdir()
-    cfg["mods"] = {"VanillaFixes": {"enabled": True}}
+    cfg["mods"] = {"ExampleLoader": {"enabled": True}}
     fakes.updater.running = True
 
     assert controller.set_path(str(game)) is False
@@ -782,13 +782,6 @@ def test_open_client_folder_oserror_logs(controller, monkeypatch, tmp_path):
     assert any("Could not open folder" in t for t in _log_texts(events))
 
 
-def test_open_url_launches_browser(controller, monkeypatch):
-    calls = []
-    monkeypatch.setattr(sc.webbrowser, "open", lambda url: calls.append(url))
-    controller.open_url("https://example.com")
-    assert calls == ["https://example.com"]
-
-
 # ── catalog registries ───────────────────────────────────────────────────────
 
 
@@ -962,3 +955,14 @@ def test_clear_custom_addons_logs(controller, monkeypatch):
     assert cleared == ["addons"]
     events = controller._dispatcher.drain()
     assert any("Custom addon entries cleared" in t for t in _log_texts(events))
+
+
+def test_set_path_empty_is_a_no_op(controller, cfg):
+    """An empty submission must not persist out_dir="." or wipe the
+    install records — "" means "unconfirmed", never the CWD."""
+    cfg["out_dir"] = "/some/game"
+    cfg["mods"] = {"m": {"installed_files": ["a.dll"]}}
+    assert controller.set_path("") is False
+    assert controller.set_path("   ") is False
+    assert cfg["out_dir"] == "/some/game"
+    assert "mods" in cfg

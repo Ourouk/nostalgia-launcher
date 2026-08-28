@@ -9,15 +9,17 @@ The libtorrent pitfall list lives in `docs/BITTORRENT_UPDATER_NOTES.md`.
 ```
 src/nostalgia_launcher/
   cli.py          # entry point: config wiring + window loop
-  core/           # constants, config_store, launcher, security_http, filesystem, helpers, log_sink, platform_support, errors, themes
-  services/       # catalog, addons, mods, assets, news, tweaks, self_update, server_index, umu, logo, update_backend/
+  core/           # constants, config_store, launcher, security_http, filesystem, helpers, log_sink, platform_support, profiles, app_lock, errors, themes
+  services/       # catalog, addons, mods, assets, news, tweaks, self_update, umu, logo, mpq, config_import, update_backend/, sources/
   controllers/    # update, news, mods, assets, addons, settings, tweaks (toolkit-agnostic)
   state/          # models.py (state dataclasses), events.py (dispatcher)
   ui/qt/          # app, main_window, bridge, theme, panels, dialogs
 ```
 
-- `core/constants.py` computes `APP_DIR`: repo root (3 dirs up from the file)
-  when run from source, exe dir when frozen. Config and cache live in separate
+- Config discovery: `launcher.discover_path()` looks next to the exe when
+  frozen (macOS also one level above the `.app`), at the **repo root** (4
+  dirs up from `core/launcher.py`) when run from source, then in the CWD.
+  Config and cache live in separate
   per-user dirs via `platform_support.config_dir()/cache_dir()`: Linux config
   `~/.nostalgia-launcher`, Windows `%APPDATA%\NostalgiaLauncher`, macOS
   `~/Library/Application Support`; cache is Linux XDG / `%LOCALAPPDATA%` /
@@ -31,18 +33,26 @@ src/nostalgia_launcher/
   driven by `cli._pick_launcher_config()`); an explicit `--launcher-config`
   that is missing/invalid is a hard `cli.main()` error (no wizard). The wizard
   validates via `launcher.validate_path()` (no global-state side effect) and
-  the selection is persisted to `launcher.user_config_path()` (the per-user
-  config dir) via `launcher.persist()`, taking precedence over auto-discovery
-  on later runs. The download host allowlist
+  REQUIRES an install folder: after validation it shows an editable
+  Games/<ServerName>-pre-filled folder stage, and the accepted folder is
+  recorded as the active profile's confirmed game folder by
+  `config_store.apply_confirmed_out_dir(prof.state_path(), …)` in
+  `cli._first_launch` (Settings → PROFILES → New… writes the fresh profile's
+  own store the same way). The config selection itself is persisted to
+  `launcher.user_config_path()` (the per-user config dir) via
+  `launcher.persist()`, taking precedence over auto-discovery on later runs.
+  The download host allowlist
   (`security_http.allowed_download_hosts()`) is built from the launcher's
   server+mirror hosts plus the git hosts.
-- Game folder is STRICTLY user-confirmed: `out_dir` is written ONLY by
-  Settings apply (which also sets `out_dir_user_set`); controllers read it
-  stored-or-empty and refuse to operate when empty. The only default-ish
-  value left is `platform_support.default_game_folder(server_name)`
-  (`~/Games/<Server>`, `""` when unnamed) — a UI placeholder suggestion,
-  never persisted or auto-created. Pre-flag installs get the flag backfilled
-  once in `SettingsController.__init__`. Don't reintroduce silent defaults.
+- Game folder is STRICTLY user-confirmed: there are exactly two writers of
+  `out_dir` — Settings apply and the first-run wizard's required folder step
+  (both set `out_dir_user_set`); controllers read it stored-or-empty and
+  refuse to operate when empty. The only default-ish value left is
+  `platform_support.default_game_folder(server_name)`
+  (`~/Games/<Server>`, "" when unnamed) — the wizard pre-fills its editable
+  field with it; it is never persisted without the user accepting that
+  stage, never auto-created. Pre-flag installs get the flag backfilled once
+  in `SettingsController.__init__`. Don't reintroduce silent defaults.
 - **Session log** (`core/log_sink.py`): `log()` is the one thread-safe sink —
   it queues for the GUI, mirrors to stdout under `NOSTALGIA_DEBUG`, and (once
   `configure_file()` ran — only `cli._run_backend()` calls it) appends to
@@ -89,7 +99,10 @@ active per process, pinned once via `profiles.activate(resolve(...))` in
 `logo.logo_cache_path()`,
 `torrent_update.torrent_cache_dir()`, and first-launch wizard persistence
 (via `launcher.set_profile_launcher_path`, cleared by `launcher.reset()`).
-`controllers/settings` checks `first_run` against
+The wizard's install-folder step lands in the same profile's state store
+(`config_store.apply_confirmed_out_dir(prof.state_path(), …)`), so each
+profile keeps its own client install folder. `controllers/settings`
+checks `first_run` against
 `config_store.config_file` (NOT the constants) so a fresh profile gets
 its own wizard flow. Name grammar `[A-Za-z0-9][A-Za-z0-9 _.-]{0,31}` with
 no trailing dot/space; `"default"` is reserved. UI: the main-window
@@ -175,6 +188,28 @@ the QLocalServer guard remains authoritative there.
   the online catalog(s) AND rescans SHAs. Panel headers show a "Catalog
   updated …" age tag. Tests provide a registry by monkeypatching
   `mods.mods_registry()`.
+- **Mod entry schema** (`catalog.validate_mod`): every validated mod carries
+  `type` (`"mod"` = DLL drop-in, default; `"external-launcher"` = provides the
+  game executable via `executable`) and `installation` (`"user_opt_in"`
+  default, `"required"` = startup auto-install / "Install Required" target).
+  Required is a default, never an enforcement: the row checkbox stays free,
+  and an explicit user opt-out (an `enabled: false` record) persists —
+  startup will NOT force-reinstall a required mod the user turned off.
+  The legacy `essential: true` boolean is silently translated to
+  `installation: "required"`. `register_dll` accepts `str | list[str]` and is
+  normalized to a list — one mod may wire several DLLs into `dlls.txt`
+  (`services.mods.registered_dlls`), and an external-launcher needs none.
+  Entries must name real on-disk DLLs that need dlls.txt *injection*;
+  proxy-loaded files (e.g. a d3d9.dll picked up by the OS loader) are tracked
+  via `installed_files` alone — dlls.txt stays the client's injection list,
+  not launcher bookkeeping.
+  `client_versions` is optional metadata (no filtering yet; legacy catalogs
+  may still send camelCase `clientVersions`, normalized on ingest). Game
+  launch prefers the first on-disk executable from
+  `mods.external_launcher_executables()` — active external launchers only:
+  required ones always, opt-ins only when enabled in state, and only when the
+  exe exists — else `WoW.exe` (`core/filesystem.pick_game_executable`). There
+  is NO hardcoded loader preference.
 - **Custom entries are first-class**: MODS and ASSETS panels have an
   "+ Add custom …" banner button (`custom_mod_dialog.py` covers every
   registered source kind; `custom_asset_dialog.py` the full asset shape);
@@ -231,7 +266,7 @@ the QLocalServer guard remains authoritative there.
   AssetsLoaded, apply completion) for the version picked in its header
   combo, and offers confirmed per-row removal of foreign files.
 - **realmlist.wtf**: `services/tweaks.write_realmlist_wtf(client_dir)`
-  writes `SET realmlist "<server.realm>"` into the client root wherever a
+  writes `SET realmlist <server.realm>` (value sanitized, unquoted) into the client root wherever a
   fresh `WTF/Config.wtf` is seeded (verify with overwrite/missing config,
   torrent recovery, tweaks apply on a missing config) — vanilla clients
   read both files.
@@ -254,19 +289,25 @@ the QLocalServer guard remains authoritative there.
   widgets. The Qt side (`ui/qt/bridge.py`) converts events to Qt signals on the
   main thread.
 - Client updates get a second download backend: when the active download
-  source advertises a `torrent_url` (launcher config, server or mirror) and
-  libtorrent is importable, `UpdateWorker` bulk-downloads the stale files via
+  source advertises a torrent snapshot — a `torrent_url` (launcher config,
+  server or mirror) or the server-only `torrent_magnet` (`magnet:?xt=…`;
+  a torrent has one swarm, so mirrors never carry magnets; an HTTPS URL
+  wins when both are set) and libtorrent is importable,
+  `UpdateWorker` bulk-downloads the stale files via
   `services/update_backend/torrent_update.py`, then re-verifies exactly the
   delivered files against the manifest's SHA-1 (`_reverify_torrent_files`)
   and HTTP-refetches any mismatch; the whole-client per-file HTTP
   `traverse()` runs only when the torrent backend wasn't used. In the
-  manifest-less recovery path there is no manifest to check — the TLS-fetched
-  torrent's piece hashes are the guarantee.
-- The torrent root is **auto-detected** from the unique `WoW.exe` position in
-  the torrent: the parent of `WoW.exe` (case-insensitive) is the root prefix
-  stripped from every torrent path when mapping to the selected WoW folder
-  (e.g. `client/WoW.exe` → `<wow_folder>/WoW.exe`). A `TorrentLayoutError`
-  is raised when `WoW.exe` is missing, duplicated, or any file escapes the root.
+  manifest-less recovery path there is no manifest to check — the piece
+  hashes of the TLS-fetched `.torrent` (or of magnet metadata that must
+  hash to the configured btih) are the guarantee.
+- The torrent root is **auto-detected** from the unique marker-file position
+  in the torrent: the parent of the marker (case-insensitive) is the root
+  prefix stripped from every torrent path when mapping to the selected WoW
+  folder (default marker `WoW.exe`, configurable via
+  `server.torrent_root_marker`; e.g. `client/WoW.exe` →
+  `<wow_folder>/WoW.exe`). A `TorrentLayoutError`
+  is raised when the marker is missing, duplicated, or any file escapes the root.
   **This stripping is applied to the actual read/write target** via
   `_remap_torrent_to_out_dir()` (in both `verify()` and `download()`), which
   remaps the torrent's file paths to `out_dir/local` with `torrent_info.remap_files`.
@@ -283,12 +324,18 @@ the QLocalServer guard remains authoritative there.
 - **Torrent verification is offline**: the verification session uses an empty
   `listen_interfaces` and disables DHT/LSD/UPnP/NAT-PMP and all peer
   connections. No P2P activity occurs before the user presses UPDATE. Only the
-  download session enables networking.
+  download session enables networking. The one exception is a magnet source:
+  `_resolve_magnet` must join the swarm (DHT + the magnet's trackers) once to
+  download the metadata — into a throwaway save path, upload-mode when the
+  binding exposes it — before the same offline recheck runs; peers cannot
+  forge metadata that doesn't hash to the magnet's configured btih.
 - When the manifest itself can't be fetched, the update falls back to a
   manifest-less **BitTorrent recovery**: if the active source advertises a
-  `torrent_url` and libtorrent is importable, `UpdateWorker._recovery_download()`
-  downloads the *whole* torrent (`TorrentDownloader.download(url, None)`), whose
-  piece hashes (the `.torrent` arrived over TLS) stand in for the manifest's
+  torrent snapshot (`torrent_url` / server `torrent_magnet`) and libtorrent is
+  importable, `UpdateWorker._recovery_download()`
+  downloads the *whole* torrent (`TorrentDownloader.download(url, None)`),
+  whose piece hashes (the `.torrent` arrived over TLS, or the metadata hashed
+  to the magnet's btih) stand in for the manifest's
   per-file SHA-1. It posts `markers.TORRENT_RECOVERY_DONE` (controller keeps
   `manifest_available=False`); a failed verify offers this via an enabled
   UPDATE button when `torrent_recovery_available()` (`LauncherConfig.has_torrent()`
@@ -297,7 +344,7 @@ the QLocalServer guard remains authoritative there.
   (`DownloadSource`/`_download_source`, re-exported by `http_update` so
   controllers/tests keep importing from there).
 - The launcher never binary-patches `WoW.exe` — runtime client fixes are left
-  to the VanillaFixes loader mod. The only tweak channel is `Config.wtf`.
+  to the catalog-declared loader mods (external launchers). The only tweak channel is `Config.wtf`.
 
 ## Update lifecycle & game launch
 
@@ -321,8 +368,9 @@ the QLocalServer guard remains authoritative there.
   True on Windows (native) and on Linux only when `umu.umu_available()` finds
   `umu-run` on PATH (or `~/.local/bin/umu-run`). `controllers/update.py`'s
   `launch_game()` splits into `_launch_game_windows()` (Popen, DXVK notice,
-  VanillaFixes.exe preference) and `_launch_game_via_umu()` (WoW.exe under
-  Proton in the launcher-wide `data_dir()/wineprefix`, no DXVK notice). All umu
+  external-launcher executable preference) and `_launch_game_via_umu()`
+  (WoW.exe under Proton in the launcher-wide `data_dir()/wineprefix`, no DXVK
+  notice). All umu
   settings live in the config's `"launch"` key and are edited via
   `SettingsController.set_umu_*`: `umu_proton` (defaults to `UMU-Proton`, the
   newest installed Proton — `services/umu.py` `DEFAULT_PROTON`/`default_proton()`),

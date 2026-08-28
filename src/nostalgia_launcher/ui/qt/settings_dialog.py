@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...controllers.settings import SettingsController
-from ...core import launcher, platform_support, profiles
+from ...core import config_store, launcher, platform_support, profiles
 from . import metrics
 from .bridge import ControllerBridge
 from .linux_settings_dialog import LinuxSettingsDialog
@@ -112,6 +112,10 @@ class SettingsDialog(QDialog):
     """
 
     logsToggleRequested = Signal()
+    # Fired whenever the profiles registry view is rebuilt after a
+    # mutation (new/duplicate/rename/delete) so live consumers — the
+    # header profile switcher — can reload without a restart.
+    profilesChanged = Signal()
 
     def __init__(
         self,
@@ -566,7 +570,8 @@ class SettingsDialog(QDialog):
 
     def _refresh_profiles_combo(self, select=None):
         """Rebuild the combo from the registry; preselect `select` (or the
-        active profile)."""
+        active profile). Every mutation path lands here, so this is also
+        where `profilesChanged` is announced."""
         combo = self._profiles_combo
         current = select or profiles.active().name
         combo.blockSignals(True)
@@ -578,6 +583,7 @@ class SettingsDialog(QDialog):
                 combo.setCurrentIndex(idx)
         finally:
             combo.blockSignals(False)
+        self.profilesChanged.emit()
 
     def _selected_profile(self) -> str:
         return self._profiles_combo.currentText()
@@ -613,8 +619,10 @@ class SettingsDialog(QDialog):
         while the dialog runs, so an accepted selection lands its
         launcher.json AND content repos into the new profile without ever
         touching the running profile's stores or the global launcher
-        config. Skipping is acceptable — the profile simply stays
-        unconfigured."""
+        config. The wizard's required install folder is recorded into the
+        new profile's OWN state store (the process store still points at
+        the running profile), so the profile restarts fully configured.
+        Skipping is acceptable — the profile simply stays unconfigured."""
         from .launcher_config_dialog import LauncherConfigDialog
 
         prev_active = profiles.active()
@@ -624,9 +632,16 @@ class SettingsDialog(QDialog):
             dlg = LauncherConfigDialog(initial_path=launcher.discover_path())
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 return
-            err = self._persist_profile_selection(dlg.selection())
+            sel = dlg.selection()
+            err = self._persist_profile_selection(sel)
             if err:
                 self._profile_error(err)
+                return
+            install_dir = (sel.get("install_dir") or "").strip()
+            if install_dir:
+                config_store.apply_confirmed_out_dir(
+                    prof.state_path(), install_dir
+                )
         finally:
             profiles.activate(prev_active)
             launcher.set_profile_launcher_path(
@@ -638,7 +653,8 @@ class SettingsDialog(QDialog):
         persist override / active-profile scope. Validation-only: never
         mutates the process-global launcher config (`persist`/
         `persist_text` re-validate internally; `validate_dict` is
-        side-effect-free). Returns "" on success."""
+        side-effect-free). Returns "" on success, an error message
+        otherwise — never raises into the Qt slot."""
         from ...services import config_import
 
         if sel["kind"] == "file":
@@ -649,7 +665,10 @@ class SettingsDialog(QDialog):
             _data, raw, err = config_import.fetch_config_url(sel["config_url"])
             if err:
                 return err
-        cfg, verr = launcher.validate_dict(json.loads(raw))
+        try:
+            cfg, verr = launcher.validate_dict(json.loads(raw))
+        except (ValueError, TypeError) as e:
+            return f"Invalid configuration JSON: {e}"
         if cfg is None:
             return f"Invalid launcher configuration: {verr}"
         _dest, err = launcher.persist_text(raw)
@@ -781,8 +800,11 @@ class SettingsDialog(QDialog):
         )
         if chosen:
             chosen = os.path.normpath(chosen)
-            self._settings.set_path(chosen)
-            self._path_edit.setText(chosen)
+            # Only mirror the picker result into the field when the change
+            # was actually applied — a refused change (update running)
+            # must not display a folder the config never accepted.
+            if self._settings.set_path(chosen):
+                self._path_edit.setText(chosen)
 
     def _on_refresh_mirror(self):
         p = self._palette

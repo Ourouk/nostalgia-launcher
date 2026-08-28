@@ -29,13 +29,23 @@ vetted by `security_http` at fetch time.
 
 import json
 import os
+import time
+import urllib.request
 from urllib.parse import urlsplit
 
 from ..core import config_store, launcher, profiles
+from ..core.constants import UA
 from ..core.log_sink import log
+from ..core.security_http import read_capped, secure_urlopen
 from .sources import hooks as _hooks
 from .sources import kinds as _source_kinds
-from .sources.safety import safe_folder, safe_relpath  # noqa: F401 (re-export)
+from .sources.safety import (  # noqa: F401 (safe_folder re-exported)
+    safe_folder,
+    safe_relpath,
+)
+from .sources.safety import (
+    valid_sha1 as _valid_sha1,
+)
 
 # Allowlisted mod source kinds / post-install hooks. A remote or custom mod
 # entry can only reference these — it cannot name arbitrary code. Both come
@@ -43,7 +53,13 @@ from .sources.safety import safe_folder, safe_relpath  # noqa: F401 (re-export)
 MOD_SOURCE_KINDS = set(_source_kinds())
 MOD_POST_INSTALL_HOOKS = set(_hooks.names())
 
-CUSTOM_FILE_TEMPLATE = "[\n]\n"
+# Mod discriminators. ``type`` says what a mod provides (a DLL drop-in vs
+# the game executable itself); ``installation`` replaces the legacy
+# ``essential`` boolean ("required" mods auto-install by default — an
+# explicit user opt-out is always respected). A catalog entry carrying the
+# legacy ``essential: true`` is translated to ``installation: "required"``.
+MOD_TYPES = ("mod", "external-launcher")
+MOD_INSTALLATIONS = ("required", "user_opt_in")
 
 # Catalogs auto-refresh at most once a week: startup and panel loads serve
 # the persisted cache instantly, and only a cache older than this TTL (or an
@@ -132,33 +148,6 @@ def load_custom(kind: str, validator) -> list:
     return out
 
 
-def write_custom_template(kind: str, template: str) -> bool:
-    """Create the custom file from ``template`` when it doesn't exist yet."""
-    path = custom_file(kind)
-    if os.path.exists(path):
-        return False
-    try:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(template)
-    except OSError as e:
-        log(f"  Could not create {kind} custom file: {e}", "err")
-        return False
-    return True
-
-
-def clear_custom(kind: str) -> bool:
-    """Delete the custom file. Returns True when something was removed."""
-    path = custom_file(kind)
-    try:
-        if os.path.exists(path):
-            os.remove(path)
-            return True
-    except OSError as e:
-        log(f"  Could not clear {kind} custom file: {e}", "err")
-    return False
-
-
 # ── local repo files ─────────────────────────────────────────────────────────
 # Each content kind (mods/addons/assets) lives in a single on-disk repo,
 # written by the import-time split (`core.launcher._persist_data`) and
@@ -245,20 +234,40 @@ def local_repo_has_entries(kind: str) -> bool:
 
 def validate_entries(entries: list, validator, label: str) -> list:
     """Sanitize raw repo/embedded entries with a kind validator, skipping
-    unusable ones with a logged warning rather than failing the load."""
+    unusable ones with a logged warning rather than failing the load. A
+    validator crash on a poisoned entry is contained the same way."""
     out = []
     for entry in entries:
-        cleaned = validator(entry) if isinstance(entry, dict) else None
-        if cleaned is None:
-            log(f"  {label}: skipping invalid entry {entry!r}", "err")
-            continue
-        out.append(cleaned)
+        cleaned = _validate_entry_safe(entry, validator, label)
+        if cleaned is not None:
+            out.append(cleaned)
     return out
+
+
+def _validate_entry_safe(entry, validator, label: str):
+    """`validator(entry)` with log-and-skip on any failure: one malformed
+    entry must never take down a whole catalog/repo load."""
+    try:
+        cleaned = validator(entry) if isinstance(entry, dict) else None
+    except Exception as e:
+        log(f"  {label}: skipping invalid entry {entry!r} ({e})", "err")
+        return None
+    if cleaned is None:
+        log(f"  {label}: skipping invalid entry {entry!r}", "err")
+        return None
+    return cleaned
 
 
 # ── shared validation helpers ────────────────────────────────────────────────
 # safe_folder / safe_relpath are re-exported from sources.safety (imported
 # above) so every consumer keeps its historical dotted path.
+
+
+def _text(v) -> str:
+    """A catalog string field coerced to a stripped str: truthy non-strings
+    (numbers, bools) become "" so the `or` fallbacks below stay effective
+    instead of crashing on .strip()."""
+    return v.strip() if isinstance(v, str) else ""
 
 
 def safe_ref(v) -> str | None:
@@ -290,7 +299,7 @@ def validate_addon(entry: dict) -> dict | None:
     vetted by the addons service (which owns the host allowlist), so they
     are only length-checked here.
     """
-    name = ((entry.get("name") or entry.get("folder")) or "").strip()
+    name = _text(entry.get("name") or entry.get("folder"))
     if not safe_folder(name):
         return None
     rec = {
@@ -356,10 +365,10 @@ def validate_mod(entry: dict) -> dict | None:
     """
     if not isinstance(entry, dict):
         return None
-    mid = (entry.get("id") or "").strip()
+    mid = _text(entry.get("id"))
     if not safe_folder(mid):
         return None
-    name = (entry.get("name") or mid).strip()
+    name = _text(entry.get("name") or mid)
     if not name:
         return None
     source = entry.get("source")
@@ -372,7 +381,9 @@ def validate_mod(entry: dict) -> dict | None:
     mod = {
         "id": mid,
         "name": name,
-        "essential": bool(entry.get("essential", False)),
+        # Explicit null behaves like absence (the documented "default mod").
+        "type": entry.get("type") or "mod",
+        "installation": _mod_installation(entry),
         "description": (
             entry.get("description")
             if isinstance(entry.get("description"), str)
@@ -381,6 +392,10 @@ def validate_mod(entry: dict) -> dict | None:
         "repo_url": _https_url(entry.get("repo_url")),
         "source": {},
     }
+    if mod["type"] not in MOD_TYPES:
+        return None
+    if mod["installation"] not in MOD_INSTALLATIONS:
+        return None
     hooks = source.get("post_install") or []
     if hooks:
         if not isinstance(hooks, list) or not all(
@@ -405,9 +420,17 @@ def validate_mod(entry: dict) -> dict | None:
 
     register = entry.get("register_dll")
     if register is not None:
-        if not isinstance(register, str) or not safe_relpath(register):
+        if isinstance(register, str):
+            register = [register]
+        if (
+            not isinstance(register, list)
+            or not register
+            or not all(
+                isinstance(d, str) and safe_relpath(d) for d in register
+            )
+        ):
             return None
-        mod["register_dll"] = register
+        mod["register_dll"] = list(register)
     files = entry.get("installed_files")
     if files is not None:
         if not isinstance(files, list) or not all(
@@ -415,47 +438,83 @@ def validate_mod(entry: dict) -> dict | None:
         ):
             return None
         mod["installed_files"] = list(files)
+    executable = entry.get("executable")
+    if executable is not None:
+        if not isinstance(executable, str) or not safe_relpath(executable):
+            return None
+        mod["executable"] = executable
+    client_versions = entry.get("client_versions")
+    if client_versions is None:  # legacy camelCase alias
+        client_versions = entry.get("clientVersions")
+    if client_versions is not None:
+        if not isinstance(client_versions, list) or not all(
+            isinstance(v, str) for v in client_versions
+        ):
+            return None
+        mod["client_versions"] = list(client_versions)
     return mod
 
 
-def merge_mods(remote: list, custom: list) -> list:
-    """Custom mod entries override remote ones by id; new ids are appended."""
-    by_id = {m["id"]: m for m in remote}
+def _mod_installation(entry: dict) -> str:
+    """The effective installation policy: the new ``installation`` field,
+    else the legacy ``essential`` boolean translated (true → "required"),
+    else the "user_opt_in" default."""
+    installation = entry.get("installation")
+    if isinstance(installation, str):
+        return installation.lower()
+    if entry.get("essential", False):
+        return "required"
+    return "user_opt_in"
+
+
+# Fields a kind's custom layer may override on an existing (remote/server)
+# entry; absent or null values leave the base copy untouched.
+MOD_MERGE_FIELDS = (
+    "name",
+    "description",
+    "repo_url",
+    "type",
+    "installation",
+    "source",
+    "register_dll",
+    "installed_files",
+    "executable",
+    "client_versions",
+)
+
+ASSET_MERGE_FIELDS = (
+    "name",
+    "description",
+    "repo_url",
+    "essential",
+    "url",
+    "dest",
+    "version",
+    "sha1",
+    "size",
+    "probe",
+)
+
+
+def merge_by_key(remote: list, custom: list, fields) -> list:
+    """Custom entries override remote ones by id (only `fields`, when set);
+    new ids are appended."""
+    by_id = {e["id"]: e for e in remote}
     for entry in custom:
-        mid = entry.get("id")
-        if not mid:
+        eid = entry.get("id")
+        if not eid:
             continue
-        base = by_id.get(mid)
+        base = by_id.get(eid)
         if base is None:
-            by_id[mid] = dict(entry)
+            by_id[eid] = dict(entry)
             continue
-        for key in (
-            "name",
-            "description",
-            "repo_url",
-            "essential",
-            "source",
-            "register_dll",
-            "installed_files",
-        ):
+        for key in fields:
             if entry.get(key) is not None:
                 base[key] = entry[key]
     return list(by_id.values())
 
 
 # ── asset entries ────────────────────────────────────────────────────────────
-
-
-def _valid_sha1(value) -> str | None:
-    """A lowercase 40-hex SHA-1 digest, or None when absent/invalid."""
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        return None
-    v = value.strip().lower()
-    if len(v) != 40 or any(c not in "0123456789abcdef" for c in v):
-        return None
-    return v
 
 
 def validate_asset(entry: dict) -> dict | None:
@@ -470,10 +529,10 @@ def validate_asset(entry: dict) -> dict | None:
     """
     if not isinstance(entry, dict):
         return None
-    aid = (entry.get("id") or "").strip()
+    aid = _text(entry.get("id"))
     if not safe_folder(aid):
         return None
-    name = (entry.get("name") or aid).strip()
+    name = _text(entry.get("name") or aid)
     if not name:
         return None
     url = _https_url(entry.get("url"))
@@ -509,27 +568,86 @@ def validate_asset(entry: dict) -> dict | None:
 
 def merge_assets(remote: list, custom: list) -> list:
     """Custom asset entries override remote ones by id; new ids append."""
-    by_id = {a["id"]: a for a in remote}
-    for entry in custom:
-        aid = entry.get("id")
-        if not aid:
-            continue
-        base = by_id.get(aid)
-        if base is None:
-            by_id[aid] = dict(entry)
-            continue
-        for key in (
-            "name",
-            "description",
-            "repo_url",
-            "essential",
-            "url",
-            "dest",
-            "version",
-            "sha1",
-            "size",
-            "probe",
-        ):
-            if entry.get(key) is not None:
-                base[key] = entry[key]
-    return list(by_id.values())
+    return merge_by_key(remote, custom, ASSET_MERGE_FIELDS)
+
+
+# ── generic catalog fetch + layered registry ─────────────────────────────────
+
+
+def fetch_url_catalog(
+    kind: str, validator, url: str, *, force: bool = False
+) -> list | None:
+    """JSON-list catalog at ``url``, validated per-entry and cached in the
+    config file ({"<kind>_catalog_cache": {"timestamp": epoch,
+    "catalog": [...]}}).
+
+    Non-forced calls never hit the network when a cached copy exists, and
+    return None (→ an empty registry) when there is none yet, so a first run
+    is fully offline-safe. Forced calls always fetch and raise when the URL
+    is unset or the network fails with nothing cached.
+    """
+    now = time.time()
+    key = f"{kind}_catalog_cache"
+    entry = config_store.load_config().get(key)
+    if not isinstance(entry, dict):
+        entry = {}
+    cached = entry.get("catalog")
+    if not force:
+        return cached if cached is not None else None
+    if not url:
+        raise RuntimeError(
+            f"{kind.capitalize()} catalog URL is not configured."
+        )
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with secure_urlopen(req, timeout=10) as r:
+            raw = json.loads(read_capped(r, 2 * 1024 * 1024))
+    except Exception:
+        if cached is not None:
+            return cached
+        raise
+    validated = []
+    for e in raw if isinstance(raw, list) else []:
+        cleaned = _validate_entry_safe(e, validator, kind)
+        if cleaned is not None:
+            validated.append(cleaned)
+    config_store.update_config(
+        lambda c: c.__setitem__(key, {"timestamp": now, "catalog": validated})
+    )
+    return validated
+
+
+def layered_registry(
+    kind: str,
+    validator,
+    fields,
+    embedded_entries: list,
+    *,
+    remote: list | None,
+) -> list:
+    """The effective registry for a content kind, in override order (later
+    wins by id): the remote/cached catalog < the local repo's server-imported
+    entries < the launcher config's embedded entries < the repo's user-custom
+    entries < the legacy per-user custom file. Empty when nothing is
+    configured."""
+    base = [] if remote is None else remote
+    repo = read_local_repo(kind)
+    label = f"local {kind} repo"
+    merged = base
+    for layer in (
+        validate_entries(repo["server"], validator, label),
+        embedded_entries,
+        validate_entries(repo["custom"], validator, label),
+        legacy_custom_layer(kind, validator),
+    ):
+        merged = merge_by_key(merged, layer, fields)
+    return merged
+
+
+def catalog_timestamp(kind: str) -> float | None:
+    """When the kind's catalog cache was last fetched (epoch), or None."""
+    entry = config_store.load_config().get(f"{kind}_catalog_cache")
+    if not isinstance(entry, dict):
+        return None
+    ts = entry.get("timestamp")
+    return ts if isinstance(ts, (int, float)) and ts > 0 else None

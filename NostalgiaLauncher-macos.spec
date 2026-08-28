@@ -15,7 +15,21 @@ frameworks) to be multi-arch — a single-arch PySide6 install yields a
 single-arch or failed build.
 """
 
+import os
+
 from PyInstaller.utils.hooks import collect_all
+
+
+# Keep the Info.plist version in lockstep with the app version
+# (tests/test_baseline.py enforces the pyproject <-> UPDATER_VERSION half).
+import re as _re
+
+with open("pyproject.toml", "r", encoding="utf-8") as _f:
+    _m = _re.search(r'^version = "(.*?)"', _f.read(), _re.MULTILINE)
+APP_VERSION = _m.group(1) if _m else "0.0.0"
+
+
+
 
 pyside_datas, pyside_binaries, pyside_hiddenimports = collect_all("PySide6")
 shiboken_datas, shiboken_binaries, shiboken_hiddenimports = collect_all("shiboken6")
@@ -28,53 +42,28 @@ hiddenimports = pyside_hiddenimports + shiboken_hiddenimports + lt_hiddenimports
 
 # The panels/dialogs are constructed by the Qt main window at runtime, so
 # list every app module explicitly to be safe under a frozen build.
-hiddenimports += [
-    "nostalgia_launcher.core.constants",
-    "nostalgia_launcher.core.config_store",
-    "nostalgia_launcher.core.errors",
-    "nostalgia_launcher.core.filesystem",
-    "nostalgia_launcher.core.helpers",
-    "nostalgia_launcher.core.launcher",
-    "nostalgia_launcher.core.log_sink",
-    "nostalgia_launcher.core.platform_support",
-    "nostalgia_launcher.core.security_http",
-    "nostalgia_launcher.core.themes",
-    "nostalgia_launcher.services.addons",
-    "nostalgia_launcher.services.catalog",
-    "nostalgia_launcher.services.logo",
-    "nostalgia_launcher.services.mods",
-    "nostalgia_launcher.services.news",
-    "nostalgia_launcher.services.self_update",
-    "nostalgia_launcher.services.server_index",
-    "nostalgia_launcher.services.tweaks",
-    "nostalgia_launcher.services.umu",
-    "nostalgia_launcher.services.update_backend.http_update",
-    "nostalgia_launcher.services.update_backend.torrent_update",
-    "nostalgia_launcher.controllers.addons",
-    "nostalgia_launcher.controllers.mods",
-    "nostalgia_launcher.controllers.news",
-    "nostalgia_launcher.controllers.settings",
-    "nostalgia_launcher.controllers.tweaks",
-    "nostalgia_launcher.controllers.update",
-    "nostalgia_launcher.state.models",
-    "nostalgia_launcher.state.events",
-    "nostalgia_launcher.ui.qt.metrics",
-    "nostalgia_launcher.ui.qt.addons_panel",
-    "nostalgia_launcher.ui.qt.app",
-    "nostalgia_launcher.ui.qt.bridge",
-    "nostalgia_launcher.ui.qt.custom_addon_dialog",
-    "nostalgia_launcher.ui.qt.launcher_config_dialog",
-    "nostalgia_launcher.ui.qt.list_panel",
-    "nostalgia_launcher.ui.qt.log_window",
-    "nostalgia_launcher.ui.qt.main_window",
-    "nostalgia_launcher.ui.qt.mods_panel",
-    "nostalgia_launcher.ui.qt.news_panel",
-    "nostalgia_launcher.ui.qt.settings_dialog",
-    "nostalgia_launcher.ui.qt.theme",
-    "nostalgia_launcher.ui.qt.tweaks_panel",
-    "nostalgia_launcher.ui.qt.update_panel",
-]
+# The panels/dialogs are constructed by the Qt main window at runtime, so
+# list every app module explicitly to be safe under a frozen build. The
+# list is generated from the module tree (no importlib/__import__ exists
+# in src/, so static analysis would also find these — this is belt and
+# braces that can no longer drift).
+def _app_modules():
+    mods = []
+    pkg_root = os.path.join("src", "nostalgia_launcher")
+    for dirpath, dirnames, filenames in os.walk(pkg_root):
+        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+        for fn in sorted(filenames):
+            if not fn.endswith(".py"):
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, fn), "src")
+            mod = rel[:-3].replace(os.sep, ".")
+            if mod.endswith(".__init__"):
+                mod = mod[: -len(".__init__")]
+            mods.append(mod)
+    return sorted(mods)
 
+
+hiddenimports += _app_modules()
 
 a = Analysis(
     ["packaging/pyinstaller_entry.py"],
@@ -125,7 +114,7 @@ app = BUNDLE(
     name="NostalgiaLauncher.app",
     icon="packaging/macos/NostalgiaLauncher.icns",
     bundle_identifier="be.ourouk.nostalgia-launcher",
-    version="1.2",
+    version=APP_VERSION,
     info_plist={
         "NSHighResolutionCapable": True,
         "NSPrincipalClass": "NSApplication",

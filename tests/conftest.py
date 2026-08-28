@@ -118,3 +118,49 @@ def fake_home(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
     monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
     return home
+
+
+@pytest.fixture
+def hermetic_cli(fake_home, tmp_path, monkeypatch):
+    """Full isolation for tests that drive ``cli.main()``.
+
+    ``fake_home`` alone is not enough: the default profile's state/cache
+    paths were resolved from the real HOME at import time and re-imported
+    BY NAME into ``core.profiles``, so a dev machine running the launcher
+    would otherwise collide with the tests (same single-instance guard
+    key → "Already running" short-circuit; real store lock acquired).
+    Rebinds the constants on every by-name importer so profile
+    resolution, guard keys and store locks all stay inside ``tmp_path``.
+    """
+    from nostalgia_launcher.core import constants, profiles
+
+    cfg = str(tmp_path / "state.json")
+    cache = str(tmp_path / "cache.json")
+    for mod in (constants, profiles):
+        monkeypatch.setattr(mod, "CONFIG_FILE", cfg)
+        monkeypatch.setattr(mod, "CACHE_FILE", cache)
+    return fake_home
+
+
+# Real, profile-aware repo-path implementations (the autouse
+# _local_repos_env fixture above replaces these seams with flat tmp
+# redirects; individual tests restore them to verify genuine routing).
+_REAL_LOCAL_REPO_PATH = launcher.local_repo_path
+_REAL_LEGACY_CUSTOM_PATH = launcher.legacy_custom_path
+
+
+@pytest.fixture
+def real_repo_seams(monkeypatch):
+    """Restore the real (profile-aware) repo-path resolution for tests
+    that exercise it. Shared by test_profiles and the Qt smoke tests."""
+    import nostalgia_launcher.services.catalog as catalog_module
+
+    monkeypatch.setattr(launcher, "local_repo_path", _REAL_LOCAL_REPO_PATH)
+    monkeypatch.setattr(
+        launcher, "legacy_custom_path", _REAL_LEGACY_CUSTOM_PATH
+    )
+    monkeypatch.setattr(
+        catalog_module,
+        "custom_file",
+        lambda kind: profiles.active().custom_catalog_path(kind),
+    )

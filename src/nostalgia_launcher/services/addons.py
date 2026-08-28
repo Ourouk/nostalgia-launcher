@@ -42,7 +42,6 @@ ADDONS_VERIFY_TTL = 300  # skip re-verify on tab switches within this
 
 # The per-user custom addon file (a JSON list, one entry per addon). Written
 # empty on first use via Settings → Catalog registries.
-CUSTOM_FILE_TEMPLATE = "[\n]\n"
 
 # Recommended addon folder names ({folder: git_url}) for the star badge and
 # the one-shot auto-install. Empty by default — a distribution may flag
@@ -259,12 +258,6 @@ def registry_urls() -> list[str]:
     return addons_registry_default_urls()
 
 
-def addons_registry_default_url() -> str:
-    """The launcher-configured addon catalog URL ('' when not configured)."""
-    urls = addons_registry_default_urls()
-    return urls[0] if urls else ""
-
-
 def addons_registry_default_urls() -> list[str]:
     """The launcher-configured addon catalog URLs, in override order ('' list
     when not configured)."""
@@ -281,21 +274,6 @@ def set_registry_url(url: str) -> str | None:
 def reset_registry_url():
     """Drop the per-user override so the launcher-configured URL is used."""
     catalog.reset_registry_url("addons")
-
-
-def custom_file() -> str:
-    """Path of the per-user custom addon JSON file."""
-    return catalog.custom_file("addons")
-
-
-def open_custom_file() -> bool:
-    """Create the custom addon file (with the template) when missing."""
-    return catalog.write_custom_template("addons", CUSTOM_FILE_TEMPLATE)
-
-
-def clear_custom_file() -> bool:
-    """Delete the custom addon file. True when something was removed."""
-    return catalog.clear_custom("addons")
 
 
 def read_toc_file(path: str) -> dict:
@@ -336,10 +314,6 @@ def addon_remote_sha(
 def addon_cached_sha(git_url: str, branch=None, ref=None):
     """Cached remote sha regardless of age — never touches the network."""
     return _GIT_BACKEND.cached_sha(git_url, branch=branch, ref=ref)
-
-
-def addon_zip_url(git_url: str, sha: str) -> str:
-    return _GIT_BACKEND.zip_url(git_url, sha)
 
 
 def install_addon_files(client_dir: str, folder: str, git_url: str, sha: str):

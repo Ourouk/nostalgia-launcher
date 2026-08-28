@@ -19,8 +19,13 @@ class _Bytes:
     def __init__(self, payload: bytes):
         self._payload = payload
 
-    def read(self):
-        return self._payload
+    def read(self, n=-1):
+        # Chunked reads (the capped transfer layer reads in 64 KiB chunks).
+        if n is None or n < 0:
+            return self._payload
+        chunk = self._payload[:n]
+        self._payload = self._payload[n:]
+        return chunk
 
 
 def _configure(tmp_path):

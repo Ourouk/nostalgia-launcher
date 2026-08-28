@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "nostalgia-launcher"
 version = "0.0.1"
 description = "Standalone updater and mod manager for the Vanilla WoW client"
+readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,7 +16,7 @@ dependencies = [
     "certifi>=2024.0",
     # libtorrent only ships wheels for CPython 3.10-3.13; on newer
     # interpreters the client update path degrades to per-file HTTP
-    # downloads (services/torrent_download.available()).
+    # downloads (services/update_backend/torrent_update.available()).
     "libtorrent; python_version < '3.14'",
 ]
 

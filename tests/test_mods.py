@@ -6,6 +6,7 @@ import os
 import pytest
 
 import nostalgia_launcher.core.config_store as config_store
+import nostalgia_launcher.services.catalog as catalog
 import nostalgia_launcher.services.mods as mods
 import nostalgia_launcher.services.self_update as self_update
 from nostalgia_launcher.controllers.mods import ModsController
@@ -28,7 +29,7 @@ def test_mods_registry_empty_when_nothing_configured(tmp_path, monkeypatch):
     def fail(*a, **k):
         raise AssertionError("no cache must not hit the network")
 
-    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     assert mods.mods_registry() == []
 
 
@@ -50,7 +51,7 @@ def test_fetch_mods_catalog_cached_never_network(tmp_path, monkeypatch):
     def fail(*a, **k):
         raise AssertionError("cached catalog must not hit the network")
 
-    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     assert mods.fetch_mods_catalog() == cached
     assert any(m["id"] == "RemoteMod" for m in mods.mods_registry())
 
@@ -89,7 +90,7 @@ def test_fetch_mods_catalog_force_fetches_and_validates(tmp_path, monkeypatch):
             self._data = b""
             return data
 
-    monkeypatch.setattr(mods, "secure_urlopen", lambda *a, **k: _R(payload))
+    monkeypatch.setattr(catalog, "secure_urlopen", lambda *a, **k: _R(payload))
 
     out = mods.fetch_mods_catalog(force=True)
     assert [m["id"] for m in out] == ["X"]
@@ -106,7 +107,7 @@ def test_fetch_mods_catalog_force_raises_offline_no_cache(
     def fail(*a, **k):
         raise ConnectionError("offline")
 
-    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     with pytest.raises(ConnectionError):
         mods.fetch_mods_catalog(force=True)
 
@@ -128,7 +129,7 @@ def test_mods_registry_merges_custom(tmp_path, monkeypatch):
 
     reg = mods.mods_registry()
     by_id = {m["id"]: m for m in reg}
-    assert by_id["MyMod"]["essential"] is True
+    assert by_id["MyMod"]["installation"] == "required"
     # Without a bundled registry, only the custom entry is present.
     assert list(by_id) == ["MyMod"]
 
@@ -161,7 +162,7 @@ def test_embedded_mods_served_without_network(tmp_path, monkeypatch):
     def fail(*a, **k):
         raise AssertionError("embedded-only registry must not hit network")
 
-    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     reg = mods.mods_registry()
     # The invalid entry is skipped; the valid one needs no URL or fetch.
     assert [m["id"] for m in reg] == ["Emb"]
@@ -257,7 +258,7 @@ def test_reload_catalog_republishes_when_embedded_only(tmp_path, monkeypatch):
     def fail(*a, **k):
         raise AssertionError("embedded-only reload must not hit the network")
 
-    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     controller = ModsController(EventDispatcher(), get_out_dir=lambda: "")
     assert controller.reload_catalog() is True
     events = controller._dispatcher.drain()
@@ -274,12 +275,12 @@ def test_pick_asset_matches_pattern_and_prefers_without_suffix():
     from nostalgia_launcher.services.sources.github_release import pick_asset
 
     assets = [
-        {"name": "vanillafixes-1.0-dxvk.zip"},
-        {"name": "vanillafixes-1.0.zip"},
+        {"name": "example-loader-1.0-dxvk.zip"},
+        {"name": "example-loader-1.0.zip"},
     ]
     assert (
-        pick_asset(assets, "vanillafixes-*.zip", "-dxvk")["name"]
-        == "vanillafixes-1.0.zip"
+        pick_asset(assets, "example-loader-*.zip", "-dxvk")["name"]
+        == "example-loader-1.0.zip"
     )
 
 
@@ -608,19 +609,26 @@ def test_fetch_updater_latest_tag_stores_result(tmp_path, monkeypatch):
     config_store.save_config({})
 
     payload = json.dumps({"tag_name": "v3.0.0"}).encode()
-    monkeypatch.setattr(
-        self_update,
-        "secure_urlopen",
-        lambda *a, **k: type(
-            "R",
-            (),
-            {
-                "__enter__": lambda s: s,
-                "__exit__": lambda *x: False,
-                "read": lambda s=0: payload,
-            },
-        )(),
-    )
+    buf = bytearray(payload)
+
+    class _R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *x):
+            return False
+
+        @staticmethod
+        def read(n=-1):
+            # Chunked reads (the capped transfer layer reads 64 KiB).
+            if n is None or n < 0:
+                chunk, buf[:] = bytes(buf), b""
+            else:
+                chunk = bytes(buf[:n])
+                del buf[:n]
+            return chunk
+
+    monkeypatch.setattr(self_update, "secure_urlopen", lambda *a, **k: _R())
 
     assert self_update.fetch_updater_latest_tag() == "v3.0.0"
     cache = config_store.load_config()["updater_release_cache"]
@@ -641,15 +649,22 @@ def test_example_community_mods_catalog_validates():
     with open(path, encoding="utf-8") as f:
         raw = json.load(f)
     assert isinstance(raw, list)
-    assert len(raw) == 1
-    cleaned = catalog.validate_mod(raw[0])
+    assert len(raw) == 2
+    by_id = {e["id"]: e for e in raw}
+    cleaned = catalog.validate_mod(by_id["example-tweak"])
     assert cleaned is not None
-    assert cleaned["id"] == "example-tweak"
     assert cleaned["name"] == "ExampleTweak"
     assert cleaned["source"]["kind"] == "github_release"
     assert cleaned["source"]["owner"] == "example-community"
     assert cleaned["source"]["repo"] == "example-tweak"
-    assert cleaned["register_dll"] == "ExampleTweak.dll"
+    assert cleaned["register_dll"] == ["ExampleTweak.dll"]
+    assert cleaned["installation"] == "user_opt_in"
+    assert cleaned["client_versions"] == ["1.12.1"]
+    launcher_mod = catalog.validate_mod(by_id["example-loader"])
+    assert launcher_mod is not None
+    assert launcher_mod["type"] == "external-launcher"
+    assert launcher_mod["executable"] == "ExampleLoader.exe"
+    assert launcher_mod["installation"] == "required"
 
 
 # ── ModsController.apply_essential_mods ─────────────────────────────────────
@@ -668,9 +683,9 @@ def test_apply_essential_mods_toggles_missing_and_applies(
     game.mkdir()
     (game / "WoW.exe").write_bytes(b"MZ")
     registry = [
-        {"id": "EssentialA", "essential": True, "name": "A"},
-        {"id": "EssentialB", "essential": True, "name": "B"},
-        {"id": "Optional", "essential": False, "name": "O"},
+        {"id": "EssentialA", "installation": "required", "name": "A"},
+        {"id": "EssentialB", "installation": "required", "name": "B"},
+        {"id": "Optional", "name": "O"},
     ]
     monkeypatch.setattr(mods, "mods_registry", lambda *a, **k: registry)
     monkeypatch.setattr(
@@ -752,7 +767,9 @@ def test_catalog_is_stale_branches(monkeypatch):
     for ts, expected in cases.items():
         entry = {} if ts is None else {"timestamp": ts, "catalog": []}
         monkeypatch.setattr(
-            mods_svc, "load_config", lambda e=entry: {"mods_catalog_cache": e}
+            catalog.config_store,
+            "load_config",
+            lambda e=entry: {"mods_catalog_cache": e},
         )
         assert mods_svc.catalog_is_stale(now=now) is expected, ts
 
@@ -760,10 +777,10 @@ def test_catalog_is_stale_branches(monkeypatch):
 def test_catalog_timestamp_roundtrip(monkeypatch):
     from nostalgia_launcher.services import mods as mods_svc
 
-    monkeypatch.setattr(mods_svc, "load_config", lambda: {})
+    monkeypatch.setattr(catalog.config_store, "load_config", lambda: {})
     assert mods_svc.catalog_timestamp() is None
     monkeypatch.setattr(
-        mods_svc,
+        catalog.config_store,
         "load_config",
         lambda: {"mods_catalog_cache": {"timestamp": 123.5, "catalog": []}},
     )
@@ -832,7 +849,7 @@ def test_mods_registry_full_precedence(tmp_path, repo_paths, monkeypatch):
     def fail(*a, **k):
         raise AssertionError("cached registry must not hit the network")
 
-    monkeypatch.setattr(mods, "secure_urlopen", fail)
+    monkeypatch.setattr(catalog, "secure_urlopen", fail)
     reg = {m["id"]: m["name"] for m in mods.mods_registry()}
     assert reg["X"] == "RepoCustom"
     assert reg["OnlyRemote"] == "OnlyRemote"
@@ -850,3 +867,78 @@ def test_catalog_is_stale_false_with_repo_content_only(tmp_path, repo_paths):
     catalog_svc.write_local_repo("mods", [_mod("Local")], [])
     assert not mods.has_remote_catalog()
     assert mods.catalog_is_stale() is False
+
+
+# ── register_dll lists + external-launcher executables ──────────────────────
+
+
+def test_scan_unknown_mods_flattens_register_dll_lists(tmp_path):
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "dlls.txt").write_text("A.dll\nB.dll\nmystery.dll\n")
+    registry = [{"id": "t", "register_dll": ["A.dll", "b.dll"]}]
+    assert mods.scan_unknown_mods(str(client), registry) == ["mystery.dll"]
+
+
+def test_mod_installed_files_present_requires_every_listed_dll(
+    tmp_path, monkeypatch
+):
+    client = tmp_path / "client"
+    client.mkdir()
+    monkeypatch.setattr(mods, "load_config", lambda: {})
+    (client / "a.dll").write_bytes(b"MZ")
+    (client / "b.dll").write_bytes(b"MZ")
+    mod = {
+        "id": "m",
+        "installed_files": ["a.dll", "b.dll"],
+        "register_dll": ["a.dll", "b.dll"],
+    }
+    # Only one of the two DLLs registered → not fully installed.
+    (client / "dlls.txt").write_text("a.dll\n")
+    assert not mods.mod_installed_files_present(mod, str(client))
+    (client / "dlls.txt").write_text("a.dll\nB.dll\n")
+    assert mods.mod_installed_files_present(mod, str(client))
+
+
+def test_external_launcher_executables_state_matrix(tmp_path, monkeypatch):
+    """Only active external-launcher mods contribute executables:
+    required = always (once on disk), user_opt_in = only when enabled."""
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    client = tmp_path / "game"
+    client.mkdir()
+    (client / "Required.exe").write_bytes(b"MZ")
+    (client / "OptIn.exe").write_bytes(b"MZ")
+    registry = [
+        {
+            "id": "req",
+            "type": "external-launcher",
+            "installation": "required",
+            "executable": "Required.exe",
+        },
+        {
+            "id": "optin",
+            "type": "external-launcher",
+            "installation": "user_opt_in",
+            "executable": "OptIn.exe",
+        },
+        {"id": "plain", "executable": "Ignored.exe"},
+    ]
+    monkeypatch.setattr(mods, "mods_registry", lambda *a, **k: registry)
+
+    # Opt-in disabled → only the required loader.
+    config_store.save_config({"mods": {}})
+    assert mods.external_launcher_executables(str(client)) == ["Required.exe"]
+
+    # Opt-in enabled → both, in registry order.
+    config_store.save_config({"mods": {"optin": {"enabled": True}}})
+    assert mods.external_launcher_executables(str(client)) == [
+        "Required.exe",
+        "OptIn.exe",
+    ]
+
+    # Required mod whose executable is missing from disk → excluded.
+    (client / "Required.exe").unlink()
+    config_store.save_config({"mods": {}})
+    assert mods.external_launcher_executables(str(client)) == []

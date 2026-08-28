@@ -85,12 +85,16 @@ catalogs, mirrors). Only accept a configuration from a source you trust.
 You can also supply a configuration explicitly:
 
 ```text
-NostalgiaLauncher --launcher-config PATH_OR_URL
+NostalgiaLauncher --launcher-config PATH
 ```
 
-(A URL here is treated like the wizard's URL field: fetched, validated, and
-shown before use. An explicit file path that is missing or invalid is a
-hard error.)
+(URL import lives in the first-launch wizard and in Settings; the flag
+itself takes a local file only. A path that is missing or invalid is a hard
+error.)
+
+> Naming: the installed console script is `nostalgia-launcher`; the frozen
+> release binaries are called `NostalgiaLauncher(.exe/.AppImage)`. The
+> examples use the packaged names.
 
 ## Debugging from the command line
 

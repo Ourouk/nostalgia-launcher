@@ -10,6 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 
+from ..core import launcher
 from ..core.constants import NEWS_CACHE_TTL
 from ..services.news import fetch_featured_post, fetch_news_items
 from ..state.events import EventDispatcher, NewsLoaded
@@ -23,11 +24,14 @@ class NewsResult:
     `data` is the post dict (featured) or items list (announcements) — None
     while still loading or when the fetch failed. `loading` and `error` let
     the renderer show the same placeholder/error states as before.
+    `configured` indicates whether the feed was explicitly configured in the
+    launcher config (vs. only the derived default).
     """
 
     data: object = None
     loading: bool = False
     error: str = ""
+    configured: bool = True
 
 
 class NewsController:
@@ -53,14 +57,20 @@ class NewsController:
 
         def worker():
             feat, err = None, ""
-            try:
-                feat = fetch_featured_post()
-            except Exception:
-                err = "Couldn't reach the news feed."
+            configured = launcher.featured_news_url_explicit()
+            # Only fetch if explicitly configured; otherwise leave as None
+            if configured:
+                try:
+                    feat = fetch_featured_post()
+                except Exception:
+                    err = "Couldn't reach the news feed."
             self.state.feat_ts = time.time()
             self.state.featured = feat
             self._dispatcher.post(
-                NewsLoaded("featured", NewsResult(data=feat, error=err))
+                NewsLoaded(
+                    "featured",
+                    NewsResult(data=feat, error=err, configured=configured),
+                )
             )
 
         threading.Thread(target=worker, daemon=True).start()
@@ -77,14 +87,20 @@ class NewsController:
 
         def worker():
             items, err = None, ""
-            try:
-                items = fetch_news_items()
-            except Exception:
-                err = "Couldn't reach the news feed."
+            configured = launcher.news_url_explicit()
+            # Only fetch if explicitly configured; otherwise leave as None
+            if configured:
+                try:
+                    items = fetch_news_items()
+                except Exception:
+                    err = "Couldn't reach the news feed."
             self.state.news_ts = time.time()
             self.state.items = items
             self._dispatcher.post(
-                NewsLoaded("items", NewsResult(data=items, error=err))
+                NewsLoaded(
+                    "items",
+                    NewsResult(data=items, error=err, configured=configured),
+                )
             )
 
         threading.Thread(target=worker, daemon=True).start()

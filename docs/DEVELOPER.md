@@ -38,7 +38,7 @@ src/nostalgia_launcher/
 - **There are no hardcoded server/mod/addon values.** Everything is configured
   by `core/launcher.py` reading `nostalgia_launcher.json`.
 - The launcher never binary-patches `WoW.exe` — runtime client fixes are left
-  to the VanillaFixes loader mod. The only tweak channel is `Config.wtf`.
+  to the catalog-declared loader mods (external launchers). The only tweak channel is `Config.wtf`.
 
 ## Launcher Configuration
 
@@ -64,6 +64,7 @@ overridden:
     "manifest_url": "https://server.example/api/file/latest/manifest.json",
     "client_url": "https://server.example/client/latest",
     "torrent_url": "https://server.example/client/latest/client.torrent",
+    "torrent_magnet": "magnet:?xt=urn:btih:EXAMPLEINFOHASH&dn=client",
     "news_url": "https://server.example/news",
     "featured_news_url": "https://server.example/news/featured",
     "mods_registry_url": "https://server.example/api/mods.json",
@@ -98,7 +99,10 @@ Key points:
   server is the fallback).
 - The optional `torrent_url` (on the server or a mirror) advertises a
   BitTorrent snapshot of the client files. A mirror's `torrent_url` takes
-  precedence over the server's.
+  precedence over the server's. The optional server-only `torrent_magnet`
+  (`magnet:?xt=urn:btih:…`) is an alternative to it — a torrent has one
+  swarm, so mirrors never carry magnets; when both are configured on the
+  same entry the HTTPS `.torrent` wins.
 - The optional `theme` object overrides the app's color theme per server:
   color slots named like `C_GOLD` (each a `#rrggbb` hex) plus an optional
   `logo` URL shown as the header wordmark. It is cosmetic and never validated
@@ -125,18 +129,21 @@ protocol in `services/update_backend/protocol.py`:
 1. **Verify / diff**: `VerifyWorker` fetches the manifest from the selected
    download source and reports which files differ against the local SHA-1
    cache.
-2. **Torrent bulk-download**: when the active source advertises a
-   `torrent_url` and libtorrent is importable, `UpdateWorker` bulk-downloads
+2. **Torrent bulk-download**: when the active source advertises a torrent
+   snapshot (an HTTPS `torrent_url` or the server's `torrent_magnet`) and
+   libtorrent is importable, `UpdateWorker` bulk-downloads
    the stale files via `services/update_backend/torrent_update.py` before its per-file HTTP
    `traverse()`. Per-file priorities keep only the pieces covering stale files
    downloading (`wanted` set).
 3. **HTTP resume + re-verify**: `traverse()` still re-verifies every file
    against the manifest's SHA-1 and HTTP-resumes anything the torrent missed.
 4. **Recovery**: when the manifest itself can't be fetched but the active
-   source advertises a `torrent_url` and libtorrent is present,
+   source advertises a torrent snapshot (`torrent_url` or server
+   `torrent_magnet`) and libtorrent is present,
    `UpdateWorker._recovery_download()` downloads the *whole* torrent
    (`TorrentDownloader.download(url, None)`). The torrent's piece hashes (the
-   `.torrent` arrived over TLS) stand in for the manifest's per-file SHA-1. It
+   `.torrent` arrived over TLS, or magnet metadata that had to hash to the
+   configured btih) stand in for the manifest's per-file SHA-1. It
    posts `__TORRENT_RECOVERY_DONE__` (the controller keeps
    `manifest_available=False`). A failed verify offers this via an enabled
    UPDATE button when `torrent_recovery_available()`
@@ -146,7 +153,15 @@ protocol in `services/update_backend/protocol.py`:
 ### BitTorrent backend (`services/update_backend/torrent_update.py`)
 
 - The `.torrent` is fetched over HTTPS through the same hardened, allowlisted
-  transport as the HTTP downloads.
+  transport as the HTTP downloads. Alternatively a `server.torrent_magnet`
+  URI is resolved once by joining its swarm (DHT + the magnet's trackers):
+  `_resolve_magnet` waits for the metadata in a networked session backed by a
+  throwaway save path (upload mode where available, so nothing payload-wise
+  is ever written), serializes it back to `.torrent` bytes and caches them
+  per info-hash. Peers cannot forge the metadata — libtorrent only accepts
+  an info section that hashes to the magnet's `xt` info-hash. After
+  resolution, verify/download behave exactly like the URL path; identity
+  reuse keys on the info-hash alone.
 - Peers in the swarm are untrusted — a malicious peer can only inject data
   that fails the piece hashes embedded in the `.torrent`. The caller still
   re-verifies every file against the manifest's SHA-1 afterwards, so the
@@ -162,7 +177,8 @@ protocol in `services/update_backend/protocol.py`:
 - **Offline verification**: the verification session uses an empty listen
   interface and disables DHT, LSD, UPnP, NAT-PMP, and all peer connections.
   No P2P activity occurs before the user presses UPDATE. Only the download
-  session enables networking.
+  session enables networking. Sole exception: a magnet source must contact
+  the swarm once during verify to download its metadata (see above).
 - `download(url, wanted)` accepts `wanted=None` to mean the whole torrent
   (every file at max priority) — used by the no-manifest recovery path.
   File priorities are computed from the auto-detected root mapping.
@@ -207,7 +223,7 @@ The **TWEAKS** tab applies preferences via `Config.wtf` only
 (`services/tweaks.py`): field of view, render distance, nameplate range,
 camera distance, ground-clutter distance, and background sounds. The launcher
 **never binary-patches `WoW.exe`** — runtime client fixes are left to the
-VanillaFixes loader mod where installed. The `Config.wtf` writer is the only
+catalog-declared external-launcher mods where installed. The `Config.wtf` writer is the only
 tweak channel.
 
 ## Platform Support

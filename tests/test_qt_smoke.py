@@ -63,30 +63,6 @@ def _offscreen(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
 
-# Real, profile-aware repo-path implementations (the autouse
-# _local_repos_env conftest fixture replaces these seams with flat tmp
-# redirects; individual tests restore them to verify genuine routing).
-_REAL_LOCAL_REPO_PATH = launcher.local_repo_path
-_REAL_LEGACY_CUSTOM_PATH = launcher.legacy_custom_path
-
-
-@pytest.fixture()
-def real_repo_seams(monkeypatch):
-    """Restore the real (profile-aware) repo-path resolution for tests
-    that exercise it."""
-    import nostalgia_launcher.services.catalog as catalog_module
-
-    monkeypatch.setattr(launcher, "local_repo_path", _REAL_LOCAL_REPO_PATH)
-    monkeypatch.setattr(
-        launcher, "legacy_custom_path", _REAL_LEGACY_CUSTOM_PATH
-    )
-    monkeypatch.setattr(
-        catalog_module,
-        "custom_file",
-        lambda kind: profiles.active().custom_catalog_path(kind),
-    )
-
-
 @pytest.fixture(scope="session")
 def qapp():
     return create_qt_app()
@@ -143,8 +119,8 @@ def qt_env(monkeypatch, tmp_path):
         "mods_registry",
         lambda *a, **k: [
             {
-                "id": "VanillaFixes",
-                "name": "VanillaFixes",
+                "id": "ExampleLoader",
+                "name": "ExampleLoader",
                 "essential": True,
                 "description": "Fixes stutter",
                 "repo_url": "https://example.invalid/vf",
@@ -219,11 +195,21 @@ def build_app(qapp, monkeypatch, qt_env):
                 {
                     "out_dir": str(cfg.parent / "game"),
                     "mod_release_cache": {
-                        "VanillaFixes": {"timestamp": 0, "release": {}}
+                        "ExampleLoader": {"timestamp": 0, "release": {}}
                     },
                     "addons": {},
                 }
             )
+        # Explicitly configure news URLs so the news controller fetches them
+        launcher.configure_from_dict(
+            {
+                "server": {
+                    "base_url": "https://launcher.test",
+                    "news_url": "https://launcher.test/news.json",
+                    "featured_news_url": "https://launcher.test/news/featured.json",
+                }
+            }
+        )
         app = QtNostalgiaLauncherApp()
         app._window.show()
         hub = app._hub
@@ -340,9 +326,9 @@ def test_startup_schedule_runs_the_full_launch_chain(qapp, app):
 
     # 900 ms → mod latest-version fetch (mod_release_cache present).
     _wait_until(lambda: bool(hub.mods.state.latest_versions))
-    assert hub.mods.state.latest_versions["VanillaFixes"] == "1.2.3"
-    assert "VanillaFixes" in mods_panel._rows
-    assert "1.2.3" in mods_panel._rows["VanillaFixes"].version_label.text()
+    assert hub.mods.state.latest_versions["ExampleLoader"] == "1.2.3"
+    assert "ExampleLoader" in mods_panel._rows
+    assert "1.2.3" in mods_panel._rows["ExampleLoader"].version_label.text()
 
     # 1500 ms → addons verify against the fake catalog.
     _wait_until(lambda: hub.addons.state.state == "done")
@@ -537,13 +523,15 @@ def test_mods_loaded_renders_rows_and_updates_badge(qapp, app_no_startup):
     hub = app_no_startup._hub
     panel = win._stack.widget(win._pages["MODS"])
 
-    state = ModsState(latest_versions={"VanillaFixes": "2.0"}, updates_count=3)
+    state = ModsState(
+        latest_versions={"ExampleLoader": "2.0"}, updates_count=3
+    )
     hub.mods.state = state
     hub.dispatcher.post(ModsLoaded(state))
     QTest.qWait(200)
 
-    assert "VanillaFixes" in panel._rows
-    assert "2.0" in panel._rows["VanillaFixes"].version_label.text()
+    assert "ExampleLoader" in panel._rows
+    assert "2.0" in panel._rows["ExampleLoader"].version_label.text()
     badge = win._tabBadges["MODS"]
     assert badge.text() == "3"
     assert badge.isVisible()
@@ -660,10 +648,12 @@ def test_raise_message_raises_window(qapp, app, monkeypatch):
 
 
 def test_run_backend_second_instance_returns_0_without_app(
-    qapp, fake_home, monkeypatch, capsys
+    hermetic_cli, monkeypatch, capsys
 ):
     """Pre-existing server for the profile key: main() forwards the raise
-    and exits 0 WITHOUT constructing the Qt app shell."""
+    and exits 0 WITHOUT constructing the Qt app shell. hermetic_cli keeps
+    the guard key off the real HOME (a dev machine running a default-
+    profile launcher must not receive this test's raise-op)."""
     from nostalgia_launcher.core import app_lock
     from nostalgia_launcher.ui.qt import app_lock_qt
 
@@ -735,9 +725,10 @@ def _open_settings_window(build_app):
     return app
 
 
-def test_header_combo_shows_active_profile(qapp, build_app):
+def test_header_combo_shows_active_profile(qapp, build_app, fake_home):
     """The header selector lists every profile with the active one
-    preselected."""
+    preselected. fake_home keeps the listing hermetic (a real machine may
+    carry extra profile directories)."""
     from PySide6.QtWidgets import QComboBox
 
     app = build_app(startup=False)
@@ -799,6 +790,50 @@ def test_settings_profiles_section_is_editor_only(qapp, build_app, fake_home):
         app._hub.close()
 
 
+def test_settings_profile_add_refreshes_header_combo(
+    qapp, build_app, fake_home, monkeypatch
+):
+    """Creating a profile in Settings → PROFILES reloads the header
+    switcher live — no restart needed (profilesChanged → _fill_profile_combo)."""
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QInputDialog.getText",
+        lambda *a, **kw: ("delta", True),
+    )
+
+    class _SkippedWizard:
+        """The post-create wizard runs modally; reject it so the test
+        only exercises the registry mutation + refresh wiring."""
+
+        def __init__(self, *a, **kw):
+            pass
+
+        def exec(self):  # QDialog.DialogCode.Rejected == 0
+            return 0
+
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.launcher_config_dialog.LauncherConfigDialog",
+        _SkippedWizard,
+    )
+
+    app = _open_settings_window(build_app)
+    try:
+        win = app._window
+        dlg = win._settingsDialog
+        try:
+            assert win._profileCombo.findText("delta") < 0
+            dlg._on_profile_new()
+
+            assert win._profileCombo.findText("delta") >= 0
+            assert dlg._profiles_combo.currentText() == "delta"
+            # The still-active profile stays preselected up top.
+            assert win._profileCombo.currentText() == "default"
+        finally:
+            dlg.close()
+    finally:
+        app.close()
+        app._hub.close()
+
+
 def test_header_switch_persists_pointer_and_quits(
     qapp, build_app, monkeypatch, fake_home
 ):
@@ -825,7 +860,8 @@ def test_header_switch_persists_pointer_and_quits(
         win = app._window
         idx = win._profileCombo.findText("beta")
         win._profileCombo.setCurrentIndex(idx)
-        win._on_profile_combo_activated("beta")
+        # Drive the real Qt signal: Qt6 delivers the item INDEX, not text.
+        win._profileCombo.activated.emit(idx)
 
         assert profiles.load_index()["active"] == "beta"
         assert detached.called
@@ -853,7 +889,8 @@ def test_header_switch_declined_reverts_and_keeps_pointer(
         win = app._window
         idx = win._profileCombo.findText("beta")
         win._profileCombo.setCurrentIndex(idx)
-        win._on_profile_combo_activated("beta")
+        # Drive the real Qt signal: Qt6 delivers the item INDEX, not text.
+        win._profileCombo.activated.emit(idx)
 
         # Nothing happened: pointer unchanged, combo reverted.
         assert profiles.load_index()["active"] == "default"
@@ -883,7 +920,8 @@ def test_header_switch_failure_keeps_pointer_but_shows_selection(
         win = app._window
         idx = win._profileCombo.findText("gamma")
         win._profileCombo.setCurrentIndex(idx)
-        win._on_profile_combo_activated("gamma")
+        # Drive the real Qt signal: Qt6 delivers the item INDEX, not text.
+        win._profileCombo.activated.emit(idx)
 
         assert profiles.load_index()["active"] == "gamma"
         assert win._profileCombo.currentText() == "default"

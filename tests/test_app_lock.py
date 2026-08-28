@@ -51,11 +51,9 @@ def test_lock_file_sits_beside_state_file():
 def test_acquire_release_reacquire(tmp_path):
     state = str(tmp_path / "state.json")
     app_lock.acquire_store_lock(state)
-    assert app_lock.holds_store_lock()
     # Idempotent within the process:
     app_lock.acquire_store_lock(state)
     app_lock.release_store_lock()
-    assert not app_lock.holds_store_lock()
     app_lock.acquire_store_lock(state)
 
 
@@ -102,7 +100,7 @@ def test_sigkilled_holder_frees_lock(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX flock")
-def test_grace_window_waits_for_relaunching_parent(tmp_path):
+def test_grace_window_waits_for_relaunching_parent(tmp_path, monkeypatch):
     state = str(tmp_path / "state.json")
     # Holder releases after ~300 ms (simulates the quitting parent).
     proc = _spawn_holder(state, hold_s=0.3)
@@ -110,13 +108,12 @@ def test_grace_window_waits_for_relaunching_parent(tmp_path):
         assert proc.stdout.readline().strip() == "READY"
     finally:
         pass
-    os.environ["NOSTALGIA_RELAUNCH"] = "1"
+    monkeypatch.setenv("NOSTALGIA_RELAUNCH", "1")
     try:
         start = time.monotonic()
         app_lock.acquire_with_grace(state)
         elapsed = time.monotonic() - start
     finally:
-        os.environ.pop("NOSTALGIA_RELAUNCH", None)
         proc.wait()
     assert elapsed < 4.0
 
@@ -149,7 +146,6 @@ def test_different_profiles_may_run_in_parallel(tmp_path):
     try:
         assert proc.stdout.readline().strip() == "READY"
         app_lock.acquire_store_lock(state_b)  # B while A held elsewhere
-        assert app_lock.holds_store_lock()
         app_lock.release_store_lock()
     finally:
         proc.kill()

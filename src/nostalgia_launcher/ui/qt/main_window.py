@@ -599,11 +599,13 @@ class MainWindow(QMainWindow):
         finally:
             combo.blockSignals(False)
 
-    def _on_profile_combo_activated(self, name: str):
+    def _on_profile_combo_activated(self, index: int):
         """User picked a profile in the header: confirm, then restart into
-        it. A declined confirmation or failed relaunch reverts the combo
-        to the still-active profile."""
-        if name == profiles.active().name:
+        it. Qt6's activated signal only delivers the item index, so the
+        name is resolved here. A declined confirmation or failed relaunch
+        reverts the combo to the still-active profile."""
+        name = self._profileCombo.itemText(index)
+        if not name or name == profiles.active().name:
             return
         from .profiles_ui import confirm_switch, switch_profile
 
@@ -623,6 +625,9 @@ class MainWindow(QMainWindow):
                 self._hub.settings, self._hub.bridge, self._palette, self
             )
             dialog.logsToggleRequested.connect(self._on_logs_toggle_requested)
+            # Profile mutations inside Settings (new/duplicate/rename/
+            # delete) must reach the header switcher without a restart.
+            dialog.profilesChanged.connect(self._fill_profile_combo)
             dialog.set_logs_open(self._logWindow is not None)
             dialog.finished.connect(self._on_settings_finished)
             self._settingsDialog = dialog
@@ -768,14 +773,13 @@ class MainWindow(QMainWindow):
         panel = self._stack.widget(self._pages["UPDATE"])
         panel.operation_finished(kind, ok, message)
         updater = self._hub.updater
-        if kind in ("update", "verify"):
+        if kind in ("update", "verify") and ok:
             # The update worker reports the (post-patch) client version just
-            # before finishing; surface it when a fresh one arrived. The
-            # panels re-render their own kinds themselves.
-            if ok and updater.state.client_version:
+            # before finishing; surface it when a fresh one arrived.
+            if updater.state.client_version:
                 self._versionLabel.setText(updater.state.client_version)
-            elif not ok:
-                self._statusLabel.setText("Update available!")
+        # Readiness owns the status line — it renders the accurate verdict
+        # for both success and failure right below.
         self._refresh_ready_state()
 
     def _onOperationFailed(self, kind: str, message: str):
@@ -848,7 +852,7 @@ class MainWindow(QMainWindow):
         self._refresh_ready_state()
 
     def _launch_game(self):
-        """Launch the game detached; the launch logic (VanillaFixes/WoW.exe
+        """Launch the game detached; the launch logic (ExampleLoader/WoW.exe
         choice, DXVK notice, clear-wdb, subprocess) lives in the
         UpdateController — this only drives the footer chrome and dialogs."""
         ok, dxvk_notice = self._hub.updater.launch_game()

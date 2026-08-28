@@ -329,3 +329,27 @@ def test_git_archive_validate_and_version_resolution(tmp_path, monkeypatch):
 def test_fetch_result_defaults():
     r = FetchResult()
     assert r.data is None and r.file is None and r.version is None
+
+
+def test_extract_tar_map_skips_directory_members(tmp_path):
+    """A pattern matching a directory entry (e.g. the archive's leading
+    folder) has no payload — it must be skipped with a warning, never
+    crash on extractfile() → None."""
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        dir_info = tarfile.TarInfo("pkg")
+        dir_info.type = tarfile.DIRTYPE
+        tf.addfile(dir_info)
+        data = b"hello"
+        info = tarfile.TarInfo("pkg/mod.lua")
+        info.size = len(data)
+        tf.addfile(info, io.BytesIO(data))
+
+    written = deploy.extract_tar_map(
+        str(tmp_path), buf.getvalue(), {"pkg": "out/lua"}
+    )
+    # The directory match was skipped; nothing was installed for it.
+    assert written == []

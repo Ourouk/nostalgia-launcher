@@ -125,9 +125,5 @@ class QtNostalgiaLauncherApp:
             self._window.show()
         return self._app.exec()
 
-    def mainloop(self):
-        """Alias for run(); the nostalgia_launcher entry point calls mainloop()."""
-        return self.run()
-
     def close(self):
         self._window.close()

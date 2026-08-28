@@ -27,6 +27,28 @@ def ensure_dir(path):
     Path(path).mkdir(parents=True, exist_ok=True)
 
 
+def atomic_write_bytes(path: str, data: bytes):
+    """Write via a temp file + atomic rename so a crash mid-write can never
+    leave a truncated/corrupt file at `path`. Creates the parent directory
+    so the per-user data dirs work on first write."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def atomic_write_text(path: str, text: str):
+    """atomic_write_bytes for str payloads (UTF-8 encoded)."""
+    atomic_write_bytes(path, text.encode("utf-8"))
+
+
 def sha1_file(path) -> str:
     h = hashlib.sha1()
     with open(path, "rb") as f:
@@ -87,16 +109,19 @@ def get_client_version(out_dir: str) -> str:
         return ""
 
 
-def pick_game_executable(client_dir: str) -> tuple[str, str]:
+def pick_game_executable(
+    client_dir: str, external_executables: list[str] | None = None
+) -> tuple[str, str]:
     """Which binary to launch from the game folder.
 
-    Prefers the VanillaFixes loader mod's executable when present on disk
-    (the catalog ships it; launching through the wrapper is its documented
-    flow), falling back to WoW.exe. Returns ``(absolute_path, label)``.
+    Prefers the first external-launcher executable (declared by an
+    installed catalog mod and passed in by the caller) that exists on disk,
+    falling back to WoW.exe. Returns ``(absolute_path, label)``.
     """
-    loader = os.path.join(client_dir, "VanillaFixes.exe")
-    if os.path.exists(loader):
-        return loader, "VanillaFixes.exe"
+    for name in external_executables or []:
+        candidate = os.path.join(client_dir, name)
+        if os.path.exists(candidate):
+            return candidate, name
     return os.path.join(client_dir, "WoW.exe"), "WoW.exe"
 
 

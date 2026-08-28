@@ -32,7 +32,15 @@ def check_config_url(url: str) -> str:
     """Validate a user-entered configuration URL. Returns the normalized
     URL or raises ConfigUrlError. Only https is accepted."""
     url = (url or "").strip().rstrip("/")
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError as e:
+        # Malformed URLs (e.g. broken IPv6 literals) must surface through
+        # the documented error type, not a raw ValueError the wizard's
+        # except-clause can't catch.
+        raise ConfigUrlError(
+            "The configuration URL must be an https:// URL."
+        ) from e
     if parts.scheme != "https" or not parts.hostname:
         raise ConfigUrlError("The configuration URL must be an https:// URL.")
     return url

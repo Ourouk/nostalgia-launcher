@@ -108,6 +108,12 @@ def main(argv=None) -> int:
     args = _parse_args(argv)
     if args.print_log is not False:
         return _print_log(args.print_log)
+    # Composition-root wiring: core's launch capability asks services/umu
+    # through an injected probe (core must not import services).
+    from .core import platform_support
+    from .services import umu
+
+    platform_support.set_umu_probe(umu.umu_available)
     try:
         prof = profiles.resolve(args.profile)
     except ProfileError as e:
@@ -152,8 +158,11 @@ def _print_log(tail) -> int:
 def _first_launch(show_log: bool = False) -> int:
     """No launcher config and no --launcher-config: ask the user to import
     one (a local file or an https URL they supply), then persist it so
-    future launches reuse it. No game folder is ever auto-selected — the
-    user confirms one in Settings before anything downloads."""
+    future launches reuse it. The wizard also REQUIRES an install folder;
+    it is recorded as the active profile's confirmed game folder
+    (``out_dir`` in its own state store) so each profile installs its own
+    client. No folder is ever assumed without that explicit wizard step —
+    profiles configured otherwise stay unconfirmed until Settings."""
     try:
         chosen = _pick_launcher_config()
     except ImportError as e:
@@ -208,6 +217,14 @@ def _first_launch(show_log: bool = False) -> int:
         if err:
             sys.stderr.write(f"{err}\n")
             return 1
+    # The wizard's required install folder becomes THIS profile's
+    # confirmed game folder (its own state store; legacy top-level file
+    # for the default profile).
+    install_dir = (chosen.get("install_dir") or "").strip()
+    if install_dir:
+        config_store.apply_confirmed_out_dir(
+            profiles.active().state_path(), install_dir
+        )
     return _run_backend(show_log)
 
 
@@ -281,39 +298,49 @@ def _run_backend(show_log: bool = False) -> int:
     relay = _guard_enter(app_lock.state_key(state_path), prof)
     if relay is _GUARD_BUSY:
         return 0
+    # Every early exit below must still release this instance's guard
+    # server — a leaked QLocalServer/socket file would contradict the
+    # single-instance contract (shutdown is idempotent, so the normal
+    # path's call stays harmless).
     try:
-        app_lock.acquire_with_grace(state_path)
-    except app_lock.AcquireError:
-        sys.stderr.write(
-            "Another launcher instance already holds this profile's store.\n"
+        try:
+            app_lock.acquire_with_grace(state_path)
+        except app_lock.AcquireError:
+            sys.stderr.write(
+                "Another launcher instance already holds this profile's "
+                "store.\n"
+            )
+            return 6
+        config_store.configure(state_path, prof.cache_path())
+        log_sink.configure_file(LOG_FILE)
+        log(
+            f"── Nostalgia Launcher {UPDATER_VERSION} · session start ──",
+            "dim",
         )
-        return 6
-    config_store.configure(state_path, prof.cache_path())
-    log_sink.configure_file(LOG_FILE)
-    log(f"── Nostalgia Launcher {UPDATER_VERSION} · session start ──", "dim")
-    backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")
-    try:
-        app_cls = resolve_backend(backend)
-    except ImportError as e:
-        sys.stderr.write(backend_error_message(backend, e))
-        return 1
-    if app_cls is None:
-        sys.stderr.write(f"Unknown NOSTALGIA_UI_BACKEND: {backend}\n")
-        return 1
-    try:
-        app = app_cls(open_log=show_log)
-    except Exception as e:
-        sys.stderr.write(
-            f"Nostalgia Launcher could not start: {e}\n"
-            "A graphical display (X11/Wayland) is required.\n"
-        )
-        return 1
-    if relay is not None and relay is not _GUARD_BUSY:
-        relay.message.connect(_make_raise_handler(app))
-    app.show()
-    rc = app.run()
-    _guard_shutdown()
-    return rc
+        backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")
+        try:
+            app_cls = resolve_backend(backend)
+        except ImportError as e:
+            sys.stderr.write(backend_error_message(backend, e))
+            return 1
+        if app_cls is None:
+            sys.stderr.write(f"Unknown NOSTALGIA_UI_BACKEND: {backend}\n")
+            return 1
+        try:
+            app = app_cls(open_log=show_log)
+        except Exception as e:
+            sys.stderr.write(
+                f"Nostalgia Launcher could not start: {e}\n"
+                "A graphical display (X11/Wayland) is required.\n"
+            )
+            return 1
+        if relay is not None and relay is not _GUARD_BUSY:
+            relay.message.connect(_make_raise_handler(app))
+        app.show()
+        rc = app.run()
+        return rc
+    finally:
+        _guard_shutdown()
 
 
 def _guard_shutdown():

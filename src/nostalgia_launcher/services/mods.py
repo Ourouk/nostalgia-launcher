@@ -11,15 +11,12 @@ Payload acquisition is delegated to the shared source backends
 by entry shape, dll registration and post-install hooks.
 """
 
-import json
 import os
 import time
-import urllib.request
 
-from ..core.config_store import load_config, update_config
-from ..core.constants import UA
+from ..core.config_store import load_config
+from ..core.filesystem import atomic_write_text as _atomic_write
 from ..core.log_sink import log
-from ..core.security_http import read_capped, secure_urlopen
 from . import catalog
 from .sources import deploy
 from .sources import get as _source_get
@@ -36,14 +33,11 @@ def _checked_rel(dest_rel) -> str:
 
 # The per-user custom mod file (a JSON list, one entry per mod, using the
 # same shape the mod catalog uses). Written empty on first use via Settings.
-CUSTOM_FILE_TEMPLATE = "[\n]\n"
 
 
 def catalog_timestamp() -> float | None:
     """When the mod catalog cache was last fetched (epoch), or None."""
-    entry = load_config().get("mods_catalog_cache", {})
-    ts = entry.get("timestamp")
-    return ts if isinstance(ts, (int, float)) and ts > 0 else None
+    return catalog.catalog_timestamp("mods")
 
 
 def has_remote_catalog() -> bool:
@@ -97,70 +91,22 @@ def catalog_is_stale(now: float | None = None) -> bool:
 
 def fetch_mods_catalog(force=False) -> list | None:
     """Mod catalog, cached in the config file ({"mods_catalog_cache":
-    {"timestamp": epoch, "catalog": […]}}).
-
-    Non-forced calls never hit the network when a cached copy exists, and
-    return None (→ an empty registry) when there is none yet, so a first run
-    is fully offline-safe. Forced calls (Settings → Reload) always fetch and
-    raise when the URL is unset or the network fails with nothing cached.
-    """
-    now = time.time()
-    entry = load_config().get("mods_catalog_cache", {})
-    cached = entry.get("catalog")
-    if not force:
-        return cached if cached is not None else None
-    url = registry_url()
-    if not url:
-        raise RuntimeError("Mod catalog URL is not configured.")
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with secure_urlopen(req, timeout=10) as r:
-            raw = json.loads(read_capped(r, 2 * 1024 * 1024))
-    except Exception:
-        if cached is not None:
-            return cached
-        raise
-    validated = []
-    for e in raw if isinstance(raw, list) else []:
-        if not isinstance(e, dict):
-            continue
-        cleaned = catalog.validate_mod(e)
-        if cleaned is not None:
-            validated.append(cleaned)
-    update_config(
-        lambda c: c.__setitem__(
-            "mods_catalog_cache", {"timestamp": now, "catalog": validated}
-        )
+    {"timestamp": epoch, "catalog": [...]}}) — see
+    ``catalog.fetch_url_catalog`` for the caching/offline semantics."""
+    return catalog.fetch_url_catalog(
+        "mods", catalog.validate_mod, registry_url(), force=force
     )
-    return validated
 
 
 def mods_registry(force=False) -> list:
-    """The effective mod registry, in override order (later wins by id):
-    the remote/cached catalog < the local repo's server-imported entries <
-    the launcher config's embedded mods < the repo's user-custom entries <
-    the legacy per-user custom file. Empty when nothing is configured."""
-    remote = fetch_mods_catalog(force=force)
-    base = [] if remote is None else remote
-    repo = catalog.read_local_repo("mods")
-    return catalog.merge_mods(
-        catalog.merge_mods(
-            catalog.merge_mods(
-                catalog.merge_mods(
-                    base,
-                    catalog.validate_entries(
-                        repo["server"],
-                        catalog.validate_mod,
-                        "local mods repo",
-                    ),
-                ),
-                embedded_mods(),
-            ),
-            catalog.validate_entries(
-                repo["custom"], catalog.validate_mod, "local mods repo"
-            ),
-        ),
-        catalog.legacy_custom_layer("mods", catalog.validate_mod),
+    """The effective mod registry — see ``catalog.layered_registry`` for
+    the layer order. Empty when nothing is configured."""
+    return catalog.layered_registry(
+        "mods",
+        catalog.validate_mod,
+        catalog.MOD_MERGE_FIELDS,
+        embedded_mods(),
+        remote=fetch_mods_catalog(force=force),
     )
 
 
@@ -186,21 +132,6 @@ def set_registry_url(url: str) -> str | None:
 def reset_registry_url():
     """Drop the per-user override so the launcher-configured URL is used."""
     catalog.reset_registry_url("mods")
-
-
-def custom_file() -> str:
-    """Path of the per-user custom mod JSON file."""
-    return catalog.custom_file("mods")
-
-
-def open_custom_file() -> bool:
-    """Create the custom mod file (with the template) when missing."""
-    return catalog.write_custom_template("mods", CUSTOM_FILE_TEMPLATE)
-
-
-def clear_custom_file() -> bool:
-    """Delete the custom mod file. True when something was removed."""
-    return catalog.clear_custom("mods")
 
 
 # ── version lookup / install ─────────────────────────────────────────────────
@@ -301,7 +232,13 @@ def uninstall_mod(mod: dict, client_dir: str):
     cfg = load_config()
     state = cfg.get("mods", {}).get(mod["id"], {})
     files = state.get("installed_files", mod.get("installed_files", []))
+    if not isinstance(files, list):
+        files = []
     for rel in files:
+        # Recorded paths are bookkeeping data — re-validate before they are
+        # ever joined onto the client dir (same gate as install).
+        if not isinstance(rel, str) or not catalog.safe_relpath(rel):
+            continue
         full = os.path.join(client_dir, rel)
         if os.path.exists(full):
             os.remove(full)
@@ -318,17 +255,26 @@ def read_dlls_entries(client_dir: str) -> set:
     try:
         with open(_dlls_txt_path(client_dir), encoding="utf-8") as f:
             return {line.strip().lower() for line in f if line.strip()}
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return set()
+
+
+def registered_dlls(mod: dict) -> list:
+    """The DLL names a catalog mod wires into dlls.txt, normalized to a
+    list (legacy catalogs carry a single string)."""
+    reg = mod.get("register_dll")
+    if not reg:
+        return []
+    if isinstance(reg, str):
+        return [reg]
+    return [d for d in reg if isinstance(d, str) and d]
 
 
 def scan_unknown_mods(client_dir: str, registry: list) -> list:
     """dlls.txt entries no catalog mod claims (by register_dll, case-
     insensitive) — mods the client loads that the launcher doesn't track."""
     known = {
-        mod.get("register_dll", "").strip().lower()
-        for mod in registry
-        if mod.get("register_dll")
+        d.strip().lower() for mod in registry for d in registered_dlls(mod)
     }
     return sorted(n for n in read_dlls_entries(client_dir) if n not in known)
 
@@ -341,16 +287,24 @@ def remove_unknown_mod(client_dir: str, name: str):
         return
     path = _dlls_txt_path(client_dir)
     if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+        except (OSError, UnicodeDecodeError):
+            return
         lines = [
             line
-            for line in open(path).read().splitlines()
+            for line in content.splitlines()
             if line.strip().lower() != name.lower()
         ]
-        if lines:
-            with open(path, "w") as f:
-                f.write("\n".join(lines) + "\n")
-        else:
-            os.remove(path)
+        try:
+            if lines:
+                _atomic_write(path, "\n".join(lines) + "\n")
+            else:
+                os.remove(path)
+        except OSError as e:
+            log(f"  Could not update dlls.txt: {e}", "err")
+            return
     # dlls.txt is mod-written, so its entries are untrusted: never resolve
     # one to a path outside client_dir.
     if catalog.safe_relpath(name):
@@ -362,31 +316,47 @@ def remove_unknown_mod(client_dir: str, name: str):
 
 def add_dll(client_dir: str, name: str):
     path = _dlls_txt_path(client_dir)
-    lines = open(path).read().splitlines() if os.path.exists(path) else []
+    lines = []
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except (OSError, UnicodeDecodeError) as e:
+            log(f"  Could not read dlls.txt: {e}", "err")
+            return
     if any(line.strip().lower() == name.lower() for line in lines):
         return
     if not catalog.safe_relpath(name.strip()):
         log(f"  Refusing unsafe dlls.txt entry: {name!r}")
         return
     lines = [line for line in lines if line.strip()] + [name]
-    with open(path, "w") as f:
-        f.write("\n".join(lines) + "\n")
+    try:
+        _atomic_write(path, "\n".join(lines) + "\n")
+    except OSError as e:
+        log(f"  Could not update dlls.txt: {e}", "err")
 
 
 def remove_dll(client_dir: str, name: str):
     path = _dlls_txt_path(client_dir)
     if not os.path.exists(path):
         return
-    lines = [
-        line
-        for line in open(path).read().splitlines()
-        if line.strip().lower() != name.lower()
-    ]
-    if not lines:
-        os.remove(path)
-    else:
-        with open(path, "w") as f:
-            f.write("\n".join(lines) + "\n")
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = [
+                line
+                for line in f.read().splitlines()
+                if line.strip().lower() != name.lower()
+            ]
+    except (OSError, UnicodeDecodeError) as e:
+        log(f"  Could not read dlls.txt: {e}", "err")
+        return
+    try:
+        if not lines:
+            os.remove(path)
+        else:
+            _atomic_write(path, "\n".join(lines) + "\n")
+    except OSError as e:
+        log(f"  Could not update dlls.txt: {e}", "err")
 
 
 def mod_installed_files_present(mod: dict, client_dir: str) -> bool:
@@ -395,8 +365,8 @@ def mod_installed_files_present(mod: dict, client_dir: str) -> bool:
     The filesystem — not the config record — is the source of truth for what
     the client loads: a mod is installed when every file it declares (catalog
     ``installed_files`` first, then the config record) exists on disk, and a
-    mod that registers a DLL is actually listed in dlls.txt. Falls back to the
-    recorded version when nothing is verifiable on disk.
+    mod that registers DLLs has them all listed in dlls.txt. Falls back to
+    the recorded version when nothing is verifiable on disk.
     """
     files = mod.get("installed_files")
     if not files:
@@ -406,15 +376,17 @@ def mod_installed_files_present(mod: dict, client_dir: str) -> bool:
             .get(mod["id"], {})
             .get("installed_files", [])
         )
+    regs_raw = registered_dlls(mod)
+    regs = [d.lower() for d in regs_raw]
+    entries = read_dlls_entries(client_dir)
     if files:
         if not all(os.path.exists(os.path.join(client_dir, f)) for f in files):
             return False
-        reg = mod.get("register_dll")
-        return (reg.lower() in read_dlls_entries(client_dir)) if reg else True
-    reg = mod.get("register_dll")
-    if reg and (
-        reg.lower() in read_dlls_entries(client_dir)
-        and os.path.exists(os.path.join(client_dir, reg))
+        return all(reg in entries for reg in regs)
+    if (
+        regs
+        and all(reg in entries for reg in regs)
+        and all(os.path.exists(os.path.join(client_dir, d)) for d in regs_raw)
     ):
         return True
     return bool(
@@ -423,6 +395,33 @@ def mod_installed_files_present(mod: dict, client_dir: str) -> bool:
         .get(mod["id"], {})
         .get("installed_version")
     )
+
+
+def external_launcher_executables(client_dir: str) -> list:
+    """Game executables provided by installed external-launcher mods, in
+    registry order (first = highest precedence).
+
+    Active means: ``type == "external-launcher"`` with a non-empty
+    ``executable``, the installation policy satisfied ("required" mods are
+    always active; "user_opt_in" only when their per-user record is enabled),
+    AND the executable exists on disk. Anything else is excluded so launch
+    falls back to WoW.exe — no implicit loader preference.
+    """
+    out = []
+    records = load_config().get("mods", {})
+    for mod in mods_registry():
+        if mod.get("type") != "external-launcher":
+            continue
+        exe = mod.get("executable")
+        if not exe:
+            continue
+        if mod.get("installation") != "required" and not records.get(
+            mod["id"], {}
+        ).get("enabled", False):
+            continue
+        if os.path.exists(os.path.join(client_dir, exe)):
+            out.append(exe)
+    return out
 
 
 def mod_supports_update_check(mod: dict) -> bool:

@@ -55,6 +55,7 @@ class AddonRow(QWidget):
         palette: Palette,
         on_toggle,
         on_retry=None,
+        on_update=None,
         parent=None,
     ):
         super().__init__(parent)
@@ -155,7 +156,13 @@ class AddonRow(QWidget):
         elif rec.status == "outOfDate" and installed:
             status = ClickableLabel("Update", top)
             status.setStyleSheet(f"color: {p.gold.name()}; font-weight: bold;")
-            status.clicked.connect(lambda: on_toggle(rec.folder, True))
+            # The gold label installs this addon's update right away — it
+            # must NOT route through the checkbox toggle (for an installed
+            # addon checked==installed would just clear a pending entry).
+            if on_update is not None:
+                status.clicked.connect(
+                    lambda checked=False, r=rec: on_update(r)
+                )
         elif warnings:
             status = QLabel(f"⚠ {warnings[0]}", top)
             status.setStyleSheet(f"color: {p.warn.name()};")
@@ -217,6 +224,7 @@ class AddonsPanel(ScrollListPanel):
         )
         self._addons = addons
         self._op_kind = "addons"
+        self._running = False
         self._build_header()
         self._add_scroll_list()
         self._build_footer()
@@ -386,6 +394,7 @@ class AddonsPanel(ScrollListPanel):
                         palette=self._palette,
                         on_toggle=self._on_toggle,
                         on_retry=self._on_retry,
+                        on_update=self._update_one,
                         parent=self._content,
                     )
                     self._rows[rec.folder] = row
@@ -451,9 +460,15 @@ class AddonsPanel(ScrollListPanel):
             self._addons.toggle(folder, checked)
         self._refresh_apply_visibility()
 
+    def _update_one(self, rec):
+        """The row's gold Update action: install this addon's update now.
+        The busy flag is only set when the controller actually started."""
+        if self._addons.apply([rec.to_dict()]):
+            self._set_running(True)
+
     def _apply(self):
-        self._set_running(True)
-        self._addons.apply_pending()
+        if self._addons.apply_pending():
+            self._set_running(True)
 
     def _on_check(self):
         if self._addons.verify(force=True):
@@ -466,13 +481,13 @@ class AddonsPanel(ScrollListPanel):
         self._on_check()
 
     def _on_update_all(self):
-        self._set_running(True)
         if self._addons.apply(self._addons.update_all()):
+            self._set_running(True)
             self._render()
 
     def _on_install_recommended(self):
-        self._set_running(True)
         if self._addons.apply_recommended_addons():
+            self._set_running(True)
             self._render()
 
     def _set_running(self, running: bool):

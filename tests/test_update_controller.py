@@ -524,12 +524,27 @@ def test_events_delivered_to_subscribers(controller, worker_cls, config):
 def test_readiness_disabled_without_manifest_when_cannot_launch(
     controller, worker_cls, config, monkeypatch
 ):
-    """No manifest + no launch possibility → button grayed UPDATE."""
+    """No manifest + no launch possibility → button grayed UPDATE with an
+    actionable reason (Linux: umu-run missing)."""
     monkeypatch.setattr(uc, "can_launch_client", lambda: False)
+    monkeypatch.setattr(uc, "is_linux", lambda: True)
     r = controller.compute_readiness()
     assert r.mode == "disabled"
     assert r.label == "UPDATE"
-    assert r.status == "Manifest unavailable"
+    assert r.status == "Manifest unavailable — umu-run not found"
+
+
+def test_readiness_disabled_without_manifest_non_linux(
+    controller, worker_cls, config, monkeypatch
+):
+    """Same grayed UPDATE on platforms without any launch path."""
+    monkeypatch.setattr(uc, "can_launch_client", lambda: False)
+    monkeypatch.setattr(uc, "is_linux", lambda: False)
+    r = controller.compute_readiness()
+    assert r.mode == "disabled"
+    assert r.status == (
+        "Manifest unavailable — launching unsupported on this platform"
+    )
 
 
 def test_readiness_recovery_update_when_manifest_down(
@@ -924,17 +939,22 @@ def test_launch_game_linux_passes_skip_builtin_dxvk(
     assert launched["kw"]["skip_builtin_dxvk"] is True
 
 
-def test_launch_game_linux_prefers_vanillafixes(
+def test_launch_game_linux_prefers_external_launcher(
     controller, worker_cls, config, monkeypatch, tmp_path
 ):
     game = tmp_path / "game"
     game.mkdir()
     (game / "WoW.exe").write_text("")
-    (game / "VanillaFixes.exe").write_text("")
+    (game / "ExampleLoader.exe").write_text("")
     config["out_dir"] = str(game)
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
     monkeypatch.setattr(uc, "is_linux", lambda: True)
     monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
+    monkeypatch.setattr(
+        uc.mods,
+        "external_launcher_executables",
+        lambda client_dir: ["ExampleLoader.exe"],
+    )
     launched = {}
     monkeypatch.setattr(
         "nostalgia_launcher.services.umu.launch",
@@ -950,11 +970,11 @@ def test_launch_game_linux_prefers_vanillafixes(
     ok, _ = controller.launch_game()
 
     assert ok is True
-    assert launched["exe"] == str(game / "VanillaFixes.exe")
+    assert launched["exe"] == str(game / "ExampleLoader.exe")
     events = controller._dispatcher.drain()
     assert any(
         isinstance(e, LogMessage)
-        and "Launched VanillaFixes.exe via umu" in e.text
+        and "Launched ExampleLoader.exe via umu" in e.text
         for e in events
     )
 
@@ -1112,17 +1132,22 @@ def test_launch_game_linux_umu_failure(
     )
 
 
-def test_launch_game_windows_prefers_vanillafixes(
+def test_launch_game_windows_prefers_external_launcher(
     controller, worker_cls, config, monkeypatch, tmp_path
 ):
     game = tmp_path / "game"
     game.mkdir()
     (game / "WoW.exe").write_text("")
-    (game / "VanillaFixes.exe").write_text("")
+    (game / "ExampleLoader.exe").write_text("")
     config["out_dir"] = str(game)
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
     monkeypatch.setattr(uc, "is_linux", lambda: False)
     monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
+    monkeypatch.setattr(
+        uc.mods,
+        "external_launcher_executables",
+        lambda client_dir: ["ExampleLoader.exe"],
+    )
     popen = Mock()
     popen.return_value.stdout = None  # keep the drain thread a no-op
     monkeypatch.setattr(subprocess, "Popen", popen)
@@ -1132,7 +1157,7 @@ def test_launch_game_windows_prefers_vanillafixes(
     assert ok is True
     assert dxvk is False
     args, kwargs = popen.call_args
-    assert args[0] == [str(game / "VanillaFixes.exe")]
+    assert args[0] == [str(game / "ExampleLoader.exe")]
     assert kwargs["cwd"] == str(game)
 
 
@@ -1291,6 +1316,61 @@ def test_readiness_torrent_error_no_stale(controller, worker_cls, config):
     r = controller.compute_readiness()
     assert r.mode == "update"
     assert r.status == "Download via BitTorrent (session failed)"
+
+
+def test_readiness_torrent_error_no_stale_plays_installed_client(
+    controller, worker_cls, config, monkeypatch
+):
+    """Regression: a failed torrent verify must not strand an installed
+    client behind a forced recovery download — with a game executable on
+    disk, PLAY wins (Force recheck remains the repair path)."""
+    controller.state.manifest_available = False
+    controller.state.torrent_reachable = True
+    controller.state.torrent_error = "session failed"
+    monkeypatch.setattr(
+        UpdateController, "_playable_client_present", lambda self: True
+    )
+    r = controller.compute_readiness()
+    assert r.mode == "play"
+    assert r.label == "PLAY"
+    assert r.status == "Verification failed — playing installed client"
+
+
+def test_readiness_recovery_offers_play_when_client_installed(
+    controller, worker_cls, config, monkeypatch
+):
+    """No verdict yet + torrent recovery possible + an installed client →
+    PLAY with an unverified-client note instead of hijacking the button
+    for a full BitTorrent re-download."""
+    monkeypatch.setattr(uc, "torrent_recovery_available", lambda: True)
+    monkeypatch.setattr(
+        UpdateController, "_playable_client_present", lambda self: True
+    )
+    r = controller.compute_readiness()
+    assert r.mode == "play"
+    assert r.label == "PLAY"
+    assert r.status == "Manifest unavailable — playing unverified client"
+
+
+def test_playable_client_present_probes_game_folder(
+    controller, tmp_path, monkeypatch
+):
+    """The helper mirrors launch_game's pick: unset folder and an empty
+    game dir yield False; a present WoW.exe yields True."""
+    monkeypatch.setattr(
+        "nostalgia_launcher.services.mods.external_launcher_executables",
+        lambda client_dir: [],
+    )
+
+    assert controller._playable_client_present() is False  # /tmp/octo-game
+
+    game = tmp_path / "game"
+    game.mkdir()
+    probe = UpdateController(EventDispatcher(), get_out_dir=lambda: str(game))
+    assert probe._playable_client_present() is False
+
+    (game / "WoW.exe").write_bytes(b"MZ")
+    assert probe._playable_client_present() is True
 
 
 # ── torrent snapshot lifecycle ──────────────────────────────────────────

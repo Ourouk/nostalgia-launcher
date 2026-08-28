@@ -1,10 +1,11 @@
-"""Shared scaffolding for the scrollable list panels (MODS, ADDONS).
+"""Shared scaffolding for the scrollable list panels (MODS, ADDONS, ASSETS).
 
-Both panels render a scrollable list of rows between a header and a footer,
-and both wire the same three bridge signals (the panel's XLoaded snapshot,
+Every panel renders a scrollable list of rows between a header and a footer,
+and all wire the same three bridge signals (the panel's XLoaded snapshot,
 plus operationFinished/operationFailed). This module holds that common shell
-and the row chrome both panels reuse, so each panel only implements its own
-rows, header and footer.
+and the row chrome the panels reuse, so each panel only implements its own
+rows, header and footer. The MODS/ASSETS tabs additionally share catalog-row
+rendering via `content_panel.ContentListPanel`.
 """
 
 import webbrowser
@@ -44,7 +45,9 @@ class ClickableLabel(QLabel):
 
 
 class LinkLabel(ClickableLabel):
-    """A QLabel that opens a URL on left-click."""
+    """A QLabel that opens a URL on left-click. Only web links are opened:
+    server-supplied URLs must not reach OS protocol handlers (file://,
+    smb://, registered app schemes)."""
 
     def __init__(self, text, url, parent=None):
         super().__init__(text, parent)
@@ -53,7 +56,8 @@ class LinkLabel(ClickableLabel):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self._url:
-            webbrowser.open(self._url)
+            if self._url.lower().startswith(("http://", "https://")):
+                webbrowser.open(self._url)
         super().mouseReleaseEvent(event)
 
 

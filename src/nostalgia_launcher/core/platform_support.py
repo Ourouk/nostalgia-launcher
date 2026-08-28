@@ -14,8 +14,6 @@ import os
 import subprocess
 import sys
 
-CLIENT_EXE = "WoW.exe"
-
 
 def is_windows() -> bool:
     return sys.platform.startswith("win")
@@ -29,15 +27,25 @@ def is_linux() -> bool:
     return sys.platform.startswith("linux")
 
 
+# Whether the Linux game launch capability is available is decided by
+# services/umu (umu-run on PATH). Core must not import services, so the
+# composition root (cli) injects the probe at startup; unset → not capable.
+_UMU_PROBE = None
+
+
+def set_umu_probe(probe) -> None:
+    """Register the Linux launch-capability probe (zero-arg callable)."""
+    global _UMU_PROBE
+    _UMU_PROBE = probe
+
+
 def can_launch_client() -> bool:
     """The game client is a Windows binary — launched natively on Windows
     and via umu-launcher (Proton/Wine) on Linux when umu-run is available."""
     if is_windows():
         return True
     if is_linux():
-        from ..services import umu
-
-        return umu.umu_available()
+        return bool(_UMU_PROBE and _UMU_PROBE())
     return False
 
 

@@ -38,8 +38,11 @@ Commands live in `AGENTS.md`; read it first.
 - libtorrent is faked via `sys.modules["libtorrent"]`; the real library is
   never needed to run the suite (only the e2e tests use it).
 - Tests redirect config to `tmp_path` via `config_store.configure(...)` and
-  monkeypatch `CONFIG_FILE`/`CACHE_FILE` on both `core.constants` and
-  `controllers.settings` (that module imports them by name).
+  monkeypatch `CONFIG_FILE`/`CACHE_FILE` on **both** `core.constants` AND
+  `core.profiles` (profiles imports them by name, so patching only
+  `core.constants` leaves the default profile's paths pointing at the real
+  HOME). The `hermetic_cli` conftest fixture composes both rebinds with
+  `fake_home` — use it for any test that drives `cli.main()`.
 - Qt tests share one `QApplication` via `create_qt_app()` (a second instance
   aborts Qt); widget assertions use `objectName`s set in the widgets.
 

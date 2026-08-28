@@ -219,3 +219,24 @@ def test_event_posted_during_dispatch_waits_for_next_round():
     assert got == [StatusChanged("first")]
     d.dispatch_all()
     assert got == [StatusChanged("first"), LogMessage("nested")]
+
+
+def test_dispatch_all_isolates_raising_handlers():
+    """One raising handler must not strand its already-drained siblings:
+    each event is delivered independently and the failure is logged."""
+    d = EventDispatcher()
+    got = []
+
+    def bad(_e):
+        raise RuntimeError("slot exploded")
+
+    def good(e):
+        got.append(e)
+
+    d.subscribe(bad)
+    d.subscribe(good)
+    d.post(LogMessage("a"))
+    d.post(LogMessage("b"))
+    delivered = d.dispatch_all()
+    assert len(delivered) == 2
+    assert got == [LogMessage("a"), LogMessage("b")]

@@ -104,12 +104,41 @@ def test_rmtree_force_removes_readonly(tmp_path):
     assert not d.exists()
 
 
-def test_pick_game_executable_prefers_vanillafixes(tmp_path):
+def test_pick_game_executable_prefers_external_executable(tmp_path):
     (tmp_path / "WoW.exe").write_bytes(b"")
-    (tmp_path / "VanillaFixes.exe").write_bytes(b"")
+    (tmp_path / "ExampleLoader.exe").write_bytes(b"")
+    exe, label = filesystem.pick_game_executable(
+        str(tmp_path), ["ExampleLoader.exe"]
+    )
+    assert label == "ExampleLoader.exe"
+    assert exe == str(tmp_path / "ExampleLoader.exe")
+
+
+def test_pick_game_executable_skips_missing_declared(tmp_path):
+    # Declared-but-absent executables are skipped; the first one present
+    # on disk wins.
+    (tmp_path / "WoW.exe").write_bytes(b"")
+    (tmp_path / "OtherLoader.exe").write_bytes(b"")
+    exe, label = filesystem.pick_game_executable(
+        str(tmp_path), ["ExampleLoader.exe", "OtherLoader.exe"]
+    )
+    assert label == "OtherLoader.exe"
+
+
+def test_pick_game_executable_first_declared_wins(tmp_path):
+    (tmp_path / "A.exe").write_bytes(b"")
+    (tmp_path / "B.exe").write_bytes(b"")
+    exe, label = filesystem.pick_game_executable(str(tmp_path), ["B.exe"])
+    assert label == "B.exe"
+
+
+def test_pick_game_executable_no_loader_stray_on_disk(tmp_path):
+    # Without a catalog-declared external executable a stray ExampleLoader.exe
+    # on disk does NOT get launched.
+    (tmp_path / "WoW.exe").write_bytes(b"")
+    (tmp_path / "ExampleLoader.exe").write_bytes(b"")
     exe, label = filesystem.pick_game_executable(str(tmp_path))
-    assert label == "VanillaFixes.exe"
-    assert exe == str(tmp_path / "VanillaFixes.exe")
+    assert label == "WoW.exe"
 
 
 def test_pick_game_executable_falls_back_to_wow(tmp_path):

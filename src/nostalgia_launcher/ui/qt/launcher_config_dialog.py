@@ -6,13 +6,17 @@ server directory: the configuration comes from a local file the user
 selects or an https URL the user types — typically obtained independently
 from a community or server operator.
 
-Flow: input stage (file path or URL) → fetch/read + validate → summary
-stage showing exactly what the configuration points at (server name, base
-URL, every host that will be contacted, which features are configured, and
+Flow: input stage (file path or URL) → fetch/read + validate → install-
+folder stage confirming where the game client lives (pre-filled with the
+Games/<ServerName> suggestion, editable + Browse; REQUIRED — each profile
+keeps its own install folder) → summary stage showing exactly what the
+configuration points at (server name, base URL, every host that will be
+contacted, which features are configured, the chosen install folder, and
 an explicit note that the configuration controls game-file downloads) →
 explicit Accept. Nothing is persisted by the dialog; the chosen selection
-is exposed via ``selection()`` as ``{"kind": "file", "path": ...}`` or
-``{"kind": "url", "config_url": ..., "raw": ...}``.
+is exposed via ``selection()`` as ``{"kind": "file", "path": ...,
+"install_dir": ...}`` or ``{"kind": "url", "config_url": ..., "raw": ...,
+"install_dir": ...}``.
 """
 
 import os
@@ -20,6 +24,7 @@ import threading
 from urllib.parse import urlsplit
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -28,9 +33,10 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
-from ...core import launcher
+from ...core import launcher, platform_support
 from ...services import config_import
 from .theme import Palette, apply_theme
 
@@ -47,10 +53,13 @@ class LauncherConfigDialog(QDialog):
         super().__init__(parent)
         p = palette or Palette()
         self._palette = p
-        self._selected_path = ""
         self._selection = None
         self._fetching = False
         self._stage = "input"
+        # Config validated but not yet confirmed (kind, source, raw, cfg):
+        # held while the install-folder stage runs.
+        self._validated = None
+        self._install_dir = ""
         self._pending = None  # (kind, raw, config) awaiting confirmation
         self.setObjectName("launcherConfigDialog")
         self.setWindowTitle("FIRST LAUNCH — IMPORT A CONFIGURATION")
@@ -115,6 +124,48 @@ class LauncherConfigDialog(QDialog):
         path_row.addWidget(browse)
         root.addLayout(path_row)
 
+        # Install-folder stage (shown after the configuration validated):
+        # each profile keeps its own game-client folder; the field is
+        # pre-filled with the Games/<ServerName> suggestion and REQUIRED.
+        self._folderGroup = QWidget(self)
+        self._folderGroup.setObjectName("launcherConfigFolderGroup")
+        folder_col = QVBoxLayout(self._folderGroup)
+        folder_col.setContentsMargins(0, 4, 0, 0)
+        folder_col.setSpacing(4)
+        folder_title = QLabel("INSTALL FOLDER", self._folderGroup)
+        folder_title.setObjectName("launcherConfigFolderTitle")
+        folder_title.setStyleSheet(
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
+        )
+        folder_col.addWidget(folder_title)
+        folder_hint = QLabel(
+            "Where the game client lives. Each launcher profile keeps its "
+            "own install folder.",
+            self._folderGroup,
+        )
+        folder_hint.setObjectName("launcherConfigFolderHint")
+        folder_hint.setWordWrap(True)
+        folder_hint.setStyleSheet(
+            f"color: {p.text_dim.name()}; font-size: 9pt;"
+        )
+        folder_col.addWidget(folder_hint)
+        folder_row = QHBoxLayout()
+        self._folder = QLineEdit(self._folderGroup)
+        self._folder.setObjectName("launcherConfigFolder")
+        self._folder.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
+        self._folder.textChanged.connect(self._on_folder_changed)
+        folder_row.addWidget(self._folder, 1)
+        folder_browse = QPushButton("Browse…", self._folderGroup)
+        folder_browse.setObjectName("launcherConfigFolderBrowse")
+        folder_browse.setCursor(Qt.PointingHandCursor)
+        folder_browse.clicked.connect(self.browse_install_dir)
+        folder_row.addWidget(folder_browse)
+        folder_col.addLayout(folder_row)
+        self._folderGroup.hide()
+        root.addWidget(self._folderGroup)
+
         self._summary = QLabel("", self)
         self._summary.setObjectName("launcherConfigSummary")
         self._summary.setStyleSheet(
@@ -162,13 +213,21 @@ class LauncherConfigDialog(QDialog):
 
     def _set_stage(self, stage: str):
         self._stage = stage
+        input_stage = stage == "input"
+        folder_stage = stage == "folder"
         summary_visible = stage == "summary"
         self._summary.setVisible(summary_visible)
-        self._back.setVisible(summary_visible)
-        self._url.setEnabled(stage == "input")
-        self._path.setEnabled(stage == "input")
+        # Back walks summary → folder → input.
+        self._back.setVisible(not input_stage)
+        self._url.setEnabled(input_stage)
+        self._path.setEnabled(input_stage)
         self.findChild(QPushButton, "launcherConfigBrowse").setEnabled(
-            stage == "input"
+            input_stage
+        )
+        self._folderGroup.setVisible(not input_stage)
+        self._folder.setEnabled(folder_stage)
+        self.findChild(QPushButton, "launcherConfigFolderBrowse").setEnabled(
+            folder_stage
         )
         self._ok.setText("Accept" if summary_visible else "Continue")
 
@@ -196,6 +255,22 @@ class LauncherConfigDialog(QDialog):
             self._path.setText(path)
             self._url.clear()
 
+    def browse_install_dir(self):
+        """Pick the game-client folder (existing directory)."""
+        current = os.path.expanduser(self._folder.text().strip())
+        start_dir = (
+            current if os.path.isdir(current) else os.path.expanduser("~")
+        )
+        path = QFileDialog.getExistingDirectory(
+            self, "Select game client folder", start_dir
+        )
+        if path:
+            self._folder.setText(os.path.normpath(path))
+
+    def _on_folder_changed(self, _text):
+        self._clear_error()
+        self._refresh_ok()
+
     def _on_input_changed(self, _text):
         self._error.clear()
         self._error.hide()
@@ -210,6 +285,10 @@ class LauncherConfigDialog(QDialog):
         if self._stage == "summary":
             self._ok.setEnabled(True)
             return
+        if self._stage == "folder":
+            # REQUIRED: no accept without an install folder.
+            self._ok.setEnabled(bool(self._folder.text().strip()))
+            return
         ready = bool(self._url.text().strip() or self._path.text().strip())
         self._ok.setEnabled(ready)
 
@@ -220,12 +299,20 @@ class LauncherConfigDialog(QDialog):
     def _show_error(self, message: str):
         self._error.setText(message)
         self._error.show()
-        self._set_stage("input")
         self._refresh_ok()
 
     def _go_back(self):
-        self._pending = None
-        self._summary.clear()
+        if self._stage == "summary":
+            self._pending = None
+            self._summary.clear()
+            self._set_stage("folder")
+            self._set_status(
+                "Confirm where the game client will be installed."
+            )
+            self._refresh_ok()
+            return
+        # folder → input: drop the validated config, re-pick the source.
+        self._validated = None
         self._set_stage("input")
         self._set_status("Choose a configuration file or enter its https URL.")
         self._refresh_ok()
@@ -235,6 +322,9 @@ class LauncherConfigDialog(QDialog):
     def _submit(self):
         if self._stage == "summary":
             self._accept_pending()
+            return
+        if self._stage == "folder":
+            self._confirm_folder()
             return
         url = self._url.text().strip()
         path = self._path.text().strip()
@@ -249,6 +339,39 @@ class LauncherConfigDialog(QDialog):
         else:
             self._submit_file(path)
 
+    def _confirm_folder(self):
+        """Validate the install folder and move to the summary stage."""
+        if not self._validated:
+            self._show_error("Pick a configuration first.")
+            return
+        chosen = os.path.normpath(
+            os.path.expanduser(self._folder.text().strip())
+        )
+        if not chosen or chosen == ".":
+            self._show_error(
+                "Choose the folder where the game client is installed."
+            )
+            return
+        self._install_dir = chosen
+        kind, source, raw, config = self._validated
+        self._show_summary(kind, source, raw, config)
+
+    def _enter_folder_stage(self, kind: str, source: str, raw: str, config):
+        """A validated configuration in hand: ask where the game client
+        lives (pre-filled with the Games/<ServerName> suggestion)."""
+        self._validated = (kind, source, raw, config)
+        if not self._folder.text().strip():
+            suggestion = platform_support.default_game_folder(
+                config.server_name
+            )
+            if suggestion:
+                self._folder.setText(suggestion)
+        self._set_stage("folder")
+        self._set_status(
+            "Confirm the configuration source, then choose the install folder."
+        )
+        self._refresh_ok()
+
     def _submit_file(self, path: str):
         config, err = launcher.validate_path(path)
         if config is None:
@@ -262,7 +385,7 @@ class LauncherConfigDialog(QDialog):
         except OSError as e:
             self._show_error(f"Could not read the configuration: {e}")
             return
-        self._show_summary("file", path, raw, config)
+        self._enter_folder_stage("file", path, raw, config)
 
     def _submit_url(self, url: str):
         """Fetch and validate the configuration on a worker thread — the
@@ -318,13 +441,15 @@ class LauncherConfigDialog(QDialog):
         if config is None:
             self._show_error(str(verr) or "The configuration is invalid.")
             return
-        self._show_summary("url", url, result.get("raw") or "", config)
+        self._enter_folder_stage("url", url, result.get("raw") or "", config)
 
     # ── summary stage ────────────────────────────────────────────────────
 
     def _show_summary(self, kind: str, source: str, raw: str, config):
         self._pending = (kind, source, raw, config)
-        self._summary.setText(_summary_text(kind, source, config))
+        self._summary.setText(
+            _summary_text(kind, source, config, self._install_dir)
+        )
         self._set_stage("summary")
         self._set_status(
             "Review this configuration. Only accept it if you trust its "
@@ -337,25 +462,28 @@ class LauncherConfigDialog(QDialog):
             return
         kind, source, raw, _config = self._pending
         if kind == "file":
-            self._selected_path = source
-            self._selection = {"kind": "file", "path": source, "raw": raw}
+            self._selection = {
+                "kind": "file",
+                "path": source,
+                "raw": raw,
+                "install_dir": self._install_dir,
+            }
         else:
             self._selection = {
                 "kind": "url",
                 "config_url": source,
                 "raw": raw,
+                "install_dir": self._install_dir,
             }
         self.accept()
 
     # ── results ──────────────────────────────────────────────────────────
 
-    def selected_path(self) -> str:
-        """The chosen local file path (file selection) or "" (url)."""
-        return self._selected_path
-
     def selection(self) -> dict | None:
-        """The chosen selection: {"kind": "file", "path", "raw"} or
-        {"kind": "url", "config_url", "raw"}, or None if cancelled."""
+        """The chosen selection: {"kind": "file", "path", "raw",
+        "install_dir"} or {"kind": "url", "config_url", "raw",
+        "install_dir"}, or None if cancelled. ``install_dir`` is the
+        confirmed game-client folder (never empty on accept)."""
         return self._selection
 
 
@@ -391,10 +519,12 @@ def _addons_catalog_summary(urls: list, cfg) -> str:
     return str(len(urls))
 
 
-def _summary_text(kind: str, source: str, config) -> str:
+def _summary_text(
+    kind: str, source: str, config, install_dir: str = ""
+) -> str:
     """Human-readable summary of a validated launcher configuration: what
-    it is, where it points, every host the launcher would contact, and
-    what will be stored locally on accept."""
+    it is, where it points, every host the launcher would contact, the
+    confirmed install folder, and what will be stored locally on accept."""
     cfg = config
     hosts = sorted(h for h in cfg.download_hosts() if h)
     for url in (
@@ -412,6 +542,7 @@ def _summary_text(kind: str, source: str, config) -> str:
         f"Name: {cfg.server_name}",
         f"Source: {source}" if kind == "url" else f"File: {source}",
         f"Server base URL: {cfg.server_url}",
+        f"Install folder: {install_dir or '(not chosen)'}",
         f"Contacts {len(hosts)} host(s): {', '.join(hosts)}",
         "Client file updates: configured (can be disabled in Settings)",
         f"BitTorrent bulk downloads: {_yes(not cfg.has_torrent())}",

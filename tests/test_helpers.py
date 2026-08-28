@@ -121,3 +121,15 @@ def test_relative_age_buckets():
     assert relative_age(now - 5 * 60, now=now) == "5m ago"
     assert relative_age(now - 3 * 3600, now=now) == "3h ago"
     assert relative_age(now - 2 * 86400, now=now) == "2d ago"
+
+
+def test_parse_version_alnum_qualifiers():
+    """'2rc1' must contribute 2, not 21 (digit splicing made e.g.
+    '0.3rc1' compare as newer than '0.3.9')."""
+    from nostalgia_launcher.core.helpers import parse_version
+
+    assert parse_version("v1.2.0") == (1, 2, 0)
+    assert parse_version("1.2rc1") == (1, 2)
+    assert parse_version("0.3rc1")[1] == 3
+    assert parse_version("1.10b2") == (1, 10)
+    assert parse_version("rc1") == (0,)

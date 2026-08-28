@@ -67,7 +67,7 @@ def test_git_parts_community_gitea():
 
 
 def test_addon_zip_url_community_gitea():
-    url = addons.addon_zip_url(
+    url = git_archive.GitArchiveBackend().zip_url(
         "https://gitea.example.com/git/a/b", "abc123" * 6
     )
     assert (
@@ -102,7 +102,9 @@ def test_git_parts_gitlab():
 
 
 def test_addon_zip_url_github():
-    url = addons.addon_zip_url("https://github.com/a/b", "abc123" * 6)
+    url = git_archive.GitArchiveBackend().zip_url(
+        "https://github.com/a/b", "abc123" * 6
+    )
     assert (
         url
         == "https://github.com/a/b/archive/abc123abc123abc123abc123abc123abc123.zip"
@@ -110,7 +112,9 @@ def test_addon_zip_url_github():
 
 
 def test_addon_zip_url_gitlab():
-    url = addons.addon_zip_url("https://gitlab.com/a/b", "abc123")
+    url = git_archive.GitArchiveBackend().zip_url(
+        "https://gitlab.com/a/b", "abc123"
+    )
     assert url == "https://gitlab.com/a/b/-/archive/abc123/b-abc123.zip"
 
 
@@ -676,19 +680,26 @@ def test_install_addon_files_extracts(tmp_path, monkeypatch):
             "pfUI-master/lib/x.lua": "-- lib",
         }
     )
-    monkeypatch.setattr(
-        git_archive,
-        "secure_urlopen",
-        lambda *a, **k: type(
-            "R",
-            (),
-            {
-                "__enter__": lambda s: s,
-                "__exit__": lambda *x: False,
-                "read": lambda s=0: payload,
-            },
-        )(),
-    )
+    buf = bytearray(payload)
+
+    class R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *x):
+            return False
+
+        @staticmethod
+        def read(n=-1):
+            # Chunked reads (the capped transfer layer reads 64 KiB).
+            if n is None or n < 0:
+                chunk, buf[:] = bytes(buf), b""
+            else:
+                chunk = bytes(buf[:n])
+                del buf[:n]
+            return chunk
+
+    monkeypatch.setattr(git_archive, "secure_urlopen", lambda *a, **k: R())
 
     addons.install_addon_files(
         str(client), "pfUI", "https://github.com/brues-code/pfUI", "abcd" * 10
@@ -707,19 +718,26 @@ def test_install_addon_files_path_traversal_safe(tmp_path, monkeypatch):
             "x-master/../../escape.txt": "evil",
         }
     )
-    monkeypatch.setattr(
-        git_archive,
-        "secure_urlopen",
-        lambda *a, **k: type(
-            "R",
-            (),
-            {
-                "__enter__": lambda s: s,
-                "__exit__": lambda *x: False,
-                "read": lambda s=0: payload,
-            },
-        )(),
-    )
+    buf = bytearray(payload)
+
+    class R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *x):
+            return False
+
+        @staticmethod
+        def read(n=-1):
+            # Chunked reads (the capped transfer layer reads 64 KiB).
+            if n is None or n < 0:
+                chunk, buf[:] = bytes(buf), b""
+            else:
+                chunk = bytes(buf[:n])
+                del buf[:n]
+            return chunk
+
+    monkeypatch.setattr(git_archive, "secure_urlopen", lambda *a, **k: R())
 
     addons.install_addon_files(
         str(client), "x", "https://github.com/a/x", "abcd" * 10

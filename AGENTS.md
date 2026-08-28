@@ -32,7 +32,8 @@ uv run ruff check .                # lint gate — run after every edit batch
 - **Ruff is the only lint/format gate — there is no type checker** (no mypy/
   pyright in the toolchain). Selects E4/E7/E9/F/I/W/UP/B,
   `line-length = 79`, `target-version = "py310"` (`pyproject.toml`).
-- Manual run against a real server config (the only example in the repo):
+- Manual run against a real server config (the only full launcher-config
+  example; `examples/` also carries mods/addons catalog examples):
   `uv run nostalgia-launcher --launcher-config examples/community.example.json`
 
 ## Non-negotiable conventions

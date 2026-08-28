@@ -19,11 +19,20 @@ from ...core.config_store import load_config, update_config
 from ...core.constants import GITHUB_API, UA
 from ...core.errors import describe_net_error
 from ...core.log_sink import log
-from ...core.security_http import allowed_download_hosts, secure_urlopen
+from ...core.security_http import (
+    allowed_download_hosts,
+    read_capped,
+    secure_urlopen,
+)
 from .base import FetchResult, SourceBackend, register
 from .safety import safe_slug, valid_extract_map
 
 _MOD_VERSION_CACHE_TTL = 3600
+# Release-API responses are small JSON documents; anything larger is not one.
+_API_MAX_BYTES = 2 * 1024 * 1024
+# Release assets are whole mod archives buffered for extraction — cap them
+# like every other transfer so a hostile origin can't OOM the process.
+_ASSET_MAX_BYTES = 512 * 1024 * 1024
 
 
 def github_latest(owner: str, repo: str, raise_errors=False) -> dict | None:
@@ -31,7 +40,7 @@ def github_latest(owner: str, repo: str, raise_errors=False) -> dict | None:
     try:
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with secure_urlopen(req, timeout=10) as r:
-            return json.load(r)
+            return json.loads(read_capped(r, _API_MAX_BYTES))
     except Exception as e:
         if raise_errors:
             raise RuntimeError(describe_net_error(e)) from e
@@ -88,12 +97,13 @@ def slim_release(rel: dict) -> dict:
 
 def fetch_bytes(url: str) -> bytes:
     """Download one artifact through the hardened transfer layer (the base
-    git-host allowlist plus the launcher config's own hosts)."""
+    git-host allowlist plus the launcher config's own hosts), refusing
+    responses over the asset size cap."""
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with secure_urlopen(
         req, timeout=120, allowed_hosts=allowed_download_hosts()
     ) as r:
-        return r.read()
+        return read_capped(r, _ASSET_MAX_BYTES)
 
 
 def fetch_release_cached(
@@ -150,6 +160,7 @@ def _validate_release_source(source: dict) -> dict | None:
 
 class GitHubReleaseBackend(SourceBackend):
     KIND = "github_release"
+    HOST = "GitHub"
 
     def validate(self, source: dict) -> dict | None:
         cleaned = _validate_release_source(source)
@@ -179,7 +190,7 @@ class GitHubReleaseBackend(SourceBackend):
         src = entry["source"]
         rel = release if release is not None else self.latest_release(src)
         if not rel:
-            raise RuntimeError("no release found on GitHub")
+            raise RuntimeError(f"no release found on {self.HOST}")
         asset = pick_asset(
             rel.get("assets", []), src["asset_pattern"], src.get("prefer_no")
         )

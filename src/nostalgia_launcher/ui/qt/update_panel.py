@@ -108,10 +108,12 @@ class UpdatePanel(QWidget):
         return value
 
     def set_updated_files(self, files):
-        """Replace the updated-files list with `files`, each marked pending."""
+        """Replace the updated-files list with `files`, each marked pending.
+        Separators are normalized to "/" to match the streamed current-file
+        paths (which are normalized before matching)."""
         self._file_list.clear()
         for rel in files:
-            item = QListWidgetItem(rel)
+            item = QListWidgetItem(str(rel).replace("\\", "/"))
             item.setData(Qt.UserRole, False)
             self._file_list.addItem(item)
 

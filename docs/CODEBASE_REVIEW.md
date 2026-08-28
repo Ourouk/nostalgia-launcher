@@ -40,7 +40,7 @@ binary-era Windows game, re-targeted at private servers.
 (optional, lazily imported BitTorrent backend), and otherwise **pure
 standard-library** business logic. Packaging via **hatchling** + **PyInstaller**;
 dependency management via **uv**; tests via **pytest**; lint/format gate via
-**ruff** (local-only, no CI step).
+**ruff** (enforced in CI via `.github/workflows/tests.yml`).
 
 **Architecture.** Strict three-layer separation:
 - **Toolkit-agnostic controllers** (`controllers/`) own all business logic and
@@ -357,8 +357,10 @@ the mirror-probe thread. All daemon threads. **[verified]**
 - **Important behavior.** Only `server.base_url` is required; everything else
   is derived (e.g. `/api/file/latest/manifest.json`, `/client/latest`). All
   URLs must be **HTTPS** (`_https_url` rejects otherwise → `RuntimeError`).
-  Downloads/mirrors may add `torrent_url`. `has_torrent()` / `download_hosts()`
-  feed the security allowlist. Auto-discovery order: per-user
+  Downloads/mirrors may add `torrent_url`; the server may alternatively set
+  `torrent_magnet` (a `magnet:?xt=…` URI; URL wins when both are set).
+  `has_torrent()` / `download_hosts()`
+  feed the security allowlist (magnets never join it — they have no host). Auto-discovery order: per-user
   `<config_dir>/nostalgia_launcher.json` → exe/repo-root → cwd.
 - **Tests:** `tests/test_launcher.py`, `tests/test_launcher_firstrun.py`.
 
@@ -479,7 +481,7 @@ the mirror-probe thread. All daemon threads. **[verified]**
   `terminate`), game launch (`_launch_game_windows`/`_launch_game_via_umu`),
   `_watch_game`, `terminate_game`, `poll()`.
 - `mods.py` (ModsController): registry, latest-version fetch, pending toggles,
-  `_apply_worker` install/uninstall/update sequence, essential-mods seeding,
+  `_apply_worker` install/uninstall/update sequence, required-mods seeding,
   unknown-mod removal.
 - `addons.py` (AddonsController): catalog merge, disk scan + `.toc` parse,
   sha-based update detection, `_apply_worker`/`_apply_pending_worker`.
@@ -603,7 +605,8 @@ stateDiagram-v2
 ### 8.3 Network endpoints (all HTTPS, configured by `nostalgia_launcher.json`)
 - Server base + derived (`/api/file/latest/manifest.json`, `/client/latest`,
   `/forum/octonews.php?…`, `/api/mods.json`, `/api/addons.json`, torrent).
-- Mirrors (same shape, optional `torrent_url`).
+- Mirrors (same shape, optional `torrent_url`; the server-only
+  `torrent_magnet` is swarm-based and not mirrored).
 - `servers.json` at `LAUNCHER_SERVERS_INDEX_URL`
   (`raw.githubusercontent.com/Ourouk/nostalgia-launcher/main/servers.json`).
 - GitHub/Codeberg/GitLab/Gitea REST API (addon commit SHAs, mod releases).
@@ -626,7 +629,7 @@ stateDiagram-v2
 | `umu-run <exe>` (+ optional `gamemoderun`) | Linux launch | env-injected; cwd=out_dir; detached |
 | `explorer.exe <path>` / `open` / `xdg-open` | open folder | explorer chosen deliberately (see §6.4) |
 | `powershell.exe -Command "Add-MpPreference -ExclusionPath '<path>'"` | Windows Defender exclusion | **single-quote injection** (see §12) |
-| `WoW.exe` / `VanillaFixes.exe` | game launch (Windows) | DETACHED_PROCESS|CREATE_BREAKAWAY_FROM_JOB with retry |
+| `WoW.exe` / external-launcher exe | game launch (Windows) | DETACHED_PROCESS|CREATE_BREAKAWAY_FROM_JOB with retry |
 | `magick`/`convert`, `linuxdeploy`, `lipo`, `pyinstaller` | build-time only | not runtime |
 
 ---
@@ -637,7 +640,8 @@ stateDiagram-v2
 (HTTPS). Without it and without `--launcher-config`, the first-launch wizard
 is shown (which itself fetches `servers.json` over HTTPS). **[verified]**
 
-**Optional.** `mirrors[]`, `torrent_url` (server/mirror), `theme`
+**Optional.** `mirrors[]`, `torrent_url` (server/mirror), `torrent_magnet`
+(server only; alternative to `torrent_url`), `theme`
 (`C_*` colors + `logo` URL), `discord_url`, `addons_registry_urls`,
 `realm`, `*_news_url`, `*_registry_url` overrides, top-level `mods[]`
 (embedded mod catalog entries; sanitized by `services.mods.embedded_mods()`,
@@ -697,9 +701,9 @@ precedence custom > embedded > remote — see `docs/agents-architecture.md`).
 
 **Lint / format (verified):**
 - `uv run ruff format .` (79-col, `target-version=py310`).
-- `uv run ruff check .` selects `E4/E7/E9/F/I/W/UP/B`. **This is the only
-  lint/format gate and it runs LOCALLY — there is NO ruff step in CI**
-  (`ci.yml` only runs `pytest`).** `pyproject` notes this explicitly.
+- `uv run ruff check .` selects `E4/E7/E9/F/I/W/UP/B`. Both gates run in CI
+  via the reusable `.github/workflows/tests.yml` (called by `ci.yml` and
+  `release.yml`).
 
 **Packaging / deploy (verified):**
 - Three PyInstaller specs freeze the package from `packaging/pyinstaller_entry.py`
@@ -1146,7 +1150,8 @@ events asserted via monkeypatched `QMessageBox`/signals; `conftest` autouse
 
 ### Workflow 7 — Game launch
 - **Windows:** `UpdateController._launch_game_windows` → `subprocess.Popen`
-  (`WoW.exe`/`VanillaFixes.exe`, detached flags).
+  (`WoW.exe` or the first active catalog-declared external-launcher
+  executable — `mods.external_launcher_executables()` — detached flags).
 - **Linux:** `_launch_game_via_umu` → `umu.launch` (forwards `wayland`, K1
   fixed) → `umu.kill_game` on terminate.
 - **Files:** `controllers/update.py`, `services/umu.py`,

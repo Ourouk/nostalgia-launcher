@@ -1,6 +1,6 @@
 """Unit tests for first-run launcher config validation, persistence, the
 Games/<ServerName> folder suggestion helpers and the strict cli first-launch
-flow (no game folder is ever auto-selected or created)."""
+flow (the wizard's install folder is the only pre-Settings out_dir writer)."""
 
 import json
 import os
@@ -78,12 +78,12 @@ def test_server_games_dir_sanitizes(fake_home):
 # ── cli first-run ────────────────────────────────────────────────────────
 
 
-def test_first_launch_url_persists_without_touching_out_dir(
+def test_first_launch_without_install_dir_touches_no_out_dir(
     tmp_path, monkeypatch
 ):
-    """Strict folder confirmation: the first-launch flow persists the
-    launcher config but NEVER writes out_dir or creates any game folder —
-    that only happens through an explicit Settings apply."""
+    """Strict folder confirmation: a selection WITHOUT an install_dir (a
+    pre-wizard-era caller or a skipped flow) persists the launcher config
+    but never writes out_dir or creates any game folder."""
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
@@ -119,3 +119,60 @@ def test_first_launch_url_persists_without_touching_out_dir(
         ]["base_url"]
         == "https://launcher.test"
     )
+
+
+def test_first_launch_records_wizard_install_dir(
+    fake_home, tmp_path, monkeypatch
+):
+    """The wizard's required install folder becomes the ACTIVE profile's
+    confirmed game folder in ITS OWN state store — a non-default profile
+    never touches the legacy top-level file. No directory is created and
+    no suggestion is applied behind the user's back."""
+    from nostalgia_launcher.core import profiles
+
+    prof, err = profiles.create("wizard")
+    assert err == ""
+    profiles.activate(prof)
+    config_store.configure(
+        str(tmp_path / "unused-default-state.json"),
+        str(tmp_path / "cache.json"),
+    )
+    monkeypatch.setattr(
+        launcher, "user_config_path", lambda: str(tmp_path / "cfg.json")
+    )
+    monkeypatch.setattr(cli, "_run_backend", lambda show_log=False: 0)
+    raw = '{"server": {"base_url": "https://launcher.test"}}'
+    game = tmp_path / "Games" / "WoW"
+    monkeypatch.setattr(
+        cli,
+        "_pick_launcher_config",
+        lambda: {
+            "kind": "url",
+            "config_url": "https://example.invalid/community.json",
+            "raw": raw,
+            "install_dir": f"{game}/",
+        },
+    )
+
+    def boom(*a, **kw):
+        raise AssertionError("first launch must not create a game folder")
+
+    monkeypatch.setattr(platform_support, "server_games_dir", boom)
+    try:
+        rc = cli._first_launch()
+    finally:
+        launcher.reset()
+    assert rc == 0
+
+    with open(prof.state_path(), encoding="utf-8") as f:
+        cfg = json.load(f)
+    assert cfg["out_dir"] == os.path.normpath(str(game))
+    assert cfg["out_dir_user_set"] is True
+    # The legacy default-profile store stayed out of it.
+    legacy = os.path.join(
+        str(fake_home),
+        ".nostalgia-launcher",
+        "nostalgia_launcher_config.json",
+    )
+    assert not os.path.exists(legacy)
+    assert not game.exists()  # recorded, never created

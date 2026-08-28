@@ -51,7 +51,10 @@ else
   echo "    installed libtorrent is ${CUR_ARCH}-only; merging ${WANT_ARCH}"
   LT_VER="$("$PYTHON" -c 'import importlib.metadata; print(importlib.metadata.version("libtorrent"))')"
   PY_TAG="$("$PYTHON" -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')"
-  URL="$("$PYTHON" - "$LT_VER" "$PY_TAG" "$WANT_ARCH" <<'PY'
+  # URL + expected sha256 come from the PyPI index metadata; the download
+  # is verified against it so a tampered/redirected wheel never reaches
+  # the lipo merge (and thus the shipped DMG).
+  URL_INFO="$("$PYTHON" - "$LT_VER" "$PY_TAG" "$WANT_ARCH" <<'PY'
 import json, sys, urllib.request
 
 version, py_tag, want = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -62,15 +65,17 @@ with urllib.request.urlopen(
 for u in data["urls"]:
     fn = u["filename"]
     if "macos" in fn and fn.endswith(f"{want}.whl") and py_tag in fn:
-        print(u["url"])
+        print(u["url"], u["digests"]["sha256"])
         break
 else:
     sys.exit(f"no {want} macOS wheel for libtorrent {version}")
 PY
 )"
+  read -r URL WANT_SHA <<<"$URL_INFO"
   TMP="$(mktemp -d /tmp/libtorrent-merge-XXXXXX)"
   trap 'rm -rf "$TMP"' EXIT
   curl -sL -o "$TMP/libtorrent.whl" "$URL"
+  echo "$WANT_SHA  $TMP/libtorrent.whl" | shasum -a 256 --check --strict
   unzip -q -o "$TMP/libtorrent.whl" -d "$TMP/extra"
   EXTRA_SO="$(find "$TMP/extra" -name '*.so' | head -n 1)"
   lipo -create "$LT_SO" "$EXTRA_SO" -output "$TMP/merged.so"
@@ -80,7 +85,9 @@ PY
   rm -rf "$TMP"
 fi
 
-uv run pyinstaller --noconfirm --clean NostalgiaLauncher-macos.spec
+# --no-sync: an implicit sync here would reinstall the single-arch wheel
+# and silently undo the lipo merge above.
+uv run --no-sync pyinstaller --noconfirm --clean NostalgiaLauncher-macos.spec
 
 # 3. Verify the binary is truly universal
 echo "==> Verifying architectures"

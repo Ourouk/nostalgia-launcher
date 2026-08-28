@@ -12,6 +12,8 @@ Event → signal mapping:
     StatusChanged(text)                  → statusChanged(str)
     LogMessage(text, tag)                → logMessage(str, str)
     ProgressChanged(value, label)        → progressChanged(float, str)
+                                         → updateProgressChanged(object)
+    UpdateFilesList(files)               → updateFilesList(object)
     NewsLoaded(kind, data)               → newsLoaded(object)       # NewsLoaded
     ModsLoaded(state)                    → modsLoaded(object)       # ModsLoaded
     AssetsLoaded(state)                  → assetsLoaded(object)     # AssetsLoaded
@@ -24,7 +26,7 @@ Event → signal mapping:
 
 The object-typed signals carry the full event dataclass (kind + payload); the
 scalar signals carry the event's fields in argument order. `ControllerHub` is a
-thin convenience that assembles the six controllers on one shared dispatcher
+thin convenience that assembles the seven controllers on one shared dispatcher
 together with the bridge — the main window may equally do the assembly by hand.
 """
 

@@ -13,7 +13,6 @@ import functools
 import os
 import threading
 import urllib.request
-import webbrowser
 from urllib.error import HTTPError
 
 from ..core import config_store, filesystem, launcher, platform_support
@@ -113,9 +112,15 @@ class SettingsController:
         session controller and re-verifies the new folder (overwriting
         Config.wtf, which also supersedes the first-run settings-close
         verify). Returns True when a change was applied, so the UI can skip
-        its own re-renders on a no-op.
+        its own re-renders on a no-op. An empty submission is a no-op: ""
+        means "unconfirmed", never the CWD.
         """
-        new_val = os.path.normpath((new_path or "").strip() or ".")
+        raw = (new_path or "").strip()
+        if not raw or os.path.normpath(raw) == ".":
+            # An empty (or CWD) path would wipe the confirmed-folder state
+            # for nothing — refuse instead of persisting out_dir=".".
+            return False
+        new_val = os.path.normpath(raw)
         if os.path.normpath(self.state.path.strip() or ".") == new_val:
             return False
         if self._updater.running:
@@ -128,8 +133,6 @@ class SettingsController:
             )
             return False
         self.state.path = new_val
-        if not new_val:
-            return False
 
         try:
             if os.path.exists(config_store.cache_file):
@@ -410,17 +413,6 @@ class SettingsController:
         )
         return self.state.config
 
-    def prune_folder_records(self) -> dict:
-        """Drop stale mods/addons install records when the configured game
-        folder no longer exists (a folder that was deleted or never created)."""
-
-        def _wipe(c):
-            c.pop("mods", None)
-            c.pop("addons", None)
-
-        self.state.config = config_store.update_config(_wipe)
-        return self.state.config
-
     def open_client_folder(self):
         path = os.path.normpath(self.state.path.strip())
         if os.path.isdir(path):
@@ -437,9 +429,6 @@ class SettingsController:
             self._dispatcher.post(
                 LogMessage(f"Folder not found: {path}\n", "err")
             )
-
-    def open_url(self, url: str):
-        webbrowser.open(url)
 
     # ── catalog registries ──────────────────────────────────────────────────
 

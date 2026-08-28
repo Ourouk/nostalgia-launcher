@@ -20,6 +20,7 @@ from ..core.filesystem import (
 )
 from ..core.log_sink import debug_emit, log
 from ..core.platform_support import can_launch_client, is_linux
+from ..services import mods
 from ..services.self_update import (
     fetch_updater_latest_tag,
     updater_update_available,
@@ -174,7 +175,7 @@ class UpdateController:
             self._dispatcher.post(
                 LogMessage("✗  Please set the game folder first.\n", "err")
             )
-            return
+            return False
         if (
             self.state.diff_nodes is not None
             and self.state.verify_out_dir != out
@@ -319,14 +320,17 @@ class UpdateController:
         return self._launch_game_windows(client_dir, cfg)
 
     def _launch_game_windows(self, client_dir: str, cfg: dict) -> tuple:
-        """Windows direct launch: prefer the loader mod's executable, then
-        WoW.exe, spawned detached from the caller's job object. Its merged
-        output is drained into the session log by a background thread."""
+        """Windows direct launch: prefer an installed external-launcher mod's
+        executable, then WoW.exe, spawned detached from the caller's job
+        object. Its merged output is drained into the session log by a
+        watcher thread that also records the exit (same bookkeeping as the
+        umu path, so the one-game-at-a-time guard holds on Windows too)."""
         import subprocess
 
-        # Prefer the loader mod's executable when it's present on disk
-        # (whatever the catalog called it).
-        exe, exe_lbl = pick_game_executable(client_dir)
+        exe, exe_lbl = pick_game_executable(
+            client_dir,
+            mods.external_launcher_executables(client_dir),
+        )
         if not os.path.exists(exe):
             self._dispatcher.post(
                 LogMessage(f"{exe_lbl} not found at: {exe}\n", "err")
@@ -364,14 +368,23 @@ class UpdateController:
                     creationflags=flags,
                     close_fds=True,
                 )
+            pid = proc.pid
+            pgid = getattr(proc, "pgid", None) or pid
+            self.state.game_running = True
+            self.state.game_pid = pid
+            self.state.game_pgid = pgid
+            self._dispatcher.post(GameLaunched(pid, pgid))
             threading.Thread(
-                target=self._drain_child_output,
-                args=(proc, "game"),
+                target=self._watch_game,
+                args=(proc, pid, "game"),
                 daemon=True,
             ).start()
             self._dispatcher.post(LogMessage(f"Launched {exe_lbl}!\n", "ok"))
             return True, dxvk_notice
         except Exception as e:
+            self.state.game_running = False
+            self.state.game_pid = None
+            self.state.game_pgid = None
             self._dispatcher.post(
                 LogMessage(f"Failed to launch {exe_lbl}: {e}\n", "err")
             )
@@ -379,15 +392,19 @@ class UpdateController:
 
     def _launch_game_via_umu(self, client_dir: str, cfg: dict) -> tuple:
         """Linux launch through umu-launcher: the client run under Proton in
-        a launcher-wide WINEPREFIX. Prefers the VanillaFixes loader like
-        Windows. No DXVK notice (shader-cache stutter is a Windows/DXVK-mod
-        concern). Records the running game and watches its exit — unless
-        close_on_launch fires, in which case the child's output goes to a
-        sidecar file and no watcher runs (the launcher exits right after
-        spawning, so nothing may depend on our pipes staying open)."""
+        a launcher-wide WINEPREFIX. Prefers an installed external-launcher
+        mod's executable like Windows. No DXVK notice (shader-cache stutter
+        is a Windows/DXVK-mod concern). Records the running game and watches
+        its exit — unless close_on_launch fires, in which case the child's
+        output goes to a sidecar file and no watcher runs (the launcher exits
+        right after spawning, so nothing may depend on our pipes staying
+        open)."""
         from ..services import umu
 
-        exe, exe_lbl = pick_game_executable(client_dir)
+        exe, exe_lbl = pick_game_executable(
+            client_dir,
+            mods.external_launcher_executables(client_dir),
+        )
         if not os.path.exists(exe):
             self._dispatcher.post(
                 LogMessage(f"{exe_lbl} not found at: {exe}\n", "err")
@@ -460,11 +477,11 @@ class UpdateController:
             )
             return False, False
 
-    def _watch_game(self, proc, pid: int):
-        """Background watcher: drains umu/Wine output into the session log
+    def _watch_game(self, proc, pid: int, source: str = "umu"):
+        """Background watcher: drains the game's output into the session log
         until EOF (the process exited), then clears the running state and
         publishes GameExited."""
-        self._drain_child_output(proc)
+        self._drain_child_output(proc, source)
         try:
             code = proc.wait()
         except Exception:
@@ -530,7 +547,9 @@ class UpdateController:
     def terminate_game(self) -> bool:
         """Request termination of the running game (umu + WoW.exe process
         group). Returns True when a game was running; the actual exit is
-        reported asynchronously via GameExited from the watcher."""
+        reported asynchronously via GameExited from the watcher. The kill
+        itself runs off-thread: its grace wait (up to ~2 s) must not freeze
+        the GUI."""
         if not self.state.game_running:
             return False
         pid = self.state.game_pid
@@ -538,14 +557,18 @@ class UpdateController:
         self._dispatcher.post(
             LogMessage(f"Terminating game (PID {pid})…\n", "acct")
         )
-        from ..services import umu
 
-        try:
-            umu.kill_game(pid, pgid)
-        except Exception as e:
-            self._dispatcher.post(
-                LogMessage(f"Failed to terminate game: {e}\n", "err")
-            )
+        def _killer():
+            from ..services import umu
+
+            try:
+                umu.kill_game(pid, pgid)
+            except Exception as e:
+                self._dispatcher.post(
+                    LogMessage(f"Failed to terminate game: {e}\n", "err")
+                )
+
+        threading.Thread(target=_killer, daemon=True).start()
         return True
 
     def poll(self):
@@ -570,8 +593,6 @@ class UpdateController:
             self.state.progress_label = lbl
             phase = details.get("phase", "")
             transport = details.get("transport", "")
-            self.state.progress_phase = phase
-            self.state.progress_transport = transport
             self.state.progress_file = details.get("current_file", "")
             self.state.progress_downloaded = details.get("downloaded", 0)
             self.state.progress_total = details.get("total", 0)
@@ -654,16 +675,38 @@ class UpdateController:
                 )
             if self.state.torrent_error and not self.state.torrent_stale:
                 # Torrent reachable but had an error (stalled, session, disk,
-                # verify failed). Offer recovery so the user can retry.
+                # verify failed). Offer recovery so the user can retry — but
+                # never at the cost of stranding an installed client: with a
+                # game executable on disk, PLAY wins (Force recheck remains
+                # the repair path).
+                if self._playable_client_present():
+                    return Readiness(
+                        "play",
+                        "PLAY",
+                        "Verification failed — playing installed client",
+                    )
                 return Readiness(
                     "update",
                     "UPDATE",
                     f"Download via BitTorrent ({self.state.torrent_error})",
                 )
             if not self.state.client_ready and torrent_recovery_available():
+                if self._playable_client_present():
+                    return Readiness(
+                        "play",
+                        "PLAY",
+                        "Manifest unavailable — playing unverified client",
+                    )
                 return Readiness("update", "UPDATE", "Download via BitTorrent")
             if not can_launch_client():
-                return Readiness("disabled", "UPDATE", "Manifest unavailable")
+                reason = (
+                    "umu-run not found"
+                    if is_linux()
+                    else "launching unsupported on this platform"
+                )
+                return Readiness(
+                    "disabled", "UPDATE", f"Manifest unavailable — {reason}"
+                )
             if not self.state.client_ready:
                 return Readiness("play", "PLAY", "Manifest unavailable")
             return Readiness("play", "PLAY", "Everything up to date!")
@@ -676,6 +719,19 @@ class UpdateController:
         return Readiness("play", "PLAY", "Everything up to date!")
 
     # ── internals ───────────────────────────────────────────────────────────
+
+    def _playable_client_present(self) -> bool:
+        """Whether the configured game folder holds a launchable executable —
+        the same pick ``launch_game`` makes, so a PLAY readiness can trust
+        the click to actually start something."""
+        client_dir = (self._get_out_dir() or "").strip()
+        if not client_dir:
+            return False
+        exe, _ = pick_game_executable(
+            client_dir,
+            mods.external_launcher_executables(client_dir),
+        )
+        return os.path.isfile(exe)
 
     def _client_updates_enabled(self) -> bool:
         return bool(load_config().get("client_update_enabled", True))
