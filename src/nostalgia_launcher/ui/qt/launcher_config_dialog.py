@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -64,6 +65,7 @@ class LauncherConfigDialog(QDialog):
         self.setObjectName("launcherConfigDialog")
         self.setWindowTitle("FIRST LAUNCH — IMPORT A CONFIGURATION")
         self.setMinimumWidth(560)
+        self.setMinimumHeight(400)
         apply_theme(
             self,
             p,
@@ -176,8 +178,21 @@ class LauncherConfigDialog(QDialog):
         )
         self._summary.setWordWrap(True)
         self._summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self._summary.hide()
-        root.addWidget(self._summary)
+        self._summary.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+
+        # Wrap the summary in a scroll area for long configurations
+        self._summaryScroll = QScrollArea(self)
+        self._summaryScroll.setObjectName("launcherConfigSummaryScroll")
+        self._summaryScroll.setWidget(self._summary)
+        self._summaryScroll.setWidgetResizable(True)
+        self._summaryScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._summaryScroll.setStyleSheet(
+            f"QScrollArea {{ background-color: {p.log_bg.name()}; border: 1px solid {p.divider.name()}; }}"
+            f"QScrollBar:vertical {{ width: 8px; background: {p.panel.name()}; }}"
+            f"QScrollBar::handle:vertical {{ background: {p.divider.name()}; border-radius: 4px; }}"
+        )
+        self._summaryScroll.hide()
+        root.addWidget(self._summaryScroll)
 
         self._error = QLabel("", self)
         self._error.setObjectName("launcherConfigError")
@@ -216,7 +231,7 @@ class LauncherConfigDialog(QDialog):
         input_stage = stage == "input"
         folder_stage = stage == "folder"
         summary_visible = stage == "summary"
-        self._summary.setVisible(summary_visible)
+        self._summaryScroll.setVisible(summary_visible)
         # Back walks summary → folder → input.
         self._back.setVisible(not input_stage)
         self._url.setEnabled(input_stage)

@@ -104,6 +104,26 @@ class ContentRow(QWidget):
         self.version_label.setStyleSheet(f"color: {p.text_dim.name()};")
         top_layout.addWidget(self.version_label, 0, Qt.AlignTop)
 
+        # Declared download size (assets carry `size`; mods may also
+        # carry it in the future). Rendered via `mpq.human_size` so
+        # the row and the Data/ scan use the same formatter.
+        self.size_label = None
+        raw_size = entry.get("size")
+        if isinstance(raw_size, (int, float)) and not isinstance(
+            raw_size, bool
+        ):
+            try:
+                from ..services.mpq import human_size
+
+                hs = human_size(raw_size)
+            except Exception:
+                hs = ""
+            if hs:
+                self.size_label = QLabel(f"  ·  {hs}", top)
+                self.size_label.setObjectName(f"{prefix}Size_{eid}")
+                self.size_label.setStyleSheet(f"color: {p.text_dim.name()};")
+                top_layout.addWidget(self.size_label, 0, Qt.AlignTop)
+
         top_layout.addStretch(1)
 
         self.action_button = None

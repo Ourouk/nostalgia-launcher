@@ -742,6 +742,7 @@ class AddonsController:
         self.state.busy = False
         self.state.installing = False
         self.state.verified_ts = 0.0
+        self._dispatcher.post(AddonsLoaded(self.state))
         self._dispatcher.post(
             OperationFinished(
                 "addons",

@@ -1,0 +1,347 @@
+{
+  "server": {
+    "name": "Vanilla Plus",
+    "base_url": "https://vanillaplus.org",
+    "realm": "logon.vanillaplus.org",
+    "torrent_magnet": "magnet:?xt=urn:btih:241B2FA4C534FDEE1915801351D1290A10581582&dn=World%20of%20Warcraft%20v1.12&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&tr=udp%3A%2F%2Ftracker.torrent.eu.org%3A451%2Fannounce&tr=udp%3A%2F%2Ftracker.bittor.pw%3A1337%2Fannounce&tr=udp%3A%2F%2Fpublic.popcorn-tracker.org%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.dler.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fexodus.desync.com%3A6969&tr=udp%3A%2F%2Fopen.demonii.com%3A1337%2Fannounce&tr=udp%3A%2F%2Fglotorrents.pw%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969&tr=udp%3A%2F%2Ftorrent.gresille.org%3A80%2Fannounce&tr=udp%3A%2F%2Fp4p.arenabg.com%3A1337&tr=udp%3A%2F%2Ftracker.internetwarriors.net%3A1337"
+  },
+  "discord_url": "https://discord.com/invite/cV7rmcr9",
+  "theme": {
+    "logo": "https://vanillaplus.org/images/vanillaplus-logo.png",
+    "C_BG": "#0a0814",
+    "C_PANEL": "#131022",
+    "C_HDR": "#070510",
+    "C_PANEL_BDR": "#262040",
+    "C_DIVIDER": "#2b2447",
+    "C_GOLD": "#cf9d4b",
+    "C_GOLD_LT": "#e1c492",
+    "C_PURPLE": "#00bfff"
+  },
+  "assets": [
+    {
+      "id": "vplus-patch3",
+      "name": "Vanilla+ patch-3",
+      "description": "Required server content patch — installs into the client's Data/ folder (the manual install from the website is dragging this same file there).",
+      "essential": true,
+      "url": "https://vanillaplus.org/uploads/patch-3.MPQ",
+      "dest": "Data/patch-3.MPQ",
+      "size": 106296558,
+      "sha1": "c5d1f885b2bced71dc08469f4fa45e749ff33f8f"
+    }
+  ],
+  "mods": [
+    {
+      "id": "VanillaFixes",
+      "type": "external-launcher",
+      "installation": "required",
+      "name": "VanillaFixes",
+      "description": "Eliminates stuttering and animation lag. REQUIRED BY OTHER MODS.",
+      "repo_url": "https://github.com/hannesmann/vanillafixes",
+      "source": {
+        "kind": "github_release",
+        "owner": "hannesmann",
+        "repo": "vanillafixes",
+        "asset_pattern": "vanillafixes-*.zip",
+        "prefer_no": "-dxvk",
+        "extract_map": {
+          "VfPatcher.dll": "VfPatcher.dll",
+          "VanillaFixes.exe": "VanillaFixes.exe"
+        }
+      },
+      "register_dll": [
+        "VfPatcher.dll"
+      ],
+      "installed_files": [
+        "VfPatcher.dll",
+        "VanillaFixes.exe"
+      ],
+      "executable": "VanillaFixes.exe",
+      "clientVersions": [
+        "1.12.1"
+      ]
+    },
+    {
+      "id": "ClassicAPI",
+      "type": "mod",
+      "installation": "required",
+      "name": "ClassicAPI",
+      "description": "Adds Lua API calls from later WoW versions. Required by addons.",
+      "repo_url": "https://github.com/brues-code/ClassicAPI",
+      "source": {
+        "kind": "github_release",
+        "owner": "brues-code",
+        "repo": "ClassicAPI",
+        "asset_pattern": "ClassicAPI.dll",
+        "prefer_no": null,
+        "extract_map": null
+      },
+      "register_dll": [
+        "ClassicAPI.dll"
+      ],
+      "installed_files": [
+        "ClassicAPI.dll"
+      ],
+      "clientVersions": [
+        "1.12.1"
+      ]
+    },
+    {
+      "id": "dxvk",
+      "type": "mod",
+      "installation": "required",
+      "name": "dxvk",
+      "description": "Enables Vulkan-based rendering mode for better performance.",
+      "repo_url": "https://gitlab.com/Ph42oN/dxvk-gplasync",
+      "source": {
+        "kind": "direct_tar",
+        "url": "https://gitlab.com/Ph42oN/dxvk-gplasync/-/raw/main/releases/dxvk-gplasync-v2.7.1-1.tar.gz?ref_type=heads",
+        "pinned_version": "v2.7.1-1",
+        "extract_map": {
+          "dxvk-gplasync-v2.7.1-1/x32/d3d9.dll": "d3d9.dll"
+        },
+        "post_install": [
+          "write_dxvk_conf"
+        ]
+      },
+      "installed_files": [
+        "d3d9.dll",
+        "dxvk.conf"
+      ],
+      "clientVersions": [
+        "1.12.1"
+      ]
+    },
+    {
+      "id": "nampower",
+      "type": "mod",
+      "installation": "required",
+      "name": "nampower",
+      "description": "A client modification that minimizes your input lag if you have higher latency.",
+      "repo_url": "https://github.com/Emyrk/nampower",
+      "source": {
+        "kind": "github_release",
+        "owner": "Emyrk",
+        "repo": "nampower",
+        "asset_pattern": "nampower.dll",
+        "prefer_no": null,
+        "extract_map": null
+      },
+      "register_dll": [
+        "nampower.dll"
+      ],
+      "installed_files": [
+        "nampower.dll"
+      ],
+      "clientVersions": [
+        "1.12.1"
+      ]
+    },
+    {
+      "id": "no1600x1200",
+      "type": "mod",
+      "installation": "user_opt_in",
+      "name": "no1600x1200",
+      "description": "Removes the 1600x1200 resolution cap so all monitor resolutions are available.",
+      "repo_url": "https://github.com/RetroCro/TurtleWoW-Mods",
+      "source": {
+        "kind": "direct_file",
+        "url": "https://raw.githubusercontent.com/RetroCro/TurtleWoW-Mods/refs/heads/main/Archive/DLL%20BACKUP/no1600x1200.dll",
+        "dest": "no1600x1200.dll"
+      },
+      "register_dll": [
+        "no1600x1200.dll"
+      ],
+      "installed_files": [
+        "no1600x1200.dll"
+      ],
+      "clientVersions": [
+        "1.12.1"
+      ]
+    },
+    {
+      "id": "PerfBoost",
+      "type": "mod",
+      "installation": "user_opt_in",
+      "name": "PerfBoost",
+      "description": "Adjustable render distances per unit type to improve FPS in crowded areas and raids.",
+      "repo_url": "https://github.com/RetroCro/TurtleWoW-Mods",
+      "source": {
+        "kind": "direct_file",
+        "url": "https://raw.githubusercontent.com/RetroCro/TurtleWoW-Mods/refs/heads/main/Archive/DLL%20BACKUP/perf_boost.dll",
+        "dest": "perf_boost.dll"
+      },
+      "register_dll": [
+        "perf_boost.dll"
+      ],
+      "installed_files": [
+        "perf_boost.dll"
+      ],
+      "clientVersions": [
+        "1.12.1"
+      ]
+    },
+    {
+      "id": "SuperWoW",
+      "type": "mod",
+      "installation": "required",
+      "name": "SuperWoW",
+      "description": "Expands the client API with backported features from later WoW versions. Required by addons.",
+      "repo_url": "https://github.com/balakethelock/SuperWoW",
+      "source": {
+        "kind": "github_release",
+        "owner": "balakethelock",
+        "repo": "SuperWoW",
+        "asset_pattern": "SuperWoW*.zip",
+        "prefer_no": null,
+        "version_from": "asset",
+        "extract_map": {
+          "SuperWoWhook.dll": "SuperWoWhook.dll"
+        }
+      },
+      "register_dll": [
+        "SuperWoWhook.dll"
+      ],
+      "installed_files": [
+        "SuperWoWhook.dll"
+      ],
+      "clientVersions": [
+        "1.12.1"
+      ]
+    },
+    {
+      "id": "transmogfix",
+      "type": "mod",
+      "installation": "required",
+      "name": "transmogfix",
+      "description": "A client-side fix that eliminates frame drops caused by the server transmogrification durability workaround.",
+      "repo_url": "https://codeberg.org/MarcelineVQ/WeirdUtils",
+      "source": {
+        "kind": "direct_file",
+        "url": "https://codeberg.org/MarcelineVQ/WeirdUtils/releases/download/v0.7.0/transmogfix.dll",
+        "dest": "transmogfix.dll",
+        "pinned_version": "v0.7.0"
+      },
+      "register_dll": [
+        "transmogfix.dll"
+      ],
+      "installed_files": [
+        "transmogfix.dll"
+      ],
+      "clientVersions": [
+        "1.12.1"
+      ]
+    },
+    {
+      "id": "weirdutils",
+      "type": "mod",
+      "installation": "user_opt_in",
+      "name": "WeirdUtils",
+      "description": "Vanilla WoW 1.12.1 utility DLLs — transmog fix, world markers, performance, and more.",
+      "repo_url": "https://codeberg.org/MarcelineVQ/WeirdUtils",
+      "source": {
+        "kind": "direct_file",
+        "url": "https://codeberg.org/MarcelineVQ/WeirdUtils/releases/download/v0.7.1/weirdutils.dll",
+        "dest": "weirdutils.dll",
+        "pinned_version": "v0.7.1"
+      },
+      "register_dll": [
+        "weirdutils.dll"
+      ],
+      "installed_files": [
+        "weirdutils.dll"
+      ],
+      "clientVersions": [
+        "1.12.1"
+      ]
+    },
+    {
+      "id": "UnitXP_SP3",
+      "type": "mod",
+      "installation": "required",
+      "name": "UnitXP_SP3",
+      "description": "Introduces modern quality-of-life features and improvements.",
+      "repo_url": "https://codeberg.org/konaka/UnitXP_SP3",
+      "source": {
+        "kind": "codeberg_release",
+        "owner": "konaka",
+        "repo": "UnitXP_SP3",
+        "asset_pattern": "UnitXP_SP3 v*.zip",
+        "prefer_no": "-debug",
+        "extract_map": {
+          "UnitXP_SP3.dll": "UnitXP_SP3.dll"
+        }
+      },
+      "register_dll": [
+        "UnitXP_SP3.dll"
+      ],
+      "installed_files": [
+        "UnitXP_SP3.dll"
+      ],
+      "clientVersions": [
+        "1.12.1"
+      ]
+    },
+    {
+      "id": "VanillaHelpers",
+      "type": "mod",
+      "installation": "required",
+      "name": "VanillaHelpers",
+      "description": "Increases the maximum supported texture resolution and improves memory allocation.",
+      "repo_url": "https://github.com/isfir/VanillaHelpers",
+      "source": {
+        "kind": "github_release",
+        "owner": "isfir",
+        "repo": "VanillaHelpers",
+        "asset_pattern": "VanillaHelpers.dll",
+        "prefer_no": null,
+        "extract_map": null
+      },
+      "register_dll": [
+        "VanillaHelpers.dll"
+      ],
+      "installed_files": [
+        "VanillaHelpers.dll"
+      ],
+      "clientVersions": [
+        "1.12.1"
+      ]
+    },
+    {
+      "id": "VanillaMultiMonitorFix",
+      "type": "mod",
+      "installation": "user_opt_in",
+      "name": "VanillaMultiMonitorFix",
+      "description": "Fixes the client misbehaving on multi-monitor setups with differing resolutions.",
+      "repo_url": "https://github.com/Mates1500/VanillaMultiMonitorFix",
+      "source": {
+        "kind": "github_release",
+        "owner": "Mates1500",
+        "repo": "VanillaMultiMonitorFix",
+        "asset_pattern": "release.zip",
+        "prefer_no": null,
+        "extract_map": {
+          "VanillaMultiMonitorFix.dll": "VanillaMultiMonitorFix.dll",
+          "VMMFix_preferred_monitor.txt": "VMMFix_preferred_monitor.txt"
+        }
+      },
+      "register_dll": [
+        "VanillaMultiMonitorFix.dll"
+      ],
+      "installed_files": [
+        "VanillaMultiMonitorFix.dll",
+        "VMMFix_preferred_monitor.txt"
+      ],
+      "clientVersions": [
+        "1.12.1"
+      ]
+    }
+  ],
+  "addons": [
+    {
+      "name": "pfQuest",
+      "git": "https://github.com/roby-brok/pfQuest",
+      "branch": "master",
+      "description": "Quest helper and database addon with integrated quest tracker, map icons, and searchable quest log."
+    }
+  ]
+}

@@ -10,16 +10,25 @@ from urllib.parse import urlsplit
 
 
 def fmt_size(num_bytes: float) -> str:
-    """Human-readable size: KB under a megabyte, MB otherwise."""
+    """Human-readable size: B / KB / MB / GB."""
+    if num_bytes < 1024:
+        return f"{int(num_bytes)} B"
     if num_bytes < 1024 * 1024:
         return f"{num_bytes / 1024:.0f} KB"
-    return f"{num_bytes / 1024 / 1024:.1f} MB"
+    if num_bytes < 1024 * 1024 * 1024:
+        return f"{num_bytes / 1024 / 1024:.1f} MB"
+    return f"{num_bytes / 1024 / 1024 / 1024:.1f} GB"
 
 
 def fmt_speed(bytes_per_sec: float) -> str:
+    """Human-readable speed: B/s / KB/s / MB/s / GB/s."""
+    if bytes_per_sec < 1024:
+        return f"{int(bytes_per_sec)} B/s"
     if bytes_per_sec < 1024 * 1024:
         return f"{bytes_per_sec / 1024:.0f} KB/s"
-    return f"{bytes_per_sec / 1024 / 1024:.1f} MB/s"
+    if bytes_per_sec < 1024 * 1024 * 1024:
+        return f"{bytes_per_sec / 1024 / 1024:.1f} MB/s"
+    return f"{bytes_per_sec / 1024 / 1024 / 1024:.1f} GB/s"
 
 
 def parse_version(v: str) -> tuple:

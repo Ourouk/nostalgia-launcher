@@ -171,7 +171,7 @@ def is_stock_mpq(filename: str, version: str) -> bool:
 
 def human_size(num) -> str:
     """A compact human-readable byte size ('1.2 MB'); '' when unknown."""
-    if not isinstance(num, int) or num < 0:
+    if isinstance(num, bool) or not isinstance(num, (int, float)) or num < 0:
         return ""
     value = float(num)
     for unit in ("B", "KB", "MB", "GB"):
@@ -223,6 +223,7 @@ def scan_custom_mpqs(client_dir: str, version: str, managed=None) -> dict:
         rel = str(dest).replace("\\", "/").lower()
         managed_paths.add(rel)
         managed_names.add(rel.rsplit("/", 1)[-1])
+    seen_lower: set[str] = set()
     for root, dirs, files in os.walk(data_dir):
         dirs[:] = [d for d in dirs if d.lower() != "cache"]
         for name in sorted(files):
@@ -234,6 +235,21 @@ def scan_custom_mpqs(client_dir: str, version: str, managed=None) -> dict:
                 size = os.path.getsize(full)
             except OSError:
                 size = None
+            rel_lower = rel.lower()
+            if rel_lower in seen_lower:
+                # Case-insensitive duplicate on a case-sensitive FS
+                # (e.g. Data/patch-3.MPQ vs Data/patch-3.mpq) — the
+                # first hit keeps its managed/foreign verdict; the
+                # extra inode is surfaced as foreign so the user
+                # can remove it.
+                if not is_stock_mpq(name, version):
+                    result["custom_foreign"].append(
+                        {"path": rel, "size": size}
+                    )
+                else:
+                    result["stock"].append(rel)
+                continue
+            seen_lower.add(rel_lower)
             if is_stock_mpq(name, version):
                 result["stock"].append(rel)
                 continue
