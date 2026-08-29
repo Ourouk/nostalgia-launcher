@@ -48,12 +48,6 @@ def backends(monkeypatch, tmp_path):
     monkeypatch.setattr(
         ac.addons, "fetch_addons_catalog", lambda force=False: []
     )
-    # Isolate the per-user custom file so a real user's config can't leak in.
-    monkeypatch.setattr(
-        ac.addons.catalog,
-        "custom_file",
-        lambda kind: str(tmp_path / f"{kind}_custom.json"),
-    )
     monkeypatch.setattr(
         ac.addons,
         "addon_remote_sha",
@@ -338,8 +332,15 @@ def test_verify_disallowed_catalog_git_host_never_contacts_it(
 def test_verify_offline_falls_back_to_cached_catalog(
     controller, cfg, monkeypatch
 ):
+    url = "https://example.com/addons.json"
+    monkeypatch.setattr(
+        ac.addons.launcher, "addons_registry_urls", lambda: [url]
+    )
     cfg["addons_catalog_cache"] = {
-        "catalog": [{"name": "Foo", "git": "https://github.com/x/y"}]
+        url: {
+            "timestamp": time.time(),
+            "catalog": [{"name": "Foo", "git": "https://github.com/x/y"}],
+        }
     }
     monkeypatch.setattr(
         ac.addons,

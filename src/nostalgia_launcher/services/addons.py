@@ -111,15 +111,13 @@ def fetch_addons_catalog(force=False) -> list:
 
 
 def _cache_entry(url: str) -> dict:
-    """The cached catalog record for a URL, handling the legacy single-URL
-    shape (a bare {"timestamp", "catalog"} object). Read through
-    `_config_store` so the controller's offline fallback honors test
-    monkeypatches of `config_store.load_config`."""
+    """The cached catalog record for a URL (the per-URL
+    ``{url: {timestamp, catalog}}`` shape). Read through `_config_store` so
+    the controller's offline fallback honors test monkeypatches of
+    `config_store.load_config`."""
     cache = _config_store.load_config().get("addons_catalog_cache", {}) or {}
     if isinstance(cache, dict) and url in cache:
         return cache[url]
-    if isinstance(cache, dict) and "catalog" in cache:
-        return cache
     return {}
 
 
@@ -169,27 +167,24 @@ def addons_catalog(force=False) -> list:
     """The effective addon catalog, in override order (later wins by folder
     name): the remote/cached catalogs < the local repo's server-imported
     entries < the launcher config's embedded addons < the repo's
-    user-custom entries < the legacy per-user custom file."""
+    user-custom entries."""
     remote = fetch_addons_catalog(force=force)
     repo = catalog.read_local_repo("addons")
     return catalog.merge_addons(
         catalog.merge_addons(
             catalog.merge_addons(
-                catalog.merge_addons(
-                    remote,
-                    catalog.validate_entries(
-                        repo["server"],
-                        _custom_validator,
-                        "local addons repo",
-                    ),
+                remote,
+                catalog.validate_entries(
+                    repo["server"],
+                    _custom_validator,
+                    "local addons repo",
                 ),
-                embedded_addons(),
             ),
-            catalog.validate_entries(
-                repo["custom"], _custom_validator, "local addons repo"
-            ),
+            embedded_addons(),
         ),
-        catalog.legacy_custom_layer("addons", _custom_validator),
+        catalog.validate_entries(
+            repo["custom"], _custom_validator, "local addons repo"
+        ),
     )
 
 
@@ -197,7 +192,6 @@ def catalog_from_cache() -> list:
     """Every local layer merged without any network — used as the offline
     fallback when a fresh fetch fails. Same override order as
     `addons_catalog`."""
-    cache = _config_store.load_config().get("addons_catalog_cache", {}) or {}
     urls = registry_urls()
     parts = []
     if urls:
@@ -205,8 +199,6 @@ def catalog_from_cache() -> list:
             entry = _cache_entry(url)
             if entry.get("catalog"):
                 parts.append(entry["catalog"])
-    elif isinstance(cache, dict) and cache.get("catalog"):
-        parts.append(cache["catalog"])
     repo = catalog.read_local_repo("addons")
     parts.append(
         catalog.validate_entries(
@@ -219,7 +211,6 @@ def catalog_from_cache() -> list:
             repo["custom"], _custom_validator, "local addons repo"
         )
     )
-    parts.append(catalog.legacy_custom_layer("addons", _custom_validator))
     merged = []
     for part in parts:
         merged = catalog.merge_addons(merged, part)

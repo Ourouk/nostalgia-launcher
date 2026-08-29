@@ -30,7 +30,6 @@ import nostalgia_launcher.cli as cli_module
 import nostalgia_launcher.controllers.news as news_controller
 import nostalgia_launcher.controllers.update as update_controller
 import nostalgia_launcher.core.config_store as config_store
-import nostalgia_launcher.core.constants as constants
 import nostalgia_launcher.core.launcher as launcher
 import nostalgia_launcher.core.platform_support as platform_support
 import nostalgia_launcher.core.profiles as profiles
@@ -82,8 +81,6 @@ def qt_env(monkeypatch, tmp_path):
     cfg = tmp_path / "config.json"
     cache = tmp_path / "hash_cache.json"
     config_store.configure(str(cfg), str(cache))
-    monkeypatch.setattr(constants, "CONFIG_FILE", str(cfg))
-    monkeypatch.setattr(constants, "CACHE_FILE", str(cache))
 
     featured = {
         "title": "1.16.2 is live",
@@ -657,7 +654,7 @@ def test_run_backend_second_instance_returns_0_without_app(
     from nostalgia_launcher.core import app_lock
     from nostalgia_launcher.ui.qt import app_lock_qt
 
-    os.makedirs(platform_support.config_dir(), exist_ok=True)
+    os.makedirs(os.path.dirname(launcher.user_config_path()), exist_ok=True)
     with open(launcher.user_config_path(), "w", encoding="utf-8") as f:
         f.write('{"server": {"base_url": "https://launcher.test"}}')
 
@@ -668,7 +665,7 @@ def test_run_backend_second_instance_returns_0_without_app(
         "nostalgia_launcher.ui.qt.app.QtNostalgiaLauncherApp", boom
     )
 
-    key = app_lock.state_key(constants.CONFIG_FILE)
+    key = app_lock.state_key(profiles.active().state_path())
     server, _relay = app_lock_qt.serve(key)
     try:
         rc = cli_module.main([])
@@ -1049,14 +1046,12 @@ def test_new_profile_wizard_scopes_repos_and_globals(
     """Settings → New… import: launcher.json AND content repos land in
     the NEW profile while the ACTIVE profile's stores and the global
     launcher config stay untouched."""
-    import nostalgia_launcher.services.catalog as catalog_module
-
     prof, err = profiles.create("fresh2")
     assert err == ""
     sentinel = '{"server": [{"sentinel": true}], "custom": []}'
-    os.makedirs(platform_support.config_dir(), exist_ok=True)
+    os.makedirs(profiles.DEFAULT.root, exist_ok=True)
     with open(
-        os.path.join(platform_support.config_dir(), "local_mods_repo.json"),
+        profiles.DEFAULT.local_repo_path("mods"),
         "w",
         encoding="utf-8",
     ) as f:
@@ -1099,9 +1094,7 @@ def test_new_profile_wizard_scopes_repos_and_globals(
             assert json.load(f)["server"]["base_url"] == "https://fresh.test"
         # …the ACTIVE profile's store is untouched…
         with open(
-            os.path.join(
-                platform_support.config_dir(), "local_mods_repo.json"
-            ),
+            profiles.DEFAULT.local_repo_path("mods"),
             encoding="utf-8",
         ) as f:
             assert f.read() == sentinel
@@ -1109,8 +1102,8 @@ def test_new_profile_wizard_scopes_repos_and_globals(
         assert profiles.active().name == "default"
         assert profiles.load_index()["active"] == "default"
         assert launcher.server_url() == "https://launcher.test"
-        assert catalog_module.custom_file("mods").startswith(
-            str(platform_support.config_dir())
+        assert launcher.local_repo_path("mods") == (
+            profiles.DEFAULT.local_repo_path("mods")
         )
     finally:
         app._window._settingsDialog.close()

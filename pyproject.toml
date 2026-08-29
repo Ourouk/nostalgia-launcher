@@ -8,7 +8,7 @@ version = "0.0.2"
 description = "Standalone updater and mod manager for the Vanilla WoW client"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "PySide6>=6.6",
     # certifi supplies a current CA bundle so TLS verification works even on
@@ -44,7 +44,7 @@ markers = [
 [tool.ruff]
 # Match the codebase's existing pep8-style 79-column wrapping.
 line-length = 79
-target-version = "py310"
+target-version = "py312"
 exclude = ["dist", "build"]
 
 [tool.ruff.lint]

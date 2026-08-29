@@ -76,7 +76,7 @@ def test_validate_mod_github_release():
         {
             "id": "ExampleLoader",
             "name": "ExampleLoader",
-            "essential": True,
+            "installation": "required",
             "repo_url": "https://github.com/hannesmann/example-loader",
             "source": {
                 "kind": "github_release",
@@ -86,7 +86,7 @@ def test_validate_mod_github_release():
                 "prefer_no": "-dxvk",
                 "extract_map": {"VfPatcher.dll": "VfPatcher.dll"},
             },
-            "register_dll": "VfPatcher.dll",
+            "register_dll": ["VfPatcher.dll"],
             "installed_files": ["VfPatcher.dll", "ExampleLoader.exe"],
         }
     )
@@ -288,30 +288,7 @@ def test_set_registry_url_rejects_insecure_and_credentials(tmp_path):
 # ── custom-file loading ──────────────────────────────────────────────────────
 
 
-def _redirect_custom(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        catalog,
-        "custom_file",
-        lambda kind: str(tmp_path / f"nostalgia_launcher_{kind}_custom.json"),
-    )
-
-
-def test_load_custom_skips_invalid_and_missing(tmp_path, monkeypatch):
-    _redirect_custom(tmp_path, monkeypatch)
-    assert catalog.load_custom("addons", catalog.validate_addon) == []
-
-    (tmp_path / "nostalgia_launcher_addons_custom.json").write_text(
-        '[{"folder": "Good", "git": "https://github.com/a/b"}, '
-        '{"folder": "../evil"}, "nope"]',
-        encoding="utf-8",
-    )
-    out = catalog.load_custom("addons", catalog.validate_addon)
-    assert [a["name"] for a in out] == ["Good"]
-
-
 # ── local repo files ─────────────────────────────────────────────────────────
-
-from pathlib import Path  # noqa: E402
 
 import pytest  # noqa: E402
 
@@ -326,35 +303,12 @@ def repo_dir(tmp_path, monkeypatch):
         "local_repo_path",
         lambda kind: str(tmp_path / f"local_{kind}_repo.json"),
     )
-    monkeypatch.setattr(
-        launcher,
-        "legacy_custom_path",
-        lambda kind: str(tmp_path / f"legacy_{kind}_custom.json"),
-    )
     return tmp_path
 
 
 def test_read_local_repo_missing_is_empty(repo_dir):
     assert catalog.read_local_repo("mods") == {"server": [], "custom": []}
     assert not catalog.local_repo_has_entries("mods")
-
-
-def test_read_local_repo_seeds_once_from_legacy(repo_dir):
-    legacy = repo_dir / "legacy_addons_custom.json"
-    legacy.write_text(
-        '[{"name": "Mine", "git": "https://github.com/x/mine"}]',
-        encoding="utf-8",
-    )
-    repo = catalog.read_local_repo("addons")
-    assert repo["custom"] == [
-        {"name": "Mine", "git": "https://github.com/x/mine"}
-    ]
-    # The repo file now exists: a changed legacy file is not re-imported.
-    legacy.write_text("[],", encoding="utf-8")
-    again = catalog.read_local_repo("addons")
-    assert again["custom"] == [
-        {"name": "Mine", "git": "https://github.com/x/mine"}
-    ]
 
 
 def test_add_custom_entry_replaces_same_id_keeps_server(repo_dir):
@@ -403,34 +357,6 @@ def test_validate_entries_skips_invalid_with_log():
     assert out == [good]
 
 
-def test_legacy_layer_inactive_once_repo_exists(repo_dir):
-    """After the repo file exists, the legacy custom file is no longer
-    loaded — stale copies must not shadow repo edits or survives-clears."""
-
-    legacy = Path(catalog.custom_file("mods"))
-    legacy.write_text(
-        '[{"id": "Legacy", "name": "Legacy",'
-        ' "source": {"kind": "direct_file"}}]',
-        encoding="utf-8",
-    )
-    # No repo yet: the legacy layer is active.
-    assert [
-        e["id"]
-        for e in catalog.legacy_custom_layer(
-            "mods", lambda e: e if isinstance(e, dict) else None
-        )
-    ] == ["Legacy"]
-    # Create the repo (as the import split or first read does).
-    catalog.write_local_repo("mods", [], [])
-    assert (
-        catalog.legacy_custom_layer(
-            "mods", lambda e: e if isinstance(e, dict) else None
-        )
-        == []
-    )
-    assert legacy.exists()  # still on disk as a backup
-
-
 # ── mod type / installation / multi-dll schema ──────────────────────────────
 
 
@@ -449,19 +375,28 @@ def test_validate_mod_defaults_type_and_installation():
     assert cleaned["installation"] == "user_opt_in"
 
 
-def test_validate_mod_translates_legacy_essential():
+def test_validate_mod_installation_field_honored():
     base = {
         "id": "X",
-        "essential": True,
         "source": {
             "kind": "direct_file",
             "url": "https://example.com/x.dll",
             "dest": "x.dll",
         },
     }
-    assert catalog.validate_mod(base)["installation"] == "required"
-    base["essential"] = False
-    assert catalog.validate_mod(base)["installation"] == "user_opt_in"
+    # The "installation" field is honored.
+    assert (
+        catalog.validate_mod({**base, "installation": "required"})[
+            "installation"
+        ]
+        == "required"
+    )
+    # The legacy "essential" boolean is no longer honored; it falls back
+    # to the "user_opt_in" default.
+    assert (
+        catalog.validate_mod({**base, "essential": True})["installation"]
+        == "user_opt_in"
+    )
 
 
 def test_validate_mod_rejects_unknown_type_and_installation():
@@ -483,7 +418,7 @@ def test_validate_mod_external_launcher_fields():
             "id": "example-loader",
             "type": "external-launcher",
             "executable": "ExampleLoader.exe",
-            "clientVersions": ["1.12.1"],
+            "client_versions": ["1.12.1"],
             "source": {
                 "kind": "github_release",
                 "owner": "a",
@@ -499,9 +434,7 @@ def test_validate_mod_external_launcher_fields():
     assert "register_dll" not in cleaned
     assert cleaned["executable"] == "ExampleLoader.exe"
     assert cleaned["type"] == "external-launcher"
-    # Legacy camelCase input is accepted and normalized to snake_case.
     assert cleaned["client_versions"] == ["1.12.1"]
-    assert "clientVersions" not in cleaned
 
 
 def test_validate_mod_register_dll_list_normalization():
@@ -513,15 +446,11 @@ def test_validate_mod_register_dll_list_normalization():
             "extract_map": {"d3d9.dll": "d3d9.dll"},
         },
     }
-    # Legacy single string → one-element list.
-    one = catalog.validate_mod({**base, "register_dll": "d3d9.dll"})
-    assert one["register_dll"] == ["d3d9.dll"]
-    # Real-world quirk: a non-file name registered into dlls.txt only.
-    named = catalog.validate_mod({**base, "register_dll": "dxvk"})
-    assert named["register_dll"] == ["dxvk"]
     # Lists pass through validated.
     many = catalog.validate_mod({**base, "register_dll": ["a.dll", "b.dll"]})
     assert many["register_dll"] == ["a.dll", "b.dll"]
+    # A single string is no longer accepted (legacy alias dropped).
+    assert catalog.validate_mod({**base, "register_dll": "d3d9.dll"}) is None
     # Bad shapes are rejected.
     assert catalog.validate_mod({**base, "register_dll": []}) is None
     assert (

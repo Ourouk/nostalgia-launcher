@@ -1,7 +1,6 @@
 """Unit tests for the launcher configuration (core/launcher)."""
 
 import json
-import os
 
 import pytest
 
@@ -32,7 +31,6 @@ def test_derives_endpoints_from_base_url():
     assert cfg.news_url == "https://srv.example/news.json"
     assert cfg.featured_news_url == ("https://srv.example/news/featured.json")
     assert cfg.mods_registry_url == "https://srv.example/api/mods.json"
-    assert cfg.addons_registry_url == "https://srv.example/api/addons.json"
     assert cfg.addons_registry_urls == ["https://srv.example/api/addons.json"]
     assert cfg.realm == "srv.example"
     assert cfg.discord_url is None
@@ -79,7 +77,6 @@ def test_addons_registry_urls_override_order():
         {
             "server": {
                 "base_url": "https://srv.example",
-                "addons_registry_url": "https://a.example/official.json",
                 "addons_registry_urls": [
                     "https://a.example/official.json",
                     "https://b.example/overrides.json",
@@ -88,7 +85,6 @@ def test_addons_registry_urls_override_order():
         }
     )
     assert cfg is not None
-    assert cfg.addons_registry_url == "https://a.example/official.json"
     assert cfg.addons_registry_urls == [
         "https://a.example/official.json",
         "https://b.example/overrides.json",
@@ -109,18 +105,6 @@ def test_addons_registry_urls_drop_insecure_entries():
     )
     assert cfg is not None
     assert cfg.addons_registry_urls == ["https://a.example/ok.json"]
-
-
-def test_addons_registry_urls_fall_back_to_singular():
-    cfg = _config(
-        {
-            "server": {
-                "base_url": "https://srv.example",
-                "addons_registry_url": "https://a.example/only.json",
-            }
-        }
-    )
-    assert cfg.addons_registry_urls == ["https://a.example/only.json"]
 
 
 def test_server_manifest_and_client_overrides():
@@ -342,11 +326,11 @@ def test_configure_missing_returns_error(monkeypatch, tmp_path):
     assert "required" in err
 
 
-def test_user_config_path_lives_in_config_dir(monkeypatch):
-    monkeypatch.setattr(launcher, "config_dir", lambda: "/cfg")
-    assert launcher.user_config_path() == os.path.join(
-        "/cfg", "nostalgia_launcher.json"
-    )
+def test_user_config_path_routes_through_active_profile():
+    """user_config_path() resolves into the active profile's directory."""
+    from nostalgia_launcher.core import profiles
+
+    assert launcher.user_config_path() == profiles.active().launcher_path()
 
 
 def test_auto_path_prefers_persisted_user_config(monkeypatch, tmp_path):
@@ -594,13 +578,6 @@ def user_dirs(tmp_path, monkeypatch):
         "local_repo_path",
         lambda kind: str(tmp_path / "user" / f"local_{kind}_repo.json"),
     )
-    monkeypatch.setattr(
-        launcher,
-        "legacy_custom_path",
-        lambda kind: str(
-            tmp_path / "user" / f"nostalgia_launcher_{kind}_custom.json"
-        ),
-    )
     return dest, tmp_path / "user"
 
 
@@ -732,20 +709,6 @@ def test_repo_failure_aborts_import_without_persisting(
     got, err = launcher.persist(str(src))
     assert got == "" and err
     assert not dest.exists()
-
-
-def test_legacy_custom_seeds_fresh_repo_on_import(tmp_path, user_dirs):
-    dest, user = user_dirs
-    user.mkdir(parents=True, exist_ok=True)
-    legacy = user / "nostalgia_launcher_addons_custom.json"
-    legacy.write_text(json.dumps([_ADDON]), encoding="utf-8")
-    src = _import_file(
-        tmp_path, "cfg.json", {"server": {"base_url": "https://srv.example"}}
-    )
-    assert launcher.persist(str(src))[1] == ""
-    repo = json.loads((user / "local_addons_repo.json").read_text())
-    assert repo["server"] == []
-    assert repo["custom"] == [_ADDON]
 
 
 def test_derive_parses_embedded_addons_raw():

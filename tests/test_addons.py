@@ -137,6 +137,7 @@ def test_fetch_addons_catalog_cached(tmp_path, monkeypatch):
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
+    url = addons.registry_urls()[0]
     catalog = [
         {
             "name": "pfUI",
@@ -145,7 +146,11 @@ def test_fetch_addons_catalog_cached(tmp_path, monkeypatch):
         }
     ]
     config_store.save_config(
-        {"addons_catalog_cache": {"timestamp": 9999999999, "catalog": catalog}}
+        {
+            "addons_catalog_cache": {
+                url: {"timestamp": 9999999999, "catalog": catalog}
+            }
+        }
     )
 
     def fail(*a, **k):
@@ -446,15 +451,17 @@ def test_addons_catalog_merges_custom(tmp_path, monkeypatch):
             }
         ],
     )
-    monkeypatch.setattr(
-        addons.catalog,
-        "custom_file",
-        lambda kind: str(tmp_path / "custom.json"),
-    )
-    (tmp_path / "custom.json").write_text(
-        '[{"folder": "A", "git": "https://github.com/fork/A", '
-        '"recommended": true}]',
-        encoding="utf-8",
+    # User-custom entries now live in the local repo's "custom" list.
+    addons.catalog.write_local_repo(
+        "addons",
+        [],
+        [
+            {
+                "name": "A",
+                "git": "https://github.com/fork/A",
+                "recommended": True,
+            }
+        ],
     )
 
     merged = {a["name"]: a for a in addons.addons_catalog()}
@@ -786,15 +793,10 @@ def _repo_redirect(tmp_path, monkeypatch):
         "local_repo_path",
         lambda kind: str(tmp_path / f"local_{kind}_repo.json"),
     )
-    monkeypatch.setattr(
-        launcher,
-        "legacy_custom_path",
-        lambda kind: str(tmp_path / f"legacy_{kind}.json"),
-    )
 
 
 def test_addons_catalog_from_cache_full_precedence(tmp_path, monkeypatch):
-    """cache < repo.server < embedded < repo.custom < legacy (by folder)."""
+    """cache < repo.server < embedded < repo.custom (by folder)."""
     from nostalgia_launcher.core import launcher
     from nostalgia_launcher.services import catalog as catalog_svc
 

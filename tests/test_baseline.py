@@ -1,7 +1,6 @@
 """Baseline consistency checks for repository metadata."""
 
 import pathlib
-
 import tomllib
 
 from nostalgia_launcher.core.constants import UPDATER_VERSION

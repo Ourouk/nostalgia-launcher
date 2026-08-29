@@ -68,22 +68,24 @@ src/nostalgia_launcher/
 ## Profiles & single-instance guard
 
 **Profiles** (`core/profiles.py`, pure stdlib) give each server/community
-fully isolated state. The reserved `default` profile maps byte-identically
-onto the legacy top-level files — zero migration. Non-default profiles
-live under `<config_dir>/profiles/<name>/`:
+fully isolated state. Every profile — including the reserved `default` —
+is a real directory under `<config_dir>/profiles/<name>/`; the `default`
+profile resolves to `<config_dir>/profiles/default/`. There is no legacy
+top-level layout and no migration: a fresh install simply starts with an
+empty `profiles/default/`. Non-default profiles live under the same
+scheme at `<config_dir>/profiles/<name>/`:
 
 ```
 <config_dir>/
-  nostalgia_launcher.json              ┐ default profile = exactly these
-  nostalgia_launcher_config.json       │ legacy paths, never moved
-  <cache_dir>/…_hash_cache.json        ┘
   profiles.json                        {"active": str, "order": [str]}
-  local_<kind>_repo.json               ┐ per-kind content repos
-                                       ┘ ({"server", "custom"}), default only
+  profiles/default/
+    launcher.json  state.json  hash_cache.json
+    local_<kind>_repo.json             mods/addons/assets content repos
+                                        ({"server", "custom"})
+    torrents/<info_hash>.torrent|.resume   launcher_logo.img
   profiles/<name>/
     launcher.json  state.json  hash_cache.json
     local_<kind>_repo.json             mods/addons/assets content repos
-    custom/nostalgia_launcher_{mods,addons,assets}_custom.json
     torrents/<info_hash>.torrent|.resume   launcher_logo.img
 ```
 
@@ -94,11 +96,9 @@ directory scan — startup never crashes over the registry. One profile is
 active per process, pinned once via `profiles.activate(resolve(...))` in
 `cli.main()`; everything downstream routes through `profiles.active()`:
 `config_store.configure(state/cache)` in `_run_backend`,
-`catalog.custom_file()`, `launcher.local_repo_path()` /
-`legacy_custom_path()` (the import-time content repos),
+`launcher.local_repo_path()` (the import-time content repos),
 `logo.logo_cache_path()`,
-`torrent_update.torrent_cache_dir()`, and first-launch wizard persistence
-(via `launcher.set_profile_launcher_path`, cleared by `launcher.reset()`).
+`torrent_update.torrent_cache_dir()`, and first-launch wizard persistence.
 The wizard's install-folder step lands in the same profile's state store
 (`config_store.apply_confirmed_out_dir(prof.state_path(), …)`), so each
 profile keeps its own client install folder. `controllers/settings`
@@ -160,19 +160,14 @@ the QLocalServer guard remains authoritative there.
   persist time, after the wizard's explicit Accept. The split is
   transactional: any repo-write or config-write failure rolls every
   already-written repo back to its prior bytes (freshly created files are
-  removed) before erroring, so an import is never half-applied. The legacy
-  per-user custom files (`nostalgia_launcher_<kind>_custom.json`) seed a
-  freshly created repo's "custom" list as a one-time migration and are then
-  left as backups **and no longer loaded** (`catalog.legacy_custom_layer`
-  returns empty once the repo exists) so stale copies can't shadow repo
-  edits; Settings' open/clear-custom buttons manage the repo files, and
-  clear wipes only "custom".
+  removed) before erroring, so an import is never half-applied. Settings'
+  open/clear-custom buttons manage the repo files, and clear wipes only
+  "custom".
 - **Registry precedence per vertical** (later wins by id/folder): remote
   catalog < repo "server" < embedded-in-config (only live for direct
-  ``--launcher-config`` runs, which never persist) < repo "custom" <
-  legacy custom file (active only until the local repo exists — see the
-  migration note above). Plumbing: `catalog.read_local_repo` /
-  `write_local_repo` / `add_custom_entry` / `clear_custom_entries`;
+  ``--launcher-config`` runs, which never persist) < repo "custom".
+  Plumbing: `catalog.read_local_repo` /
+  write_local_repo` / `add_custom_entry` / `clear_custom_entries`;
   offline guards (`catalog_is_stale`) count repo entries as content.
 - The mods/addons/assets lists come from remote JSON catalogs
   (`services/catalog.py` holds the shared validation/merge logic; the fetch
@@ -195,16 +190,16 @@ the QLocalServer guard remains authoritative there.
   Required is a default, never an enforcement: the row checkbox stays free,
   and an explicit user opt-out (an `enabled: false` record) persists —
   startup will NOT force-reinstall a required mod the user turned off.
-  The legacy `essential: true` boolean is silently translated to
-  `installation: "required"`. `register_dll` accepts `str | list[str]` and is
-  normalized to a list — one mod may wire several DLLs into `dlls.txt`
-  (`services.mods.registered_dlls`), and an external-launcher needs none.
-  Entries must name real on-disk DLLs that need dlls.txt *injection*;
-  proxy-loaded files (e.g. a d3d9.dll picked up by the OS loader) are tracked
-  via `installed_files` alone — dlls.txt stays the client's injection list,
-  not launcher bookkeeping.
-  `client_versions` is optional metadata (no filtering yet; legacy catalogs
-  may still send camelCase `clientVersions`, normalized on ingest). Game
+  `installation` is the only install-policy field (`"user_opt_in"` default,
+  `"required"` = startup auto-install / "Install Required" target); the
+  legacy `essential: true` boolean is gone. `register_dll` is a `list[str]`
+  (no single-string form anymore) — one mod may wire several DLLs into
+  `dlls.txt` (`services.mods.registered_dlls`), and an external-launcher
+  needs none. Entries must name real on-disk DLLs that need dlls.txt
+  *injection*; proxy-loaded files (e.g. a d3d9.dll picked up by the OS
+  loader) are tracked via `installed_files` alone — dlls.txt stays the
+  client's injection list, not launcher bookkeeping.
+  `client_versions` is optional metadata (no filtering yet). Game
   launch prefers the first on-disk executable from
   `mods.external_launcher_executables()` — active external launchers only:
   required ones always, opt-ins only when enabled in state, and only when the

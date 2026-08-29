@@ -24,7 +24,6 @@ other URL is derived from it unless overridden:
         "news_url": "https://server.example/news",
         "featured_news_url": "https://server.example/news/featured",
         "mods_registry_url": "https://server.example/api/mods.json",
-        "addons_registry_url": "https://server.example/api/addons.json",
         "addons_registry_urls": [
           "https://server.example/api/addons.json",
           "https://server.example/addons-overrides.json"
@@ -110,7 +109,7 @@ from urllib.parse import parse_qs, urlsplit
 from .filesystem import atomic_write_text
 from .helpers import redact_url
 from .log_sink import log
-from .platform_support import config_dir, is_macos
+from .platform_support import is_macos
 
 LAUNCHER_FILE = "nostalgia_launcher.json"
 
@@ -118,9 +117,6 @@ _LOCK = threading.Lock()
 _config: "LauncherConfig | None" = None
 _path: str = ""
 _error: str = ""
-# Active-profile override for user_config_path() (see set_profile_
-# launcher_path); empty means the legacy per-user default file.
-_profile_launcher_path: str = ""
 
 
 @dataclass
@@ -145,7 +141,6 @@ class LauncherConfig:
     news_url: str
     featured_news_url: str
     mods_registry_url: str
-    addons_registry_url: str
     realm: str
     addons_registry_urls: list[str] = field(default_factory=list)
     embedded_mods: list[dict] = field(default_factory=list)
@@ -382,16 +377,10 @@ def _derive(data: dict) -> LauncherConfig:
     )
     client_url = _https_url(server.get("client_url")) or _default_client(base)
 
-    addons_registry_url = _url("addons_registry_url", "/api/addons.json")
-    addons_registry_urls: list[str] = []
-    raw_urls = server.get("addons_registry_urls")
-    if isinstance(raw_urls, list) and raw_urls:
-        for u in raw_urls:
-            https = _https_url(u)
-            if https:
-                addons_registry_urls.append(https)
-    if not addons_registry_urls:
-        addons_registry_urls = [addons_registry_url]
+    urls = server.get("addons_registry_urls") or []
+    addons_registry_urls = [u for u in (_https_url(x) for x in urls) if u] or [
+        _https_url(base + "/api/addons.json")
+    ]
 
     raw_theme = data.get("theme")
     theme = raw_theme if isinstance(raw_theme, dict) else None
@@ -474,7 +463,6 @@ def _derive(data: dict) -> LauncherConfig:
         news_url=_url("news_url", "/news.json"),
         featured_news_url=_url("featured_news_url", "/news/featured.json"),
         mods_registry_url=_url("mods_registry_url", "/api/mods.json"),
-        addons_registry_url=addons_registry_url,
         addons_registry_urls=addons_registry_urls,
         realm=_name_or_host(server.get("realm")),
         mirrors=mirrors,
@@ -530,22 +518,11 @@ def discover_path() -> str:
 
 def user_config_path() -> str:
     """The per-user launcher-config file, where a first-launch selection is
-    persisted so future launches reuse it (lives in the OS config dir).
-    Redirected into the active profile's directory when a profile override
-    is set (set_profile_launcher_path)."""
-    if _profile_launcher_path:
-        return _profile_launcher_path
-    return os.path.join(config_dir(), LAUNCHER_FILE)
+    persisted so future launches reuse it. Scoped to the active profile
+    (the default profile resolves under ``profiles/default/``)."""
+    from . import profiles
 
-
-def set_profile_launcher_path(path: str):
-    """Route persist()/persist_text() (and therefore auto-discovery of the
-    previously imported config) at a profile-scoped launcher.json instead
-    of the legacy top-level file. Called by the CLI for non-default
-    profiles; empty string restores the default."""
-    global _profile_launcher_path
-    with _LOCK:
-        _profile_launcher_path = path or ""
+    return profiles.active().launcher_path()
 
 
 def _auto_path() -> str:
@@ -568,9 +545,8 @@ CONTENT_KINDS = ("mods", "addons", "assets")
 
 def local_repo_path(kind: str) -> str:
     """The local repo file for a content kind (one of `CONTENT_KINDS`),
-    scoped to the active profile (the legacy top-level file for the
-    default profile). Function-local profiles import: profiles imports
-    LAUNCHER_FILE/CONTENT_KINDS from this module."""
+    scoped to the active profile. Function-local profiles import: profiles
+    imports LAUNCHER_FILE/CONTENT_KINDS from this module."""
     from . import profiles
 
     return profiles.active().local_repo_path(kind)
@@ -600,31 +576,6 @@ def load_local_repo(kind: str) -> tuple[list, list]:
     if not isinstance(raw, dict):
         raise ValueError(f"local {kind} repo must be a JSON object")
     return _entries("server"), _entries("custom")
-
-
-def legacy_custom_path(kind: str) -> str:
-    """Path of the pre-repo per-user custom file (the hand-edit escape
-    hatch that predates the local repos), scoped to the active profile —
-    the SAME file services.catalog.custom_file() serves, so the one-time
-    migration seeds from what that profile's user actually had. Kept as a
-    backup after the migration into the repo's "custom" list."""
-    from . import profiles
-
-    return profiles.active().custom_catalog_path(kind)
-
-
-def legacy_custom_entries(kind: str) -> list:
-    """The raw entries of the legacy per-user custom file, or [] when it
-    doesn't exist / isn't readable. Used to seed a freshly-created local
-    repo so pre-repo user additions survive the migration."""
-    try:
-        with open(legacy_custom_path(kind), encoding="utf-8") as f:
-            raw = json.load(f)
-    except Exception:
-        return []
-    if not isinstance(raw, list):
-        return []
-    return [e for e in raw if isinstance(e, dict)]
 
 
 def store_local_repo(
@@ -670,14 +621,11 @@ def _split_and_strip(data: dict, final=None) -> dict:
             path = local_repo_path(kind)
             existed = os.path.exists(path)
             prior = None
+            custom = []
             if existed:
                 with open(path, "rb") as f:
                     prior = f.read()
                 _prev_server, custom = load_local_repo(kind)
-            else:
-                # First-ever repo creation: seed "custom" from the legacy
-                # per-user custom file so pre-repo user additions survive.
-                custom = legacy_custom_entries(kind)
             store_local_repo(kind, entries, custom)
             staged.append((path, prior))
         if final is not None:
@@ -816,10 +764,9 @@ def configure_from_dict(data: dict) -> "LauncherConfig | None":
 
 def reset():
     """Drop the loaded configuration (test teardown)."""
-    global _config, _path, _error, _profile_launcher_path
+    global _config, _path, _error
     with _LOCK:
         _config, _path, _error = None, "", ""
-        _profile_launcher_path = ""
 
 
 def config() -> "LauncherConfig | None":
