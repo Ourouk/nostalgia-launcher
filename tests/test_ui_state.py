@@ -175,6 +175,7 @@ def test_mods_state_no_errors_or_pending():
 
 ADDON_REC = {
     "folder": "pfUI",
+    "id": "pfUI",
     "status": "upToDate",
     "git": "https://github.com/brues-code/pfUI",
     "branch": "master",
@@ -182,6 +183,7 @@ ADDON_REC = {
     "toc": {"Title": "pfUI", "Interface": "11200"},
     "description": "Full interface",
     "error": None,
+    "depends": [],
 }
 
 

@@ -181,6 +181,69 @@ def test_delete_active_resets_pointer(prof_home):
     assert profiles.resolve().name == "default"
 
 
+def test_reset_refuses_default_and_unknown(prof_home):
+    assert profiles.reset("default")
+    assert profiles.reset("ghost")
+
+
+def test_reset_wipes_all_local_artifacts_leaves_dir(
+    prof_home, real_repo_seams
+):
+    """Reset removes every per-profile artifact but keeps the empty directory
+    and the registry entry, so the profile stays reconfigurable."""
+    prof, _ = profiles.create(
+        "wipe", launcher_json_text=json.dumps(MINIMAL_CFG)
+    )
+    # Seed the artifacts the wipe is expected to remove.
+    for path in (
+        prof.state_path(),
+        prof.cache_path(),
+        prof.logo_path(),
+        prof.torrents_dir(),
+        prof.custom_dir(),
+    ):
+        if path.endswith((".json", ".img")):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("{}")
+        else:
+            os.makedirs(path, exist_ok=True)
+            with open(os.path.join(path, "x.txt"), "w") as f:
+                f.write("x")
+    for kind in launcher.CONTENT_KINDS:
+        with open(prof.local_repo_path(kind), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"server": [], "custom": []}))
+
+    assert profiles.reset("wipe") == ""
+
+    # Profile directory survives, but every artifact is gone.
+    assert os.path.isdir(prof.root)
+    for path in (
+        prof.launcher_path(),
+        prof.state_path(),
+        prof.cache_path(),
+        prof.logo_path(),
+        prof.torrents_dir(),
+        prof.custom_dir(),
+    ):
+        assert not os.path.exists(path), path
+    for kind in launcher.CONTENT_KINDS:
+        assert not os.path.exists(prof.local_repo_path(kind))
+    # Still registered (reconfigurable), not deleted from the index.
+    assert "wipe" in profiles.list_profiles()
+
+
+def test_reset_active_then_reconfigurable(prof_home, real_repo_seams):
+    """Resetting a profile leaves it in the same 'unconfigured' state a fresh
+    profile starts in (no launcher.json)."""
+    prof, _ = profiles.create(
+        "wipe", launcher_json_text=json.dumps(MINIMAL_CFG)
+    )
+    assert os.path.exists(prof.launcher_path())
+    assert profiles.reset("wipe") == ""
+    assert not os.path.exists(prof.launcher_path())
+    assert "wipe" in profiles.list_profiles()
+
+
 # ── corrupt / missing index recovery ────────────────────────────────────
 
 
@@ -262,7 +325,7 @@ def test_cli_good_profile_routes_stores(fake_home, monkeypatch):
     assert launcher.server_url() == "https://p.test"
 
 
-def test_cli_default_routes_legacy_stores(fake_home, monkeypatch):
+def test_cli_default_routes_legacy_stores(hermetic_cli, monkeypatch):
     # Seed the legacy per-user launcher config so main() goes straight
     # to the backend instead of the first-launch wizard.
     os.makedirs(platform_support.config_dir(), exist_ok=True)
