@@ -360,7 +360,8 @@ Keep them in sync when bumping.
 ## Testing Notes
 
 - Tests get a launcher config from the autouse `_launcher_env` fixture in
-  `tests/conftest.py` (server `https://launcher.test` + a "Backup" mirror) —
+  `tests/conftest.py` (server `https://launcher.test` with a `server.download`
+  block — a single download source, server name "Test Server", no mirrors) —
   never rely on real network in tests. Launcher state is **process-global**:
   `_launcher_env` calls `launcher.reset()` + `launcher.configure_from_dict(...)`
   before and after each test.

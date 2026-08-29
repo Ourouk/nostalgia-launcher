@@ -44,8 +44,8 @@ src/nostalgia_launcher/
   `launcher.user_config_path()` (the per-user config dir) via
   `launcher.persist()`, taking precedence over auto-discovery on later runs.
   The download host allowlist
-  (`security_http.allowed_download_hosts()`) is built from the launcher's
-  server+mirror hosts plus the git hosts.
+  (  `security_http.allowed_download_hosts()`) is built from the launcher's
+  server/download hosts plus the git hosts.
 - Game folder is STRICTLY user-confirmed: there are exactly two writers of
   `out_dir` — Settings apply and the first-run wizard's required folder step
   (both set `out_dir_user_set`); controllers read it stored-or-empty and
