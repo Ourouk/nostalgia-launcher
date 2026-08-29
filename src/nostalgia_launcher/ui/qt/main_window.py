@@ -814,6 +814,8 @@ class MainWindow(QMainWindow):
             self._launch_game()
         elif ready.mode == "update":
             self._start_update()
+        elif ready.mode == "download":
+            self._start_client_download()
         elif ready.mode == "terminate":
             self._terminate_game()
 
@@ -828,6 +830,21 @@ class MainWindow(QMainWindow):
             return
         self.switch_tab("UPDATE")
         updater.start_update()
+        self._refresh_ready_state()
+
+    def _start_client_download(self):
+        """First-time client acquisition via BitTorrent (offered when client
+        updates are disabled but no client is installed yet)."""
+        updater = self._hub.updater
+        if updater.running:
+            return
+        if not (self._hub.settings.state.path or "").strip():
+            self._hub.dispatcher.post(
+                LogMessage("✗  Please set the game folder first.\n", "err")
+            )
+            return
+        self.switch_tab("UPDATE")
+        updater.start_client_download()
         self._refresh_ready_state()
 
     def _start_verify(self, overwrite_config: bool = False):
@@ -920,6 +937,12 @@ class MainWindow(QMainWindow):
             self._set_button_ready(True)
         elif r.mode == "update":
             self._set_button_ready(False)
+        elif r.mode == "download":
+            # Clickable gold button (same action styling as UPDATE) but with
+            # the DOWNLOAD label — triggers the BitTorrent client download.
+            self._updateButton.setText("DOWNLOAD")
+            self._updateButton.setStyleSheet(self._buttonStyles["update"])
+            self._updateButton.setEnabled(True)
         elif r.mode == "terminate":
             self._set_button_terminate()
         elif r.mode == "disabled":

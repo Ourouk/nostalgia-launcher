@@ -556,21 +556,21 @@ def _summary_text(
     lines = [
         f"Name: {cfg.server_name}",
         f"Source: {source}" if kind == "url" else f"File: {source}",
-        f"Server base URL: {cfg.server_url}",
+        f"Server URL: {cfg.server_url or '(not set)'}",
         f"Install folder: {install_dir or '(not chosen)'}",
         f"Contacts {len(hosts)} host(s): {', '.join(hosts)}",
-        "Client file updates: configured (can be disabled in Settings)",
+        f"Client file updates: {_yes(cfg.download_update)}",
         f"BitTorrent bulk downloads: {_yes(not cfg.has_torrent())}",
         f"News feed: {_yes(not cfg.news_url)}",
         "Mod catalog: "
         + _catalog_summary(
-            cfg.mods_registry_url_explicit,
+            bool(cfg.mods_registry_url),
             1,
             len(cfg.embedded_mods),
         ),
         "Addon catalog(s): "
         + _addons_catalog_summary(cfg.addons_registry_urls, cfg),
-        f"Mirrors: {len(cfg.mirrors)}",
+        f"Download source: {_yes(bool(cfg.download_manifest_url or cfg.download_client_url or cfg.has_torrent()))}",
     ]
     if cfg.assets_registry_url or cfg.embedded_assets:
         lines.append(

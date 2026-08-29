@@ -234,6 +234,46 @@ class UpdateController:
         self._dispatcher.post(ProgressChanged(0.0, ""))
         return True
 
+    def start_client_download(self) -> bool:
+        """First-time client acquisition via BitTorrent (``torrent_url`` or
+        ``magnet``), available even when client updates are disabled. Downloads
+        the whole client manifest-less; the torrent's piece hashes are the
+        integrity guarantee. The payload is then extracted per
+        ``server.download.content.type`` (folder/zip/rar)."""
+        if self.state.running:
+            self._dispatcher.post(
+                LogMessage("An operation is already in progress.\n", "dim")
+            )
+            return False
+        out = (self._get_out_dir() or "").strip()
+        if not out:
+            self._dispatcher.post(
+                LogMessage("✗  Please set the game folder first.\n", "err")
+            )
+            return False
+        if not torrent_recovery_available():
+            self._dispatcher.post(
+                LogMessage(
+                    "✗  This server has no BitTorrent source configured — "
+                    "enable client updates to download via HTTP.\n",
+                    "err",
+                )
+            )
+            return False
+        self.state.running = True
+        self._op = "download"
+        self.state.status = "Downloading client…"
+        self._log_q = queue.Queue()
+        self._prog_q = queue.Queue()
+        worker = UpdateWorker(out, self._log_q, self._prog_q)
+        self._worker = worker
+        threading.Thread(
+            target=worker.run, kwargs={"recovery_full": True}, daemon=True
+        ).start()
+        self._dispatcher.post(StatusChanged("Downloading client…"))
+        self._dispatcher.post(ProgressChanged(0.0, ""))
+        return True
+
     def cancel(self):
         """Ask every live worker to stop; the queues are drained as normal."""
         for worker in (self._verify_worker, self._worker):
@@ -634,9 +674,37 @@ class UpdateController:
         if addons_installing:
             return Readiness("busy", "Installing…", "Downloading addons…")
         if self.state.running:
-            label = "Updating…" if self._op == "update" else "Checking…"
+            label = {
+                "update": "Updating…",
+                "download": "Downloading…",
+            }.get(self._op, "Checking…")
             return Readiness("busy", label, self.state.status)
         if not self._client_updates_enabled():
+            if not self._playable_client_present():
+                # Updates are off but the client folder holds nothing
+                # playable yet — offer a first-time BitTorrent acquisition.
+                out = (self._get_out_dir() or "").strip()
+                if not out:
+                    return Readiness(
+                        "disabled", "DOWNLOAD", "Set the game folder first"
+                    )
+                if torrent_recovery_available():
+                    return Readiness(
+                        "download",
+                        "DOWNLOAD",
+                        "Download client via BitTorrent",
+                    )
+                if not can_launch_client():
+                    return Readiness(
+                        "disabled",
+                        "DOWNLOAD",
+                        "No BitTorrent source — enable client updates",
+                    )
+                return Readiness(
+                    "busy",
+                    "DOWNLOAD",
+                    "No BitTorrent source — enable client updates",
+                )
             if self._mods_have_errors():
                 return Readiness("busy", "PLAY", "Mod errors — check MODS tab")
             if not can_launch_client():
@@ -734,7 +802,9 @@ class UpdateController:
         return os.path.isfile(exe)
 
     def _client_updates_enabled(self) -> bool:
-        return bool(load_config().get("client_update_enabled", True))
+        from ..core import launcher
+
+        return launcher.effective_client_updates_enabled()
 
     def _handle_log(self, msg: str, tag: str):
         if markers.is_version(msg):

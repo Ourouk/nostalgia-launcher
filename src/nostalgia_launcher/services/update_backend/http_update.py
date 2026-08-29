@@ -1165,10 +1165,30 @@ class UpdateWorker(WorkerBase):
             "verified against the torrent's piece hashes).",
             "ok",
         )
+        self._extract_payload()
         self._report_client_version()
         self.log_q.put((markers.TORRENT_RECOVERY_DONE, ""))
 
-    def run(self, diff_nodes=None, torrent_wanted: set[str] | None = None):
+    def _extract_payload(self):
+        """Extract a zip/rar client payload per the configured content type
+        (folder = already extracted, no-op). Best-effort: failures are logged
+        but do not downgrade a successful download into an error."""
+        from ...core import launcher
+        from .extract import extract_client_payload
+
+        try:
+            extract_client_payload(
+                self.out_dir, launcher.download_content_type()
+            )
+        except Exception as e:  # pragma: no cover - defensive
+            self.log(f"[extract] payload extraction failed: {e}", "err")
+
+    def run(
+        self,
+        diff_nodes=None,
+        torrent_wanted: set[str] | None = None,
+        recovery_full: bool = False,
+    ):
 
         try:
             torrent_recovery = False
@@ -1177,6 +1197,23 @@ class UpdateWorker(WorkerBase):
                 self.progress(0.05, "Downloading…", phase="Downloading")
                 self._cache.pop(TORRENT_VALIDATION_CACHE_KEY, None)
                 nodes = diff_nodes
+            elif recovery_full:
+                # First-time client acquisition: download the whole client
+                # via BitTorrent regardless of the manifest, even when client
+                # updates are disabled. The torrent's piece hashes are the
+                # integrity guarantee.
+                self.progress(
+                    0.02,
+                    "Downloading via BitTorrent…",
+                    phase="BitTorrent",
+                    transport="BitTorrent",
+                )
+                self.log("\nStarting BitTorrent client download…\n", "acct")
+                self._source = _download_source()
+                if self._source is None or not self._source.torrent_locator:
+                    raise RuntimeError("No BitTorrent source configured.")
+                self._recovery_download(None)
+                return
             elif torrent_wanted is not None:
                 # A prior torrent verification already established the stale
                 # paths. Do not probe the manifest again: this is explicitly
@@ -1294,6 +1331,7 @@ class UpdateWorker(WorkerBase):
 
             self.progress(1.0, "")
             save_cache(self._cache)
+            self._extract_payload()
             self.log("\n✓  Everything is up to date!", "ok")
             self._report_client_version()
             self.log_q.put((markers.DONE, ""))

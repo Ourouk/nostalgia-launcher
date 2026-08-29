@@ -100,8 +100,14 @@ class SettingsController:
 
     @property
     def client_update_enabled(self) -> bool:
-        """Whether client verification and downloads are enabled."""
-        return bool(self.state.config.get("client_update_enabled", True))
+        """Whether client verification and downloads are enabled.
+
+        Combines the per-profile user override with the server's
+        ``server.download.update`` default (see
+        `core.launcher.effective_client_updates_enabled`)."""
+        from ..core import launcher
+
+        return launcher.effective_client_updates_enabled()
 
     def set_path(self, new_path: str) -> bool:
         """Apply a game-folder change.
@@ -255,11 +261,14 @@ class SettingsController:
         ).start()
 
     def _http_mirror_names(self) -> list:
-        """Names of configured mirrors that serve HTTP client files."""
+        """Name of the configured download source (the server). Mirrors are
+        gone; the single source's reachability is what we report."""
         cfg = launcher.config()
         if cfg is None:
             return []
-        return [m.name for m in cfg.mirrors if m.manifest_url and m.client_url]
+        if cfg.download_manifest_url or cfg.download_client_url:
+            return [cfg.server_name or "server"]
+        return []
 
     def verify_files(self):
         """Full re-verification: drop the hash cache so every file is
@@ -623,14 +632,10 @@ class SettingsController:
             return False
 
     def _mirror_probe_url(self, name: str) -> str:
-        """The client-files endpoint of a named download source (the server
-        or a mirror)."""
+        """The client-files endpoint of the configured download source (the
+        server). Mirrors are gone, so this is always the server's ``client``
+        URL."""
         cfg = launcher.config()
         if cfg is None:
             return ""
-        if cfg.server_name == name:
-            return cfg.client_url
-        for m in cfg.mirrors:
-            if m.name == name:
-                return m.client_url
-        return ""
+        return cfg.download_client_url or ""

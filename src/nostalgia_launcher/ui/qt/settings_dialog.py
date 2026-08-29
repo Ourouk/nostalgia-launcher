@@ -207,7 +207,7 @@ class SettingsDialog(QDialog):
         path_row.addWidget(change_btn)
         body_layout.addLayout(path_row)
 
-        mirror_title = QLabel("DOWNLOAD MIRRORS", body)
+        mirror_title = QLabel("DOWNLOAD SOURCE", body)
         mirror_title.setStyleSheet(
             f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
         )
@@ -221,8 +221,8 @@ class SettingsDialog(QDialog):
             cfg = launcher.config()
             text = (
                 "No server configured (launcher configuration missing)."
-                if cfg is None or not cfg.server_url
-                else "No HTTP mirrors configured — update uses the server directly."
+                if cfg is None or not cfg.configured
+                else "No download source configured — set server.download.http."
             )
             hint = QLabel(text, body)
             hint.setObjectName("settingsMirrorEmpty")
@@ -251,8 +251,8 @@ class SettingsDialog(QDialog):
                 self._mirror_dots[name] = dot
         refresh = QToolButton(body)
         refresh.setObjectName("settingsMirrorRefresh")
-        refresh.setText("⟳  Check mirrors")
-        refresh.setToolTip("Check server and mirror reachability")
+        refresh.setText("⟳  Check source")
+        refresh.setToolTip("Check download source reachability")
         refresh.setCursor(Qt.PointingHandCursor)
         refresh.setVisible(bool(names))
         refresh.setStyleSheet(
