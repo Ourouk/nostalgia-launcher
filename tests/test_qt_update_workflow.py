@@ -389,9 +389,15 @@ def test_startup_auto_verifies_when_not_first_run(qapp, window):
     hub.news.load.assert_called_once_with()
 
 
-def test_startup_skips_client_verify_when_disabled(qapp, window):
+def test_startup_skips_client_verify_when_disabled(qapp, window, monkeypatch):
     hub = window._hub
-    hub.settings.state.config["client_update_enabled"] = False
+    # The effective switch is the per-profile override merged over the server
+    # default (launcher.effective_client_updates_enabled), not state.config.
+    from nostalgia_launcher.core import launcher
+
+    monkeypatch.setattr(
+        launcher, "effective_client_updates_enabled", lambda: False
+    )
     hub.updater.start_verify.reset_mock()
     window.schedule_startup_tasks()
     QTest.qWait(700)

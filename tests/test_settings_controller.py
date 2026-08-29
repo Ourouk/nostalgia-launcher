@@ -692,7 +692,7 @@ def test_check_mirror_posts_online(controller, monkeypatch):
         for e in events
     )
     assert controller.mirror_statuses == {
-        "Backup": "online",
+        "Test Server": "online",
     }
 
 
@@ -712,7 +712,7 @@ def test_check_mirror_posts_offline(controller, monkeypatch):
         for e in events
     )
     assert controller.mirror_statuses == {
-        "Backup": "offline",
+        "Test Server": "offline",
     }
 
 
@@ -736,12 +736,12 @@ def test_check_mirror_http_error_still_online(controller, monkeypatch):
         for e in events
     )
     assert controller.mirror_statuses == {
-        "Backup": "online",
+        "Test Server": "online",
     }
 
 
 def test_http_mirror_names_follow_launcher(controller):
-    assert controller._http_mirror_names() == ["Backup"]
+    assert controller._http_mirror_names() == ["Test Server"]
 
 
 # ── open helpers ───────────────────────────────────────────────────────────

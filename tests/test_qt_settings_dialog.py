@@ -164,9 +164,9 @@ def test_change_cancelled_leaves_path(qapp, window, monkeypatch):
 def test_mirror_rows_render_configured_sources(qapp, window):
     hub = window._hub
     dialog = _open(window)
-    assert dialog.findChild(QLabel, "settingsMirrorStatus_Backup") is not None
-    assert dialog.findChild(QLabel, "settingsMirrorStatus_Backup") is not None
-    assert hub.settings._http_mirror_names() == ["Backup"]
+    assert dialog.findChild(QLabel, "settingsMirrorStatus_Test Server") is not None
+    assert dialog.findChild(QLabel, "settingsMirrorStatus_Test Server") is not None
+    assert hub.settings._http_mirror_names() == ["Test Server"]
 
 
 def test_no_http_mirrors_shows_direct_server_hint(qapp, window):
@@ -174,19 +174,22 @@ def test_no_http_mirrors_shows_direct_server_hint(qapp, window):
         {
             "server": {
                 "name": "ExampleServer",
-                "base_url": "https://server.example",
-                "torrent_url": "https://dl.server.example/client.torrent",
-            },
-            "mirrors": [],
+                "url": "https://server.example",
+                "download": {
+                    "torrent": {
+                        "torrent_url": "https://dl.server.example/client.torrent"
+                    }
+                },
+            }
         }
     )
     dialog = _open(window)
     hint = dialog.findChild(QLabel, "settingsMirrorEmpty")
     assert hint is not None
     assert hint.text() == (
-        "No HTTP mirrors configured — update uses the server directly."
+        "No download source configured — set server.download.http."
     )
-    assert dialog.findChild(QLabel, "settingsMirrorStatus_Backup") is None
+    assert dialog.findChild(QLabel, "settingsMirrorStatus_ExampleServer") is None
     assert not dialog.findChild(
         QToolButton, "settingsMirrorRefresh"
     ).isVisible()
@@ -194,9 +197,9 @@ def test_no_http_mirrors_shows_direct_server_hint(qapp, window):
 
 def test_mirror_status_renders_initial_state(qapp, window):
     hub = window._hub
-    hub.settings.mirror_statuses = {"Backup": "online"}
+    hub.settings.mirror_statuses = {"Test Server": "online"}
     dialog = _open(window)
-    status = dialog.findChild(QLabel, "settingsMirrorStatus_Backup")
+    status = dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
     assert status.text() == "online"
     p = Palette()
     assert p.ok.name() in status.styleSheet()
@@ -205,11 +208,11 @@ def test_mirror_status_renders_initial_state(qapp, window):
 def test_mirror_status_updates_on_event(qapp, window):
     hub = window._hub
     dialog = _open(window)
-    status = dialog.findChild(QLabel, "settingsMirrorStatus_Backup")
+    status = dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
     p = Palette()
 
     hub.settings.mirror_statuses = {
-        "Backup": "online",
+        "Test Server": "online",
     }
     hub.dispatcher.post(MirrorStatusChanged(True, "online"))
     QTest.qWait(200)
@@ -217,7 +220,7 @@ def test_mirror_status_updates_on_event(qapp, window):
     assert p.ok.name() in status.styleSheet()
 
     hub.settings.mirror_statuses = {
-        "Backup": "offline",
+        "Test Server": "offline",
     }
     hub.dispatcher.post(MirrorStatusChanged(False, "offline"))
     QTest.qWait(200)
@@ -233,7 +236,7 @@ def test_mirror_refresh_calls_check_mirror(qapp, window, monkeypatch):
     dialog.findChild(QToolButton, "settingsMirrorRefresh").click()
     check.assert_called_once()
     assert (
-        dialog.findChild(QLabel, "settingsMirrorStatus_Backup").text()
+        dialog.findChild(QLabel, "settingsMirrorStatus_Test Server").text()
         == "checking…"
     )
 
@@ -324,7 +327,11 @@ def test_client_update_checkbox_reflects_and_persists_setting(
     qapp, window, monkeypatch
 ):
     hub = window._hub
-    hub.settings.state.config = {"client_update_enabled": False}
+    # The checkbox reflects effective_client_updates_enabled() (a per-profile
+    # override wins over the server default), not the raw state.config.
+    monkeypatch.setattr(
+        launcher, "effective_client_updates_enabled", lambda: False
+    )
     set_enabled = Mock()
     monkeypatch.setattr(hub.settings, "set_client_update_enabled", set_enabled)
     dialog = _open(window)

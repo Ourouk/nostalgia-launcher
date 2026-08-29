@@ -534,6 +534,7 @@ def test_catalog_is_stale_false_with_repo_content_only(tmp_path, monkeypatch):
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
     config_store.save_config({})
+    monkeypatch.setattr(launcher, "assets_registry_url", lambda: "")
     catalog_svc.write_local_repo("assets", [_asset("Local")], [])
     assert not assets.has_remote_catalog()
     assert assets.catalog_is_stale() is False

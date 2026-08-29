@@ -23,6 +23,30 @@ def _mk_client(tmp_path):
     return d
 
 
+@pytest.fixture(autouse=True)
+def _default_source():
+    """Configure a default single download source so the workers have
+    something to resolve. Tests that need a specific source monkeypatch
+    ``client_update._download_source`` instead."""
+    from nostalgia_launcher.core import launcher
+
+    launcher.configure_from_dict(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "download": {
+                    "http": {
+                        "manifest": "https://srv.example/api/file/latest/manifest.json",
+                        "client": "https://srv.example/client/latest",
+                    }
+                },
+            }
+        }
+    )
+    yield
+    launcher.reset()
+
+
 class _BodyResp:
     """A fake response whose ``read`` returns the whole body once, then EOF —
     compatible with the bounded ``read_capped`` loop in http_update."""
@@ -329,7 +353,7 @@ def test_update_worker_uses_verified_torrent_paths_without_manifest(
     assert details["phase"] == "BitTorrent"
 
 
-# ── mirror failover ──────────────────────────────────────────────────────────
+# ── download source resolution (single source, no mirror failover) ───────────
 
 
 def _resp():
@@ -344,57 +368,6 @@ def _resp():
     )()
 
 
-def test_download_source_fails_over_to_first_reachable_mirror(monkeypatch):
-    from nostalgia_launcher.core import launcher
-
-    launcher.configure_from_dict(
-        {
-            "server": {"base_url": "https://srv.example"},
-            "mirrors": [
-                {"name": "A", "base_url": "https://a.example"},
-                {"name": "B", "base_url": "https://b.example"},
-            ],
-        }
-    )
-    calls = []
-
-    def fake_urlopen(req, timeout, allowed_hosts=None):
-        calls.append(req.full_url)
-        if req.full_url.startswith("https://a.example"):
-            raise ConnectionError("down")
-        return _resp()
-
-    monkeypatch.setattr(update_sources, "secure_urlopen", fake_urlopen)
-    src = client_update._download_source()
-    assert (
-        src.manifest_url == "https://b.example/api/file/latest/manifest.json"
-    )
-    assert src.client_url == "https://b.example/client/latest"
-    assert calls[0].startswith("https://a.example")
-    assert calls[1].startswith("https://b.example")
-
-
-def test_download_source_falls_back_to_server_when_all_down(monkeypatch):
-    from nostalgia_launcher.core import launcher
-
-    launcher.configure_from_dict(
-        {
-            "server": {"base_url": "https://srv.example"},
-            "mirrors": [{"name": "A", "base_url": "https://a.example"}],
-        }
-    )
-
-    def boom(req, timeout, allowed_hosts=None):
-        raise ConnectionError("down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", boom)
-    src = client_update._download_source()
-    assert (
-        src.manifest_url == "https://srv.example/api/file/latest/manifest.json"
-    )
-    assert src.client_url == "https://srv.example/client/latest"
-
-
 def test_download_source_none_without_launcher(monkeypatch):
     from nostalgia_launcher.core import launcher
 
@@ -402,22 +375,42 @@ def test_download_source_none_without_launcher(monkeypatch):
     assert client_update._download_source() is None
 
 
-def test_download_source_uses_mirror_endpoint_overrides(monkeypatch):
-    """A mirror's custom manifest/client URLs are what the updater uses, not
-    the reconstructed defaults."""
+def test_download_source_requires_manifest_or_client():
+    """A source is only resolved when an HTTP manifest or client URL is set;
+    a torrent/magnet alone is a recovery path, not an HTTP source."""
     from nostalgia_launcher.core import launcher
 
     launcher.configure_from_dict(
         {
-            "server": {"base_url": "https://srv.example"},
-            "mirrors": [
-                {
-                    "name": "CDN",
-                    "base_url": "https://m1.example",
-                    "manifest_url": "https://m1.example/custom/manifest.json",
-                    "client_url": "https://dl.example/client/latest",
-                }
-            ],
+            "server": {
+                "url": "https://srv.example",
+                "download": {
+                    "torrent": {
+                        "magnet": "magnet:?xt=urn:btih:" + "ab" * 20
+                    }
+                },
+            }
+        }
+    )
+    assert client_update._download_source() is None
+
+
+def test_download_source_uses_explicit_endpoint_overrides(monkeypatch):
+    """The configured manifest/client URLs (not any derived defaults) are what
+    the updater uses."""
+    from nostalgia_launcher.core import launcher
+
+    launcher.configure_from_dict(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "download": {
+                    "http": {
+                        "manifest": "https://srv.example/custom/manifest.json",
+                        "client": "https://dl.example/client/latest",
+                    }
+                },
+            }
         }
     )
 
@@ -427,64 +420,25 @@ def test_download_source_uses_mirror_endpoint_overrides(monkeypatch):
         lambda req, timeout=5, allowed_hosts=None: _resp(),
     )
     src = client_update._download_source()
-    assert src.manifest_url == "https://m1.example/custom/manifest.json"
+    assert src.manifest_url == "https://srv.example/custom/manifest.json"
     assert src.client_url == "https://dl.example/client/latest"
-
-
-def test_download_source_probes_client_url_and_accepts_http_error(monkeypatch):
-    """A CDN-only mirror is selected by probing its client-files endpoint, and
-    an HTTP error status (e.g. 404 on the root path) still proves the host is
-    reachable."""
-    from urllib.error import HTTPError
-
-    from nostalgia_launcher.core import launcher
-
-    launcher.configure_from_dict(
-        {
-            "server": {"base_url": "https://srv.example"},
-            "mirrors": [
-                {
-                    "name": "CDN",
-                    "base_url": "https://m1.example",
-                    "client_url": "https://dl.example/client/latest",
-                }
-            ],
-        }
-    )
-    probed = []
-
-    def http_error(req, timeout=5, allowed_hosts=None):
-        probed.append(req.full_url)
-        raise HTTPError(req.full_url, 404, "Not Found", None, None)
-
-    monkeypatch.setattr(update_sources, "secure_urlopen", http_error)
-    src = client_update._download_source()
-    assert probed == [
-        "https://m1.example/api/file/latest/manifest.json",
-        "https://dl.example/client/latest",
-    ]
-    assert src.client_url == "https://dl.example/client/latest"
-    assert (
-        src.manifest_url == "https://m1.example/api/file/latest/manifest.json"
-    )
 
 
 def test_verify_uses_selected_manifest_url(monkeypatch, tmp_path):
-    """VerifyWorker must fetch the manifest from the selected source's
-    configured manifest URL."""
+    """VerifyWorker must fetch the manifest from the configured manifest URL."""
     from nostalgia_launcher.core import launcher
 
     launcher.configure_from_dict(
         {
-            "server": {"base_url": "https://srv.example"},
-            "mirrors": [
-                {
-                    "name": "CDN",
-                    "base_url": "https://m1.example",
-                    "manifest_url": "https://m1.example/custom/manifest.json",
-                    "client_url": "https://dl.example/client/latest",
-                }
-            ],
+            "server": {
+                "url": "https://srv.example",
+                "download": {
+                    "http": {
+                        "manifest": "https://m1.example/custom/manifest.json",
+                        "client": "https://dl.example/client/latest",
+                    }
+                },
+            }
         }
     )
     fetched = []
@@ -510,20 +464,21 @@ def test_verify_uses_selected_manifest_url(monkeypatch, tmp_path):
     )
 
 
-def test_traverse_downloads_from_mirror_client_url(monkeypatch, tmp_path):
-    """File downloads must come from the selected mirror's client_url."""
+def test_traverse_downloads_from_configured_client_url(monkeypatch, tmp_path):
+    """File downloads must come from the configured client_url."""
     from nostalgia_launcher.core import launcher
 
     launcher.configure_from_dict(
         {
-            "server": {"base_url": "https://srv.example"},
-            "mirrors": [
-                {
-                    "name": "CDN",
-                    "base_url": "https://m1.example",
-                    "client_url": "https://dl.example/client/latest",
-                }
-            ],
+            "server": {
+                "url": "https://srv.example",
+                "download": {
+                    "http": {
+                        "manifest": "https://srv.example/m.json",
+                        "client": "https://dl.example/client/latest",
+                    }
+                },
+            }
         }
     )
 

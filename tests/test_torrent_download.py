@@ -120,63 +120,58 @@ def test_available_false_on_probe_error(monkeypatch):
 # ── launcher config parsing ──────────────────────────────────────────────────
 
 
-def test_config_parses_server_and_mirror_torrent_urls():
+def test_config_parses_server_torrent_url():
     launcher.configure_from_dict(
         {
             "server": {
-                "base_url": "https://srv.example",
-                "torrent_url": "https://dl.example/client/client.torrent",
-            },
-            "mirrors": [
-                {
-                    "name": "A",
-                    "base_url": "https://a.example",
-                    "torrent_url": "https://a.example/t/client.torrent",
+                "url": "https://srv.example",
+                "download": {
+                    "torrent": {
+                        "torrent_url": "https://dl.example/client/client.torrent"
+                    },
                 },
-                {"name": "B", "base_url": "https://b.example"},
-            ],
+            }
         }
     )
     cfg = launcher.config()
-    assert cfg.torrent_url == "https://dl.example/client/client.torrent"
-    assert cfg.mirrors[0].torrent_url == "https://a.example/t/client.torrent"
-    assert cfg.mirrors[1].torrent_url is None
+    assert (
+        cfg.download_torrent_url == "https://dl.example/client/client.torrent"
+    )
 
 
 def test_config_rejects_non_https_torrent_url():
     launcher.configure_from_dict(
         {
             "server": {
-                "base_url": "https://srv.example",
-                "torrent_url": "http://insecure.example/client.torrent",
-            },
-            "mirrors": [
-                {
-                    "name": "A",
-                    "base_url": "https://a.example",
-                    "torrent_url": "not a url",
-                }
-            ],
+                "url": "https://srv.example",
+                "download": {
+                    "torrent": {
+                        "torrent_url": "http://insecure.example/client.torrent"
+                    },
+                },
+            }
         }
     )
     cfg = launcher.config()
-    assert cfg.torrent_url is None
-    assert cfg.mirrors[0].torrent_url is None
+    assert cfg.download_torrent_url is None
 
 
 def test_config_parses_server_torrent_magnet():
     launcher.configure_from_dict(
         {
             "server": {
-                "base_url": "https://srv.example",
-                "torrent_magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
+                "url": "https://srv.example",
+                "download": {
+                    "torrent": {
+                        "magnet": "magnet:?xt=urn:btih:" + "ab" * 20
+                    }
+                },
             }
         }
     )
     cfg = launcher.config()
-    assert cfg.torrent_magnet == "magnet:?xt=urn:btih:" + "ab" * 20
-    assert cfg.torrent_url is None
-    assert cfg.mirrors == []
+    assert cfg.download_torrent_magnet == "magnet:?xt=urn:btih:" + "ab" * 20
+    assert cfg.download_torrent_url is None
 
 
 def test_config_rejects_invalid_torrent_magnet():
@@ -188,20 +183,24 @@ def test_config_rejects_invalid_torrent_magnet():
         launcher.configure_from_dict(
             {
                 "server": {
-                    "base_url": "https://srv.example",
-                    "torrent_magnet": bad,
+                    "url": "https://srv.example",
+                    "download": {"torrent": {"magnet": bad}},
                 }
             }
         )
-        assert launcher.config().torrent_magnet is None
+        assert launcher.config().download_torrent_magnet is None
 
 
 def test_has_torrent_true_for_magnet_only_config():
     launcher.configure_from_dict(
         {
             "server": {
-                "base_url": "https://srv.example",
-                "torrent_magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
+                "url": "https://srv.example",
+                "download": {
+                    "torrent": {
+                        "magnet": "magnet:?xt=urn:btih:" + "ab" * 20
+                    }
+                },
             }
         }
     )
@@ -211,14 +210,14 @@ def test_has_torrent_true_for_magnet_only_config():
 def test_torrent_hosts_join_download_allowlist():
     launcher.configure_from_dict(
         {
-            "server": {"base_url": "https://srv.example"},
-            "mirrors": [
-                {
-                    "name": "A",
-                    "base_url": "https://a.example",
-                    "torrent_url": "https://torrent.example/client.torrent",
-                }
-            ],
+            "server": {
+                "url": "https://srv.example",
+                "download": {
+                    "torrent": {
+                        "torrent_url": "https://torrent.example/client.torrent"
+                    },
+                },
+            }
         }
     )
     hosts = launcher.config().download_hosts()
@@ -228,17 +227,18 @@ def test_torrent_hosts_join_download_allowlist():
 # ── DownloadSource propagation ───────────────────────────────────────────────
 
 
-def test_download_source_uses_mirror_torrent_url(monkeypatch):
+def test_download_source_uses_server_torrent_url(monkeypatch):
     launcher.configure_from_dict(
         {
-            "server": {"base_url": "https://srv.example"},
-            "mirrors": [
-                {
-                    "name": "A",
-                    "base_url": "https://a.example",
-                    "torrent_url": "https://a.example/client.torrent",
-                }
-            ],
+            "server": {
+                "url": "https://srv.example",
+                "download": {
+                    "http": {"manifest": "https://srv.example/m.json"},
+                    "torrent": {
+                        "torrent_url": "https://dl.example/client.torrent"
+                    },
+                },
+            }
         }
     )
     monkeypatch.setattr(
@@ -247,25 +247,6 @@ def test_download_source_uses_mirror_torrent_url(monkeypatch):
         lambda req, timeout=5, allowed_hosts=None: _resp(b"{}"),
     )
     src = client_update._download_source()
-    assert src.torrent_url == "https://a.example/client.torrent"
-
-
-def test_download_source_falls_back_to_server_torrent_url(monkeypatch):
-    launcher.configure_from_dict(
-        {
-            "server": {
-                "base_url": "https://srv.example",
-                "torrent_url": "https://dl.example/client.torrent",
-            },
-            "mirrors": [{"name": "A", "base_url": "https://a.example"}],
-        }
-    )
-
-    def down(req, timeout=5, allowed_hosts=None):
-        raise ConnectionError("down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
-    src = client_update._download_source()
     assert src.torrent_url == "https://dl.example/client.torrent"
 
 
@@ -273,9 +254,14 @@ def test_download_source_locator_prefers_url_over_magnet(monkeypatch):
     launcher.configure_from_dict(
         {
             "server": {
-                "base_url": "https://srv.example",
-                "torrent_url": "https://dl.example/client.torrent",
-                "torrent_magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
+                "url": "https://srv.example",
+                "download": {
+                    "http": {"manifest": "https://srv.example/m.json"},
+                    "torrent": {
+                        "torrent_url": "https://dl.example/client.torrent",
+                        "magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
+                    },
+                },
             }
         }
     )
@@ -288,46 +274,20 @@ def test_download_source_locator_prefers_url_over_magnet(monkeypatch):
     assert src.torrent_locator == "https://dl.example/client.torrent"
 
 
-def test_download_source_falls_back_to_server_magnet(monkeypatch):
-    """A mirror without its own torrent_url still exposes the server's
-    magnet as the resolved locator — the magnet is a server-only field that
-    rides along regardless of which HTTP source was probed."""
+def test_download_source_carries_magnet_when_no_url(monkeypatch):
+    """A source without an HTTPS .torrent still exposes the server's magnet as
+    the resolved locator."""
     launcher.configure_from_dict(
         {
             "server": {
-                "base_url": "https://srv.example",
-                "torrent_magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
-            },
-            "mirrors": [{"name": "A", "base_url": "https://a.example"}],
-        }
-    )
-
-    def up(req, timeout=5, allowed_hosts=None):
-        return _resp(b"{}")
-
-    monkeypatch.setattr(update_sources, "secure_urlopen", up)
-    src = client_update._download_source()
-    assert src.torrent_url is None
-    assert src.torrent_magnet == "magnet:?xt=urn:btih:" + "ab" * 20
-    assert src.torrent_locator == "magnet:?xt=urn:btih:" + "ab" * 20
-
-
-def test_download_source_mirror_url_beats_server_magnet(monkeypatch):
-    """A mirror's own torrent_url wins the locator; the server's magnet is
-    still carried on the field (URL-first preference)."""
-    launcher.configure_from_dict(
-        {
-            "server": {
-                "base_url": "https://srv.example",
-                "torrent_magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
-            },
-            "mirrors": [
-                {
-                    "name": "A",
-                    "base_url": "https://a.example",
-                    "torrent_url": "https://a.example/client.torrent",
-                }
-            ],
+                "url": "https://srv.example",
+                "download": {
+                    "http": {"manifest": "https://srv.example/m.json"},
+                    "torrent": {
+                        "magnet": "magnet:?xt=urn:btih:" + "ab" * 20
+                    },
+                },
+            }
         }
     )
     monkeypatch.setattr(
@@ -336,9 +296,27 @@ def test_download_source_mirror_url_beats_server_magnet(monkeypatch):
         lambda req, timeout=5, allowed_hosts=None: _resp(b"{}"),
     )
     src = client_update._download_source()
-    assert src.torrent_url == "https://a.example/client.torrent"
+    assert src.torrent_url is None
     assert src.torrent_magnet == "magnet:?xt=urn:btih:" + "ab" * 20
-    assert src.torrent_locator == "https://a.example/client.torrent"
+    assert src.torrent_locator == "magnet:?xt=urn:btih:" + "ab" * 20
+
+
+def test_download_source_none_when_no_manifest_or_client():
+    launcher.configure_from_dict(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "download": {
+                    "torrent": {
+                        "magnet": "magnet:?xt=urn:btih:" + "ab" * 20
+                    }
+                },
+            }
+        }
+    )
+    # No manifest/client URL → no HTTP source; the worker needs an HTTP source
+    # even when a torrent/magnet is advertised (torrent is a recovery path).
+    assert client_update._download_source() is None
 
 
 # ── TorrentDownloader unit tests (fake libtorrent) ──────────────────────────
@@ -1016,7 +994,7 @@ def test_configured_root_marker_from_launcher():
         launcher.configure_from_dict(
             {
                 "server": {
-                    "base_url": "https://srv.example",
+                    "url": "https://srv.example",
                     "torrent_root_marker": "client.exe",
                 }
             }

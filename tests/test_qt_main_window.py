@@ -162,6 +162,11 @@ def test_operation_events_flip_button_state(qapp, window, monkeypatch):
     import nostalgia_launcher.controllers.update as update_controller
 
     monkeypatch.setattr(update_controller, "can_launch_client", lambda: True)
+    # No torrent source configured in this scenario, so a missing manifest
+    # alone does not turn the button into a BitTorrent download offer.
+    monkeypatch.setattr(
+        update_controller, "torrent_recovery_available", lambda: False
+    )
     window._refresh_ready_state()
     assert window._updateButton.text() == "PLAY"
 

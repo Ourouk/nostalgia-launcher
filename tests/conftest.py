@@ -13,12 +13,26 @@ from nostalgia_launcher.core import launcher, profiles
 LAUNCHER_TEST_CONFIG = {
     "server": {
         "name": "Test Server",
-        "base_url": "https://launcher.test",
+        "url": "https://launcher.test",
         "realm": "launcher.test",
+        "news_url": "https://launcher.test/api/news.json",
+        "featured_news_url": "https://launcher.test/api/news/featured.json",
+        "mods_registry_url": "https://launcher.test/api/mods.json",
+        "addons_registry_url": "https://launcher.test/api/addons.json",
+        "assets_registry_url": "https://launcher.test/api/assets.json",
+        "download": {
+            "update": True,
+            "torrent": {
+                "torrent_url": "https://launcher.test/client/latest/client.torrent",
+                "magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
+            },
+            "http": {
+                "manifest": "https://launcher.test/api/file/latest/manifest.json",
+                "client": "https://launcher.test/client/latest",
+            },
+            "content": {"type": "folder"},
+        },
     },
-    "mirrors": [
-        {"name": "Backup", "base_url": "https://mirror-a.test"},
-    ],
 }
 
 

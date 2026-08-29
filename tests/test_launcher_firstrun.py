@@ -15,17 +15,19 @@ from nostalgia_launcher import cli
 
 def test_validate_dict_accepts_valid():
     config, err = launcher.validate_dict(
-        {"server": {"base_url": "https://launcher.test"}}
+        {"server": {"url": "https://launcher.test"}}
     )
     assert err == ""
     assert config is not None
     assert config.server_url == "https://launcher.test"
 
 
-def test_validate_dict_rejects_missing_base_url():
+def test_validate_dict_accepts_empty_server():
+    """A server object with no endpoints is still a valid configuration; the
+    endpoints are all optional direct links (no base_url to require)."""
     config, err = launcher.validate_dict({"server": {}})
-    assert config is None
-    assert err
+    assert config is not None
+    assert err == ""
 
 
 # ── launcher.persist_text ───────────────────────────────────────────────
@@ -34,12 +36,12 @@ def test_validate_dict_rejects_missing_base_url():
 def test_persist_text_writes_valid_config(tmp_path, monkeypatch):
     dest = tmp_path / "nostalgia_launcher.json"
     monkeypatch.setattr(launcher, "user_config_path", lambda: str(dest))
-    text = json.dumps({"server": {"base_url": "https://launcher.test"}})
+    text = json.dumps({"server": {"url": "https://launcher.test"}})
     out, err = launcher.persist_text(text)
     assert err == ""
     assert out == str(dest)
     assert (
-        json.loads(dest.read_text(encoding="utf-8"))["server"]["base_url"]
+        json.loads(dest.read_text(encoding="utf-8"))["server"]["url"]
         == "https://launcher.test"
     )
 
@@ -91,7 +93,7 @@ def test_first_launch_without_install_dir_touches_no_out_dir(
         launcher, "user_config_path", lambda: str(tmp_path / "cfg.json")
     )
     monkeypatch.setattr(cli, "_run_backend", lambda show_log=False: 0)
-    raw = '{"server": {"base_url": "https://launcher.test"}}'
+    raw = '{"server": {"url": "https://launcher.test"}}'
     monkeypatch.setattr(
         cli,
         "_pick_launcher_config",
@@ -116,7 +118,7 @@ def test_first_launch_without_install_dir_touches_no_out_dir(
     assert (
         json.loads((tmp_path / "cfg.json").read_text(encoding="utf-8"))[
             "server"
-        ]["base_url"]
+        ]["url"]
         == "https://launcher.test"
     )
 
@@ -141,7 +143,7 @@ def test_first_launch_records_wizard_install_dir(
         launcher, "user_config_path", lambda: str(tmp_path / "cfg.json")
     )
     monkeypatch.setattr(cli, "_run_backend", lambda show_log=False: 0)
-    raw = '{"server": {"base_url": "https://launcher.test"}}'
+    raw = '{"server": {"url": "https://launcher.test"}}'
     game = tmp_path / "Games" / "WoW"
     monkeypatch.setattr(
         cli,

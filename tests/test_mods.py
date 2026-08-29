@@ -236,13 +236,14 @@ def test_catalog_stale_when_url_explicit_despite_embedded(
     assert mods.catalog_is_stale() is True
 
 
-def test_has_remote_catalog_user_override(tmp_path):
+def test_has_remote_catalog_user_override(tmp_path, monkeypatch):
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
     config_store.save_config({})
-    # The conftest launcher config only derives a default URL — that does
-    # not count as a configured catalog.
+    # A launcher config that does not explicitly set a mods registry URL has
+    # no remote catalog — only a user override counts.
+    monkeypatch.setattr(launcher, "mods_registry_url_explicit", lambda: False)
     assert mods.has_remote_catalog() is False
     assert mods.set_registry_url("https://mine.example/mods.json") is None
     assert mods.has_remote_catalog() is True
@@ -856,11 +857,12 @@ def test_mods_registry_full_precedence(tmp_path, repo_paths, monkeypatch):
     assert reg["OnlyRepoServer"] == "OnlyRepoServer"
 
 
-def test_catalog_is_stale_false_with_repo_content_only(tmp_path, repo_paths):
+def test_catalog_is_stale_false_with_repo_content_only(tmp_path, repo_paths, monkeypatch):
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
     config_store.save_config({})
+    monkeypatch.setattr(launcher, "mods_registry_url_explicit", lambda: False)
     catalog_svc = __import__(
         "nostalgia_launcher.services.catalog", fromlist=["catalog"]
     )

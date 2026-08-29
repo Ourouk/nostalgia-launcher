@@ -1,4 +1,9 @@
-"""Unit tests for the launcher configuration (core/launcher)."""
+"""Unit tests for the launcher configuration (core/launcher).
+
+The config no longer derives any endpoint from a base URL: every URL is a
+direct link, and the client download/update settings live under
+``server.download``.
+"""
 
 import json
 import os
@@ -19,28 +24,60 @@ def _config(data):
     return launcher.configure_from_dict(data)
 
 
-def test_derives_endpoints_from_base_url():
+def test_valid_minimal_config():
+    cfg = _config({"server": {"url": "https://srv.example"}})
+    assert cfg is not None
+    assert cfg.server_url == "https://srv.example"
+    assert cfg.download_update is True
+    assert cfg.download_content_type == "folder"
+    assert cfg.has_torrent() is False
+    assert cfg.discord_url is None
+
+
+def test_explicit_endpoints_used_verbatim():
     cfg = _config(
-        {"server": {"name": "My", "base_url": "https://srv.example"}}
+        {
+            "server": {
+                "name": "My",
+                "url": "https://srv.example",
+                "realm": "realms.example",
+                "news_url": "https://cdn.example/news.json",
+                "featured_news_url": "https://cdn.example/news/featured.json",
+                "mods_registry_url": "https://cdn.example/api/mods.json",
+                "addons_registry_url": "https://cdn.example/api/addons.json",
+                "download": {
+                    "update": False,
+                    "torrent": {"torrent_url": "https://cdn.example/c.torrent"},
+                    "http": {
+                        "manifest": "https://cdn.example/m.json",
+                        "client": "https://cdn.example/client",
+                    },
+                    "content": {"type": "zip"},
+                },
+            }
+        }
     )
     assert cfg is not None
     assert cfg.server_url == "https://srv.example"
-    assert cfg.manifest_url == (
-        "https://srv.example/api/file/latest/manifest.json"
-    )
-    assert cfg.client_url == "https://srv.example/client/latest"
-    assert cfg.news_url == "https://srv.example/news.json"
-    assert cfg.featured_news_url == ("https://srv.example/news/featured.json")
-    assert cfg.mods_registry_url == "https://srv.example/api/mods.json"
-    assert cfg.addons_registry_url == "https://srv.example/api/addons.json"
-    assert cfg.addons_registry_urls == ["https://srv.example/api/addons.json"]
-    assert cfg.realm == "srv.example"
-    assert cfg.discord_url is None
+    assert cfg.realm == "realms.example"
+    assert cfg.news_url == "https://cdn.example/news.json"
+    assert cfg.featured_news_url == "https://cdn.example/news/featured.json"
+    assert cfg.mods_registry_url == "https://cdn.example/api/mods.json"
+    assert cfg.addons_registry_url == "https://cdn.example/api/addons.json"
+    assert cfg.addons_registry_urls == ["https://cdn.example/api/addons.json"]
+    # download block
+    assert cfg.download_update is False
+    assert cfg.download_torrent_url == "https://cdn.example/c.torrent"
+    assert cfg.download_manifest_url == "https://cdn.example/m.json"
+    assert cfg.download_client_url == "https://cdn.example/client"
+    assert cfg.download_content_type == "zip"
+    assert cfg.has_torrent() is True
+    assert cfg.download_capable() is True
 
 
 @pytest.mark.parametrize("value", [None, "", "   "])
 def test_optional_discord_url_can_be_omitted_or_empty(value):
-    data = {"server": {"base_url": "https://srv.example"}}
+    data = {"server": {"url": "https://srv.example"}}
     if value is not None:
         data["discord_url"] = value
     cfg = _config(data)
@@ -51,7 +88,7 @@ def test_optional_discord_url_can_be_omitted_or_empty(value):
 def test_discord_url_accepts_https():
     cfg = _config(
         {
-            "server": {"base_url": "https://srv.example"},
+            "server": {"url": "https://srv.example"},
             "discord_url": " https://discord.gg/example/ ",
         }
     )
@@ -65,7 +102,7 @@ def test_discord_url_rejects_invalid_nonempty_value(value):
     assert (
         _config(
             {
-                "server": {"base_url": "https://srv.example"},
+                "server": {"url": "https://srv.example"},
                 "discord_url": value,
             }
         )
@@ -78,7 +115,7 @@ def test_addons_registry_urls_override_order():
     cfg = _config(
         {
             "server": {
-                "base_url": "https://srv.example",
+                "url": "https://srv.example",
                 "addons_registry_url": "https://a.example/official.json",
                 "addons_registry_urls": [
                     "https://a.example/official.json",
@@ -99,7 +136,7 @@ def test_addons_registry_urls_drop_insecure_entries():
     cfg = _config(
         {
             "server": {
-                "base_url": "https://srv.example",
+                "url": "https://srv.example",
                 "addons_registry_urls": [
                     "https://a.example/ok.json",
                     "http://b.example/insecure.json",
@@ -115,7 +152,7 @@ def test_addons_registry_urls_fall_back_to_singular():
     cfg = _config(
         {
             "server": {
-                "base_url": "https://srv.example",
+                "url": "https://srv.example",
                 "addons_registry_url": "https://a.example/only.json",
             }
         }
@@ -123,18 +160,24 @@ def test_addons_registry_urls_fall_back_to_singular():
     assert cfg.addons_registry_urls == ["https://a.example/only.json"]
 
 
-def test_server_manifest_and_client_overrides():
+def test_download_http_endpoints_explicit():
     cfg = _config(
         {
             "server": {
-                "base_url": "https://srv.example",
-                "manifest_url": "https://cdn.example/api/manifest.json",
-                "client_url": "https://dl.example/client/latest",
+                "url": "https://srv.example",
+                "download": {
+                    "http": {
+                        "manifest": "https://cdn.example/api/manifest.json",
+                        "client": "https://dl.example/client/latest",
+                    }
+                },
             }
         }
     )
-    assert cfg.manifest_url == "https://cdn.example/api/manifest.json"
-    assert cfg.client_url == "https://dl.example/client/latest"
+    assert cfg.download_manifest_url == (
+        "https://cdn.example/api/manifest.json"
+    )
+    assert cfg.download_client_url == "https://dl.example/client/latest"
 
 
 # ── embedded mods (top-level "mods") ─────────────────────────────────────────
@@ -145,7 +188,7 @@ def test_embedded_mods_kept_raw_dicts_only():
     b = {"id": "B"}
     cfg = _config(
         {
-            "server": {"base_url": "https://srv.example"},
+            "server": {"url": "https://srv.example"},
             "mods": [a, "junk", 42, b, None],
         }
     )
@@ -156,7 +199,7 @@ def test_embedded_mods_kept_raw_dicts_only():
 
 @pytest.mark.parametrize("value", [None, "mods", 42, {"id": "A"}])
 def test_embedded_mods_ignores_non_list(value):
-    data = {"server": {"base_url": "https://srv.example"}}
+    data = {"server": {"url": "https://srv.example"}}
     if value is not None:
         data["mods"] = value
     cfg = _config(data)
@@ -166,7 +209,7 @@ def test_embedded_mods_ignores_non_list(value):
 
 def test_embedded_mods_accessor_and_reset():
     entry = {"id": "A", "name": "A", "source": {"kind": "direct_file"}}
-    _config({"server": {"base_url": "https://srv.example"}, "mods": [entry]})
+    _config({"server": {"url": "https://srv.example"}, "mods": [entry]})
     assert launcher.embedded_mods() == [entry]
     launcher.reset()
     assert launcher.embedded_mods() == []
@@ -174,34 +217,34 @@ def test_embedded_mods_accessor_and_reset():
 
 @pytest.mark.parametrize("raw", [None, "", "   "])
 def test_mods_registry_url_not_explicit_when_missing_or_blank(raw):
-    data = {"server": {"base_url": "https://srv.example"}}
+    data = {"server": {"url": "https://srv.example"}}
     if raw is not None:
         data["server"]["mods_registry_url"] = raw
     cfg = _config(data)
     assert cfg is not None
-    # The base_url-derived default still applies…
-    assert cfg.mods_registry_url == "https://srv.example/api/mods.json"
-    # …but it does not count as an explicitly configured catalog.
-    assert cfg.mods_registry_url_explicit is False
+    # No derivation: an absent/blank URL is simply empty…
+    assert cfg.mods_registry_url == ""
+    # …and therefore not "explicit".
+    assert launcher.mods_registry_url_explicit() is False
 
 
 def test_mods_registry_url_explicit_flag():
-    cfg = _config(
+    _config(
         {
             "server": {
-                "base_url": "https://srv.example",
+                "url": "https://srv.example",
                 "mods_registry_url": "https://other.example/mods.json",
             }
         }
     )
-    assert cfg.mods_registry_url_explicit is True
+    assert launcher.mods_registry_url_explicit() is True
 
 
 def test_endpoint_overrides_and_realm():
     cfg = _config(
         {
             "server": {
-                "base_url": "https://srv.example",
+                "url": "https://srv.example",
                 "realm": "realms.example",
                 "news_url": "https://other.example/news",
                 "mods_registry_url": "https://other.example/mods.json",
@@ -213,111 +256,137 @@ def test_endpoint_overrides_and_realm():
     assert cfg.realm == "realms.example"
 
 
-def test_has_torrent_any_source():
+def test_has_torrent_from_download_block():
     assert (
         _config(
             {
                 "server": {
-                    "base_url": "https://srv.example",
-                    "torrent_url": "https://srv.example/client.torrent",
+                    "url": "https://srv.example",
+                    "download": {
+                        "torrent": {
+                            "torrent_url": "https://srv.example/c.torrent"
+                        }
+                    },
                 }
             }
         ).has_torrent()
         is True
     )
-    # Mirror-only torrent still counts (server fallback when a mirror wins).
     assert (
         _config(
             {
-                "server": {"base_url": "https://srv.example"},
-                "mirrors": [
-                    {
-                        "name": "M",
-                        "base_url": "https://m1.example",
-                        "torrent_url": "https://m1.example/client.torrent",
-                    }
-                ],
+                "server": {
+                    "url": "https://srv.example",
+                    "download": {"torrent": {"magnet": "magnet:?xt=urn:btih:AB"}},
+                }
             }
         ).has_torrent()
         is True
     )
     assert (
-        _config({"server": {"base_url": "https://srv.example"}}).has_torrent()
+        _config({"server": {"url": "https://srv.example"}}).has_torrent()
         is False
     )
 
 
-def test_missing_base_url_is_error():
-    assert _config({"server": {"realm": "x"}}) is None
-    assert "base_url" in launcher.config_error()
+def test_missing_server_is_error():
     assert _config({}) is None
+    assert "server" in launcher.config_error()
+    # An empty server object is still accepted (no endpoints are derived).
+    assert _config({"server": {}}) is not None
 
 
-def test_rejects_non_https_server():
-    assert _config({"server": {"base_url": "http://insecure.example"}}) is None
+def test_non_https_server_url_is_ignored():
+    # server.url is identity/display only (no longer a download base) and is
+    # only honored when https; a non-https value is dropped, not fatal.
+    cfg = _config({"server": {"url": "http://insecure.example"}})
+    assert cfg is not None
+    assert cfg.server_url == ""
 
 
-def test_mirrors_parsed_with_default_endpoints():
+def test_download_defaults_when_block_absent():
+    cfg = _config({"server": {"url": "https://srv.example"}})
+    assert cfg.download_update is True
+    assert cfg.download_content_type == "folder"
+    assert cfg.download_torrent_url is None
+    assert cfg.download_manifest_url is None
+    assert cfg.download_client_url is None
+    assert cfg.download_capable() is False
+
+
+def test_download_content_type_falls_back_to_folder():
     cfg = _config(
         {
-            "server": {"base_url": "https://srv.example"},
-            "mirrors": [
-                {"name": "Backup", "base_url": "https://m1.example"},
-                {
-                    "name": "Second",
-                    "base_url": "https://m2.example",
-                    "manifest_url": "https://m2.example/custom/manifest.json",
+            "server": {
+                "url": "https://srv.example",
+                "download": {"content": {"type": "bogus"}},
+            }
+        }
+    )
+    assert cfg.download_content_type == "folder"
+
+
+def test_effective_client_updates_enabled_merge(tmp_path, monkeypatch):
+    from nostalgia_launcher.core import config_store
+
+    monkeypatch.setattr(
+        config_store,
+        "load_config",
+        lambda: {"client_update_enabled": False},
+    )
+    _config(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "download": {"update": True},
+            }
+        }
+    )
+    # User override wins even when the server default is true.
+    assert launcher.effective_client_updates_enabled() is False
+
+    monkeypatch.setattr(config_store, "load_config", lambda: {})
+    assert launcher.effective_client_updates_enabled() is True
+
+    _config(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "download": {"update": False},
+            }
+        }
+    )
+    assert launcher.effective_client_updates_enabled() is False
+
+
+def test_download_hosts_cover_explicit_endpoints():
+    cfg = _config(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "news_url": "https://news.example/n.json",
+                "download": {
+                    "torrent": {"torrent_url": "https://t.example/c.torrent"},
+                    "http": {
+                        "manifest": "https://m.example/m.json",
+                        "client": "https://dl.example/client",
+                    },
                 },
-                {"name": "skip-http", "base_url": "http://nope.example"},
-            ],
+            }
         }
     )
-    assert len(cfg.mirrors) == 2
-    assert cfg.mirrors[0].name == "Backup"
-    assert cfg.mirrors[0].base_url == "https://m1.example"
-    assert cfg.mirrors[0].manifest_url == (
-        "https://m1.example/api/file/latest/manifest.json"
-    )
-    assert cfg.mirrors[1].manifest_url == (
-        "https://m2.example/custom/manifest.json"
-    )
-
-
-def test_download_hosts_cover_server_and_mirrors():
-    cfg = _config(
-        {
-            "server": {"base_url": "https://srv.example"},
-            "mirrors": [{"base_url": "https://m1.example"}],
-        }
-    )
-    assert cfg.download_hosts() == {"srv.example", "m1.example"}
-
-
-def test_download_hosts_cover_custom_manifest_client_hosts():
-    cfg = _config(
-        {
-            "server": {"base_url": "https://srv.example"},
-            "mirrors": [
-                {
-                    "base_url": "https://m1.example",
-                    "manifest_url": "https://api.example/m.json",
-                    "client_url": "https://dl.example/client/latest",
-                }
-            ],
-        }
-    )
-    assert cfg.download_hosts() == {
-        "srv.example",
-        "m1.example",
-        "api.example",
-        "dl.example",
-    }
+    hosts = cfg.download_hosts()
+    assert "srv.example" in hosts
+    assert "news.example" in hosts
+    assert "t.example" in hosts
+    assert "m.example" in hosts
+    assert "dl.example" in hosts
 
 
 def test_configure_from_file(tmp_path):
     path = tmp_path / "nostalgia_launcher.json"
     path.write_text(
-        json.dumps({"server": {"base_url": "https://file.example"}}),
+        json.dumps({"server": {"url": "https://file.example"}}),
         encoding="utf-8",
     )
     cfg, err = launcher.configure(str(path))
@@ -352,7 +421,7 @@ def test_user_config_path_lives_in_config_dir(monkeypatch):
 def test_auto_path_prefers_persisted_user_config(monkeypatch, tmp_path):
     user = tmp_path / "nostalgia_launcher.json"
     user.write_text(
-        json.dumps({"server": {"base_url": "https://srv.example"}}),
+        json.dumps({"server": {"url": "https://srv.example"}}),
         encoding="utf-8",
     )
     monkeypatch.setattr(launcher, "user_config_path", lambda: str(user))
@@ -372,7 +441,7 @@ def test_discover_path_macos_frozen_finds_config_next_to_bundle(
     exe.parent.mkdir(parents=True)
     cfg = tmp_path / "nostalgia_launcher.json"
     cfg.write_text(
-        json.dumps({"server": {"base_url": "https://srv.example"}}),
+        json.dumps({"server": {"url": "https://srv.example"}}),
         encoding="utf-8",
     )
 
@@ -399,7 +468,7 @@ def test_auto_path_falls_back_to_discovery(monkeypatch, tmp_path):
 def test_configure_uses_persisted_user_config(monkeypatch, tmp_path):
     user = tmp_path / "nostalgia_launcher.json"
     user.write_text(
-        json.dumps({"server": {"base_url": "https://user.example"}}),
+        json.dumps({"server": {"url": "https://user.example"}}),
         encoding="utf-8",
     )
     monkeypatch.setattr(launcher, "user_config_path", lambda: str(user))
@@ -412,13 +481,13 @@ def test_configure_uses_persisted_user_config(monkeypatch, tmp_path):
 def test_configure_explicit_overrides_persisted(monkeypatch, tmp_path):
     user = tmp_path / "user.json"
     user.write_text(
-        json.dumps({"server": {"base_url": "https://user.example"}}),
+        json.dumps({"server": {"url": "https://user.example"}}),
         encoding="utf-8",
     )
     monkeypatch.setattr(launcher, "user_config_path", lambda: str(user))
     explicit = tmp_path / "explicit.json"
     explicit.write_text(
-        json.dumps({"server": {"base_url": "https://explicit.example"}}),
+        json.dumps({"server": {"url": "https://explicit.example"}}),
         encoding="utf-8",
     )
     cfg, err = launcher.configure(str(explicit))
@@ -426,10 +495,19 @@ def test_configure_explicit_overrides_persisted(monkeypatch, tmp_path):
     assert cfg.server_url == "https://explicit.example"
 
 
+def _stripped_keys(parsed: dict) -> set:
+    return set(parsed.keys())
+
+
 def test_persist_copies_config_to_user_path(monkeypatch, tmp_path):
     src = tmp_path / "src.json"
     src.write_text(
-        json.dumps({"server": {"base_url": "https://srv.example"}}),
+        json.dumps(
+            {
+                "server": {"url": "https://srv.example"},
+                "mods": [{"id": "M"}],
+            }
+        ),
         encoding="utf-8",
     )
     dest = tmp_path / "user" / "nostalgia_launcher.json"
@@ -438,9 +516,9 @@ def test_persist_copies_config_to_user_path(monkeypatch, tmp_path):
     assert err == ""
     assert got == str(dest)
     assert dest.exists()
-    assert json.loads(dest.read_text()) == {
-        "server": {"base_url": "https://srv.example"}
-    }
+    parsed = json.loads(dest.read_text())
+    assert "mods" not in _stripped_keys(parsed)
+    assert parsed["server"]["url"] == "https://srv.example"
 
 
 def test_persist_rejects_invalid_json(monkeypatch, tmp_path):
@@ -455,10 +533,10 @@ def test_persist_rejects_invalid_json(monkeypatch, tmp_path):
 
 
 def test_persist_rejects_semantically_invalid_config(monkeypatch, tmp_path):
-    """Parseable JSON that isn't a valid launcher config (no server.base_url)
+    """Parseable JSON that isn't a valid launcher config (no server object)
     must not be persisted."""
     src = tmp_path / "bad.json"
-    src.write_text(json.dumps({"server": {}}), encoding="utf-8")
+    src.write_text(json.dumps({"not": "a server"}), encoding="utf-8")
     dest = tmp_path / "dest.json"
     monkeypatch.setattr(launcher, "user_config_path", lambda: str(dest))
     got, err = launcher.persist(str(src))
@@ -484,7 +562,7 @@ def test_auto_path_prefers_invalid_persisted_file_over_discovery(
 def test_persist_reports_write_failure(monkeypatch, tmp_path):
     src = tmp_path / "src.json"
     src.write_text(
-        json.dumps({"server": {"base_url": "https://srv.example"}}),
+        json.dumps({"server": {"url": "https://srv.example"}}),
         encoding="utf-8",
     )
 
@@ -500,7 +578,7 @@ def test_persist_reports_write_failure(monkeypatch, tmp_path):
 def test_validate_path_valid(tmp_path):
     path = tmp_path / "nostalgia_launcher.json"
     path.write_text(
-        json.dumps({"server": {"base_url": "https://launcher.test"}}),
+        json.dumps({"server": {"url": "https://launcher.test"}}),
         encoding="utf-8",
     )
     config, err = launcher.validate_path(str(path))
@@ -524,9 +602,7 @@ def test_validate_path_invalid_json(tmp_path):
 
 
 def test_validate_path_does_not_touch_active_config(tmp_path):
-    launcher.configure_from_dict(
-        {"server": {"base_url": "https://launcher.test"}}
-    )
+    launcher.configure_from_dict({"server": {"url": "https://launcher.test"}})
     before = launcher.config()
     assert before is not None
     invalid = tmp_path / "bad.json"
@@ -548,7 +624,7 @@ def test_accessors_empty_when_not_configured():
 def test_theme_dict_parses():
     cfg = _config(
         {
-            "server": {"base_url": "https://srv.example"},
+            "server": {"url": "https://srv.example"},
             "theme": {
                 "C_GOLD": "#d4a02f",
                 "logo": "https://srv.example/logo.png",
@@ -563,7 +639,7 @@ def test_theme_dict_parses():
 
 
 def test_theme_omitted_is_none():
-    cfg = _config({"server": {"base_url": "https://srv.example"}})
+    cfg = _config({"server": {"url": "https://srv.example"}})
     assert cfg is not None
     assert cfg.theme is None
 
@@ -572,7 +648,7 @@ def test_non_dict_theme_parses_as_none_and_does_not_fail_config():
     for value in ("bogus", 42, ["C_GOLD"]):
         cfg = _config(
             {
-                "server": {"base_url": "https://srv.example"},
+                "server": {"url": "https://srv.example"},
                 "theme": value,
             }
         )
@@ -633,7 +709,7 @@ def test_persist_splits_sections_into_local_repos(tmp_path, user_dirs):
         tmp_path,
         "cfg.json",
         {
-            "server": {"base_url": "https://srv.example"},
+            "server": {"url": "https://srv.example"},
             "mods": [_MOD],
             "addons": [_ADDON],
             "assets": [_ASSET],
@@ -643,9 +719,11 @@ def test_persist_splits_sections_into_local_repos(tmp_path, user_dirs):
     assert err == ""
     assert got == str(dest)
     # The persisted config is stripped of every content section.
-    assert json.loads(dest.read_text()) == {
-        "server": {"base_url": "https://srv.example"}
-    }
+    parsed = json.loads(dest.read_text())
+    assert "mods" not in parsed
+    assert "addons" not in parsed
+    assert "assets" not in parsed
+    assert parsed["server"]["url"] == "https://srv.example"
     for kind, entries in (
         ("mods", [_MOD]),
         ("addons", [_ADDON]),
@@ -658,7 +736,7 @@ def test_persist_splits_sections_into_local_repos(tmp_path, user_dirs):
 def test_persist_writes_empty_repos_when_sections_absent(tmp_path, user_dirs):
     _, user = user_dirs
     src = _import_file(
-        tmp_path, "cfg.json", {"server": {"base_url": "https://srv.example"}}
+        tmp_path, "cfg.json", {"server": {"url": "https://srv.example"}}
     )
     assert launcher.persist(str(src))[1] == ""
     for kind in ("mods", "addons", "assets"):
@@ -671,7 +749,7 @@ def test_reimport_replaces_server_keeps_custom(tmp_path, user_dirs):
     first = _import_file(
         tmp_path,
         "a.json",
-        {"server": {"base_url": "https://srv.example"}, "mods": [_MOD]},
+        {"server": {"url": "https://srv.example"}, "mods": [_MOD]},
     )
     assert launcher.persist(str(first))[1] == ""
     custom = {
@@ -692,7 +770,7 @@ def test_reimport_replaces_server_keeps_custom(tmp_path, user_dirs):
     second = _import_file(
         tmp_path,
         "b.json",
-        {"server": {"base_url": "https://srv.example"}, "mods": [mod2]},
+        {"server": {"url": "https://srv.example"}, "mods": [mod2]},
     )
     assert launcher.persist(str(second))[1] == ""
     merged = json.loads(repo_path.read_text())
@@ -705,7 +783,7 @@ def test_validate_helpers_never_write_repo_files(tmp_path, user_dirs):
     src = _import_file(
         tmp_path,
         "cfg.json",
-        {"server": {"base_url": "https://srv.example"}, "mods": [_MOD]},
+        {"server": {"url": "https://srv.example"}, "mods": [_MOD]},
     )
     cfg, err = launcher.validate_path(str(src))
     assert err == "" and cfg is not None
@@ -727,7 +805,7 @@ def test_repo_failure_aborts_import_without_persisting(
     src = _import_file(
         tmp_path,
         "cfg.json",
-        {"server": {"base_url": "https://srv.example"}, "mods": [_MOD]},
+        {"server": {"url": "https://srv.example"}, "mods": [_MOD]},
     )
     got, err = launcher.persist(str(src))
     assert got == "" and err
@@ -740,7 +818,7 @@ def test_legacy_custom_seeds_fresh_repo_on_import(tmp_path, user_dirs):
     legacy = user / "nostalgia_launcher_addons_custom.json"
     legacy.write_text(json.dumps([_ADDON]), encoding="utf-8")
     src = _import_file(
-        tmp_path, "cfg.json", {"server": {"base_url": "https://srv.example"}}
+        tmp_path, "cfg.json", {"server": {"url": "https://srv.example"}}
     )
     assert launcher.persist(str(src))[1] == ""
     repo = json.loads((user / "local_addons_repo.json").read_text())
@@ -751,7 +829,7 @@ def test_legacy_custom_seeds_fresh_repo_on_import(tmp_path, user_dirs):
 def test_derive_parses_embedded_addons_raw():
     cfg = _config(
         {
-            "server": {"base_url": "https://srv.example"},
+            "server": {"url": "https://srv.example"},
             "addons": [_ADDON, "junk", 42],
         }
     )
@@ -783,7 +861,7 @@ def test_repo_failure_rolls_back_earlier_repos(
     src = _import_file(
         tmp_path,
         "cfg.json",
-        {"server": {"base_url": "https://srv.example"}, "mods": [_MOD]},
+        {"server": {"url": "https://srv.example"}, "mods": [_MOD]},
     )
     got, err = launcher.persist(str(src))
     assert got == "" and err
@@ -818,7 +896,7 @@ def test_config_write_failure_rolls_back_repos(
     src = _import_file(
         tmp_path,
         "cfg.json",
-        {"server": {"base_url": "https://srv.example"}},
+        {"server": {"url": "https://srv.example"}},
     )
     # Inject the failure at the config write itself.
     orig_replace = launcher.os.replace

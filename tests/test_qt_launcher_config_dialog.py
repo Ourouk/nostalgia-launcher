@@ -43,7 +43,7 @@ def qapp():
 
 def _write_config(path):
     path.write_text(
-        json.dumps({"server": {"base_url": "https://launcher.test"}}),
+        json.dumps({"server": {"url": "https://launcher.test"}}),
         encoding="utf-8",
     )
     return str(path)
@@ -292,12 +292,12 @@ def _wait_until(qapp, cond, timeout_ms=4000):
 def test_url_submission_reaches_summary(qapp, monkeypatch):
     import nostalgia_launcher.services.config_import as config_import_module
 
-    payload = json.dumps({"server": {"base_url": "https://x.example"}})
+    payload = json.dumps({"server": {"url": "https://x.example"}})
     monkeypatch.setattr(
         config_import_module,
         "fetch_config_url",
         lambda url: (
-            {"server": {"base_url": "https://x.example"}},
+            {"server": {"url": "https://x.example"}},
             payload,
             "",
         ),
@@ -410,7 +410,7 @@ def test_summary_lists_embedded_and_local_store(qapp, tmp_path):
     path.write_text(
         json.dumps(
             {
-                "server": {"base_url": "https://launcher.test"},
+                "server": {"url": "https://launcher.test"},
                 "mods": [{"id": "m"}],
                 "addons": [{"name": "a", "git": "https://github.com/e/a"}],
                 "assets": [
@@ -436,7 +436,7 @@ def test_summary_lists_embedded_and_local_store(qapp, tmp_path):
 def test_summary_omits_asset_line_when_unconfigured(qapp, tmp_path):
     path = tmp_path / "cfg.json"
     path.write_text(
-        json.dumps({"server": {"base_url": "https://launcher.test"}}),
+        json.dumps({"server": {"url": "https://launcher.test"}}),
         encoding="utf-8",
     )
     dlg = LauncherConfigDialog(initial_path=str(path))
