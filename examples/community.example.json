@@ -1,15 +1,26 @@
 {
   "server": {
     "name": "Example Community",
-    "base_url": "https://launcher.example.com",
+    "url": "https://launcher.example.com",
     "realm": "realm.example.com",
     "news_url": "https://launcher.example.com/news.json",
     "featured_news_url": "https://launcher.example.com/news/featured.json",
     "mods_registry_url": "https://launcher.example.com/community.mods.example.json",
     "addons_registry_url": "https://launcher.example.com/community.addons.example.json",
-    "assets_registry_url": "https://launcher.example.com/community.assets.example.json"
+    "assets_registry_url": "https://launcher.example.com/community.assets.example.json",
+    "download": {
+      "update": true,
+      "torrent": {
+        "torrent_url": "https://launcher.example.com/client/latest/client.torrent",
+        "magnet": "magnet:?xt=urn:btih:EXAMPLEINFOHASH0123456789abcdef0123456789ab&dn=client"
+      },
+      "http": {
+        "manifest": "https://launcher.example.com/api/file/latest/manifest.json",
+        "client": "https://launcher.example.com/client/latest"
+      },
+      "content": { "type": "folder" }
+    }
   },
-  "mirrors": [],
   "addons": [
     {
       "name": "ExampleAddon",

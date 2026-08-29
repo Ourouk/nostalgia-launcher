@@ -52,19 +52,18 @@ The file is `nostalgia_launcher.json`, discovered next to the executable
 persisted into the per-user config directory and takes precedence over
 auto-discovery on later runs.
 
-Only `server.base_url` is required; every other URL is derived from it unless
-overridden:
+Every endpoint the launcher talks to is a **direct, fully-qualified URL** — there
+is no base-URL derivation and no mirrors. The optional `server.url` is
+identity/display only (and falls back to the manifest host when omitted); it is
+never used to build other endpoints. Client acquisition is described entirely by
+the `server.download` block:
 
 ```json
 {
   "server": {
     "name": "My Server",
-    "base_url": "https://server.example",
+    "url": "https://server.example",
     "realm": "server.example",
-    "manifest_url": "https://server.example/api/file/latest/manifest.json",
-    "client_url": "https://server.example/client/latest",
-    "torrent_url": "https://server.example/client/latest/client.torrent",
-    "torrent_magnet": "magnet:?xt=urn:btih:EXAMPLEINFOHASH&dn=client",
     "news_url": "https://server.example/news",
     "featured_news_url": "https://server.example/news/featured",
     "mods_registry_url": "https://server.example/api/mods.json",
@@ -72,37 +71,50 @@ overridden:
     "addons_registry_urls": [
       "https://server.example/api/addons.json",
       "https://server.example/addons-overrides.json"
-    ]
+    ],
+    "download": {
+      "update": true,
+      "torrent": {
+        "torrent_url": "https://server.example/client/latest/client.torrent",
+        "magnet": "magnet:?xt=urn:btih:EXAMPLEINFOHASH&dn=client"
+      },
+      "http": {
+        "manifest": "https://server.example/api/file/latest/manifest.json",
+        "client": "https://server.example/client/latest"
+      },
+      "content": { "type": "folder" }
+    }
   },
   "discord_url": "https://discord.gg/example",
   "theme": {
     "C_GOLD": "#d4a02f",
     "logo": "https://server.example/logo.png"
   },
-  "mods": [],
-  "mirrors": [
-    {
-      "name": "Backup",
-      "base_url": "https://mirror.example",
-      "manifest_url": "https://mirror.example/api/file/latest/manifest.json",
-      "client_url": "https://dl.mirror.example/client/latest",
-      "torrent_url": "https://dl.mirror.example/client/latest/client.torrent"
-    }
-  ]
+  "mods": []
 }
 ```
 
 Key points:
 
-- The manifest and client files come from the configured endpoints; a mirror's
-  `client_url` may point at a separate CDN host. Mirrors are optional (the
-  server is the fallback).
-- The optional `torrent_url` (on the server or a mirror) advertises a
-  BitTorrent snapshot of the client files. A mirror's `torrent_url` takes
-  precedence over the server's. The optional server-only `torrent_magnet`
-  (`magnet:?xt=urn:btih:…`) is an alternative to it — a torrent has one
-  swarm, so mirrors never carry magnets; when both are configured on the
-  same entry the HTTPS `.torrent` wins.
+- `server.download.update` (bool, default `true`) is the server-level "should the
+  launcher verify/update the client" flag. A per-profile user override
+  (`client_update_enabled` in the profile config) wins when set; otherwise this
+  default applies. Updates are only meaningful when a source exists (a torrent
+  snapshot or an HTTP manifest). When `update` is `false` the client is never
+  verified/updated — but a first-time acquisition is still offered via the
+  configured torrent (`torrent_url`/`magnet`) when no playable client is
+  installed.
+- The `server.download.http` block gives the explicit `manifest` (per-file
+  SHA-1 tree) and `client` (base the per-file downloads are joined to) URLs.
+  There is no mirror failover; the single source is what the updater uses.
+- The optional `server.download.torrent` advertises a BitTorrent snapshot: an
+  HTTPS `torrent_url` and/or a `magnet` (`magnet:?xt=urn:btih:…`). A torrent has
+  one swarm, so the HTTPS `.torrent` wins when both are present. This is also
+  the only first-time acquisition path when `update` is `false`.
+- `server.download.content.type` is one of `folder` | `zip` | `rar` and
+  describes how the delivered client is packaged (`folder` = already extracted;
+  `zip`/`rar` = the acquired payload is an archive the launcher extracts into
+  the game folder).
 - The optional `theme` object overrides the app's color theme per server:
   color slots named like `C_GOLD` (each a `#rrggbb` hex) plus an optional
   `logo` URL shown as the header wordmark. It is cosmetic and never validated
@@ -118,7 +130,8 @@ Key points:
   `launcher.validate_path()` (no global-state side effect) and persists the
   selection to `launcher.user_config_path()` via `launcher.persist()`.
 - The download-host allowlist (`security_http.allowed_download_hosts()`) is
-  built from the launcher's server + mirror hosts plus the git hosts.
+  built from the launcher's configured server/download hosts plus the git
+  hosts.
 
 ## Client Update Pipeline
 
@@ -130,7 +143,7 @@ protocol in `services/update_backend/protocol.py`:
    download source and reports which files differ against the local SHA-1
    cache.
 2. **Torrent bulk-download**: when the active source advertises a torrent
-   snapshot (an HTTPS `torrent_url` or the server's `torrent_magnet`) and
+   snapshot (a `server.download.torrent.torrent_url` or a `magnet`) and
    libtorrent is importable, `UpdateWorker` bulk-downloads
    the stale files via `services/update_backend/torrent_update.py` before its per-file HTTP
    `traverse()`. Per-file priorities keep only the pieces covering stale files
@@ -138,8 +151,8 @@ protocol in `services/update_backend/protocol.py`:
 3. **HTTP resume + re-verify**: `traverse()` still re-verifies every file
    against the manifest's SHA-1 and HTTP-resumes anything the torrent missed.
 4. **Recovery**: when the manifest itself can't be fetched but the active
-   source advertises a torrent snapshot (`torrent_url` or server
-   `torrent_magnet`) and libtorrent is present,
+   source advertises a torrent snapshot (`torrent_url` or a
+   `magnet`) and libtorrent is present,
    `UpdateWorker._recovery_download()` downloads the *whole* torrent
    (`TorrentDownloader.download(url, None)`). The torrent's piece hashes (the
    `.torrent` arrived over TLS, or magnet metadata that had to hash to the
@@ -153,7 +166,7 @@ protocol in `services/update_backend/protocol.py`:
 ### BitTorrent backend (`services/update_backend/torrent_update.py`)
 
 - The `.torrent` is fetched over HTTPS through the same hardened, allowlisted
-  transport as the HTTP downloads. Alternatively a `server.torrent_magnet`
+  transport as the HTTP downloads. Alternatively a `server.download.torrent.magnet`
   URI is resolved once by joining its swarm (DHT + the magnet's trackers):
   `_resolve_magnet` waits for the metadata in a networked session backed by a
   throwaway save path (upload mode where available, so nothing payload-wise
