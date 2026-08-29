@@ -385,9 +385,7 @@ def test_download_source_requires_manifest_or_client():
             "server": {
                 "url": "https://srv.example",
                 "download": {
-                    "torrent": {
-                        "magnet": "magnet:?xt=urn:btih:" + "ab" * 20
-                    }
+                    "torrent": {"magnet": "magnet:?xt=urn:btih:" + "ab" * 20}
                 },
             }
         }

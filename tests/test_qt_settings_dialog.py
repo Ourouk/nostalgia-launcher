@@ -164,8 +164,14 @@ def test_change_cancelled_leaves_path(qapp, window, monkeypatch):
 def test_mirror_rows_render_configured_sources(qapp, window):
     hub = window._hub
     dialog = _open(window)
-    assert dialog.findChild(QLabel, "settingsMirrorStatus_Test Server") is not None
-    assert dialog.findChild(QLabel, "settingsMirrorStatus_Test Server") is not None
+    assert (
+        dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
+        is not None
+    )
+    assert (
+        dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
+        is not None
+    )
     assert hub.settings._http_mirror_names() == ["Test Server"]
 
 
@@ -189,7 +195,9 @@ def test_no_http_mirrors_shows_direct_server_hint(qapp, window):
     assert hint.text() == (
         "No download source configured — set server.download.http."
     )
-    assert dialog.findChild(QLabel, "settingsMirrorStatus_ExampleServer") is None
+    assert (
+        dialog.findChild(QLabel, "settingsMirrorStatus_ExampleServer") is None
+    )
     assert not dialog.findChild(
         QToolButton, "settingsMirrorRefresh"
     ).isVisible()

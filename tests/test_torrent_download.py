@@ -162,9 +162,7 @@ def test_config_parses_server_torrent_magnet():
             "server": {
                 "url": "https://srv.example",
                 "download": {
-                    "torrent": {
-                        "magnet": "magnet:?xt=urn:btih:" + "ab" * 20
-                    }
+                    "torrent": {"magnet": "magnet:?xt=urn:btih:" + "ab" * 20}
                 },
             }
         }
@@ -197,9 +195,7 @@ def test_has_torrent_true_for_magnet_only_config():
             "server": {
                 "url": "https://srv.example",
                 "download": {
-                    "torrent": {
-                        "magnet": "magnet:?xt=urn:btih:" + "ab" * 20
-                    }
+                    "torrent": {"magnet": "magnet:?xt=urn:btih:" + "ab" * 20}
                 },
             }
         }
@@ -283,9 +279,7 @@ def test_download_source_carries_magnet_when_no_url(monkeypatch):
                 "url": "https://srv.example",
                 "download": {
                     "http": {"manifest": "https://srv.example/m.json"},
-                    "torrent": {
-                        "magnet": "magnet:?xt=urn:btih:" + "ab" * 20
-                    },
+                    "torrent": {"magnet": "magnet:?xt=urn:btih:" + "ab" * 20},
                 },
             }
         }
@@ -307,9 +301,7 @@ def test_download_source_none_when_no_manifest_or_client():
             "server": {
                 "url": "https://srv.example",
                 "download": {
-                    "torrent": {
-                        "magnet": "magnet:?xt=urn:btih:" + "ab" * 20
-                    }
+                    "torrent": {"magnet": "magnet:?xt=urn:btih:" + "ab" * 20}
                 },
             }
         }

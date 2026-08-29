@@ -857,7 +857,9 @@ def test_mods_registry_full_precedence(tmp_path, repo_paths, monkeypatch):
     assert reg["OnlyRepoServer"] == "OnlyRepoServer"
 
 
-def test_catalog_is_stale_false_with_repo_content_only(tmp_path, repo_paths, monkeypatch):
+def test_catalog_is_stale_false_with_repo_content_only(
+    tmp_path, repo_paths, monkeypatch
+):
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )

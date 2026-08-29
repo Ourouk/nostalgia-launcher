@@ -47,7 +47,9 @@ def test_explicit_endpoints_used_verbatim():
                 "addons_registry_url": "https://cdn.example/api/addons.json",
                 "download": {
                     "update": False,
-                    "torrent": {"torrent_url": "https://cdn.example/c.torrent"},
+                    "torrent": {
+                        "torrent_url": "https://cdn.example/c.torrent"
+                    },
                     "http": {
                         "manifest": "https://cdn.example/m.json",
                         "client": "https://cdn.example/client",
@@ -277,7 +279,9 @@ def test_has_torrent_from_download_block():
             {
                 "server": {
                     "url": "https://srv.example",
-                    "download": {"torrent": {"magnet": "magnet:?xt=urn:btih:AB"}},
+                    "download": {
+                        "torrent": {"magnet": "magnet:?xt=urn:btih:AB"}
+                    },
                 }
             }
         ).has_torrent()
