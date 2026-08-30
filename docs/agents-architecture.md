@@ -27,8 +27,10 @@ src/nostalgia_launcher/
   launcher does not read or migrate files from any older directory layout.
 - **There are no hardcoded server/mod/addon values.** Everything is configured
   by `core/launcher.py` reading `nostalgia_launcher.json` (server, news,
-  realm, registry URLs, mirrors; auto-discovered next to the exe / repo root,
-  or `--launcher-config`). Missing/invalid config with no `--launcher-config`
+  realm, registry URLs, `server.download`; auto-discovered next to the exe /
+  repo root, or `--launcher-config`). Every endpoint is a direct, fully-qualified
+  HTTPS URL — there is no base-URL derivation and no mirrors. Missing/invalid
+  config with no `--launcher-config`
   opens a **modal first-launch wizard** (`ui/qt/launcher_config_dialog.py`,
   driven by `cli._pick_launcher_config()`); an explicit `--launcher-config`
   that is missing/invalid is a hard `cli.main()` error (no wizard). The wizard
@@ -42,8 +44,8 @@ src/nostalgia_launcher/
   `launcher.user_config_path()` (the per-user config dir) via
   `launcher.persist()`, taking precedence over auto-discovery on later runs.
   The download host allowlist
-  (`security_http.allowed_download_hosts()`) is built from the launcher's
-  server+mirror hosts plus the git hosts.
+  (  `security_http.allowed_download_hosts()`) is built from the launcher's
+  server/download hosts plus the git hosts.
 - Game folder is STRICTLY user-confirmed: there are exactly two writers of
   `out_dir` — Settings apply and the first-run wizard's required folder step
   (both set `out_dir_user_set`); controllers read it stored-or-empty and
@@ -220,8 +222,8 @@ the QLocalServer guard remains authoritative there.
   the services with exactly the catalog validators (addons go through the
   git-host allowlist too). Embedded-only configs are fully offline-safe:
   when no catalog URL is *explicitly* configured
-  (`launcher.mods_registry_url_explicit()` — the base_url-derived default
-  does not count; see `services.mods.has_remote_catalog()`),
+  (`launcher.mods_registry_url_explicit()` — only an explicitly-configured URL
+  counts; see `services.mods.has_remote_catalog()`),
   `catalog_is_stale()` stays False and the MODS ⟳ / Settings → Reload
   republish silently instead of failing with "Mod catalog URL is not
   configured."
@@ -231,7 +233,7 @@ the QLocalServer guard remains authoritative there.
   strictly separate from mods (DLLs) and addons (Lua/XML folders). The list
   comes from the launcher config's top-level `"assets": […]` entries plus
   the optional remote catalog at `server.assets_registry_url`
-  (**explicit-only** — no base_url-derived default), merged with the
+  (**explicit-only**), merged with the
   per-user custom file; embedded ids override catalog ids, custom overrides
   both. Every asset download URL and the registry URL join the security
   allowlist (`LauncherConfig._all_urls`). An entry carries its own update
@@ -284,10 +286,10 @@ the QLocalServer guard remains authoritative there.
   widgets. The Qt side (`ui/qt/bridge.py`) converts events to Qt signals on the
   main thread.
 - Client updates get a second download backend: when the active download
-  source advertises a torrent snapshot — a `torrent_url` (launcher config,
-  server or mirror) or the server-only `torrent_magnet` (`magnet:?xt=…`;
-  a torrent has one swarm, so mirrors never carry magnets; an HTTPS URL
-  wins when both are set) and libtorrent is importable,
+  source advertises a torrent snapshot — a `torrent_url` and/or `magnet` in
+  `server.download.torrent` (`magnet:?xt=…`;
+  a torrent has one swarm, so an HTTPS `.torrent` URL wins when both are set)
+  and libtorrent is importable,
   `UpdateWorker` bulk-downloads the stale files via
   `services/update_backend/torrent_update.py`, then re-verifies exactly the
   delivered files against the manifest's SHA-1 (`_reverify_torrent_files`)

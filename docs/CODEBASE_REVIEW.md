@@ -344,22 +344,28 @@ the mirror-probe thread. All daemon threads. **[verified]**
 ### 6.1 `core/launcher.py` — process-global launcher configuration
 - **Purpose.** Validate/parse the single `nostalgia_launcher.json`,
   resolving every endpoint (manifest, client, news, mods, addons, torrent,
-  mirrors, discord, theme).
-- **Interface.** `dataclass LauncherConfig` + `Mirror`; module functions
+  discord, theme). **No endpoint derivation and no mirrors** — every URL is a
+  direct, fully-qualified link; client acquisition is described by the
+  `server.download` block.
+- **Interface.** `dataclass LauncherConfig` (no `Mirror`); module functions
   `configure()`, `configure_from_dict()`, `reset()`, `persist()`,
   `persist_text()`, `validate_path()`, `validate_dict()`, `discover_path()`,
   `user_config_path()`, `server_url()`, `server_name()`, `realm()`,
-  `mods_registry_url()`, `addons_registry_urls()`, `mirrors()`, … and `*_url()`
-  accessors.
+  `mods_registry_url()`, `addons_registry_urls()`, `download_torrent_url()`,
+  `download_manifest_url()`, `download_client_url()`, `has_torrent()`,
+  `download_capable()`, `effective_client_updates_enabled()`, `mirrors()`
+  (returns `[]`), … and `*_url()` accessors.
 - **State.** Module-level `_config`, `_path`, `_error` guarded by `_LOCK`
   (threading). **Process-global singleton.** **[verified]**
-- **Important behavior.** Only `server.base_url` is required; everything else
-  is derived (e.g. `/api/file/latest/manifest.json`, `/client/latest`). All
-  URLs must be **HTTPS** (`_https_url` rejects otherwise → `RuntimeError`).
-  Downloads/mirrors may add `torrent_url`; the server may alternatively set
-  `torrent_magnet` (a `magnet:?xt=…` URI; URL wins when both are set).
-  `has_torrent()` / `download_hosts()`
-  feed the security allowlist (magnets never join it — they have no host). Auto-discovery order: per-user
+- **Important behavior.** Every endpoint is an explicit HTTPS URL; there is no
+  base URL to derive from (`server.url` is identity/display only). All URLs
+  must be **HTTPS** (`_https_url` rejects otherwise → the field is dropped).
+  `server.download.update` (default `true`) is the server-level client-update
+  flag; a per-profile `client_update_enabled` override wins when set (see
+  `effective_client_updates_enabled()`). `server.download.torrent` may set a
+  `torrent_url` and/or a `magnet` (`magnet:?xt=…` URI; URL wins when both are
+  set). `has_torrent()` / `download_hosts()` feed the security allowlist
+  (magnets never join it — they have no host). Auto-discovery order: per-user
   `<config_dir>/nostalgia_launcher.json` → exe/repo-root → cwd.
 - **Tests:** `tests/test_launcher.py`, `tests/test_launcher_firstrun.py`.
 
@@ -383,7 +389,7 @@ the mirror-probe thread. All daemon threads. **[verified]**
   re-apply the host allowlist** (documented rationale: an allowlisted host
   controls its own redirects to its CDN). **[verified]**
 - **`allowed_download_hosts()`** = base git hosts + every host from the
-  configured server/mirrors. **[verified]**
+  configured server/download endpoints. **[verified]**
 
 ### 6.4 `core/platform_support.py`
 - `is_windows/macos/linux`, `can_launch_client()` (Windows True; Linux True
@@ -632,12 +638,13 @@ stateDiagram-v2
 
 ## 9. Configuration and Environment
 
-**Mandatory.** A valid `nostalgia_launcher.json` with `server.base_url`
-(HTTPS). Without it and without `--launcher-config`, the first-launch wizard
+**Mandatory.** A valid `nostalgia_launcher.json` with a `server` object
+(pass `"url"` for identity; every other endpoint is a direct HTTPS URL).
+Without it and without `--launcher-config`, the first-launch wizard
 is shown (which itself fetches `servers.json` over HTTPS). **[verified]**
 
-**Optional.** `mirrors[]`, `torrent_url` (server/mirror), `torrent_magnet`
-(server only; alternative to `torrent_url`), `theme`
+**Optional.** `server.download` (`update` flag, `torrent.{torrent_url,magnet}`,
+`http.{manifest,client}`, `content.type`), `theme`
 (`C_*` colors + `logo` URL), `discord_url`, `addons_registry_urls`,
 `realm`, `*_news_url`, `*_registry_url` overrides, top-level `mods[]`
 (embedded mod catalog entries; sanitized by `services.mods.embedded_mods()`,

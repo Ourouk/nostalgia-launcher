@@ -1,9 +1,10 @@
 """Download-source resolution for the client update backends.
 
-Resolves the active `DownloadSource` (mirror failover probed via the
-manifest/client endpoints, server as fallback). Kept separate from the
-worker engines so both `VerifyWorker` and `UpdateWorker` share one
-definition; `http_update` re-exports these names for compatibility.
+The active `DownloadSource` is now derived solely from the server's
+``server.download`` block (no mirror failover): the explicit HTTP manifest /
+client URLs and the optional BitTorrent ``torrent_url`` / ``magnet``. Kept
+separate from the worker engines so both `VerifyWorker` and `UpdateWorker`
+share one definition; `http_update` re-exports these names for compatibility.
 """
 
 import urllib.request
@@ -53,44 +54,25 @@ def _source_reachable(url: str) -> bool:
 
 
 def _download_source() -> "DownloadSource | None":
-    """Resolve the active download source: mirrors are tried in order
-    (automatic failover, probed via their client-files endpoint) and the
-    server is the fallback. Returns None when the launcher configuration is
-    missing."""
+    """Resolve the active download source from the server's ``download`` block.
+
+    Returns None when the launcher configuration is missing or carries no
+    manifest/client endpoints."""
     from ...core import launcher
 
     cfg = launcher.config()
-    server = cfg.server_url if cfg else ""
-    if not server:
+    if cfg is None:
         return None
-    for mirror in cfg.mirrors if cfg else []:
-        if not mirror.manifest_url or not mirror.client_url:
-            continue
-        debug_emit(
-            f"[torrent] probing mirror {mirror.name} "
-            f"(manifest={'yes' if mirror.manifest_url else 'no'}, "
-            f"client={'yes' if mirror.client_url else 'no'}, "
-            f"torrent={'yes' if mirror.torrent_url else 'no'})"
-        )
-        if _source_reachable(mirror.manifest_url) and _source_reachable(
-            mirror.client_url
-        ):
-            debug_emit(f"[torrent] selected mirror {mirror.name}")
-            # Fall back to the server's torrent snapshot when the chosen mirror
-            # doesn't advertise one, so the resolved source still exposes a
-            # torrent even though the recovery UI keys off the whole config.
-            # The magnet is a server-only field and rides along unchanged.
-            return DownloadSource(
-                mirror.manifest_url,
-                mirror.client_url,
-                mirror.torrent_url or cfg.torrent_url,
-                cfg.torrent_magnet,
-            )
+    if not (cfg.download_manifest_url or cfg.download_client_url):
+        return None
     debug_emit(
         f"[torrent] selected server {cfg.server_name} "
-        f"(torrent={'yes' if cfg.torrent_url else 'no'}, "
-        f"magnet={'yes' if cfg.torrent_magnet else 'no'})"
+        f"(torrent={'yes' if cfg.download_torrent_url else 'no'}, "
+        f"magnet={'yes' if cfg.download_torrent_magnet else 'no'})"
     )
     return DownloadSource(
-        cfg.manifest_url, cfg.client_url, cfg.torrent_url, cfg.torrent_magnet
+        cfg.download_manifest_url or "",
+        cfg.download_client_url or "",
+        cfg.download_torrent_url,
+        cfg.download_torrent_magnet,
     )

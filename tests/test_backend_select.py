@@ -20,7 +20,7 @@ QT_UNAVAILABLE = "Nostalgia Launcher needs PySide6 (Qt) to run"
 def launcher_file(tmp_path):
     path = tmp_path / "nostalgia_launcher.json"
     path.write_text(
-        json.dumps({"server": {"base_url": "https://launcher.test"}}),
+        json.dumps({"server": {"url": "https://launcher.test"}}),
         encoding="utf-8",
     )
     return str(path)
@@ -157,7 +157,7 @@ def test_main_wizard_selection_persists_config(
     assert cli.main([]) == 0
     assert dest.exists()
     assert json.loads(dest.read_text()) == {
-        "server": {"base_url": "https://launcher.test"}
+        "server": {"url": "https://launcher.test"}
     }
     assert launcher.config().server_url == "https://launcher.test"
 

@@ -57,13 +57,20 @@ Minimal configuration:
 {
   "server": {
     "name": "Your Community",
-    "base_url": "https://launcher.your-community.example"
+    "url": "https://launcher.your-community.example",
+    "download": {
+      "update": true,
+      "http": {
+        "manifest": "https://launcher.your-community.example/api/file/latest/manifest.json",
+        "client": "https://launcher.your-community.example/client/latest"
+      }
+    }
   }
 }
 ```
 
-All endpoints derive from `base_url` unless you override them. See
-`docs/DEVELOPER.md` for the full schema.
+Every endpoint is a direct, fully-qualified HTTPS URL — there is no `base_url`
+derivation and no mirrors. See `docs/DEVELOPER.md` for the full schema.
 
 ### New optional configuration keys
 

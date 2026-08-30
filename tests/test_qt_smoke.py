@@ -201,7 +201,7 @@ def build_app(qapp, monkeypatch, qt_env):
         launcher.configure_from_dict(
             {
                 "server": {
-                    "base_url": "https://launcher.test",
+                    "url": "https://launcher.test",
                     "news_url": "https://launcher.test/news.json",
                     "featured_news_url": "https://launcher.test/news/featured.json",
                 }
@@ -656,7 +656,7 @@ def test_run_backend_second_instance_returns_0_without_app(
 
     os.makedirs(os.path.dirname(launcher.user_config_path()), exist_ok=True)
     with open(launcher.user_config_path(), "w", encoding="utf-8") as f:
-        f.write('{"server": {"base_url": "https://launcher.test"}}')
+        f.write('{"server": {"url": "https://launcher.test"}}')
 
     def boom(*a, **kw):
         raise AssertionError("QtNostalgiaLauncherApp must not be built")
@@ -682,7 +682,7 @@ def test_busy_store_exits_6(qapp, fake_home, monkeypatch, capsys):
     import nostalgia_launcher.core.app_lock as app_lock_module
 
     prof, err = profiles.create(
-        "busy", '{"server": {"base_url": "https://launcher.test"}}'
+        "busy", '{"server": {"url": "https://launcher.test"}}'
     )
     assert err == ""
 
@@ -1059,7 +1059,7 @@ def test_new_profile_wizard_scopes_repos_and_globals(
 
     raw = json.dumps(
         {
-            "server": {"base_url": "https://fresh.test"},
+            "server": {"url": "https://fresh.test"},
             "mods": [],
         }
     )
@@ -1091,7 +1091,7 @@ def test_new_profile_wizard_scopes_repos_and_globals(
         with open(prof.local_repo_path("mods"), encoding="utf-8") as f:
             assert json.load(f) == {"server": [], "custom": []}
         with open(prof.launcher_path(), encoding="utf-8") as f:
-            assert json.load(f)["server"]["base_url"] == "https://fresh.test"
+            assert json.load(f)["server"]["url"] == "https://fresh.test"
         # …the ACTIVE profile's store is untouched…
         with open(
             profiles.DEFAULT.local_repo_path("mods"),

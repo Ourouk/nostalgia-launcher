@@ -15,6 +15,7 @@ import pytest
 
 import nostalgia_launcher.controllers.update as uc
 from nostalgia_launcher.controllers.update import UpdateController
+from nostalgia_launcher.core import launcher
 from nostalgia_launcher.state.events import (
     EventDispatcher,
     GameExited,
@@ -106,6 +107,20 @@ def config(monkeypatch):
         uc, "update_config", lambda mutator: (mutator(cfg), cfg)[1]
     )
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
+
+    # The controller derives the effective switch from
+    # launcher.effective_client_updates_enabled(), which merges the
+    # per-profile override (config_store) over the server default. Mirror the
+    # fixture's config dict so client_update_enabled toggles behave.
+    def _effective():
+        v = cfg.get("client_update_enabled")
+        if v is None:
+            return launcher.download_update_enabled()
+        return bool(v)
+
+    monkeypatch.setattr(
+        launcher, "effective_client_updates_enabled", _effective
+    )
     return cfg
 
 
@@ -528,6 +543,7 @@ def test_readiness_disabled_without_manifest_when_cannot_launch(
     actionable reason (Linux: umu-run missing)."""
     monkeypatch.setattr(uc, "can_launch_client", lambda: False)
     monkeypatch.setattr(uc, "is_linux", lambda: True)
+    monkeypatch.setattr(uc, "torrent_recovery_available", lambda: False)
     r = controller.compute_readiness()
     assert r.mode == "disabled"
     assert r.label == "UPDATE"
@@ -540,6 +556,7 @@ def test_readiness_disabled_without_manifest_non_linux(
     """Same grayed UPDATE on platforms without any launch path."""
     monkeypatch.setattr(uc, "can_launch_client", lambda: False)
     monkeypatch.setattr(uc, "is_linux", lambda: False)
+    monkeypatch.setattr(uc, "torrent_recovery_available", lambda: False)
     r = controller.compute_readiness()
     assert r.mode == "disabled"
     assert r.status == (
@@ -571,10 +588,11 @@ def test_readiness_no_recovery_without_torrent(
 
 
 def test_readiness_play_without_manifest_when_can_launch(
-    controller, worker_cls, config
+    controller, worker_cls, config, monkeypatch
 ):
     """No manifest + launchable → PLAY (the client may be on disk; the
     manifest just couldn't be verified)."""
+    monkeypatch.setattr(uc, "torrent_recovery_available", lambda: False)
     r = controller.compute_readiness()
     assert r.mode == "play"
     assert r.label == "PLAY"
@@ -582,9 +600,13 @@ def test_readiness_play_without_manifest_when_can_launch(
 
 
 def test_readiness_allows_play_without_manifest_when_updates_disabled(
-    controller, worker_cls, config
+    controller, worker_cls, config, monkeypatch
 ):
     config["client_update_enabled"] = False
+    # A playable client is already on disk → updates-disabled lets PLAY win
+    # (the first-time BitTorrent acquisition is only offered when nothing is
+    # installed yet).
+    monkeypatch.setattr(controller, "_playable_client_present", lambda: True)
     r = controller.compute_readiness()
     assert r.mode == "play"
     assert r.status == "Client updates disabled"

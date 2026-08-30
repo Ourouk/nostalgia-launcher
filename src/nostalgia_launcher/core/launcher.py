@@ -1,4 +1,4 @@
-"""Launcher configuration — the distribution's server, endpoints and mirrors.
+"""Launcher configuration — the distribution's server and endpoints.
 
 Every endpoint the app talks to (client updates, news, mod/addon catalogs,
 realm, downloads) comes from a single JSON file instead of hardcoded values,
@@ -9,62 +9,64 @@ The file is `nostalgia_launcher.json`, discovered next to the executable
 (frozen) or in the repo root (running from source), or passed explicitly via
 ``--launcher-config``. A configuration chosen through the first-launch wizard
 is persisted into the per-user config directory and takes precedence over
-auto-discovery on later runs. Only ``server.base_url`` is required; every
-other URL is derived from it unless overridden:
+auto-discovery on later runs.
+
+**No endpoint derivation.** Every URL is a direct, fully-qualified link — the
+config declares exactly what the launcher talks to; there are no
+server-specific path conventions spliced onto a base URL. The optional
+``server.url`` is identity/display only (and falls back to the host of the
+manifest when omitted); it is never used to build other endpoints.
 
     {
       "server": {
         "name": "My Server",
-        "base_url": "https://server.example",
+        "url": "https://server.example",
         "realm": "server.example",
-        "manifest_url": "https://server.example/api/file/latest/manifest.json",
-        "client_url": "https://server.example/client/latest",
-        "torrent_url": "https://server.example/client/latest/client.torrent",
-        "torrent_magnet": "magnet:?xt=urn:btih:EXAMPLEINFOHASH&dn=client",
-        "news_url": "https://server.example/news",
-        "featured_news_url": "https://server.example/news/featured",
+        "news_url": "https://server.example/news.json",
+        "featured_news_url": "https://server.example/news/featured.json",
         "mods_registry_url": "https://server.example/api/mods.json",
-        "addons_registry_urls": [
-          "https://server.example/api/addons.json",
-          "https://server.example/addons-overrides.json"
-        ]
+        "addons_registry_urls": ["https://server.example/api/addons.json"],
+        "assets_registry_url": "https://server.example/api/assets.json",
+        "download": {
+          "update": true,
+          "torrent": {
+            "torrent_url": "https://server.example/client/latest/client.torrent",
+            "magnet": "magnet:?xt=urn:btih:EXAMPLEINFOHASH&dn=client"
+          },
+          "http": {
+            "manifest": "https://server.example/api/file/latest/manifest.json",
+            "client": "https://server.example/client/latest"
+          },
+          "content": { "type": "folder" }
+        }
       },
       "mods": [],
       "addons": [],
       "assets": [],
       "discord_url": "https://discord.gg/example",
-      "theme": {
-        "C_GOLD": "#d4a02f",
-        "logo": "https://server.example/logo.png"
-      },
-      "mirrors": [
-        {
-          "name": "Backup",
-          "base_url": "https://mirror.example",
-          "manifest_url": "https://mirror.example/api/file/latest/manifest.json",
-          "client_url": "https://dl.mirror.example/client/latest",
-          "torrent_url": "https://dl.mirror.example/client/latest/client.torrent"
-        }
-      ]
+      "theme": { "C_GOLD": "#d4a02f", "logo": "https://server.example/logo.png" }
     }
 
-The manifest and client files are fetched from the configured endpoints; a
-mirror's ``client_url`` may point at a separate CDN host, and mirrors are
-optional (the server is the fallback).
+The ``server.download`` block is the single source of truth for client
+acquisition:
 
-The optional ``torrent_url`` (on the server or a mirror) advertises a
-BitTorrent snapshot of the client files for the update backend: the launcher
-fetches the ``.torrent`` over HTTPS and bulk-downloads the stale files via
-libtorrent when it is available, falling back to per-file HTTP downloads
-otherwise. A mirror's ``torrent_url`` takes precedence over the server's.
-
-The optional server-only ``torrent_magnet`` is an alternative to
-``torrent_url``: a ``magnet:?xt=urn:btih:…`` URI whose swarm serves the same
-client snapshot. A torrent has one swarm, so mirrors — an HTTP-download
-concept — do not apply: the field is accepted on the server object only.
-libtorrent resolves the metadata from the swarm once; peers cannot forge it
-because it must hash to the magnet's info-hash. When both are configured,
-the HTTPS ``.torrent`` wins.
+* ``update`` (bool, default true) — the server-level "should the launcher
+  verify/update the client" flag. A per-profile user override
+  (``client_update_enabled``) wins when set; otherwise this default applies.
+  Updates are only meaningful when a source exists (a torrent snapshot or an
+  HTTP manifest).
+* ``torrent`` — optional ``torrent_url`` (HTTPS ``.torrent``) and/or
+  ``magnet`` (``magnet:?xt=urn:btih:…``). The HTTPS ``.torrent`` wins when
+  both are present. This is also the only first-time acquisition path when
+  ``update`` is false.
+* ``http`` — explicit ``manifest`` and ``client`` URLs. The manifest is the
+  per-file SHA-1 tree; ``client`` is the base the per-file HTTP downloads
+  are joined to (``{client}/{relative_path}``).
+* ``content`` — ``type`` is one of ``folder`` | ``zip`` | ``rar`` and describes
+  how the delivered client is packaged. ``folder`` means the source already
+  delivers extracted files; ``zip``/``rar`` means the acquired payload is an
+  archive the launcher extracts into the game folder (used for first-time
+  acquisition).
 
 The optional ``theme`` object overrides the app's color theme per server:
 color slots named like ``C_GOLD`` (each a ``#rrggbb`` hex value) plus an
@@ -72,27 +74,19 @@ optional ``logo`` URL shown as the header wordmark (see `core/themes`). It
 is cosmetic and never validated strictly — a malformed theme falls back to
 the default palette instead of failing startup.
 
-The optional top-level ``mods`` list embeds mod catalog entries directly in
-the config (same shape the remote mod catalog uses). Entries are kept raw
-here and sanitized by `services/mods` with the same rules as remote entries;
-embedded ids override the remote catalog, and the per-user custom file
-overrides both. ``addons`` works the same way (sanitized by `services/addons`,
-git-host allowlist included).
-
-The optional top-level ``assets`` list embeds asset entries (single-file
-server content patches such as MPQs) the same way, sanitized by
-`services/assets`; ``server.assets_registry_url`` optionally points at a
-remote assets catalog. Every embedded asset download URL and the registry
-URL join the security allowlist.
+The optional top-level ``mods``/``addons``/``assets`` lists embed catalog
+entries directly in the config (same shape the remote catalogs use). Entries
+are kept raw here and sanitized by `services/mods`, `services/addons` and
+`services/assets`; embedded ids override the remote catalog, and the
+per-user custom file overrides both.
 
 **Import-time split**: `persist()` / `persist_text()` move the three content
 sections out of the document before it is stored. Each lands in its own
 local repo file (`local_<kind>_repo.json` in the config dir, shaped
 ``{"server": […], "custom": […]}`` — "server" mirrors the imported doc,
 "custom" holds user-added entries that survive re-imports), and the
-persisted config keeps only server/mirrors/theme. The ``validate_*``
-helpers stay side-effect-free; a repo write failure aborts the whole
-import.
+persisted config keeps only server/theme. The ``validate_*`` helpers stay
+side-effect-free; a repo write failure aborts the whole import.
 
 A missing or invalid configuration is a hard startup error: the app has
 nothing to point at. This module is network-free; `core/security_http` builds
@@ -120,61 +114,65 @@ _error: str = ""
 
 
 @dataclass
-class Mirror:
-    """One configured download mirror."""
-
-    name: str
-    base_url: str
-    manifest_url: str
-    client_url: str
-    torrent_url: str | None = None
-
-
-@dataclass
 class LauncherConfig:
-    """Validated launcher configuration with every endpoint resolved."""
+    """Validated launcher configuration.
 
-    server_name: str
-    server_url: str
-    manifest_url: str
-    client_url: str
-    news_url: str
-    featured_news_url: str
-    mods_registry_url: str
-    realm: str
+    Every endpoint is a direct, fully-qualified URL — nothing is derived from a
+    base URL. The optional ``server_url`` is identity/display only.
+    """
+
+    server_name: str = ""
+    server_url: str = ""
+    realm: str = ""
+    news_url: str = ""
+    featured_news_url: str = ""
+    mods_registry_url: str = ""
+    addons_registry_url: str = ""
     addons_registry_urls: list[str] = field(default_factory=list)
-    embedded_mods: list[dict] = field(default_factory=list)
-    embedded_addons: list[dict] = field(default_factory=list)
-    mods_registry_url_explicit: bool = False
-    embedded_assets: list[dict] = field(default_factory=list)
     assets_registry_url: str = ""
-    mirrors: list["Mirror"] = field(default_factory=list)
     discord_url: str | None = None
     theme: dict | None = None
-    torrent_url: str | None = None
-    torrent_magnet: str | None = None
     addon_git_hosts: list[str] = field(default_factory=list)
     torrent_root_marker: str = "WoW.exe"
-    # News feed explicit configuration flags
-    news_url_explicit: bool = False
-    featured_news_url_explicit: bool = False
     # Server-specific trusted hosts for downloads (beyond auto-derived ones)
     trusted_hosts: set[str] = field(default_factory=set)
+    embedded_mods: list[dict] = field(default_factory=list)
+    embedded_addons: list[dict] = field(default_factory=list)
+    embedded_assets: list[dict] = field(default_factory=list)
+    # ── server.download block ────────────────────────────────────────────────
+    # Whether the launcher should verify/update the client (server default; a
+    # per-profile override wins when set).
+    download_update: bool = True
+    # BitTorrent source for updates and first-time acquisition.
+    download_torrent_url: str | None = None
+    download_torrent_magnet: str | None = None
+    # HTTP update source: the manifest (per-file SHA-1 tree) and the client
+    # base the per-file downloads are joined to.
+    download_manifest_url: str | None = None
+    download_client_url: str | None = None
+    # How the delivered client is packaged: "folder" | "zip" | "rar".
+    download_content_type: str = "folder"
 
     @property
     def configured(self) -> bool:
-        return bool(self.server_url)
+        """Whether the config points at a usable server (any endpoint set)."""
+        return bool(
+            self.server_name
+            or self.server_url
+            or self.download_manifest_url
+            or self.download_torrent_url
+            or self.news_url
+            or self.mods_registry_url
+        )
 
     def download_hosts(self) -> set[str]:
-        """Every host the configured server and mirrors may serve from —
-        the base URLs plus any custom manifest/client endpoints (e.g. a
-        separate CDN host), plus any server-specific trusted hosts."""
+        """Every host the configured endpoints may serve from, plus any
+        server-specific trusted hosts, so the security allowlist covers them."""
         hosts: set[str] = set()
         for url in self._all_urls():
             host = urlsplit(url).hostname
             if host:
                 hosts.add(host)
-        # Add server-specific trusted hosts (explicitly configured)
         hosts |= self.trusted_hosts
         return hosts
 
@@ -188,35 +186,42 @@ class LauncherConfig:
         return hosts
 
     def has_torrent(self) -> bool:
-        """Whether any configured source (server or mirror) advertises a
-        ``torrent_url``, or the server a ``torrent_magnet``. Static — no
-        network probing."""
-        if self.torrent_url or self.torrent_magnet:
-            return True
-        return any(m.torrent_url for m in self.mirrors)
+        """Whether a config advertises a BitTorrent source (``torrent_url`` or
+        ``magnet``). Static — no network probing."""
+        return bool(self.download_torrent_url or self.download_torrent_magnet)
+
+    def download_capable(self) -> bool:
+        """Whether any update source exists (torrent snapshot or HTTP
+        manifest). Updates are only possible when this is true."""
+        return bool(self.download_torrent_url or self.download_manifest_url)
 
     def all_bases(self) -> list[str]:
-        """The server followed by every mirror's base URL."""
-        return [self.server_url] + [m.base_url for m in self.mirrors]
+        """The server identity URL (no longer a list of mirror bases)."""
+        return [self.server_url] if self.server_url else []
 
     def _all_urls(self) -> list[str]:
-        """Every endpoint URL the app may contact: base URLs plus the
-        resolved manifest/client endpoints of the server and mirrors, plus
-        every asset download URL (embedded entries and the asset registry
-        catalog) so the security allowlist covers them."""
-        urls: list[str] = list(self.all_bases())
-        urls += [self.manifest_url, self.client_url]
-        if self.torrent_url:
-            urls.append(self.torrent_url)
-        if self.assets_registry_url:
-            urls.append(self.assets_registry_url)
+        """Every endpoint URL the app may contact, so the security allowlist
+        covers them."""
+        urls: list[str] = []
+        if self.server_url:
+            urls.append(self.server_url)
+        for u in (
+            self.news_url,
+            self.featured_news_url,
+            self.mods_registry_url,
+            self.addons_registry_url,
+            self.assets_registry_url,
+            self.download_manifest_url,
+            self.download_client_url,
+            self.download_torrent_url,
+            self.discord_url or "",
+        ):
+            if u:
+                urls.append(u)
+        urls += self.addons_registry_urls
         for a in self.embedded_assets:
             if isinstance(a, dict) and isinstance(a.get("url"), str):
                 urls.append(a["url"])
-        for m in self.mirrors:
-            urls += [m.manifest_url, m.client_url]
-            if m.torrent_url:
-                urls.append(m.torrent_url)
         return urls
 
 
@@ -302,14 +307,11 @@ def _magnet_uri(value: str) -> str | None:
     return uri
 
 
-def _default_manifest(base: str) -> str:
-    """The derived manifest endpoint for a base URL (\"latest\" version)."""
-    return base + "/api/file/latest/manifest.json"
-
-
-def _default_client(base: str) -> str:
-    """The derived client-files root for a base URL (\"latest\" version)."""
-    return base + "/client/latest"
+def _host_of(url: str) -> str:
+    """The hostname of a URL, or '' when it isn't a parseable http(s) URL."""
+    if not url:
+        return ""
+    return urlsplit(url).hostname or ""
 
 
 def _derive(data: dict) -> LauncherConfig:
@@ -318,14 +320,8 @@ def _derive(data: dict) -> LauncherConfig:
     server = data.get("server")
     if not isinstance(server, dict):
         raise ValueError("launcher config is missing the 'server' object")
-    base = _https_url(server.get("base_url"))
-    if base is None:
-        raise ValueError(
-            "launcher config 'server.base_url' must be an "
-            "https URL and is required"
-        )
 
-    host = urlsplit(base).hostname or ""
+    host = _host_of(_https_url(server.get("url")))
 
     raw_discord_url = data.get("discord_url")
     if raw_discord_url is None:
@@ -341,67 +337,24 @@ def _derive(data: dict) -> LauncherConfig:
     else:
         raise ValueError("launcher config 'discord_url' must be an https URL")
 
-    def _url(key, suffix):
-        v = server.get(key)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-        return base + suffix
+    # Explicit, direct URLs only — no base_url suffix derivation.
+    news_url = _https_url(server.get("news_url")) or ""
+    featured_news_url = _https_url(server.get("featured_news_url")) or ""
+    mods_registry_url = _https_url(server.get("mods_registry_url")) or ""
+    addons_registry_url = _https_url(server.get("addons_registry_url")) or ""
 
-    mirrors = []
-    for m in data.get("mirrors") or []:
-        if not isinstance(m, dict):
-            continue
-        mb = _https_url(m.get("base_url"))
-        if mb is None:
-            continue
-        mhost = urlsplit(mb).hostname or ""
-        m_name = m.get("name")
-        mirrors.append(
-            Mirror(
-                name=(
-                    m_name.strip()
-                    if isinstance(m_name, str) and m_name.strip()
-                    else mhost
-                ),
-                base_url=mb,
-                manifest_url=_https_url(m.get("manifest_url"))
-                or _default_manifest(mb),
-                client_url=_https_url(m.get("client_url"))
-                or _default_client(mb),
-                torrent_url=_https_url(m.get("torrent_url")),
-            )
-        )
-
-    manifest_url = _https_url(server.get("manifest_url")) or _default_manifest(
-        base
-    )
-    client_url = _https_url(server.get("client_url")) or _default_client(base)
-
-    urls = server.get("addons_registry_urls") or []
-    addons_registry_urls = [u for u in (_https_url(x) for x in urls) if u] or [
-        _https_url(base + "/api/addons.json")
-    ]
+    addons_registry_urls: list[str] = []
+    raw_urls = server.get("addons_registry_urls")
+    if isinstance(raw_urls, list) and raw_urls:
+        for u in raw_urls:
+            https = _https_url(u)
+            if https:
+                addons_registry_urls.append(https)
+    if not addons_registry_urls:
+        addons_registry_urls = [addons_registry_url]
 
     raw_theme = data.get("theme")
     theme = raw_theme if isinstance(raw_theme, dict) else None
-
-    # Whether server.mods_registry_url was explicitly set (vs. derived from
-    # the base URL): a config that embeds its mod list inline usually has
-    # no real catalog endpoint, and must not be force-refetched.
-    raw_mods_url = server.get("mods_registry_url")
-    mods_registry_url_explicit = isinstance(raw_mods_url, str) and bool(
-        raw_mods_url.strip()
-    )
-
-    # News URLs explicit flags: true when explicitly provided in config
-    raw_news_url = server.get("news_url")
-    news_url_explicit = isinstance(raw_news_url, str) and bool(
-        raw_news_url.strip()
-    )
-    raw_featured_news_url = server.get("featured_news_url")
-    featured_news_url_explicit = isinstance(
-        raw_featured_news_url, str
-    ) and bool(raw_featured_news_url.strip())
 
     # Server-specific trusted hosts for downloads (beyond auto-derived ones)
     raw_trusted_hosts = server.get("trusted_hosts")
@@ -409,16 +362,14 @@ def _derive(data: dict) -> LauncherConfig:
     if isinstance(raw_trusted_hosts, list):
         for h in raw_trusted_hosts:
             if isinstance(h, str):
-                host = h.strip().lower()
-                if host and _valid_host(host):
-                    trusted_hosts.add(host)
+                h = h.strip().lower()
+                if h and _valid_host(h):
+                    trusted_hosts.add(h)
 
-    # Asset registry URL — explicit-only (no base_url-derived default): a
-    # config without one simply has no remote asset catalog. Assets may
-    # also be embedded directly via the top-level "assets" list (kept raw;
-    # services/assets sanitizes with catalog.validate_asset).
-    raw_assets_url = server.get("assets_registry_url")
-    assets_registry_url = _https_url(raw_assets_url) or ""
+    # Asset registry URL — explicit only: a config without one simply has no
+    # remote asset catalog. Assets may also be embedded directly via the
+    # top-level "assets" list (kept raw; services/assets sanitizes them).
+    assets_registry_url = _https_url(server.get("assets_registry_url")) or ""
     raw_embedded_assets = data.get("assets")
     embedded_assets: list[dict] = (
         [e for e in raw_embedded_assets if isinstance(e, dict)]
@@ -426,11 +377,8 @@ def _derive(data: dict) -> LauncherConfig:
         else []
     )
 
-    # Mods embedded directly in the config. Kept raw — services/mods
-    # sanitizes each entry with catalog.validate_mod (allowlisted source
-    # kinds, https URLs, safe relative paths). Addons follow the same
-    # pattern via the top-level "addons" list (sanitized by services/addons
-    # with the git-host allowlist on top).
+    # Mods/Addons embedded directly in the config (same shape as the remote
+    # catalogs; sanitized by services/mods, services/addons, services/assets).
     raw_embedded_mods = data.get("mods")
     embedded_mods: list[dict] = (
         [e for e in raw_embedded_mods if isinstance(e, dict)]
@@ -447,6 +395,24 @@ def _derive(data: dict) -> LauncherConfig:
     addon_git_hosts = _parse_git_hosts(data.get("addon_git_hosts"))
     torrent_root_marker = _parse_root_marker(server.get("torrent_root_marker"))
 
+    # ── server.download block ──
+    dl = server.get("download")
+    dl = dl if isinstance(dl, dict) else {}
+    download_update = bool(dl.get("update", True))
+    torrent = dl.get("torrent")
+    torrent = torrent if isinstance(torrent, dict) else {}
+    http = dl.get("http")
+    http = http if isinstance(http, dict) else {}
+    content = dl.get("content")
+    content = content if isinstance(content, dict) else {}
+    content_type = content.get("type")
+    if content_type not in ("zip", "rar", "folder"):
+        content_type = "folder"
+    download_torrent_url = _https_url(torrent.get("torrent_url"))
+    download_torrent_magnet = _magnet_uri(torrent.get("magnet"))
+    download_manifest_url = _https_url(http.get("manifest"))
+    download_client_url = _https_url(http.get("client"))
+
     def _name_or_host(value) -> str:
         """A config-supplied display name, or the host fallback. Truthy
         non-strings (e.g. a numeric name) fall back like absent ones
@@ -455,31 +421,37 @@ def _derive(data: dict) -> LauncherConfig:
             return value.strip()
         return host
 
+    server_url = (
+        _https_url(server.get("url"))
+        or _host_of(download_manifest_url)
+        or _host_of(download_torrent_url)
+        or host
+    )
+
     return LauncherConfig(
         server_name=_name_or_host(server.get("name")),
-        server_url=base,
-        manifest_url=manifest_url,
-        client_url=client_url,
-        news_url=_url("news_url", "/news.json"),
-        featured_news_url=_url("featured_news_url", "/news/featured.json"),
-        mods_registry_url=_url("mods_registry_url", "/api/mods.json"),
-        addons_registry_urls=addons_registry_urls,
+        server_url=server_url,
         realm=_name_or_host(server.get("realm")),
-        mirrors=mirrors,
-        embedded_mods=embedded_mods,
-        embedded_addons=embedded_addons,
-        mods_registry_url_explicit=mods_registry_url_explicit,
-        embedded_assets=embedded_assets,
+        news_url=news_url,
+        featured_news_url=featured_news_url,
+        mods_registry_url=mods_registry_url,
+        addons_registry_url=addons_registry_url,
+        addons_registry_urls=addons_registry_urls,
         assets_registry_url=assets_registry_url,
         discord_url=discord_url,
         theme=theme,
-        torrent_url=_https_url(server.get("torrent_url")),
-        torrent_magnet=_magnet_uri(server.get("torrent_magnet")),
         addon_git_hosts=addon_git_hosts,
         torrent_root_marker=torrent_root_marker,
-        news_url_explicit=news_url_explicit,
-        featured_news_url_explicit=featured_news_url_explicit,
         trusted_hosts=trusted_hosts,
+        embedded_mods=embedded_mods,
+        embedded_addons=embedded_addons,
+        embedded_assets=embedded_assets,
+        download_update=download_update,
+        download_torrent_url=download_torrent_url,
+        download_torrent_magnet=download_torrent_magnet,
+        download_manifest_url=download_manifest_url,
+        download_client_url=download_client_url,
+        download_content_type=content_type,
     )
 
 
@@ -838,24 +810,68 @@ def assets_registry_url() -> str:
 
 
 def mods_registry_url_explicit() -> bool:
-    """Whether server.mods_registry_url was explicitly configured (the
-    derived base_url default does not count)."""
+    """Whether a mod catalog URL is configured (no base_url derivation)."""
     c = config()
-    return bool(c and c.mods_registry_url_explicit)
+    return bool(c and c.mods_registry_url)
 
 
 def news_url_explicit() -> bool:
-    """Whether server.news_url was explicitly configured (the
-    derived base_url default does not count)."""
+    """Whether a news URL is configured (no base_url derivation)."""
     c = config()
-    return bool(c and c.news_url_explicit)
+    return bool(c and c.news_url)
 
 
 def featured_news_url_explicit() -> bool:
-    """Whether server.featured_news_url was explicitly configured (the
-    derived base_url default does not count)."""
+    """Whether a featured-news URL is configured (no base_url derivation)."""
     c = config()
-    return bool(c and c.featured_news_url_explicit)
+    return bool(c and c.featured_news_url)
+
+
+def download_update_enabled() -> bool:
+    """The server's ``server.download.update`` default."""
+    c = config()
+    return bool(c and c.download_update)
+
+
+def download_content_type() -> str:
+    """The server's ``server.download.content.type`` (folder/zip/rar)."""
+    c = config()
+    return c.download_content_type if c else "folder"
+
+
+def download_manifest_url() -> str:
+    c = config()
+    return c.download_manifest_url or "" if c else ""
+
+
+def download_client_url() -> str:
+    c = config()
+    return c.download_client_url or "" if c else ""
+
+
+def download_torrent_url() -> str:
+    c = config()
+    return c.download_torrent_url or "" if c else ""
+
+
+def download_torrent_magnet() -> str:
+    c = config()
+    return c.download_torrent_magnet or "" if c else ""
+
+
+def effective_client_updates_enabled() -> bool:
+    """The effective client-update switch.
+
+    A per-profile user override (``client_update_enabled`` in the profile
+    config) wins when set; otherwise the server's ``server.download.update``
+    default applies. Network-free."""
+    from .config_store import load_config
+
+    default = download_update_enabled()
+    user = load_config().get("client_update_enabled")
+    if user is None:
+        return default
+    return bool(user)
 
 
 def addons_registry_urls() -> list[str]:
@@ -870,6 +886,7 @@ def realm() -> str:
     return c.realm if c else ""
 
 
-def mirrors() -> list["Mirror"]:
-    c = config()
-    return list(c.mirrors) if c else []
+def mirrors() -> list:
+    """Mirrors were removed; the single download source lives in
+    ``server.download``. Kept as an empty list for any legacy caller."""
+    return []
