@@ -165,10 +165,11 @@ class AssetsState:
 @dataclass
 class AddonState:
     """One addon record — the shape stored in the config's "addons" key
-    ({"folder", "status", "git", "branch", "ref", "toc", "description",
-    "error"})."""
+    ({"folder", "id", "status", "git", "branch", "ref", "toc", "description",
+    "error", "depends"})."""
 
     folder: str
+    id: str | None = None
     status: str = "available"
     git: str | None = None
     branch: str | None = None
@@ -176,6 +177,7 @@ class AddonState:
     toc: dict = field(default_factory=dict)
     description: str | None = None
     error: str | None = None
+    depends: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, rec: dict) -> "AddonState":
