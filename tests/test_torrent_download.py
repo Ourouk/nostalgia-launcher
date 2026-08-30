@@ -295,7 +295,9 @@ def test_download_source_carries_magnet_when_no_url(monkeypatch):
     assert src.torrent_locator == "magnet:?xt=urn:btih:" + "ab" * 20
 
 
-def test_download_source_none_when_no_manifest_or_client():
+def test_download_source_resolves_torrent_only():
+    """A torrent/magnet is a valid download source on its own;
+    _download_source() returns it without requiring HTTP endpoints."""
     launcher.configure_from_dict(
         {
             "server": {
@@ -306,9 +308,11 @@ def test_download_source_none_when_no_manifest_or_client():
             }
         }
     )
-    # No manifest/client URL → no HTTP source; the worker needs an HTTP source
-    # even when a torrent/magnet is advertised (torrent is a recovery path).
-    assert client_update._download_source() is None
+    src = client_update._download_source()
+    assert src is not None
+    assert src.torrent_locator is not None
+    assert src.manifest_url == ""
+    assert src.client_url == ""
 
 
 # ── TorrentDownloader unit tests (fake libtorrent) ──────────────────────────

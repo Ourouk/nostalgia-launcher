@@ -58,7 +58,11 @@ acquisition:
 * ``torrent`` — optional ``torrent_url`` (HTTPS ``.torrent``) and/or
   ``magnet`` (``magnet:?xt=urn:btih:…``). The HTTPS ``.torrent`` wins when
   both are present. This is also the only first-time acquisition path when
-  ``update`` is false.
+  ``update`` is false. ``torrent.update`` (bool, optional) controls whether
+  the torrent is used for incremental updates: explicit ``false`` means
+  first-time download only; explicit ``true`` forces updates via torrent.
+  When absent, inferred as ``bool(torrent_url)`` — a ``magnet``-only source
+  defaults to first-time-only, a ``torrent_url`` defaults to updatable.
 * ``http`` — explicit ``manifest`` and ``client`` URLs. The manifest is the
   per-file SHA-1 tree; ``client`` is the base the per-file HTTP downloads
   are joined to (``{client}/{relative_path}``).
@@ -146,6 +150,9 @@ class LauncherConfig:
     # BitTorrent source for updates and first-time acquisition.
     download_torrent_url: str | None = None
     download_torrent_magnet: str | None = None
+    # Whether the torrent may be used for incremental updates (None = infer
+    # from presence of torrent_url: magnet-only → first-time-only).
+    download_torrent_update: bool | None = None
     # HTTP update source: the manifest (per-file SHA-1 tree) and the client
     # base the per-file downloads are joined to.
     download_manifest_url: str | None = None
@@ -160,6 +167,7 @@ class LauncherConfig:
             self.server_name
             or self.server_url
             or self.download_manifest_url
+            or self.download_client_url
             or self.download_torrent_url
             or self.news_url
             or self.mods_registry_url
@@ -190,10 +198,27 @@ class LauncherConfig:
         ``magnet``). Static — no network probing."""
         return bool(self.download_torrent_url or self.download_torrent_magnet)
 
+    def torrent_update_allowed(self) -> bool:
+        """Whether the torrent may be used for incremental updates.
+
+        Explicit ``server.download.torrent.update`` wins; otherwise inferred
+        as ``bool(torrent_url)`` — magnet-only defaults to first-time-only.
+        First-time acquisition via ``start_client_download`` does not honor
+        this flag (a magnet still downloads the initial client)."""
+        if not self.has_torrent():
+            return False
+        if self.download_torrent_update is not None:
+            return bool(self.download_torrent_update)
+        return bool(self.download_torrent_url)
+
     def download_capable(self) -> bool:
         """Whether any update source exists (torrent snapshot or HTTP
-        manifest). Updates are only possible when this is true."""
-        return bool(self.download_torrent_url or self.download_manifest_url)
+        manifest or HTTP client). Updates are only possible when this is true."""
+        return bool(
+            self.download_torrent_url
+            or self.download_manifest_url
+            or self.download_client_url
+        )
 
     def all_bases(self) -> list[str]:
         """The server identity URL (no longer a list of mirror bases)."""
@@ -410,6 +435,10 @@ def _derive(data: dict) -> LauncherConfig:
         content_type = "folder"
     download_torrent_url = _https_url(torrent.get("torrent_url"))
     download_torrent_magnet = _magnet_uri(torrent.get("magnet"))
+    if "update" in torrent:
+        download_torrent_update: bool | None = bool(torrent.get("update"))
+    else:
+        download_torrent_update = None
     download_manifest_url = _https_url(http.get("manifest"))
     download_client_url = _https_url(http.get("client"))
 
@@ -450,6 +479,7 @@ def _derive(data: dict) -> LauncherConfig:
         download_update=download_update,
         download_torrent_url=download_torrent_url,
         download_torrent_magnet=download_torrent_magnet,
+        download_torrent_update=download_torrent_update,
         download_manifest_url=download_manifest_url,
         download_client_url=download_client_url,
         download_content_type=content_type,
@@ -858,6 +888,12 @@ def download_torrent_url() -> str:
 def download_torrent_magnet() -> str:
     c = config()
     return c.download_torrent_magnet or "" if c else ""
+
+
+def torrent_update_allowed() -> bool:
+    """Whether the torrent may be used for incremental updates (Plan A)."""
+    c = config()
+    return bool(c and c.torrent_update_allowed())
 
 
 def effective_client_updates_enabled() -> bool:

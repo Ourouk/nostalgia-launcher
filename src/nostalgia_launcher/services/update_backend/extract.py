@@ -52,7 +52,7 @@ def _extract_rar(archive: str, dest: str) -> None:
     with rarfile.RarFile(archive) as rf:
         for member in rf.namelist():
             if not _is_within(dest, os.path.join(dest, member)):
-                raise RuntimeError("unsafe rar entry (zip-slip): {member}")
+                raise RuntimeError(f"unsafe rar entry (rar-slip): {member}")
         rf.extractall(dest)
 
 

@@ -288,7 +288,10 @@ the QLocalServer guard remains authoritative there.
 - Client updates get a second download backend: when the active download
   source advertises a torrent snapshot — a `torrent_url` and/or `magnet` in
   `server.download.torrent` (`magnet:?xt=…`;
-  a torrent has one swarm, so an HTTPS `.torrent` URL wins when both are set)
+  a torrent has one swarm, so an HTTPS `.torrent` URL wins when both are set;
+  optional `torrent.update` controls incremental updates — explicit `false`
+  means first-time download only, explicit `true` forces updates, absent
+  infers `bool(torrent_url)` so magnet-only defaults to first-time-only)
   and libtorrent is importable,
   `UpdateWorker` bulk-downloads the stale files via
   `services/update_backend/torrent_update.py`, then re-verifies exactly the
@@ -340,6 +343,13 @@ the QLocalServer guard remains authoritative there.
 - Download-source probing lives in `update_backend/sources.py`
   (`DownloadSource`/`_download_source`, re-exported by `http_update` so
   controllers/tests keep importing from there).
+- **Readiness for torrent-only is disabled till verification**: `compute_readiness`
+  returns disabled `Verifying…` while torrent validation has no verdict
+  (`torrent_stale/reachable/error` all None). The verdict is cached by
+  `TORRENT_VALIDATION_CACHE_KEY` (`info_hash`/`content_hash`), so repeat
+  launches reuse it instantly — magnet-only with `torrent.update=false`
+  skips the incremental verify and offers `DOWNLOAD via BitTorrent`
+  (first-time only) directly.
 - The launcher never binary-patches `WoW.exe` — runtime client fixes are left
   to the catalog-declared loader mods (external launchers). The only tweak channel is `Config.wtf`.
 

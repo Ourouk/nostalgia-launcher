@@ -375,9 +375,9 @@ def test_download_source_none_without_launcher(monkeypatch):
     assert client_update._download_source() is None
 
 
-def test_download_source_requires_manifest_or_client():
-    """A source is only resolved when an HTTP manifest or client URL is set;
-    a torrent/magnet alone is a recovery path, not an HTTP source."""
+def test_download_source_resolves_torrent_only():
+    """A torrent/magnet is a valid download source on its own;
+    _download_source() returns it without requiring HTTP endpoints."""
     from nostalgia_launcher.core import launcher
 
     launcher.configure_from_dict(
@@ -390,7 +390,11 @@ def test_download_source_requires_manifest_or_client():
             }
         }
     )
-    assert client_update._download_source() is None
+    src = client_update._download_source()
+    assert src is not None
+    assert src.torrent_locator is not None
+    assert src.manifest_url == ""
+    assert src.client_url == ""
 
 
 def test_download_source_uses_explicit_endpoint_overrides(monkeypatch):

@@ -266,7 +266,11 @@ class SettingsController:
         cfg = launcher.config()
         if cfg is None:
             return []
-        if cfg.download_manifest_url or cfg.download_client_url:
+        if (
+            cfg.download_manifest_url
+            or cfg.download_client_url
+            or cfg.has_torrent()
+        ):
             return [cfg.server_name or "server"]
         return []
 
