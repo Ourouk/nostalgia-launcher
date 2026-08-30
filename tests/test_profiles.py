@@ -1,9 +1,8 @@
 """Unit + wiring tests for the profile registry and artifact routing.
 
-The default profile must map byte-identically onto the legacy top-level
-paths (back-compat gate); non-default profiles isolate every per-profile
-artifact under ``<config_dir>/profiles/<name>/``. CLI tests exercise the
-``--profile`` wiring through ``cli.main`` with the backend stubbed.
+Every profile (including the reserved ``default``) is a real directory under
+``<config_dir>/profiles/<name>/``. CLI tests exercise the ``--profile`` wiring
+through ``cli.main`` with the backend stubbed.
 """
 
 import json
@@ -13,11 +12,8 @@ import pytest
 
 import nostalgia_launcher.cli as cli
 import nostalgia_launcher.core.config_store as config_store
-import nostalgia_launcher.core.constants as constants
 import nostalgia_launcher.core.launcher as launcher
-import nostalgia_launcher.core.platform_support as platform_support
 import nostalgia_launcher.core.profiles as profiles
-import nostalgia_launcher.services.catalog as catalog
 import nostalgia_launcher.services.logo as logo
 import nostalgia_launcher.services.update_backend.torrent_update as tu
 
@@ -38,44 +34,45 @@ def prof_home(tmp_path, monkeypatch):
     monkeypatch.setattr(
         profiles, "index_path", lambda: str(tmp_path / "profiles.json")
     )
+    # Rebind the reserved default profile to the redirected profiles root.
+    monkeypatch.setattr(
+        profiles,
+        "DEFAULT",
+        profiles.Profile(
+            profiles.DEFAULT_PROFILE,
+            profiles.profile_root(profiles.DEFAULT_PROFILE),
+        ),
+    )
     return root
 
 
-# ── default-profile back-compat ──────────────────────────────────────────
+# ── default-profile artifact routing ─────────────────────────────────────
 
 
-def test_default_maps_legacy_paths_byte_identically(prof_home):
+def test_default_maps_profile_dir_paths(prof_home):
     prof = profiles.resolve()
     assert prof.name == "default"
-    assert prof.root == ""
-    assert prof.state_path() == constants.CONFIG_FILE
-    assert prof.cache_path() == constants.CACHE_FILE
+    assert prof.root == profiles.profile_root("default")
+    assert prof.launcher_path() == os.path.join(prof.root, "launcher.json")
+    assert prof.state_path() == os.path.join(prof.root, "state.json")
+    assert prof.cache_path() == os.path.join(prof.root, "hash_cache.json")
     assert prof.launcher_path() == launcher.user_config_path()
-    assert prof.custom_dir() == platform_support.config_dir()
-    assert prof.custom_catalog_path("mods") == os.path.join(
-        platform_support.config_dir(), "nostalgia_launcher_mods_custom.json"
-    )
-    assert prof.torrents_dir() == os.path.join(
-        platform_support.cache_dir(), "torrents"
-    )
-    assert prof.logo_path() == os.path.join(
-        platform_support.cache_dir(), "launcher_logo.img"
-    )
+    for kind in launcher.CONTENT_KINDS:
+        assert prof.local_repo_path(kind) == os.path.join(
+            prof.root, f"local_{kind}_repo.json"
+        )
+    assert prof.torrents_dir() == os.path.join(prof.root, "torrents")
+    assert prof.logo_path() == os.path.join(prof.root, "launcher_logo.img")
 
 
-def test_default_active_services_keep_legacy_paths():
-    """With nothing activated, artifact indirection yields exactly
-    today's paths."""
-    # The autouse _local_repos_env may redirect these wholesale; the
-    # contract under a default-active profile is mutual consistency.
-    assert catalog.custom_file("addons") == (
-        launcher.legacy_custom_path("addons")
-    )
+def test_default_active_services_keep_profile_paths():
+    """With nothing activated, artifact indirection yields exactly the
+    default profile's directory paths."""
     assert logo.logo_cache_path() == os.path.join(
-        platform_support.cache_dir(), "launcher_logo.img"
+        profiles.DEFAULT.root, "launcher_logo.img"
     )
     assert tu.torrent_cache_dir() == os.path.join(
-        platform_support.cache_dir(), "torrents"
+        profiles.DEFAULT.root, "torrents"
     )
 
 
@@ -200,7 +197,6 @@ def test_reset_wipes_all_local_artifacts_leaves_dir(
         prof.cache_path(),
         prof.logo_path(),
         prof.torrents_dir(),
-        prof.custom_dir(),
     ):
         if path.endswith((".json", ".img")):
             with open(path, "w", encoding="utf-8") as f:
@@ -223,7 +219,6 @@ def test_reset_wipes_all_local_artifacts_leaves_dir(
         prof.cache_path(),
         prof.logo_path(),
         prof.torrents_dir(),
-        prof.custom_dir(),
     ):
         assert not os.path.exists(path), path
     for kind in launcher.CONTENT_KINDS:
@@ -275,9 +270,6 @@ def test_artifacts_route_into_profile(prof_home, real_repo_seams):
     assert err == ""
     profiles.activate(prof)
     try:
-        assert catalog.custom_file("mods") == os.path.join(
-            prof.root, "custom", "nostalgia_launcher_mods_custom.json"
-        )
         assert logo.logo_cache_path() == os.path.join(
             prof.root, "launcher_logo.img"
         )
@@ -323,18 +315,6 @@ def test_cli_good_profile_routes_stores(fake_home, monkeypatch):
     assert seen["cfg"] == os.path.join(prof.root, "state.json")
     assert seen["cache"] == os.path.join(prof.root, "hash_cache.json")
     assert launcher.server_url() == "https://p.test"
-
-
-def test_cli_default_routes_legacy_stores(hermetic_cli, monkeypatch):
-    # Seed the legacy per-user launcher config so main() goes straight
-    # to the backend instead of the first-launch wizard.
-    os.makedirs(platform_support.config_dir(), exist_ok=True)
-    with open(launcher.user_config_path(), "w", encoding="utf-8") as f:
-        f.write(json.dumps(MINIMAL_CFG))
-    seen = _spy_configure(monkeypatch)
-    assert cli.main([]) == 1
-    assert seen["cfg"] == constants.CONFIG_FILE
-    assert seen["cache"] == constants.CACHE_FILE
 
 
 def test_cli_first_run_in_profile_persists_wizard_choice(
@@ -398,7 +378,7 @@ def _wizard_stub(monkeypatch):
     _stub_backend(monkeypatch)
 
 
-def _legacy_config():
+def _active_config():
     with open(launcher.user_config_path(), encoding="utf-8") as f:
         return json.load(f)
 
@@ -428,7 +408,7 @@ def test_deleting_only_server_restarts_into_setup_wizard(
     assert idx["active"] == "default"
     assert "only" not in idx["order"]
     assert not os.path.exists(str(prof.root))
-    assert _legacy_config()["server"]["base_url"] == "https://p.test"
+    assert _active_config()["server"]["base_url"] == "https://p.test"
 
 
 def test_declined_restart_next_launch_lands_on_wizard(fake_home, monkeypatch):
@@ -447,7 +427,7 @@ def test_declined_restart_next_launch_lands_on_wizard(fake_home, monkeypatch):
 
     assert profiles.load_index()["active"] == "default"
     assert not os.path.exists(str(prof.root))
-    assert _legacy_config()["server"]["base_url"] == "https://p.test"
+    assert _active_config()["server"]["base_url"] == "https://p.test"
 
 
 # ── local content repos (post main-merge: import-time split) ───────────
@@ -455,7 +435,7 @@ def test_declined_restart_next_launch_lands_on_wizard(fake_home, monkeypatch):
 
 def test_local_repos_route_into_profile(prof_home, real_repo_seams):
     """launcher.local_repo_path resolves through the active profile; the
-    default profile keeps the byte-compatible top-level file."""
+    default profile keeps its repo under ``profiles/default/``."""
     prof, err = profiles.create("iso")
     assert err == ""
     profiles.activate(prof)
@@ -468,23 +448,8 @@ def test_local_repos_route_into_profile(prof_home, real_repo_seams):
         profiles.activate(profiles.DEFAULT)
     for kind in launcher.CONTENT_KINDS:
         assert launcher.local_repo_path(kind) == os.path.join(
-            platform_support.config_dir(), f"local_{kind}_repo.json"
+            profiles.DEFAULT.root, f"local_{kind}_repo.json"
         )
-
-
-def test_legacy_custom_path_matches_custom_file(prof_home, real_repo_seams):
-    """The migration seed and catalog.custom_file() must resolve to the
-    SAME per-profile file (no split brain)."""
-    import nostalgia_launcher.services.catalog as catalog
-
-    prof, _ = profiles.create("iso")
-    profiles.activate(prof)
-    try:
-        assert launcher.legacy_custom_path("mods") == (
-            catalog.custom_file("mods")
-        )
-    finally:
-        profiles.activate(profiles.DEFAULT)
 
 
 def test_duplicate_carries_content_repos(prof_home):
@@ -518,31 +483,25 @@ def test_persist_text_splits_content_into_active_profile(
 ):
     """persist_text writes the stripped config into the active profile's
     launcher.json AND lands the local repos inside the profile root."""
-    from nostalgia_launcher.core.constants import CACHE_FILE
-
     prof, err = profiles.create("seeded")
     assert err == ""
     profiles.set_active("seeded")
     profiles.activate(prof)
-    launcher.set_profile_launcher_path(prof.launcher_path())
-    try:
-        doc = {
-            "server": {"base_url": "https://p.test"},
-            "mods": [],
-            "addons": [],
-            "assets": [],
-        }
-        config_store.configure(prof.state_path(), CACHE_FILE)
-        dest, err = launcher.persist_text(json.dumps(doc))
-        assert err == ""
-        assert dest == prof.launcher_path()
-        for kind in launcher.CONTENT_KINDS:
-            path = os.path.join(prof.root, f"local_{kind}_repo.json")
-            with open(path, encoding="utf-8") as f:
-                repo = json.load(f)
-            assert repo == {"server": [], "custom": []}
-    finally:
-        launcher.set_profile_launcher_path("")
+    doc = {
+        "server": {"base_url": "https://p.test"},
+        "mods": [],
+        "addons": [],
+        "assets": [],
+    }
+    config_store.configure(prof.state_path(), prof.cache_path())
+    dest, err = launcher.persist_text(json.dumps(doc))
+    assert err == ""
+    assert dest == prof.launcher_path()
+    for kind in launcher.CONTENT_KINDS:
+        path = os.path.join(prof.root, f"local_{kind}_repo.json")
+        with open(path, encoding="utf-8") as f:
+            repo = json.load(f)
+        assert repo == {"server": [], "custom": []}
 
 
 # ── path-safety: names must never address outside profiles/ ────────────

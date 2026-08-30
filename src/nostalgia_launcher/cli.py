@@ -120,17 +120,10 @@ def main(argv=None) -> int:
         sys.stderr.write(f"{e}\n")
         return 2
     profiles.activate(prof)
-    if prof.root:
-        # Non-default profile: persist target (and auto-discovery of the
-        # previously imported config) becomes the profile's own file.
-        launcher.set_profile_launcher_path(prof.launcher_path())
-        if not args.launcher_config and not os.path.exists(
-            prof.launcher_path()
-        ):
-            # First launch FOR THIS PROFILE: no launcher config anywhere
-            # in its scope — the wizard below persists into the profile's
-            # own launcher.json (legacy-file discovery is bypassed).
-            return _first_launch(args.show_log)
+    if not args.launcher_config and not os.path.exists(prof.launcher_path()):
+        # First launch for this profile: no launcher config in its scope —
+        # the wizard below persists into the profile's own launcher.json.
+        return _first_launch(args.show_log)
     explicit = bool(args.launcher_config)
     _cfg, err = launcher.configure(args.launcher_config)
     if err:

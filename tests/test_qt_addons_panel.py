@@ -550,11 +550,6 @@ def test_check_for_updates_refetches_online_catalogs(
         "fetch_addons_catalog",
         lambda force=False: fetch_calls.append(force) or [],
     )
-    monkeypatch.setattr(
-        addons_module.catalog,
-        "load_custom",
-        lambda kind, validator: [],
-    )
     panel = _panel(window)
     check = panel.findChild(QToolButton, "addonsCheck")
     QTest.mouseClick(check, Qt.LeftButton)

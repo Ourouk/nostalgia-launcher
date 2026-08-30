@@ -46,17 +46,6 @@ from . import markers
 from .sources import DownloadSource, _download_source
 from .worker_base import WorkerBase
 
-# Re-exported for compatibility: controllers and tests resolve these through
-# this module (and monkeypatch `_download_source` on it).
-__all__ = [
-    "DownloadSource",
-    "UpdateWorker",
-    "VerifyWorker",
-    "torrent_recovery_available",
-    "_download_source",
-]
-
-
 TORRENT_VALIDATION_CACHE_KEY = "__torrent_validation__"
 
 # Generous ceiling for one manifest-delivered file; a hostile or broken

@@ -117,14 +117,23 @@ def test_mods_registry_merges_custom(tmp_path, monkeypatch):
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
     config_store.save_config({})
-    monkeypatch.setattr(
-        mods.catalog, "custom_file", lambda kind: str(tmp_path / "custom.json")
-    )
-    (tmp_path / "custom.json").write_text(
-        '[{"id": "MyMod", "name": "My Mod", "essential": true,'
-        ' "source": {"kind": "github_release", "owner": "a", "repo": "b",'
-        ' "asset_pattern": "*.zip"}}]',
-        encoding="utf-8",
+    # User-custom entries now live in the local repo's "custom" list.
+    mods.catalog.write_local_repo(
+        "mods",
+        [],
+        [
+            {
+                "id": "MyMod",
+                "name": "My Mod",
+                "installation": "required",
+                "source": {
+                    "kind": "github_release",
+                    "owner": "a",
+                    "repo": "b",
+                    "asset_pattern": "*.zip",
+                },
+            }
+        ],
     )
 
     reg = mods.mods_registry()
@@ -202,13 +211,22 @@ def test_mods_registry_precedence_custom_over_embedded_over_remote(
             },
         ]
     )
-    monkeypatch.setattr(
-        mods.catalog, "custom_file", lambda kind: str(tmp_path / "custom.json")
-    )
-    (tmp_path / "custom.json").write_text(
-        '[{"id": "M", "name": "Custom", "source": {"kind": "github_release",'
-        ' "owner": "a", "repo": "b", "asset_pattern": "*.zip"}}]',
-        encoding="utf-8",
+    # User-custom entries now live in the local repo's "custom" list.
+    mods.catalog.write_local_repo(
+        "mods",
+        [],
+        [
+            {
+                "id": "M",
+                "name": "Custom",
+                "source": {
+                    "kind": "github_release",
+                    "owner": "a",
+                    "repo": "b",
+                    "asset_pattern": "*.zip",
+                },
+            }
+        ],
     )
 
     by_id = {m["id"]: m for m in mods.mods_registry()}
@@ -357,7 +375,7 @@ def test_mod_installed_files_present_requires_files_and_dlls_entry(
     client = tmp_path / "client"
     client.mkdir()
     monkeypatch.setattr(mods, "load_config", lambda: {})
-    mod = {"id": "m", "installed_files": ["a.dll"], "register_dll": "a.dll"}
+    mod = {"id": "m", "installed_files": ["a.dll"], "register_dll": ["a.dll"]}
     # dlls.txt missing → not loaded.
     assert not mods.mod_installed_files_present(mod, str(client))
     # File present but not registered in dlls.txt → not loaded.
@@ -381,7 +399,7 @@ def test_mod_installed_files_present_uses_record_files(tmp_path, monkeypatch):
         "load_config",
         lambda: {"mods": {"m": {"installed_files": ["data.patch"]}}},
     )
-    mod = {"id": "m", "register_dll": "m.dll"}
+    mod = {"id": "m", "register_dll": ["m.dll"]}
     assert mods.mod_installed_files_present(mod, str(client))
 
 
@@ -402,7 +420,7 @@ def test_scan_unknown_mods_lists_unclaimed_dlls(tmp_path):
     client = tmp_path / "client"
     client.mkdir()
     (client / "dlls.txt").write_text("Tracked.dll\nmystery.dll\n")
-    registry = [{"id": "t", "register_dll": "Tracked.dll"}]
+    registry = [{"id": "t", "register_dll": ["Tracked.dll"]}]
     assert mods.scan_unknown_mods(str(client), registry) == ["mystery.dll"]
 
 
@@ -721,7 +739,7 @@ def test_apply_essential_mods_noop_when_all_present(tmp_path, monkeypatch):
     game = tmp_path / "game"
     game.mkdir()
     (game / "WoW.exe").write_bytes(b"MZ")
-    registry = [{"id": "EssentialA", "essential": True, "name": "A"}]
+    registry = [{"id": "EssentialA", "installation": "required", "name": "A"}]
     monkeypatch.setattr(mods, "mods_registry", lambda *a, **k: registry)
     monkeypatch.setattr(
         mods, "mod_installed_files_present", lambda m, cd: True
@@ -742,7 +760,7 @@ def test_apply_essential_mods_skips_without_client(tmp_path, monkeypatch):
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
     config_store.save_config({})
-    registry = [{"id": "EssentialA", "essential": True, "name": "A"}]
+    registry = [{"id": "EssentialA", "installation": "required", "name": "A"}]
     monkeypatch.setattr(mods, "mods_registry", lambda *a, **k: registry)
 
     controller = ModsController(
@@ -809,16 +827,11 @@ def repo_paths(tmp_path, monkeypatch):
         "local_repo_path",
         lambda kind: str(tmp_path / f"local_{kind}_repo.json"),
     )
-    monkeypatch.setattr(
-        launcher,
-        "legacy_custom_path",
-        lambda kind: str(tmp_path / f"legacy_{kind}.json"),
-    )
     return tmp_path
 
 
 def test_mods_registry_full_precedence(tmp_path, repo_paths, monkeypatch):
-    """remote < repo.server < embedded < repo.custom < legacy custom."""
+    """remote < repo.server < embedded < repo.custom."""
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )

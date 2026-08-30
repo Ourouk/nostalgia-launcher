@@ -28,12 +28,11 @@ vetted by `security_http` at fetch time.
 """
 
 import json
-import os
 import time
 import urllib.request
 from urllib.parse import urlsplit
 
-from ..core import config_store, launcher, profiles
+from ..core import config_store, launcher
 from ..core.constants import UA
 from ..core.log_sink import log
 from ..core.security_http import read_capped, secure_urlopen
@@ -107,47 +106,6 @@ def reset_registry_url(kind: str):
     config_store.update_config(lambda c: c.pop(f"{kind}_registry_url", None))
 
 
-# ── custom-file helpers ──────────────────────────────────────────────────────
-
-
-def custom_file(kind: str) -> str:
-    """Path of the per-user custom JSON file for a catalog kind — scoped
-    to the active profile (legacy top-level file for the default)."""
-    return profiles.active().custom_catalog_path(kind)
-
-
-def load_custom(kind: str, validator) -> list:
-    """Load and validate the per-user custom file.
-
-    Returns the validated entries (empty on a missing file or malformed
-    JSON). Invalid entries are skipped with a logged warning rather than
-    failing the whole load.
-    """
-    path = custom_file(kind)
-    try:
-        with open(path, encoding="utf-8") as f:
-            raw = json.load(f)
-    except FileNotFoundError:
-        return []
-    except Exception as e:
-        log(f"  {kind} custom file unreadable: {e}", "err")
-        return []
-    if not isinstance(raw, list):
-        log(f"  {kind} custom file must contain a JSON list.", "err")
-        return []
-    out = []
-    for entry in raw:
-        cleaned = validator(entry) if isinstance(entry, dict) else None
-        if cleaned is None:
-            log(
-                f"  {kind} custom file: skipping invalid entry {entry!r}",
-                "err",
-            )
-            continue
-        out.append(cleaned)
-    return out
-
-
 # ── local repo files ─────────────────────────────────────────────────────────
 # Each content kind (mods/addons/assets) lives in a single on-disk repo,
 # written by the import-time split (`core.launcher._persist_data`) and
@@ -159,38 +117,14 @@ def load_custom(kind: str, validator) -> list:
 def read_local_repo(kind: str) -> dict:
     """The raw local repo for a content kind as ``{"server": [...],
     "custom": [...]}`` — entries are unvalidated; each service applies its
-    own validator per layer. A missing repo file is seeded from the legacy
-    per-user custom file (one-time migration; that file stays as a backup).
-    A malformed repo degrades to empty lists with a logged error rather
-    than breaking catalog loads."""
-    if not os.path.exists(launcher.local_repo_path(kind)):
-        legacy = launcher.legacy_custom_entries(kind)
-        if legacy:
-            try:
-                launcher.store_local_repo(kind, [], legacy)
-                log(
-                    f"  Migrated {len(legacy)} {kind} entr"
-                    f"{'y' if len(legacy) == 1 else 'ies'} from the legacy "
-                    "custom file into the local repo."
-                )
-            except Exception as e:
-                log(f"  Could not migrate the legacy {kind} customs: {e}")
+    own validator per layer. A malformed repo degrades to empty lists with
+    a logged error rather than breaking catalog loads."""
     try:
         server, custom = launcher.load_local_repo(kind)
     except ValueError as e:
         log(f"  {kind} local repo unreadable: {e}", "err")
         return {"server": [], "custom": []}
     return {"server": server, "custom": custom}
-
-
-def legacy_custom_layer(kind: str, validator) -> list:
-    """The pre-repo custom-file layer. Empty once the kind's local repo
-    exists — its "custom" list was seeded from that file at creation, so
-    loading it afterwards would shadow repo edits and survives-clears with
-    stale copies. The file itself stays on disk as a backup."""
-    if os.path.exists(launcher.local_repo_path(kind)):
-        return []
-    return load_custom(kind, validator)
 
 
 def write_local_repo(kind: str, server: list, custom: list) -> str | None:
@@ -420,8 +354,6 @@ def validate_mod(entry: dict) -> dict | None:
 
     register = entry.get("register_dll")
     if register is not None:
-        if isinstance(register, str):
-            register = [register]
         if (
             not isinstance(register, list)
             or not register
@@ -444,8 +376,6 @@ def validate_mod(entry: dict) -> dict | None:
             return None
         mod["executable"] = executable
     client_versions = entry.get("client_versions")
-    if client_versions is None:  # legacy camelCase alias
-        client_versions = entry.get("clientVersions")
     if client_versions is not None:
         if not isinstance(client_versions, list) or not all(
             isinstance(v, str) for v in client_versions
@@ -456,14 +386,11 @@ def validate_mod(entry: dict) -> dict | None:
 
 
 def _mod_installation(entry: dict) -> str:
-    """The effective installation policy: the new ``installation`` field,
-    else the legacy ``essential`` boolean translated (true → "required"),
-    else the "user_opt_in" default."""
+    """The effective installation policy: the ``installation`` field when
+    it is a string, else the "user_opt_in" default."""
     installation = entry.get("installation")
     if isinstance(installation, str):
         return installation.lower()
-    if entry.get("essential", False):
-        return "required"
     return "user_opt_in"
 
 
@@ -628,8 +555,7 @@ def layered_registry(
     """The effective registry for a content kind, in override order (later
     wins by id): the remote/cached catalog < the local repo's server-imported
     entries < the launcher config's embedded entries < the repo's user-custom
-    entries < the legacy per-user custom file. Empty when nothing is
-    configured."""
+    entries. Empty when nothing is configured."""
     base = [] if remote is None else remote
     repo = read_local_repo(kind)
     label = f"local {kind} repo"
@@ -638,7 +564,6 @@ def layered_registry(
         validate_entries(repo["server"], validator, label),
         embedded_entries,
         validate_entries(repo["custom"], validator, label),
-        legacy_custom_layer(kind, validator),
     ):
         merged = merge_by_key(merged, layer, fields)
     return merged

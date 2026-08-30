@@ -9,7 +9,6 @@ import os
 import re
 import shutil
 import stat
-import sys
 from pathlib import Path
 
 from .log_sink import log
@@ -135,7 +134,4 @@ def rmtree_force(path):
         os.chmod(p, stat.S_IWRITE)
         func(p)
 
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(path, onexc=handler)  # onerror deprecated in 3.12
-    else:
-        shutil.rmtree(path, onerror=handler)
+    shutil.rmtree(path, onexc=handler)

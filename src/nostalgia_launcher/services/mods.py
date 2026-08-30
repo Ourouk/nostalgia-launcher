@@ -261,12 +261,10 @@ def read_dlls_entries(client_dir: str) -> set:
 
 def registered_dlls(mod: dict) -> list:
     """The DLL names a catalog mod wires into dlls.txt, normalized to a
-    list (legacy catalogs carry a single string)."""
+    list."""
     reg = mod.get("register_dll")
-    if not reg:
+    if not isinstance(reg, list):
         return []
-    if isinstance(reg, str):
-        return [reg]
     return [d for d in reg if isinstance(d, str) and d]
 
 

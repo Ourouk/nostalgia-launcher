@@ -627,7 +627,6 @@ class SettingsDialog(QDialog):
 
         prev_active = profiles.active()
         try:
-            launcher.set_profile_launcher_path(prof.launcher_path())
             profiles.activate(prof)
             dlg = LauncherConfigDialog(initial_path=launcher.discover_path())
             if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -644,9 +643,6 @@ class SettingsDialog(QDialog):
                 )
         finally:
             profiles.activate(prev_active)
-            launcher.set_profile_launcher_path(
-                prev_active.launcher_path() if prev_active.root else ""
-            )
 
     def _persist_profile_selection(self, sel) -> str:
         """Persist a wizard selection (file or URL) into the CURRENT

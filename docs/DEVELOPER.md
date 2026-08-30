@@ -68,7 +68,6 @@ overridden:
     "news_url": "https://server.example/news",
     "featured_news_url": "https://server.example/news/featured",
     "mods_registry_url": "https://server.example/api/mods.json",
-    "addons_registry_url": "https://server.example/api/addons.json",
     "addons_registry_urls": [
       "https://server.example/api/addons.json",
       "https://server.example/addons-overrides.json"
@@ -356,8 +355,9 @@ Keep them in sync when bumping.
 - Qt tests share one `QApplication` via `create_qt_app()` (a second instance
   aborts Qt); widget assertions use `objectName`s set in the widgets.
 - Tests redirect config to `tmp_path` via `config_store.configure(...)` and
-  monkeypatch `CONFIG_FILE`/`CACHE_FILE` on both `core.constants` and
-  `controllers.settings` (that module imports them by name).
+  use the `fake_home` / `hermetic_cli` conftest fixtures (which redirect the
+  per-user config dir via HOME / USERPROFILE / APPDATA / LOCALAPPDATA) so the
+  `default` profile resolves under `<config_dir>/profiles/default/`.
 - Known flaky: `tests/test_addons_controller.py::test_apply_failure_records_error_and_posts_finished`
   times out intermittently under full-suite load but passes in isolation. Do
   not "fix" by disabling.

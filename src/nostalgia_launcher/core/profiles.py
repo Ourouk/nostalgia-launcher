@@ -3,9 +3,7 @@
 A profile owns its own server config (`launcher.json`), state store
 (`state.json`), hash cache, custom catalogs, torrent metadata and logo
 cache under ``<config_dir>/profiles/<name>/``. The reserved ``default``
-profile has NO directory: it maps byte-identically onto the legacy
-top-level files, so existing installations keep working unchanged
-(``zero migration``).
+profile is a real directory at ``<config_dir>/profiles/default/``.
 
 Which profile an artifact resolves to is decided once per process by
 ``activate(resolve(...))`` at CLI startup; services consult
@@ -21,10 +19,9 @@ import shutil
 import threading
 from dataclasses import dataclass
 
-from .constants import CACHE_FILE, CONFIG_FILE
 from .filesystem import atomic_write_text as _atomic_write_text
-from .launcher import CONTENT_KINDS, LAUNCHER_FILE
-from .platform_support import cache_dir, config_dir
+from .launcher import CONTENT_KINDS
+from .platform_support import config_dir
 
 DEFAULT_PROFILE = "default"
 
@@ -45,67 +42,39 @@ class ProfileError(Exception):
 class Profile:
     """A named profile and its artifact paths.
 
-    ``root`` is "" for the default profile (legacy top-level files) and
-    ``<config_dir>/profiles/<name>`` otherwise.
+    ``root`` is ``<config_dir>/profiles/<name>`` for every profile,
+    including the reserved ``default`` profile (a real directory at
+    ``<config_dir>/profiles/default/``).
     """
 
     name: str
-    root: str = ""
+    root: str
 
     def launcher_path(self) -> str:
         """The profile's server-config file (LAUNCHER_FILE schema)."""
-        if not self.root:
-            return os.path.join(config_dir(), LAUNCHER_FILE)
         return os.path.join(self.root, "launcher.json")
 
     def state_path(self) -> str:
-        """The profile's CONFIG_FILE-schema state store."""
-        if not self.root:
-            return CONFIG_FILE
+        """The profile's state store."""
         return os.path.join(self.root, "state.json")
 
     def cache_path(self) -> str:
-        """The profile's hash-cache file (CACHE_FILE schema)."""
-        if not self.root:
-            return CACHE_FILE
+        """The profile's hash-cache file."""
         return os.path.join(self.root, "hash_cache.json")
-
-    def custom_dir(self) -> str:
-        """Directory holding the per-user custom catalog JSON files."""
-        if not self.root:
-            return config_dir()
-        return os.path.join(self.root, "custom")
-
-    def custom_catalog_path(self, kind: str) -> str:
-        """Custom-catalog file for a kind ("mods"/"addons"); same file
-        naming as the legacy top-level layout."""
-        return os.path.join(
-            self.custom_dir(), f"nostalgia_launcher_{kind}_custom.json"
-        )
 
     def local_repo_path(self, kind: str) -> str:
         """The content-kind local repo file (launcher CONTENT_KINDS):
         `{"server": [...], "custom": [...]}` written by the import-time
         split."""
-        if not self.root:
-            return os.path.join(config_dir(), f"local_{kind}_repo.json")
         return os.path.join(self.root, f"local_{kind}_repo.json")
 
     def torrents_dir(self) -> str:
         """Torrent metadata/resume directory for this profile."""
-        if not self.root:
-            return os.path.join(cache_dir(), "torrents")
         return os.path.join(self.root, "torrents")
 
     def logo_path(self) -> str:
         """Cached server-logo image for this profile."""
-        if not self.root:
-            return os.path.join(cache_dir(), "launcher_logo.img")
         return os.path.join(self.root, "launcher_logo.img")
-
-
-#: Shared instance of the default profile (frozen dataclass).
-DEFAULT = Profile(DEFAULT_PROFILE, "")
 
 
 # ── name validation ──────────────────────────────────────────────────────────
@@ -145,9 +114,14 @@ def profile_root(name: str) -> str:
     return os.path.join(profiles_root(), name)
 
 
+#: Shared instance of the default profile (frozen dataclass). The default
+#: profile is a real directory under ``profiles/default/``.
+DEFAULT = Profile(DEFAULT_PROFILE, profile_root(DEFAULT_PROFILE))
+
+
 def _scan_profile_dirs() -> list:
     """Names backed by a directory under profiles/ (sorted, default never
-    listed — it has no directory by construction)."""
+    listed — it is an implicit-first profile, not a user-created one)."""
     try:
         entries = sorted(os.listdir(profiles_root()))
     except OSError:
@@ -320,6 +294,42 @@ def delete(name: str) -> str:
     return ""
 
 
+def reset(name: str) -> str:
+    """Wipe a non-default profile's per-profile artifacts (state, hash
+    cache, launcher config, content repos, torrents, logo) but keep its
+    directory and registry entry so it stays reconfigurable. Refuses the
+    default and unknown profiles. Returns "" on success, else an error
+    message."""
+    if name == DEFAULT_PROFILE:
+        return "The default profile cannot be reset."
+    prof = _existing_or_none(name)
+    if prof is None:
+        return f"Unknown profile: {name}"
+    root = prof.root
+    for path in (
+        os.path.join(root, "launcher.json"),
+        prof.state_path(),
+        prof.cache_path(),
+        prof.logo_path(),
+        prof.torrents_dir(),
+    ):
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            elif os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+    for kind in CONTENT_KINDS:
+        repo = prof.local_repo_path(kind)
+        try:
+            if os.path.exists(repo):
+                os.remove(repo)
+        except OSError:
+            pass
+    return ""
+
+
 def set_active(name: str):
     """Point the index at an existing profile (persisted; picked up by
     the next launch's resolve())."""
@@ -386,7 +396,6 @@ def activate(p: Profile):
 
 
 def active() -> Profile:
-    """The active profile; lazily the default when nothing was activated
-    (library/test callers get today's legacy behavior unchanged)."""
+    """The active profile; lazily the default when nothing was activated."""
     with _INDEX_LOCK:
         return _ACTIVE if _ACTIVE is not None else DEFAULT

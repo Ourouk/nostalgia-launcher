@@ -302,10 +302,9 @@ change to this contract.** **[verified]**
    - No game folder is auto-selected: the user confirms one in Settings
      before anything downloads (strict confirmation).
 4. `_run_backend()` (`cli.py:185-212`):
-   - `config_store.configure(CONFIG_FILE, CACHE_FILE, legacy_*…)` — sets the
-     global store paths and runs **legacy file migration** (copy old
-     `octo_updater_*` / next-to-exe / XDG config files into the new per-user
-     dirs).
+   - `config_store.configure(state, cache)` — sets the active profile's
+     global store paths (`profiles.active().state_path()` /
+     `cache_path()`).
    - Resolve backend via `NOSTALGIA_UI_BACKEND` (default `qt`).
    - Construct `QtNostalgiaLauncherApp` → `app.show()` → `app.run()` (Qt event
      loop).
@@ -367,16 +366,13 @@ the mirror-probe thread. All daemon threads. **[verified]**
 ### 6.2 `core/config_store.py` — atomic JSON persistence
 - **Purpose.** Read-modify-write the per-user config + hash cache, with
   lock-guarded `update_config()` and `_atomic_write()` (temp file + `os.replace`).
-- **Interface.** `configure(cfg, cache, legacy_config=, legacy_cache=,
-  legacy_pairs=)`, `load_config()`, `save_config()`, `update_config(mutator)`,
-  `load_cache()`, `save_cache()`.
+- **Interface.** `configure(cfg, cache)`, `load_config()`, `save_config()`,
+  `update_config(mutator)`, `load_cache()`, `save_cache()`.
 - **Concurrency.** `update_config` uses `_CONFIG_LOCK` (RLock). `save_cache()`
   is **not** lock-guarded (only `load_cache`/`save_cache` are independent
   functions; `UpdateWorker`/`VerifyWorker` both write the cache from separate
   threads — a minor race since the controller cancels one before starting the
   other, but not structurally safe). **[verified]**
-- **Legacy migration.** `_migrate()` copies old location files into new paths
-  on first `configure()`. **[verified]**
 
 ### 6.3 `core/security_http.py` — hardened transfer layer
 - **Purpose.** All network downloads go through `secure_urlopen()`.
@@ -527,11 +523,11 @@ the mirror-probe thread. All daemon threads. **[verified]**
 | Logo cache | `<cache_dir>/launcher_logo.img` | binary pixmap | `services/logo` |
 
 **Per-profile note** (`core/profiles.py`): every artifact row above is
-PER-PROFILE. The paths shown are the reserved `default` profile's (the
-legacy top-level files, never moved); a non-default profile P resolves
+PER-PROFILE. The paths shown are the reserved `default` profile's, resolved
+under `<config_dir>/profiles/default/`; a non-default profile P resolves
 them under `<config_dir>/profiles/P/` as `launcher.json`, `state.json`,
 `hash_cache.json`, `local_<kind>_repo.json` (content repos),
-`custom/<…>_custom.json`, `torrents/<hash>.*`,
+`torrents/<hash>.*`,
 `launcher_logo.img`. The registry itself is `<config_dir>/profiles.json`
 (`{"active", "order"}`; tolerant of corruption — rebuilt by dir scan).
 Single-instance machinery adds two more files/artifacts next to the state
@@ -544,7 +540,7 @@ store: the advisory lock `<dir-of-state>/<stem>.lock`
 installed_files, error}}`), `addons` (`{folder: {git, branch,
 ref, sha}}`), `tweaks`, `launch` (`{umu_proton, umu_binary_path, umu_game_id,
 umu_renderer, umu_gamemode, umu_wayland}`), `mods_registry_url`,
-`addons_registry_url`, `mods_catalog_cache`, `addons_catalog_cache`
+`addons_registry_urls`, `mods_catalog_cache`, `addons_catalog_cache`
 (`{url: {timestamp, catalog}}`), `mod_release_cache`, `addon_sha_cache`,
 `updater_release_cache`, `dxvk_notice_pending`, `clear_wdb_on_launch`,
 `close_on_launch`. **[verified largely; inferred key set from controller/service code]**
@@ -620,7 +616,7 @@ stateDiagram-v2
 - `dlls.txt` — mod DLL registration.
 - Game client files (`Data/…`, `*.mpq`, etc.) — update/mod/addon installs.
 - `dxvk.conf` — mod post-install hook.
-- Legacy migration copies. **[verified]**
+- Profile-scoped artifact copies (state/cache/repos). **[verified]**
 
 ### 8.5 Subprocess invocations
 | Command | Trigger | Risk note |
@@ -921,7 +917,7 @@ with `WoW.exe`-presence gate before marking ready.
 
 **Well-designed / worth preserving.**
 - Strict controller↔UI separation via events; UI never imports services.
-- Atomic, lock-guarded config writes + legacy migration.
+- Atomic, lock-guarded config writes.
 - Defense-in-depth archive extraction in addons (`install_addon_files`).
 - Allowlisted mod source kinds + post-install hooks (no arbitrary code from
   catalog JSON).
