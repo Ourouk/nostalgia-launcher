@@ -125,6 +125,98 @@ class GameExited(Event):
     exit_code: int | None = None
 
 
+# ── Typed update lifecycle events ─────────────────────────────────────────
+
+
+@dataclass
+class UpdateCompleted(Event):
+    """Update finished successfully."""
+
+
+@dataclass
+class UpdateFailed(Event):
+    """Update failed."""
+
+
+@dataclass
+class ManifestAvailable(Event):
+    """Manifest was successfully fetched and parsed."""
+
+
+@dataclass
+class ManifestUnavailable(Event):
+    """Manifest could not be fetched or parsed."""
+
+
+@dataclass
+class UpToDate(Event):
+    """Client is up to date."""
+
+
+@dataclass
+class UpdateNeeded(Event):
+    """Update is needed."""
+
+
+@dataclass
+class DiffTree(Event):
+    """List of files that need updating."""
+
+    files: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TorrentReachable(Event):
+    """BitTorrent snapshot is reachable."""
+
+
+@dataclass
+class TorrentUnreachable(Event):
+    """BitTorrent snapshot cannot be fetched."""
+
+
+@dataclass
+class TorrentCorrupt(Event):
+    """Torrent file is corrupt."""
+
+
+@dataclass
+class TorrentStalled(Event):
+    """Torrent verification stalled."""
+
+
+@dataclass
+class TorrentSessionError(Event):
+    """Torrent session error."""
+
+
+@dataclass
+class TorrentDiskError(Event):
+    """Torrent disk I/O error."""
+
+
+@dataclass
+class TorrentVerifyFailed(Event):
+    """Torrent verification failed."""
+
+
+@dataclass
+class TorrentDiff(Event):
+    """Stale files identified by torrent verification."""
+
+    files: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TorrentUpToDate(Event):
+    """Torrent snapshot is up to date."""
+
+
+@dataclass
+class TorrentRecoveryDone(Event):
+    """Torrent recovery download complete."""
+
+
 class EventDispatcher:
     """Thread-safe, non-blocking event bus.
 

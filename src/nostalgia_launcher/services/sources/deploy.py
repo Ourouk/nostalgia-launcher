@@ -9,7 +9,7 @@ what lets every download backend serve every vertical:
 * addon folder target       → `unpack_folder` (strip the archive's top-level
                               dir into Interface/AddOns/<folder>)
 
-All paths are validated against `safety.safe_relpath`; a compromised
+All paths are validated against `core.safety.safe_relative_path`; a compromised
 upstream must not be able to write outside the client folder. Extracted
 members are also size-capped so a small compressed bomb cannot fill the
 disk (the archives themselves are capped by the fetch layer).
@@ -22,7 +22,7 @@ import zipfile
 
 from ...core.filesystem import rmtree_force
 from ...core.log_sink import log
-from . import safety
+from ...core.safety import safe_relative_path
 
 # Per-member uncompressed ceiling: far above any legitimate game file,
 # far below disk-filling territory.
@@ -32,7 +32,7 @@ _MAX_MEMBER_BYTES = 1 * 1024 * 1024 * 1024
 def checked_rel(dest_rel) -> str:
     """Validate a client-dir-relative install target before it is joined
     onto `client_dir`."""
-    if not safety.safe_relpath(dest_rel):
+    if not safe_relative_path(dest_rel):
         raise RuntimeError(f"Refusing unsafe install path: {dest_rel!r}")
     return dest_rel
 

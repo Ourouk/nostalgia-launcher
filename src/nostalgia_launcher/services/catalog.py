@@ -35,16 +35,11 @@ from urllib.parse import urlsplit
 from ..core import config_store, launcher
 from ..core.constants import UA
 from ..core.log_sink import log
+from ..core.safety import safe_folder, safe_relpath
+from ..core.safety import valid_sha1 as _valid_sha1
 from ..core.security_http import read_capped, secure_urlopen
 from .sources import hooks as _hooks
 from .sources import kinds as _source_kinds
-from .sources.safety import (  # noqa: F401 (safe_folder re-exported)
-    safe_folder,
-    safe_relpath,
-)
-from .sources.safety import (
-    valid_sha1 as _valid_sha1,
-)
 
 # Allowlisted mod source kinds / post-install hooks. A remote or custom mod
 # entry can only reference these — it cannot name arbitrary code. Both come

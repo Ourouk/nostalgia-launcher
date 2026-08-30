@@ -9,6 +9,7 @@ import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.services.catalog as catalog
 import nostalgia_launcher.services.mods as mods
 import nostalgia_launcher.services.self_update as self_update
+import nostalgia_launcher.services.sources.deploy as deploy
 from nostalgia_launcher.controllers.mods import ModsController
 from nostalgia_launcher.core import launcher
 from nostalgia_launcher.state.events import (
@@ -576,7 +577,7 @@ def test_install_mod_rejects_traversal_dest(tmp_path, monkeypatch):
 
 
 def test_checked_rel_rejects_traversal_and_absolute():
-    assert mods._checked_rel("mod/mod.dll") == "mod/mod.dll"
+    assert deploy.checked_rel("mod/mod.dll") == "mod/mod.dll"
     for bad in (
         "../evil.dll",
         "a/../../evil.dll",
@@ -587,7 +588,7 @@ def test_checked_rel_rejects_traversal_and_absolute():
         None,
     ):
         with pytest.raises(RuntimeError, match="unsafe install path"):
-            mods._checked_rel(bad)
+            deploy.checked_rel(bad)
 
 
 # ── self-update ─────────────────────────────────────────────────────────────

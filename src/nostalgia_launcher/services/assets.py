@@ -30,14 +30,6 @@ from ..core.security_http import (
 from . import catalog
 from .sources import deploy
 
-
-def _checked_rel(dest_rel) -> str:
-    """Validate a client-dir-relative install target before it is joined
-    onto `client_dir` (a compromised catalog must not write outside the
-    client folder). Delegates to the shared deploy validator."""
-    return deploy.checked_rel(dest_rel)
-
-
 # ── registry loading ─────────────────────────────────────────────────────────
 
 
@@ -141,7 +133,7 @@ def install_asset(asset: dict, client_dir: str) -> dict:
     ``probe`` carries the response headers for the opt-in drift probe
     (empty dict when the server sent none).
     """
-    dest_rel = _checked_rel(asset["dest"])
+    dest_rel = deploy.checked_rel(asset["dest"])
     source: dict = {
         "kind": "direct_file",
         "url": asset["url"],

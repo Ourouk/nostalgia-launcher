@@ -12,6 +12,7 @@ import os
 import zipfile
 
 from ...core.log_sink import log
+from ...core.safety import safe_destination
 
 
 def _root_archives(out_dir: str, ext: str) -> list[str]:
@@ -29,15 +30,10 @@ def _root_archives(out_dir: str, ext: str) -> list[str]:
     return found
 
 
-def _is_within(base: str, target: str) -> bool:
-    base = os.path.abspath(base)
-    return os.path.abspath(target).startswith(base + os.sep)
-
-
 def _extract_zip(archive: str, dest: str) -> None:
     with zipfile.ZipFile(archive) as zf:
         for member in zf.namelist():
-            if not _is_within(dest, os.path.join(dest, member)):
+            if not safe_destination(os.path.join(dest, member), dest):
                 raise RuntimeError(f"unsafe zip entry (zip-slip): {member}")
         zf.extractall(dest)
 
@@ -51,7 +47,7 @@ def _extract_rar(archive: str, dest: str) -> None:
         ) from None
     with rarfile.RarFile(archive) as rf:
         for member in rf.namelist():
-            if not _is_within(dest, os.path.join(dest, member)):
+            if not safe_destination(os.path.join(dest, member), dest):
                 raise RuntimeError("unsafe rar entry (zip-slip): {member}")
         rf.extractall(dest)
 

@@ -35,12 +35,12 @@ from ...core.filesystem import (
     sha1_file,
 )
 from ...core.helpers import fmt_size, fmt_speed, redact_url
+from ...core.safety import safe_relative_path
 from ...core.security_http import (
     allowed_download_hosts,
     read_capped,
     secure_urlopen,
 )
-from ..sources.safety import safe_relpath
 from ..tweaks import write_config_wtf, write_realmlist_wtf
 from . import markers
 from .sources import DownloadSource, _download_source
@@ -59,7 +59,7 @@ def _checked_node_rel(parts: list, name: str, ext: str = "") -> str | None:
     manifest is untrusted input: it names every file the updater writes AND
     deletes, so this gate runs before any filesystem touch."""
     rel = "/".join([*parts, name + ext])
-    return rel if safe_relpath(rel) else None
+    return rel if safe_relative_path(rel) else None
 
 
 def _checked_node_size(size) -> int:
