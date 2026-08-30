@@ -694,6 +694,11 @@ def configure(path: str | None = None) -> tuple["LauncherConfig | None", str]:
     auto-discovered file). Returns (config, error); exactly one is set."""
     global _config, _path, _error
     with _LOCK:
+        if _config is not None or _path:
+            log(
+                f"launcher.configure() called twice ({_path!r} -> {path!r})",
+                "dim",
+            )
         path = path or _auto_path()
         if not path:
             _config, _path, _error = (
@@ -726,6 +731,11 @@ def configure_from_dict(data: dict) -> "LauncherConfig | None":
     invalid; the error is recorded for config_error()."""
     global _config, _path, _error
     with _LOCK:
+        if _config is not None or _path:
+            log(
+                f"launcher.configure_from_dict() called twice ({_path!r})",
+                "dim",
+            )
         try:
             config = _derive(data)
         except Exception as e:

@@ -114,9 +114,15 @@ def profile_root(name: str) -> str:
     return os.path.join(profiles_root(), name)
 
 
-#: Shared instance of the default profile (frozen dataclass). The default
-#: profile is a real directory under ``profiles/default/``.
-DEFAULT = Profile(DEFAULT_PROFILE, profile_root(DEFAULT_PROFILE))
+def default_profile() -> Profile:
+    """Live default profile — computed via ``profile_root`` so a
+    ``HOME``/``APPDATA`` redirection is always reflected (no import-time
+    freeze)."""
+    return Profile(DEFAULT_PROFILE, profile_root(DEFAULT_PROFILE))
+
+
+# Deprecated alias — import-time frozen, use ``default_profile()`` instead.
+DEFAULT = default_profile()
 
 
 def _scan_profile_dirs() -> list:
@@ -347,7 +353,7 @@ def resolve(override=None) -> Profile:
     persisted pointer silently falls back to default."""
     name = override or load_index()["active"] or DEFAULT_PROFILE
     if name == DEFAULT_PROFILE:
-        return DEFAULT
+        return default_profile()
     if not _clean_name(name):
         raise ProfileError(f"Unknown profile: {name}")
     root = profile_root(name)
@@ -379,7 +385,7 @@ def _existing_or_none(name) -> "Profile | None":
     if name != DEFAULT_PROFILE and not _clean_name(name):
         return None
     if name == DEFAULT_PROFILE:
-        return DEFAULT
+        return default_profile()
     if name and os.path.isdir(profile_root(name)):
         return Profile(name, profile_root(name))
     return None
@@ -396,6 +402,12 @@ def activate(p: Profile):
 
 
 def active() -> Profile:
-    """The active profile; lazily the default when nothing was activated."""
+    """The active profile — must be activated via ``activate()`` first."""
     with _INDEX_LOCK:
-        return _ACTIVE if _ACTIVE is not None else DEFAULT
+        if _ACTIVE is None:
+            raise RuntimeError(
+                "profiles.active() called before profiles.activate() — "
+                "no active profile (call profiles.activate(resolve(...)) "
+                "at startup)"
+            )
+        return _ACTIVE

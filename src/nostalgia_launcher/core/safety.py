@@ -62,7 +62,6 @@ def validate_download_url(u) -> str | None:
 
 
 https_url = validate_download_url  # legacy alias
-validate_url = validate_download_url  # legacy alias
 
 
 # ── Extract map / SHA-1 validation ──────────────────────────────

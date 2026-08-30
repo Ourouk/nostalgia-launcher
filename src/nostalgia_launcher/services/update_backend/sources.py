@@ -7,13 +7,12 @@ separate from the worker engines so both `VerifyWorker` and `UpdateWorker`
 share one definition; `http_update` re-exports these names for compatibility.
 """
 
-import urllib.request
 from typing import NamedTuple
-from urllib.error import HTTPError
 
-from ...core.constants import UA
 from ...core.log_sink import debug_emit
-from ...core.security_http import allowed_download_hosts, secure_urlopen
+from ...core.security_http import (
+    secure_urlopen,  # noqa: F401  (test compat shim after _source_reachable removal)
+)
 
 
 class DownloadSource(NamedTuple):
@@ -32,25 +31,6 @@ class DownloadSource(NamedTuple):
         URL when one exists (the stronger guarantee), else the server's
         ``magnet:`` URI."""
         return self.torrent_url or self.torrent_magnet
-
-
-def _source_reachable(url: str) -> bool:
-    """Whether a download source answers at `url`. Any HTTP response — even an
-    error status (4xx/5xx) — proves the host is reachable; only transport
-    failures (DNS, refused, timeout) count as down."""
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    try:
-        with secure_urlopen(
-            req,
-            timeout=5,
-            allowed_hosts=allowed_download_hosts(),
-        ) as r:
-            r.read(1)
-        return True
-    except HTTPError:
-        return True
-    except Exception:
-        return False
 
 
 def _download_source() -> "DownloadSource | None":

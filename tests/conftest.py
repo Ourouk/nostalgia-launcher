@@ -46,11 +46,15 @@ def _log_sink_env(tmp_path_factory, monkeypatch):
     plain unit tests never write any file.
     """
     import nostalgia_launcher.cli as cli_module
+    from nostalgia_launcher.core import constants as constants_module
     from nostalgia_launcher.core import log_sink
 
     scratch = str(tmp_path_factory.mktemp("logs") / "launcher.log")
     monkeypatch.setattr(log_sink, "LOG_FILE", scratch)
     monkeypatch.setattr(cli_module, "LOG_FILE", scratch)
+    # New live helper — keep backward compat for tests that patch it.
+    monkeypatch.setattr(constants_module, "log_file", lambda: scratch)
+    # log_sink also imports LOG_FILE directly; keep its copy patched.
     # A previous test's CLI startup may have enabled the sink; keep every
     # test starting from the disabled state.
     monkeypatch.setattr(log_sink, "_sink_path", None)
@@ -81,7 +85,17 @@ def _launcher_env():
 @pytest.fixture(autouse=True)
 def _profiles_env():
     """The active profile is process-global; drop any per-test activation
-    so a profile-scoped test can't bleed into later ones."""
+    so a profile-scoped test can't bleed into later ones.
+
+    Hardened ``profiles.active()`` now fails loudly when nothing was
+    activated — auto-activate the live default so most unit tests keep
+    working without explicit ``profiles.activate()``.
+    """
+    # Use live helper so a HOME redirection is reflected.
+    try:
+        profiles.activate(profiles.default_profile())
+    except Exception:
+        profiles._ACTIVE = None
     yield
     profiles._ACTIVE = None
 
@@ -122,14 +136,19 @@ def fake_home(tmp_path, monkeypatch):
     # The reserved default profile is a real directory; because its root is
     # resolved at import time it must be rebound to the (now redirected)
     # config dir so profile paths stay test-local.
-    monkeypatch.setattr(
-        profiles,
-        "DEFAULT",
-        profiles.Profile(
-            profiles.DEFAULT_PROFILE,
-            profiles.profile_root(profiles.DEFAULT_PROFILE),
-        ),
+    # Keep both the deprecated alias and the live helper in sync.
+    patched_default = profiles.Profile(
+        profiles.DEFAULT_PROFILE,
+        profiles.profile_root(profiles.DEFAULT_PROFILE),
     )
+    monkeypatch.setattr(profiles, "DEFAULT", patched_default)
+    # default_profile() is live via profile_root() -> config_dir() -> HOME,
+    # so no need to patch it, but keep _ACTIVE in sync if auto-activated.
+    if profiles._ACTIVE is not None:
+        try:
+            profiles._ACTIVE = profiles.default_profile()
+        except Exception:
+            pass
     return home
 
 
