@@ -189,6 +189,28 @@ class VerifyWorker(WorkerBase):
             if self.overwrite_config or not os.path.exists(cfg_wtf):
                 write_config_wtf(self.out_dir)
                 write_realmlist_wtf(self.out_dir)
+            # Torrent-only (no manifest URL) — skip HTTP fetch entirely.
+            # Respects server.download.torrent.update (magnet-only defaults
+            # to first-time-only): no manifest and no torrent-update → treat
+            # as manifest-unavailable without noisy Refusing non-HTTPS URL.
+            if not src.manifest_url:
+                from ...core import launcher as _launcher
+
+                _can_torrent_update = bool(
+                    _launcher.config()
+                    and _launcher.config().torrent_update_allowed()
+                )
+                if _can_torrent_update and self._torrent_verify(src):
+                    return
+                self.log_q.put((markers.MANIFEST_UNAVAILABLE, ""))
+                if torrent_recovery_available():
+                    self.log(
+                        "Manifest unavailable — a full re-download via "
+                        "BitTorrent is available (UPDATE).",
+                        "dim",
+                    )
+                self.log_q.put((markers.DIFF_TREE, None))
+                return
             req = urllib.request.Request(
                 src.manifest_url, headers={"User-Agent": UA}
             )
@@ -1018,6 +1040,8 @@ class UpdateWorker(WorkerBase):
                 self.log(f"  Refusing unsafe manifest path: {fname!r}", "err")
                 return
             dest = os.path.join(self.out_dir, rel)
+            if not src.client_url:
+                raise RuntimeError("No HTTP client URL — use BitTorrent")
             url = f"{src.client_url}/{rel}"
             self.log(f"[{t}]".ljust(7) + f"{rel}", "acct")
 
@@ -1265,35 +1289,60 @@ class UpdateWorker(WorkerBase):
                 self._source = _download_source()
                 if self._source is None:
                     raise RuntimeError("No download source configured.")
-                try:
-                    req = urllib.request.Request(
-                        self._source.manifest_url,
-                        headers={"User-Agent": UA},
+                # Torrent-only (no manifest URL) — skip HTTP fetch.
+                if not self._source.manifest_url:
+                    from ...core import launcher as _launcher2
+
+                    _can_upd = bool(
+                        _launcher2.config()
+                        and _launcher2.config().torrent_update_allowed()
                     )
-                    with secure_urlopen(
-                        req,
-                        timeout=DOWNLOAD_TIMEOUT,
-                        allowed_hosts=allowed_download_hosts(),
-                    ) as r:
-                        manifest = json.loads(read_capped(r, 16 * 1024 * 1024))
-                    # Same shape gate as the verify path: JSON that isn't a
-                    # manifest is "unavailable", not "update needed".
-                    if not isinstance(manifest.get("root"), dict):
-                        raise ValueError(
-                            "malformed manifest: 'root' is not an object"
-                        )
-                except Exception:
-                    # Manifest unavailable — fall back to a BitTorrent
-                    # recovery download instead of failing outright.
-                    if self._source.torrent_locator and _torrent_available():
-                        self.log(
-                            "\nManifest unavailable — downloading the client "
-                            "via BitTorrent…",
-                            "acct",
-                        )
+                    if (
+                        self._source.torrent_locator
+                        and _torrent_available()
+                        and _can_upd
+                    ):
                         torrent_recovery = True
                     else:
-                        raise
+                        raise RuntimeError(
+                            "No manifest and no BitTorrent update source."
+                        )
+                else:
+                    try:
+                        req = urllib.request.Request(
+                            self._source.manifest_url,
+                            headers={"User-Agent": UA},
+                        )
+                        with secure_urlopen(
+                            req,
+                            timeout=DOWNLOAD_TIMEOUT,
+                            allowed_hosts=allowed_download_hosts(),
+                        ) as r:
+                            manifest = json.loads(
+                                read_capped(r, 16 * 1024 * 1024)
+                            )
+                        # Same shape gate as the verify path: JSON that
+                        # isn't a manifest is "unavailable", not "update
+                        # needed".
+                        if not isinstance(manifest.get("root"), dict):
+                            raise ValueError(
+                                "malformed manifest: 'root' is not an object"
+                            )
+                    except Exception:
+                        # Manifest unavailable — fall back to a BitTorrent
+                        # recovery download instead of failing outright.
+                        if (
+                            self._source.torrent_locator
+                            and _torrent_available()
+                        ):
+                            self.log(
+                                "\nManifest unavailable — downloading the "
+                                "client via BitTorrent…",
+                                "acct",
+                            )
+                            torrent_recovery = True
+                        else:
+                            raise
                 if not torrent_recovery:
                     self._cache.pop(TORRENT_VALIDATION_CACHE_KEY, None)
                     self.log_q.put((markers.MANIFEST_AVAILABLE, ""))

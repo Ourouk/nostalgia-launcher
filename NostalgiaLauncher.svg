@@ -1,46 +1,299 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800" role="img" aria-label="Nostalgia Launcher logo — square">
-<defs>
- <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ffe7a1"/><stop offset=".38" stop-color="#e8a62f"/><stop offset=".72" stop-color="#a96112"/><stop offset="1" stop-color="#61340c"/></linearGradient>
- <linearGradient id="goldLite" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff1bd"/><stop offset=".5" stop-color="#d89022"/><stop offset="1" stop-color="#7a400b"/></linearGradient>
- <linearGradient id="steel" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#58616a"/><stop offset=".25" stop-color="#f2eee1"/><stop offset=".55" stop-color="#8d969e"/><stop offset="1" stop-color="#343c45"/></linearGradient>
- <linearGradient id="navy" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#31547d"/><stop offset="1" stop-color="#0d2039"/></linearGradient>
- <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#000" flood-opacity=".55"/></filter>
-</defs>
-<g transform="translate(20 170) scale(.543)" >
-<!-- refined emblem -->
-<g stroke="#2a1a0d" stroke-linejoin="round">
- <!-- centered decorative divider -->
- <path d="M600 385H800" stroke="url(#gold)" stroke-width="8"/>
- <path d="M605 385H795" stroke="#fff0ba" stroke-opacity=".45" stroke-width="2"/>
- <path d="M660 385l18-14 18 14-18 14zM722 385l18-14 18 14-18 14z" fill="url(#gold)" stroke-width="4"/>
- <!-- sword behind shield: handle -->
- <path d="M678 52q22-18 44 0l-5 143h-34z" fill="#4a2b16" stroke-width="8"/>
- <path d="M683 72h34M682 102h35M681 132h36" stroke="#7c4a20" stroke-width="6"/>
- <circle cx="700" cy="43" r="34" fill="url(#gold)" stroke-width="8"/>
- <circle cx="700" cy="43" r="19" fill="#183e69" stroke="#8d5316" stroke-width="5"/>
- <!-- crossguard -->
- <path d="M700 150l-34 30-72 2-18 31 30 15 76-22h36l76 22 30-15-18-31-72-2z" fill="url(#goldLite)" stroke-width="8"/>
- <!-- shield -->
- <path d="M700 185 875 255l-25 220q-54 115-150 170-96-55-150-170l-25-220z" fill="url(#navy)" stroke-width="13"/>
- <path d="M700 208 848 268l-23 196q-42 91-125 143-83-52-125-143l-23-196z" fill="none" stroke="#c98623" stroke-width="6" opacity=".9"/>
- <!-- sword blade pointing DOWN -->
- <path d="M678 184h44v367l-22 105-22-105z" fill="url(#steel)" stroke-width="8"/>
- <path d="M700 194v430" stroke="#fff" stroke-opacity=".65" stroke-width="4"/>
- <path d="M700 640l-20 48 20 35 20-35z" fill="url(#goldLite)" stroke-width="7"/>
- <!-- gem -->
- <path d="M700 142l34 34-34 34-34-34z" fill="#15559a" stroke="#dca23b" stroke-width="8"/>
- <path d="M700 157l18 19-18 18-18-18z" fill="#2c86d1" opacity=".8" stroke="none"/>
-</g>
-<!-- wordmark foreground -->
-<g>
- <text x="700" y="485" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="166" font-weight="bold" letter-spacing="-5" fill="url(#gold)" stroke="#321e0f" stroke-width="9" paint-order="stroke fill">Nostalgia</text>
- <text x="700" y="485" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="166" font-weight="bold" letter-spacing="-5" fill="url(#gold)" stroke="#f7c968" stroke-opacity=".32" stroke-width="2" paint-order="stroke fill">Nostalgia</text>
-</g>
-<!-- launcher banner -->
-<g>
- <path d="M445 522h510l-40 76H485z" fill="#132d4d" stroke="#9d641b" stroke-width="7"/>
- <text x="700" y="577" text-anchor="middle" font-family="Georgia, serif" font-size="43" font-weight="bold" letter-spacing="10" fill="#f4ead5">LAUNCHER</text>
- <path d="M700 612l18 18-18 18-18-18z" fill="url(#goldLite)" stroke="#2a1a0d" stroke-width="5"/>
-</g>
-</g>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="391.77432"
+   height="391.77432"
+   viewBox="0 0 391.77432 391.77432"
+   role="img"
+   aria-label="Nostalgia Launcher logo — square"
+   version="1.1"
+   id="svg28"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs13">
+    <linearGradient
+       id="gold"
+       x1="0"
+       y1="0"
+       x2="0"
+       y2="1">
+      <stop
+         stop-color="#ffe7a1"
+         id="stop1" />
+      <stop
+         offset=".38"
+         stop-color="#e8a62f"
+         id="stop2" />
+      <stop
+         offset=".72"
+         stop-color="#a96112"
+         id="stop3" />
+      <stop
+         offset="1"
+         stop-color="#61340c"
+         id="stop4" />
+    </linearGradient>
+    <linearGradient
+       id="goldLite"
+       x1="0"
+       y1="0"
+       x2="1"
+       y2="1">
+      <stop
+         stop-color="#fff1bd"
+         id="stop5" />
+      <stop
+         offset=".5"
+         stop-color="#d89022"
+         id="stop6" />
+      <stop
+         offset="1"
+         stop-color="#7a400b"
+         id="stop7" />
+    </linearGradient>
+    <linearGradient
+       id="steel"
+       x1="2047.7557"
+       y1="59.24535"
+       x2="2205.7429"
+       y2="59.24535"
+       gradientTransform="scale(0.32914083,3.0382132)"
+       gradientUnits="userSpaceOnUse">
+      <stop
+         stop-color="#58616a"
+         id="stop8" />
+      <stop
+         offset=".25"
+         stop-color="#f2eee1"
+         id="stop9" />
+      <stop
+         offset=".55"
+         stop-color="#8d969e"
+         id="stop10" />
+      <stop
+         offset="1"
+         stop-color="#343c45"
+         id="stop11" />
+    </linearGradient>
+    <linearGradient
+       id="navy"
+       x1="591.86963"
+       y1="156.37276"
+       x2="591.86963"
+       y2="570.7384"
+       gradientTransform="scale(0.8760376,1.1415035)"
+       gradientUnits="userSpaceOnUse">
+      <stop
+         stop-color="#31547d"
+         id="stop12" />
+      <stop
+         offset="1"
+         stop-color="#0d2039"
+         id="stop13" />
+    </linearGradient>
+    <linearGradient
+       xlink:href="#gold"
+       id="linearGradient2"
+       x1="662"
+       y1="5"
+       x2="662"
+       y2="81"
+       gradientUnits="userSpaceOnUse" />
+    <linearGradient
+       xlink:href="#goldLite"
+       id="linearGradient3"
+       x1="331.53186"
+       y1="251.89767"
+       x2="479.90952"
+       y2="400.27533"
+       gradientTransform="scale(1.7253249,0.57960097)"
+       gradientUnits="userSpaceOnUse" />
+    <linearGradient
+       xlink:href="#goldLite"
+       id="linearGradient4"
+       x1="936.13464"
+       y1="459.96872"
+       x2="1001.1727"
+       y2="525.00677"
+       gradientTransform="scale(0.72265252,1.3837909)"
+       gradientUnits="userSpaceOnUse" />
+    <linearGradient
+       xlink:href="#gold"
+       id="linearGradient5"
+       x1="195.77069"
+       y1="721.53571"
+       x2="195.77069"
+       y2="1039.1577"
+       gradientTransform="scale(1.9750716,0.50631076)"
+       gradientUnits="userSpaceOnUse" />
+    <linearGradient
+       xlink:href="#gold"
+       id="linearGradient6"
+       x1="194.28259"
+       y1="740.67224"
+       x2="194.28259"
+       y2="1049.5667"
+       gradientTransform="scale(2.0082145,0.49795477)"
+       gradientUnits="userSpaceOnUse" />
+    <linearGradient
+       xlink:href="#goldLite"
+       id="linearGradient7"
+       x1="678.46448"
+       y1="608.46448"
+       x2="721.53552"
+       y2="651.53552"
+       gradientUnits="userSpaceOnUse" />
+  </defs>
+  <g
+     transform="matrix(0.543,0,0,0.543,-184.257,-2.7149974)"
+     id="logo">
+    <!-- refined emblem -->
+    <g
+       stroke="#2a1a0d"
+       stroke-linejoin="round"
+       id="g25">
+      <!-- centered decorative divider -->
+      <!-- sword behind shield: handle -->
+      <path
+         d="m 678,52 q 22,-18 44,0 l -5,143 h -34 z"
+         fill="#4a2b16"
+         stroke-width="8"
+         id="path16" />
+      <path
+         d="m 683,72 h 34 m -35,30 h 35 m -36,30 h 36"
+         stroke="#7c4a20"
+         stroke-width="6"
+         id="path17" />
+      <circle
+         cx="700"
+         cy="43"
+         r="34"
+         fill="url(#gold)"
+         stroke-width="8"
+         id="circle17"
+         style="fill:url(#linearGradient2)" />
+      <circle
+         cx="700"
+         cy="43"
+         r="19"
+         fill="#183e69"
+         stroke="#8d5316"
+         stroke-width="5"
+         id="circle18" />
+      <!-- crossguard -->
+      <path
+         d="m 700,150 -34,30 -72,2 -18,31 30,15 76,-22 h 36 l 76,22 30,-15 -18,-31 -72,-2 z"
+         fill="url(#goldLite)"
+         stroke-width="8"
+         id="path18"
+         style="fill:url(#linearGradient3)" />
+      <!-- shield -->
+      <path
+         d="m 700,185 175,70 -25,220 Q 796,590 700,645 604,590 550,475 L 525,255 Z"
+         fill="url(#navy)"
+         stroke-width="13"
+         id="path19"
+         style="fill:url(#navy)" />
+      <path
+         d="m 700,208 148,60 -23,196 Q 783,555 700,607 617,555 575,464 L 552,268 Z"
+         fill="none"
+         stroke="#c98623"
+         stroke-width="6"
+         opacity="0.9"
+         id="path20" />
+      <!-- sword blade pointing DOWN -->
+      <path
+         d="m 678,184 h 44 V 551 L 700,656 678,551 Z"
+         fill="url(#steel)"
+         stroke-width="8"
+         id="path21"
+         style="fill:url(#steel)" />
+      <path
+         d="M 700,194 V 624"
+         stroke="#ffffff"
+         stroke-opacity="0.65"
+         stroke-width="4"
+         id="path22" />
+      <path
+         d="m 700,640 -20,48 20,35 20,-35 z"
+         fill="url(#goldLite)"
+         stroke-width="7"
+         id="path23"
+         style="fill:url(#linearGradient4)" />
+      <!-- gem -->
+      <path
+         d="m 700,142 34,34 -34,34 -34,-34 z"
+         fill="#15559a"
+         stroke="#dca23b"
+         stroke-width="8"
+         id="path24" />
+      <path
+         d="m 700,157 18,19 -18,18 -18,-18 z"
+         fill="#2c86d1"
+         opacity="0.8"
+         stroke="none"
+         id="path25" />
+    </g>
+    <!-- wordmark foreground -->
+    <g
+       id="g26">
+      <text
+         x="700"
+         y="485"
+         text-anchor="middle"
+         font-family="Georgia, 'Times New Roman', serif"
+         font-size="166px"
+         font-weight="bold"
+         letter-spacing="-5"
+         fill="url(#gold)"
+         stroke="#321e0f"
+         stroke-width="9"
+         paint-order="stroke fill"
+         id="text25"
+         style="fill:url(#linearGradient5)">Nostalgia</text>
+      <text
+         x="700"
+         y="485"
+         text-anchor="middle"
+         font-family="Georgia, 'Times New Roman', serif"
+         font-size="166px"
+         font-weight="bold"
+         letter-spacing="-5"
+         fill="url(#gold)"
+         stroke="#f7c968"
+         stroke-opacity="0.32"
+         stroke-width="2"
+         paint-order="stroke fill"
+         id="text26"
+         style="fill:url(#linearGradient6)">Nostalgia</text>
+    </g>
+    <!-- launcher banner -->
+    <g
+       id="g27">
+      <path
+         d="m 445,522 h 510 l -40,76 H 485 Z"
+         fill="#132d4d"
+         stroke="#9d641b"
+         stroke-width="7"
+         id="path26" />
+      <text
+         x="700"
+         y="577"
+         text-anchor="middle"
+         font-family="Georgia, serif"
+         font-size="43px"
+         font-weight="bold"
+         letter-spacing="10"
+         fill="#f4ead5"
+         id="text27">LAUNCHER</text>
+      <path
+         d="m 700,612 18,18 -18,18 -18,-18 z"
+         fill="url(#goldLite)"
+         stroke="#2a1a0d"
+         stroke-width="5"
+         id="path27"
+         style="fill:url(#linearGradient7)" />
+    </g>
+  </g>
 </svg>

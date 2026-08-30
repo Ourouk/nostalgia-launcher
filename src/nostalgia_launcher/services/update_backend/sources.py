@@ -36,14 +36,12 @@ class DownloadSource(NamedTuple):
 def _download_source() -> "DownloadSource | None":
     """Resolve the active download source from the server's ``download`` block.
 
-    Returns None when the launcher configuration is missing or carries no
-    manifest/client endpoints."""
+    Returns None when the launcher configuration is missing.
+    A torrent-only source (no HTTP endpoints) is a valid download source."""
     from ...core import launcher
 
     cfg = launcher.config()
     if cfg is None:
-        return None
-    if not (cfg.download_manifest_url or cfg.download_client_url):
         return None
     debug_emit(
         f"[torrent] selected server {cfg.server_name} "

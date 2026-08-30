@@ -715,18 +715,51 @@ class UpdateController:
                 return Readiness("busy", "READY", "Client updates disabled")
             return Readiness("play", "PLAY", "Client updates disabled")
         if not self.state.manifest_available:
+            # Disabled till verification for torrent-only (cache makes this
+            # instant via TORRENT_VALIDATION_CACHE_KEY). Magnet-only with
+            # torrent.update=false skips incremental verify → Download.
+            if (
+                self.state.torrent_stale is None
+                and self.state.torrent_reachable is None
+                and self.state.torrent_error is None
+                and not self.state.client_ready
+            ):
+                from ..core import launcher as _launcher_v
+
+                _vcfg = _launcher_v.config()
+                # Only when torrent is the expected path (no manifest URL)
+                _torrent_only = bool(
+                    _vcfg
+                    and _vcfg.has_torrent()
+                    and not _vcfg.download_manifest_url
+                )
+                if _torrent_only:
+                    # Respect torrent.update flag; magnet-only first-time-only
+                    # still shows Download via BitTorrent, not Verifying.
+                    if _vcfg.torrent_update_allowed():
+                        if not self._playable_client_present():
+                            return Readiness("disabled", "UPDATE", "Verifying…")
+                        return Readiness("disabled", "PLAY", "Verifying…")
             # No manifest → can't verify via SHA-1, but a torrent-only verify
             # may have established readiness or a stale-file list.
             if self.state.torrent_stale:
-                n = len(self.state.torrent_stale)
-                error_suffix = ""
-                if self.state.torrent_error:
-                    error_suffix = f" ({self.state.torrent_error})"
-                return Readiness(
-                    "update",
-                    "UPDATE",
-                    f"{n} file(s) to update via BitTorrent{error_suffix}",
-                )
+                # Magnet-only first-time-only: don't offer incremental
+                # torrent updates (server.download.torrent.update).
+                from ..core import launcher as _launcher_cfg
+
+                _cfg = _launcher_cfg.config()
+                if _cfg is not None and not _cfg.torrent_update_allowed():
+                    pass  # fall through — no torrent update for magnet-only
+                else:
+                    n = len(self.state.torrent_stale)
+                    error_suffix = ""
+                    if self.state.torrent_error:
+                        error_suffix = f" ({self.state.torrent_error})"
+                    return Readiness(
+                        "update",
+                        "UPDATE",
+                        f"{n} file(s) to update via BitTorrent{error_suffix}",
+                    )
             if self.state.torrent_reachable is False:
                 # Neither the manifest nor the BitTorrent snapshot is
                 # reachable — there is no update to offer. Play if we can,
@@ -745,7 +778,7 @@ class UpdateController:
                 return Readiness(
                     "play", "PLAY", f"Torrent unavailable{error_detail}"
                 )
-            if self.state.torrent_error and not self.state.torrent_stale:
+            if self.state.torrent_error and self.state.torrent_stale is None:
                 # Torrent reachable but had an error (stalled, session, disk,
                 # verify failed). Offer recovery so the user can retry — but
                 # never at the cost of stranding an installed client: with a

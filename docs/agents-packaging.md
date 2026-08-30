@@ -26,8 +26,11 @@ uv run pyinstaller --noconfirm --clean NostalgiaLauncher.spec        # Windows o
 - macOS: `build-dmg.sh` must run on macOS with a *universal* Python/PySide6
   (`lipo -archs` verifies both arm64+x86_64 and fails otherwise). UPX is off in
   `NostalgiaLauncher-macos.spec` (unsupported on macOS); the `.icns` is built
-  by `build-icons.sh` from `packaging/icons/NostalgiaLauncher.png`. The result
-  is unsigned by default — signing/notarization are opt-in via env vars.
+  by `build-icons.sh` from `packaging/icons/NostalgiaLauncher.png`. The PNG
+  source is `NostalgiaLauncher.svg` (not the old `generate_icon.py` "N" monogram);
+  both the `build-icons.sh` script and `generate_icon.py` have been updated to
+  render from the SVG so all platforms share the same vector-sourced icon.
+  The result is unsigned by default — signing/notarization are opt-in via env vars.
 
 ## CI/CD
 

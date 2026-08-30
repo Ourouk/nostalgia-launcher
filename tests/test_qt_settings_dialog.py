@@ -175,7 +175,8 @@ def test_mirror_rows_render_configured_sources(qapp, window):
     assert hub.settings._http_mirror_names() == ["Test Server"]
 
 
-def test_no_http_mirrors_shows_direct_server_hint(qapp, window):
+def test_torrent_only_shows_as_configured_source(qapp, window):
+    hub = window._hub
     launcher.configure_from_dict(
         {
             "server": {
@@ -189,18 +190,13 @@ def test_no_http_mirrors_shows_direct_server_hint(qapp, window):
             }
         }
     )
+    assert hub.settings._http_mirror_names() == ["ExampleServer"]
     dialog = _open(window)
-    hint = dialog.findChild(QLabel, "settingsMirrorEmpty")
-    assert hint is not None
-    assert hint.text() == (
-        "No download source configured — set server.download.http."
-    )
     assert (
-        dialog.findChild(QLabel, "settingsMirrorStatus_ExampleServer") is None
+        dialog.findChild(QLabel, "settingsMirrorStatus_ExampleServer")
+        is not None
     )
-    assert not dialog.findChild(
-        QToolButton, "settingsMirrorRefresh"
-    ).isVisible()
+    assert dialog.findChild(QLabel, "settingsMirrorEmpty") is None
 
 
 def test_mirror_status_renders_initial_state(qapp, window):
