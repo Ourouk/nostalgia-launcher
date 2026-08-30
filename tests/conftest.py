@@ -54,7 +54,9 @@ def _log_sink_env(tmp_path_factory, monkeypatch):
     # A previous test's CLI startup may have enabled the sink; keep every
     # test starting from the disabled state.
     monkeypatch.setattr(log_sink, "_sink_path", None)
+    monkeypatch.setattr(log_sink, "_dispatcher", None)
     yield
+    log_sink.set_dispatcher(None)
 
 
 @pytest.fixture(autouse=True)
