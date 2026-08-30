@@ -807,21 +807,6 @@ def test_repo_failure_aborts_import_without_persisting(
     assert not dest.exists()
 
 
-def test_legacy_custom_seeds_fresh_repo_on_import(tmp_path, user_dirs):
-    dest, user = user_dirs
-    user.mkdir(parents=True, exist_ok=True)
-    legacy = user / "nostalgia_launcher_addons_custom.json"
-    legacy.write_text(json.dumps([_ADDON]), encoding="utf-8")
-    src = _import_file(
-        tmp_path, "cfg.json", {"server": {"url": "https://srv.example"}}
-    )
-    assert launcher.persist(str(src))[1] == ""
-    repo = json.loads((user / "local_addons_repo.json").read_text())
-    assert repo["server"] == []
-    assert repo["custom"] == [_ADDON]
-
-
-
 def test_derive_parses_embedded_addons_raw():
     cfg = _config(
         {

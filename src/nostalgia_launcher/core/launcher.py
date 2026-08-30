@@ -423,6 +423,7 @@ def _derive(data: dict) -> LauncherConfig:
 
     server_url = (
         _https_url(server.get("url"))
+        or _https_url(server.get("base_url"))
         or _host_of(download_manifest_url)
         or _host_of(download_torrent_url)
         or host
