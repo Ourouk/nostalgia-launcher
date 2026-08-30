@@ -640,6 +640,12 @@ class UpdateWorker(WorkerBase):
         self._torrent_wanted: set[str] = set()
 
     def download(self, url, dest, size, name=""):
+        """HTTP helper (§6) — per-file HTTPS download with resume/retry.
+
+        Simple manifest path: fetch -> SHA check; no torrent piece logic
+        or priority mapping.
+        """
+
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         tmp = dest + ".tmp"
         name = name or os.path.basename(dest)
@@ -802,15 +808,20 @@ class UpdateWorker(WorkerBase):
         return self.file_matches(dest, node["hash"])
 
     def _torrent_download(self, nodes) -> bool:
-        """Bulk-download the stale files via BitTorrent when the active source
-        advertises a torrent snapshot (HTTPS ``.torrent`` URL or server
-        magnet) and libtorrent is available. Returns True
-        when the torrent backend ran; the delivered paths are remembered in
-        ``_torrent_wanted`` for the caller's manifest SHA-1 re-check
-        (``_reverify_torrent_files``). Returns False when the torrent backend
-        was not used (no snapshot advertised, libtorrent missing, or the
-        download failed), in which case the caller falls back to
-        ``traverse()`` for HTTP downloads with manifest re-verification."""
+        """Torrent-only helper (§6) — bulk-download stale files via
+        BitTorrent when the active source advertises a torrent snapshot
+        (HTTPS ``.torrent`` URL or server magnet) and libtorrent is
+        available. Returns True when the torrent backend ran; the delivered
+        paths are remembered in ``_torrent_wanted`` for the caller's manifest
+        SHA-1 re-check (``_reverify_torrent_files``). Returns False when the
+        torrent backend was not used (no snapshot advertised, libtorrent
+        missing, or the download failed), in which case the caller falls
+        back to ``traverse()`` for HTTP downloads with manifest
+        re-verification.
+
+        Not part of the simple HTTP fallback (manifest -> SHA check ->
+        download missing -> verify); uses ``_collect_wanted`` to map
+        manifest stale files to torrent priorities."""
         src = self._source
         if src is None or not src.torrent_locator:
             return False
@@ -853,8 +864,14 @@ class UpdateWorker(WorkerBase):
             return False
 
     def _collect_wanted(self, node, path_parts, wanted):
-        """Collect the relative paths of stale file/mpq nodes for the torrent
-        backend, reusing the same up-to-date checks as `traverse`."""
+        """Torrent-only helper (§6) — collect stale file/mpq paths for the
+        torrent backend, reusing the same up-to-date checks as `traverse`.
+
+        Maps manifest stale files to torrent priorities; not used by the
+        simple HTTP fallback (manifest -> SHA check -> download missing ->
+        verify).  Candidate to move to ``torrent_update`` or delete if
+        duplicated there.  Kept here only for the torrent bulk-download
+        shim ``_torrent_download``."""
         if self._cancel:
             return
         t = node["type"]
@@ -884,12 +901,17 @@ class UpdateWorker(WorkerBase):
                 wanted.add(rel)
 
     def _reverify_torrent_files(self, nodes):
-        """SHA-1 re-check of exactly the files BitTorrent delivered, against
-        the manifest's hashes. Anything missing or mismatched is re-fetched
-        over HTTPS with ``download``'s resume/retry, so a torrent bulk
-        download cannot weaken the manifest's integrity guarantee. No-op when
-        no manifest tree exists (the recovery path — there the torrent's
-        piece hashes, received over TLS, are the only guarantee)."""
+        """Torrent-only helper (§6) — SHA-1 re-check of exactly the files
+        BitTorrent delivered, against the manifest's hashes. Anything
+        missing or mismatched is re-fetched over HTTPS with ``download``'s
+        resume/retry, so a torrent bulk download cannot weaken the manifest's
+        integrity guarantee. No-op when no manifest tree exists (the recovery
+        path — there the torrent's piece hashes, received over TLS, are the
+        only guarantee).
+
+        Not used by the simple HTTP fallback; only paired with
+        ``_torrent_download`` / ``_collect_wanted``.  Candidate to move to
+        ``torrent_update`` or delete."""
         wanted = self._torrent_wanted
         if not wanted:
             return
@@ -939,10 +961,11 @@ class UpdateWorker(WorkerBase):
         self._torrent_wanted = set()
 
     def _sum_needed_bytes(self, nodes) -> int:
-        """Total bytes of the files that actually need downloading (those not
-        already matching the manifest), so the update progress bar can span
-        0→100 across exactly the files that need updating — not the whole
-        client."""
+        """HTTP helper (§6) — total bytes of files that actually need
+        downloading (those not already matching the manifest), so the
+        progress bar can span 0→100 across exactly the files that need
+        updating — not the whole client.  Pure manifest SHA-check path;
+        does not use torrent piece logic or priorities."""
         total = 0
 
         def walk(node, path_parts):
@@ -975,8 +998,10 @@ class UpdateWorker(WorkerBase):
         return total
 
     def _download_verified(self, node, url: str, dest: str, rel: str):
-        """Download one manifest node and enforce its SHA-1: on mismatch the
-        partial file is removed and fetched once more before giving up."""
+        """HTTP helper (§6) — download one manifest node and enforce its
+        SHA-1: on mismatch the partial file is removed and fetched once more
+        before giving up.  Simple manifest -> SHA check -> download -> verify;
+        no torrent piece logic."""
         got_hash = self.download(url, dest, node["size"], rel)
         if (got_hash or sha1_file(dest)) == node["hash"]:
             return
@@ -1013,6 +1038,9 @@ class UpdateWorker(WorkerBase):
             self.log("Could not read client version from WoW.exe", "dim")
 
     def traverse(self, node, path_parts):
+        """HTTP helper (§6) — walk manifest tree, SHA-check each file,
+        download missing via ``_download_verified``.  No torrent piece
+        logic; manifest -> SHA check -> download is the whole path."""
 
         if self._cancel:
             return
@@ -1067,14 +1095,17 @@ class UpdateWorker(WorkerBase):
                     self.log(f"  Could not remove {rel}: {e}", "err")
 
     def _recovery_download(self, wanted: set[str] | None = None):
-        """Manifest-less recovery: download the client via BitTorrent.
+        """Torrent-only helper (§6) — manifest-less recovery via BitTorrent.
 
         ``wanted`` is the set of stale file paths (from a prior torrent
         verify) to download; None means the whole torrent. The files are
         verified against the torrent's embedded piece hashes (the ``.torrent``
-        itself arrived over TLS); there is no per-file manifest SHA-1 to check
-        against in this degraded path. Raises on failure/cancellation, which
-        the caller's except block turns into an ``__ERROR__``."""
+        itself arrived over TLS); there is no per-file manifest SHA-1 to
+        check against in this degraded path. Raises on failure/cancellation,
+        which the caller's except block turns into an ``__ERROR__``.
+
+        Not part of the HTTP fallback; torrent recovery has no manifest.
+        """
         from .torrent_update import (
             TorrentCorruptError,
             TorrentDiskError,
@@ -1359,6 +1390,12 @@ class UpdateWorker(WorkerBase):
                 self._source = _download_source()
             if self._source is None:
                 raise RuntimeError("No download source configured.")
+            # §6 — HTTP fallback is simple: manifest -> SHA check -> download
+            # missing -> verify.  Torrent bulk path (_torrent_download +
+            # _reverify_torrent_files / _collect_wanted) is only a shim that
+            # maps stale files to torrent priorities; when torrent is
+            # unavailable or fails, the plain HTTP path below runs without
+            # any torrent metadata.
             ran_torrent = self._torrent_download(nodes)
             if ran_torrent:
                 # Piece hashes prove what peers sent; when a manifest exists
@@ -1366,10 +1403,8 @@ class UpdateWorker(WorkerBase):
                 # delivered files and HTTP-refetch any mismatch.
                 self._reverify_torrent_files(nodes)
             else:
-                # The BitTorrent backend didn't fetch the files, so fall back
-                # to the per-file HTTP download (which re-verifies each file
-                # against the manifest). The update progress bar spans 0→100
-                # across exactly the files that need updating.
+                # Simple HTTP path (no torrent piece logic, no priorities):
+                # SHA-check each file and download what is missing.
                 self._total = self._sum_needed_bytes(nodes)
                 self._downloaded = 0
                 for child in nodes:
