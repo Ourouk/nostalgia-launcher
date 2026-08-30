@@ -53,4 +53,19 @@ exclude = ["dist", "build"]
 select = ["E4", "E7", "E9", "F", "I", "W", "UP", "B"]
 
 [tool.pyright]
-typeCheckingMode = "standard"
+typeCheckingMode = "basic"
+# LSP only — not a gate; keep noise low for packaging + optional deps
+reportMissingImports = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnknownParameterType = false
+reportAttributeAccessIssue = false
+reportOptionalMemberAccess = false
+reportCallIssue = false
+reportArgumentType = false
+reportRedeclaration = false
+reportPossiblyUnboundVariable = false
+reportReturnType = false
+include = ["src/nostalgia_launcher"]
+exclude = ["packaging", "context", "tests"]
