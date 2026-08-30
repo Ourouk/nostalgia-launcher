@@ -156,6 +156,7 @@ class UpdateController:
             self._log_q,
             self._prog_q,
             overwrite_config=overwrite_config,
+            dispatcher=self._dispatcher,
         )
         self._verify_worker = worker
         threading.Thread(target=worker.run, daemon=True).start()
@@ -220,6 +221,7 @@ class UpdateController:
             out,
             self._log_q,
             self._prog_q,
+            dispatcher=self._dispatcher,
         )
         self._worker = worker
         diff = self.state.diff_nodes
@@ -265,7 +267,9 @@ class UpdateController:
         self.state.status = "Downloading client…"
         self._log_q = queue.Queue()
         self._prog_q = queue.Queue()
-        worker = UpdateWorker(out, self._log_q, self._prog_q)
+        worker = UpdateWorker(
+            out, self._log_q, self._prog_q, dispatcher=self._dispatcher
+        )
         self._worker = worker
         threading.Thread(
             target=worker.run, kwargs={"recovery_full": True}, daemon=True

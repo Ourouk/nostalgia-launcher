@@ -688,8 +688,15 @@ class TorrentVerifier(WorkerBase):
     final integrity.
     """
 
-    def __init__(self, out_dir: str, log_q: queue.Queue, prog_q: queue.Queue):
-        super().__init__(out_dir, log_q, prog_q)
+    def __init__(
+        self,
+        out_dir: str,
+        log_q: queue.Queue | None = None,
+        prog_q: queue.Queue | None = None,
+        *,
+        dispatcher=None,
+    ):
+        super().__init__(out_dir, log_q, prog_q, dispatcher=dispatcher)
         self.snapshot: TorrentSnapshot | None = None
 
     def _session(self):
@@ -884,8 +891,15 @@ class TorrentVerifier(WorkerBase):
 
 
 class TorrentDownloader(WorkerBase):
-    def __init__(self, out_dir: str, log_q: queue.Queue, prog_q: queue.Queue):
-        super().__init__(out_dir, log_q, prog_q)
+    def __init__(
+        self,
+        out_dir: str,
+        log_q: queue.Queue | None = None,
+        prog_q: queue.Queue | None = None,
+        *,
+        dispatcher=None,
+    ):
+        super().__init__(out_dir, log_q, prog_q, dispatcher=dispatcher)
         self.snapshot: TorrentSnapshot | None = None
 
     def _priorities(

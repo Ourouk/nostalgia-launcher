@@ -116,11 +116,13 @@ class VerifyWorker(WorkerBase):
     def __init__(
         self,
         out_dir: str,
-        log_q: queue.Queue,
-        prog_q: queue.Queue,
+        log_q: queue.Queue | None = None,
+        prog_q: queue.Queue | None = None,
         overwrite_config: bool = False,
+        *,
+        dispatcher=None,
     ):
-        super().__init__(out_dir, log_q, prog_q)
+        super().__init__(out_dir, log_q, prog_q, dispatcher=dispatcher)
         self.overwrite_config = overwrite_config
         self._cache: dict = load_cache()
 
@@ -429,7 +431,17 @@ class VerifyWorker(WorkerBase):
         # Run the full libtorrent recheck of the on-disk files (None snapshot
         # lets the verifier fetch it; a pre-fetched snapshot is reused).
         try:
-            verifier = TorrentVerifier(self.out_dir, self.log_q, self.prog_q)
+            try:
+                verifier = TorrentVerifier(
+                    self.out_dir,
+                    self.log_q,
+                    self.prog_q,
+                    dispatcher=self._dispatcher,
+                )
+            except TypeError:
+                verifier = TorrentVerifier(
+                    self.out_dir, self.log_q, self.prog_q
+                )
             self.log(
                 "Manifest unavailable — verifying client against the "
                 "BitTorrent snapshot…",
@@ -584,10 +596,12 @@ class UpdateWorker(WorkerBase):
     def __init__(
         self,
         out_dir: str,
-        log_q: queue.Queue,
-        prog_q: queue.Queue,
+        log_q: queue.Queue | None = None,
+        prog_q: queue.Queue | None = None,
+        *,
+        dispatcher=None,
     ):
-        super().__init__(out_dir, log_q, prog_q)
+        super().__init__(out_dir, log_q, prog_q, dispatcher=dispatcher)
         self._cache: dict = load_cache()
         self._source: DownloadSource | None = None
         # Total bytes of the files that actually need downloading, and how many
@@ -796,7 +810,15 @@ class UpdateWorker(WorkerBase):
         try:
             from .torrent_update import TorrentDownloader
 
-            dl = TorrentDownloader(self.out_dir, self.log_q, self.prog_q)
+            try:
+                dl = TorrentDownloader(
+                    self.out_dir,
+                    self.log_q,
+                    self.prog_q,
+                    dispatcher=self._dispatcher,
+                )
+            except TypeError:
+                dl = TorrentDownloader(self.out_dir, self.log_q, self.prog_q)
             dl.download(src.torrent_locator, wanted)
             self._torrent_wanted = wanted
             self.log("[torrent] BitTorrent download complete.", "ok")
@@ -1038,7 +1060,15 @@ class UpdateWorker(WorkerBase):
             TorrentStalledError,
         )
 
-        dl = TorrentDownloader(self.out_dir, self.log_q, self.prog_q)
+        try:
+            dl = TorrentDownloader(
+                self.out_dir,
+                self.log_q,
+                self.prog_q,
+                dispatcher=self._dispatcher,
+            )
+        except TypeError:
+            dl = TorrentDownloader(self.out_dir, self.log_q, self.prog_q)
         scope = "full client" if wanted is None else f"{len(wanted)} file(s)"
         self.log(f"[torrent] Starting recovery download ({scope}).", "acct")
         try:
