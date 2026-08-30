@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800" role="img" aria-label="Nostalgia Launcher logo — square">
+<defs>
+ <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ffe7a1"/><stop offset=".38" stop-color="#e8a62f"/><stop offset=".72" stop-color="#a96112"/><stop offset="1" stop-color="#61340c"/></linearGradient>
+ <linearGradient id="goldLite" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff1bd"/><stop offset=".5" stop-color="#d89022"/><stop offset="1" stop-color="#7a400b"/></linearGradient>
+ <linearGradient id="steel" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#58616a"/><stop offset=".25" stop-color="#f2eee1"/><stop offset=".55" stop-color="#8d969e"/><stop offset="1" stop-color="#343c45"/></linearGradient>
+ <linearGradient id="navy" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#31547d"/><stop offset="1" stop-color="#0d2039"/></linearGradient>
+ <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#000" flood-opacity=".55"/></filter>
+</defs>
+<g transform="translate(20 170) scale(.543)" >
+<!-- refined emblem -->
+<g stroke="#2a1a0d" stroke-linejoin="round">
+ <!-- centered decorative divider -->
+ <path d="M600 385H800" stroke="url(#gold)" stroke-width="8"/>
+ <path d="M605 385H795" stroke="#fff0ba" stroke-opacity=".45" stroke-width="2"/>
+ <path d="M660 385l18-14 18 14-18 14zM722 385l18-14 18 14-18 14z" fill="url(#gold)" stroke-width="4"/>
+ <!-- sword behind shield: handle -->
+ <path d="M678 52q22-18 44 0l-5 143h-34z" fill="#4a2b16" stroke-width="8"/>
+ <path d="M683 72h34M682 102h35M681 132h36" stroke="#7c4a20" stroke-width="6"/>
+ <circle cx="700" cy="43" r="34" fill="url(#gold)" stroke-width="8"/>
+ <circle cx="700" cy="43" r="19" fill="#183e69" stroke="#8d5316" stroke-width="5"/>
+ <!-- crossguard -->
+ <path d="M700 150l-34 30-72 2-18 31 30 15 76-22h36l76 22 30-15-18-31-72-2z" fill="url(#goldLite)" stroke-width="8"/>
+ <!-- shield -->
+ <path d="M700 185 875 255l-25 220q-54 115-150 170-96-55-150-170l-25-220z" fill="url(#navy)" stroke-width="13"/>
+ <path d="M700 208 848 268l-23 196q-42 91-125 143-83-52-125-143l-23-196z" fill="none" stroke="#c98623" stroke-width="6" opacity=".9"/>
+ <!-- sword blade pointing DOWN -->
+ <path d="M678 184h44v367l-22 105-22-105z" fill="url(#steel)" stroke-width="8"/>
+ <path d="M700 194v430" stroke="#fff" stroke-opacity=".65" stroke-width="4"/>
+ <path d="M700 640l-20 48 20 35 20-35z" fill="url(#goldLite)" stroke-width="7"/>
+ <!-- gem -->
+ <path d="M700 142l34 34-34 34-34-34z" fill="#15559a" stroke="#dca23b" stroke-width="8"/>
+ <path d="M700 157l18 19-18 18-18-18z" fill="#2c86d1" opacity=".8" stroke="none"/>
+</g>
+<!-- wordmark foreground -->
+<g>
+ <text x="700" y="485" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="166" font-weight="bold" letter-spacing="-5" fill="url(#gold)" stroke="#321e0f" stroke-width="9" paint-order="stroke fill">Nostalgia</text>
+ <text x="700" y="485" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="166" font-weight="bold" letter-spacing="-5" fill="url(#gold)" stroke="#f7c968" stroke-opacity=".32" stroke-width="2" paint-order="stroke fill">Nostalgia</text>
+</g>
+<!-- launcher banner -->
+<g>
+ <path d="M445 522h510l-40 76H485z" fill="#132d4d" stroke="#9d641b" stroke-width="7"/>
+ <text x="700" y="577" text-anchor="middle" font-family="Georgia, serif" font-size="43" font-weight="bold" letter-spacing="10" fill="#f4ead5">LAUNCHER</text>
+ <path d="M700 612l18 18-18 18-18-18z" fill="url(#goldLite)" stroke="#2a1a0d" stroke-width="5"/>
+</g>
+</g>
+</svg>
