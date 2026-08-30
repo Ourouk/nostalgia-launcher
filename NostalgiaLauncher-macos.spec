@@ -35,7 +35,8 @@ pyside_datas, pyside_binaries, pyside_hiddenimports = collect_all("PySide6")
 shiboken_datas, shiboken_binaries, shiboken_hiddenimports = collect_all("shiboken6")
 lt_datas, lt_binaries, lt_hiddenimports = collect_all("libtorrent")
 datas = pyside_datas + shiboken_datas + lt_datas + [
-    ("packaging/fonts/STIXTwoMath-Regular.otf", "fonts")
+    ("packaging/fonts/STIXTwoMath-Regular.otf", "fonts"),
+    ("packaging/icons/NostalgiaLauncher.png", "icons"),
 ]
 binaries = pyside_binaries + shiboken_binaries + lt_binaries
 hiddenimports = pyside_hiddenimports + shiboken_hiddenimports + lt_hiddenimports

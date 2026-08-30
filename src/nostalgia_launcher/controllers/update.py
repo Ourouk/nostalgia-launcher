@@ -734,7 +734,9 @@ class UpdateController:
                     # still shows Download via BitTorrent, not Verifying.
                     if _vcfg.torrent_update_allowed():
                         if not self._playable_client_present():
-                            return Readiness("disabled", "UPDATE", "Verifying…")
+                            return Readiness(
+                                "disabled", "UPDATE", "Verifying…"
+                            )
                         return Readiness("disabled", "PLAY", "Verifying…")
             # No manifest → can't verify via SHA-1, but a torrent-only verify
             # may have established readiness or a stale-file list.
