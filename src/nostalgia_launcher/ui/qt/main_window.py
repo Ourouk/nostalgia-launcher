@@ -10,12 +10,14 @@ keyed by tab name in `self._pages`; the nav gear and footer widgets are
 exposed as attributes for the settings and update workflows.
 """
 
+import os
+import sys
 import threading
 import webbrowser
 from collections import deque
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -69,6 +71,25 @@ class _LogoFetcher(QObject):
         self.finished.emit(logo.fetch_logo(url) or "")
 
 
+def _icon_path() -> str:
+    """Resolve bundled launcher icon for frozen and dev builds."""
+    if getattr(sys, "frozen", False):
+        return os.path.join(sys._MEIPASS, "icons", "NostalgiaLauncher.png")
+    # src/nostalgia_launcher/ui/qt/main_window.py -> repo root
+    return os.path.join(
+        os.path.dirname(
+            os.path.dirname(
+                os.path.dirname(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                )
+            )
+        ),
+        "packaging",
+        "icons",
+        "NostalgiaLauncher.png",
+    )
+
+
 # The header wordmark logo is scaled to fit within this box.
 _LOGO_HEIGHT = 28
 _LOGO_MAX_WIDTH = 320
@@ -100,6 +121,9 @@ class MainWindow(QMainWindow):
         self._oneShotTimers: list = []
         apply_theme(self, self._palette)
         self.setWindowTitle("Nostalgia Launcher")
+        _ip = _icon_path()
+        if os.path.isfile(_ip):
+            self.setWindowIcon(QIcon(_ip))
         self.setMinimumSize(
             clamp(BASE_W // 2, 560, 800), clamp(BASE_H // 2, 420, 600)
         )

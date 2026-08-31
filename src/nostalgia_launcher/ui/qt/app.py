@@ -11,7 +11,7 @@ import os
 import sys
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontDatabase, QGuiApplication
+from PySide6.QtGui import QFontDatabase, QGuiApplication, QIcon
 from PySide6.QtWidgets import QApplication
 
 from . import metrics as ui_metrics
@@ -43,6 +43,24 @@ def _load_bundled_font():
         QFontDatabase.addApplicationFont(font_path)
 
 
+def _icon_path() -> str:
+    """Resolve bundled icon path for frozen and dev builds."""
+    if getattr(sys, "frozen", False):
+        return os.path.join(sys._MEIPASS, "icons", "NostalgiaLauncher.png")
+    return os.path.join(
+        os.path.dirname(
+            os.path.dirname(
+                os.path.dirname(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                )
+            )
+        ),
+        "packaging",
+        "icons",
+        "NostalgiaLauncher.png",
+    )
+
+
 def create_qt_app():
     """Return the process-wide QApplication, creating it exactly once.
 
@@ -59,6 +77,9 @@ def create_qt_app():
     )
     app = QApplication([])
     _load_bundled_font()
+    ip = _icon_path()
+    if os.path.isfile(ip):
+        app.setWindowIcon(QIcon(ip))
     return app
 
 
