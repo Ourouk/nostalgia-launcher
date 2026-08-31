@@ -22,7 +22,7 @@ def test_update_state_defaults():
     assert s.progress_label == ""
     assert s.running is False
     assert s.client_ready is False
-    assert s.diff_nodes is None
+    assert s.torrent_stale is None
     assert s.client_version == ""
 
 
@@ -77,7 +77,7 @@ def test_update_state_construction():
         progress_label="WoW.exe",
         running=True,
         client_ready=False,
-        diff_nodes=[],
+        torrent_stale=[],
         client_version="1.16.1",
     )
     assert s.status == "Downloading…"
@@ -85,7 +85,7 @@ def test_update_state_construction():
     assert s.progress_label == "WoW.exe"
     assert s.running is True
     assert s.client_ready is False
-    assert s.diff_nodes == []
+    assert s.torrent_stale == []
     assert s.client_version == "1.16.1"
 
 

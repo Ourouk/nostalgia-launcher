@@ -33,13 +33,13 @@ Python `3.13.x`. The reference implementation lives in
    hashes — no peer connections, no writes.
 2. **A file is "stale" when any piece covering it is not present**
    (`not all(h.have_piece(p) for p in piece_range)`). Return the stale file
-   list (root stripped) so the caller can correlate with the manifest.
+   list (root stripped) for the caller.
 3. **Download only the missing pieces.** Re-add the torrent with per-file
    priorities `7` for wanted/stale files and `0` for the rest, so libtorrent
-   fetches just the gaps. The piece hashes still guarantee final integrity.
-4. **Authoritative per-file check is the HTTP manifest** (per-file SHA-1). The
-   torrent check is piece-granular: a stale piece straddling two files marks
-   both, so the follow-up manifest pass is the real correctness gate.
+   fetches just the gaps. The piece hashes guarantee final integrity.
+4. **Piece hashes are the integrity guarantee.** The `.torrent` arrives over
+   TLS (or the magnet metadata hashes to the configured btih), so its
+   per-piece SHA-1 is authoritative — no follow-up manifest pass exists.
 
 ## Pitfalls (the expensive ones)
 
@@ -135,7 +135,7 @@ over time. Trip a stall only if progress hasn't advanced for a bounded window
 A `.torrent` carries only per-piece SHA-1, not per-file hashes. Map each file
 to its piece range (`file_offset(i)//piece_length` … `(offset+size-1)//piece_length`)
 and treat it stale if any covered piece is missing. Tell users the torrent check
-is advisory; the manifest recheck is authoritative.
+is advisory; the piece hashes are the guarantee.
 
 ### P9 — snapshot identity
 A URL never stands in for identity. Persist `content_hash` + `info_hash` with the

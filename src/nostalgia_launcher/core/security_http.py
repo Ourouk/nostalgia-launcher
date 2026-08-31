@@ -1,10 +1,10 @@
-"""Hardened HTTP: TLS verification, HTTPS-only enforcement, host allowlists.
+"""Hardened HTTP via httpx: HTTPS-only, host allowlist, capped reads.
 
 All network I/O goes through :func:`make_secure_client` / :func:`secure_urlopen`
-which refuse non-HTTPS URLs, optionally enforce a host allowlist on the
-*initial* URL, keep every redirect on HTTPS, and use a shared TLS context
-that verifies against the system trust store (plus ``certifi`` roots when
-bundled).
+which refuse non-HTTPS URLs, optionally enforce a host allowlist, validate
+every redirect hop, and use a shared TLS context that verifies against the
+system trust store (plus ``certifi`` roots when bundled). ``httpx`` manages
+redirect following; we validate the resulting ``response.history``.
 
 The legacy ``urllib`` opener has been replaced with :mod:`httpx` + a
 centralised :mod:`tenacity` retry policy. ``secure_urlopen`` is retained as
@@ -30,16 +30,9 @@ from .constants import UA
 
 _log = logging.getLogger(__name__)
 
-# Hardened TLS: verify the server certificate against the system trust store,
-# require the hostname to match, and refuse anything below TLS 1.2. This is
-# the primary defence against a man-in-the-middle tampering with downloads.
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = True
 SSL_CTX.verify_mode = ssl.CERT_REQUIRED
-# Trust certifi's curated roots *in addition to* the system store, so a stale
-# or incomplete Windows root store (Python's ssl uses a static snapshot and
-# never triggers Windows' on-demand root update) can't break verification.
-# If certifi isn't bundled, fall back to the system store alone.
 try:
     import certifi
 
@@ -51,11 +44,6 @@ try:
 except (AttributeError, ValueError):
     pass
 
-# Binaries may only be fetched from these hosts. TLS already stops a MITM
-# from impersonating them; this additionally stops a tampered API response from
-# redirecting a download (e.g. a mod DLL) to an unexpected host. The base set
-# covers the git hosts; the configured server/mirror hosts are added at call
-# time via allowed_download_hosts().
 ALLOWED_DOWNLOAD_HOSTS = {
     "github.com",
     "raw.githubusercontent.com",
@@ -67,7 +55,6 @@ ALLOWED_DOWNLOAD_HOSTS = {
 
 
 def allowed_download_hosts() -> set[str]:
-    """The full download allowlist: base git hosts + launcher server hosts."""
     hosts = set(ALLOWED_DOWNLOAD_HOSTS)
     c = launcher.config()
     if c is not None:
@@ -75,27 +62,60 @@ def allowed_download_hosts() -> set[str]:
     return hosts
 
 
-def _check_url(
-    url: str, allowed_hosts: set[str] | frozenset[str] | None
-) -> None:
-    """Enforce HTTPS and (optionally) an allowlist on a URL."""
+def _check_url(url: str, allowed_hosts) -> None:
     parts = urlsplit(url)
     if parts.scheme != "https":
         raise RuntimeError(f"Refusing non-HTTPS URL: {url}")
     if allowed_hosts is not None:
         host = (parts.hostname or "").lower()
-        if host not in allowed_hosts:
+        if host not in {h.lower() for h in allowed_hosts}:
             raise RuntimeError(
                 f"Refusing download from unexpected host: {host}"
             )
 
 
+def _check_redirect_chain(resp: httpx.Response, allowed_hosts) -> None:
+    allowed = (
+        {h.lower() for h in allowed_hosts}
+        if allowed_hosts is not None
+        else None
+    )
+    for hist in resp.history:
+        _check_url(str(hist.url), allowed)
+        loc = str(hist.headers.get("location", ""))
+        if loc and "://" in loc:
+            _check_url(loc, allowed)
+        # Handle protocol-relative redirects (//evil.com/path)
+        elif loc.startswith("//"):
+            _check_url(f"https:{loc}", allowed)
+    _check_url(str(resp.url), allowed)
+
+
+def _validate(resp: httpx.Response, allowed_hosts) -> None:
+    if allowed_hosts is not None:
+        _check_redirect_chain(resp, allowed_hosts)
+    else:
+        for hist in resp.history:
+            _check_url(str(hist.url), None)
+        _check_url(str(resp.url), None)
+
+
+# Deprecated alias for backward compat (old urllib handler)
+class _HttpsOnlyRedirectHandler:  # type: ignore[no-redef]
+    def __init__(self, allowed_hosts=None):
+        self.allowed_hosts = (
+            {h.lower() for h in allowed_hosts} if allowed_hosts else None
+        )
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        import urllib.request
+
+        _check_url(newurl, self.allowed_hosts)
+        return urllib.request.Request(newurl, headers=dict(req.headers))
+
+
 def _enforce_https_request(request: httpx.Request) -> None:
-    """httpx request hook — every request (including redirects) must stay
-    HTTPS. Host allowlist is intentionally *not* re-applied on redirects:
-    an allowlisted host controls its own redirects to its CDN and TLS protects
-    wherever it lands. The allowlist vets the *initial* URL before the first
-    request; this hook only enforces the scheme."""
+    """httpx request hook — every request (including redirects) must stay HTTPS."""
     if request.url.scheme != "https":
         raise RuntimeError(f"Refusing non-HTTPS redirect: {request.url}")
 
@@ -109,7 +129,7 @@ def make_secure_client(
 
     Centralises TLS, certificate, redirect, UA, and timeout policy. Host
     allowlist validation remains per-request via :func:`_check_url` /
-    :func:`secure_request` so different call sites can supply different
+    :func:`_validate` so different call sites can supply different
     allowlists while sharing the same TLS configuration.
     """
     return httpx.Client(
@@ -129,7 +149,6 @@ def make_secure_client(
 
 def _is_retryable(exc: BaseException) -> bool:
     """Whether *exc* is a transient failure worth retrying."""
-    # Security / validation failures must never be retried.
     if isinstance(exc, RuntimeError) and "Refusing" in str(exc):
         return False
     if isinstance(exc, RuntimeError) and "Cancelled" in str(exc):
@@ -142,13 +161,10 @@ def _is_retryable(exc: BaseException) -> bool:
         return True
     if isinstance(exc, httpx.HTTPStatusError):
         return 500 <= exc.response.status_code < 600  # type: ignore[attr-defined]
-    # Legacy urllib errors that may surface via the compat shim.
     if isinstance(exc, urllib.error.URLError):
         return True
     if isinstance(exc, urllib.error.HTTPError):
         return 500 <= exc.code < 600
-    # File/Disk transient (e.g. short read, connection lost) is retryable
-    # for the download path — handled centrally so callers need not duplicate.
     if isinstance(exc, OSError):
         return True
     return False
@@ -164,50 +180,8 @@ httpx_retry = tenacity.retry(
 )
 
 
-# ---------------------------------------------------------------------------
-# Compatibility shim — preserves the old ``secure_urlopen`` API via httpx
-# ---------------------------------------------------------------------------
-
-
-class _HttpxCompatResponse:
-    """Minimal ``urllib``-compatible response wrapper around :class:`httpx.Response`.
-
-    Only the surface used by the codebase is implemented: ``read(n)``,
-    ``getcode()`` / ``status``, ``headers``, context-manager protocol, and
-    ``close()``. The entire body is buffered in memory; callers that need
-    streaming for large downloads should use :func:`make_secure_client`
-    directly with ``client.stream()``.
-    """
-
-    def __init__(self, response: httpx.Response) -> None:
-        self._response = response
-        self._buf = io.BytesIO(response.content)
-        self.headers = response.headers
-        self.status = response.status_code
-
-    def read(self, n: int = -1) -> bytes:
-        return self._buf.read(n)
-
-    def getcode(self) -> int:
-        return self._response.status_code
-
-    def close(self) -> None:
-        self._response.close()
-
-    def __enter__(self) -> _HttpxCompatResponse:
-        return self
-
-    def __exit__(self, *_exc: object) -> bool:
-        self.close()
-        return False
-
-
 def _httpx_to_http_error(url: str, response: httpx.Response) -> None:
-    """Raise a :class:`urllib.error.HTTPError` mirroring httpx's 4xx/5xx.
-
-    Preserves the ``e.code`` contract expected by callers such as
-    ``self_update.fetch_updater_latest_tag`` which branches on 404.
-    """
+    """Raise a :class:`urllib.error.HTTPError` mirroring httpx's 4xx/5xx."""
     raise urllib.error.HTTPError(
         url,
         response.status_code,
@@ -217,102 +191,147 @@ def _httpx_to_http_error(url: str, response: httpx.Response) -> None:
     )
 
 
-def read_capped(r: object, max_bytes: int) -> bytes:
-    """Read *r* (httpx compat response or any file-like with ``read``) in
-    chunks, refusing responses longer than *max_bytes*. Raises
-    RuntimeError on overflow."""
-    # Fast path for httpx compat wrapper or urllib response: delegate to
-    # chunked read loop so large responses are not buffered twice.
-    read = getattr(r, "read", None)
-    if not callable(read):
-        raise TypeError("read_capped expects a response with .read()")
-    chunks: list[bytes] = []
-    total = 0
+def read_capped(r, max_bytes: int) -> bytes:
+    if hasattr(r, "iter_bytes"):
+        chunks, total = [], 0
+        for chunk in r.iter_bytes(65536):  # type: ignore[attr-defined]
+            total += len(chunk)
+            if total > max_bytes:
+                raise RuntimeError(
+                    f"Response exceeded the {max_bytes // 1024} KiB limit."
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
+    chunks, total = [], 0
     while True:
-        chunk: bytes = read(65536)  # type: ignore[assignment,operator]
+        chunk = r.read(65536)
         if not chunk:
             break
-        total += len(chunk)  # type: ignore[arg-type]
+        total += len(chunk)
         if total > max_bytes:
             raise RuntimeError(
                 f"Response exceeded the {max_bytes // 1024} KiB limit."
             )
-        chunks.append(chunk)  # type: ignore[arg-type]
+        chunks.append(chunk)
     return b"".join(chunks)
 
 
-def secure_urlopen(
-    req: str | urllib.request.Request,
-    timeout: float = 10.0,
-    allowed_hosts: set[str] | frozenset[str] | None = None,
-) -> _HttpxCompatResponse:
-    """Compatibility wrapper that enforces HTTPS + host allowlist and uses
-    :mod:`httpx` under the hood.
-
-    ``req`` may be a URL string or a :class:`urllib.request.Request`
-    (headers from the Request are forwarded). Redirects are followed but each
-    hop is re-validated to stay HTTPS. 4xx/5xx are surfaced as
-    :class:`urllib.error.HTTPError` to preserve existing error handling.
-    """
-    if isinstance(req, urllib.request.Request):
-        url = req.full_url
-        # urllib Request stores headers in ``headers`` and
-        # ``unredirected_hdrs``; ``header_items()`` is not public.
-        headers: dict[str, str] = {}
-        try:
-            headers.update(dict(req.header_items()))  # type: ignore[attr-defined]
-        except Exception:
-            pass
-        # Fallback for Requests built with explicit headers dict.
-        if not headers and hasattr(req, "headers"):
-            try:
-                headers.update(dict(req.headers))  # type: ignore[arg-type]
-            except Exception:
-                pass
-    else:
-        url = req
-        headers = {}
-
+def _request(
+    method: str,
+    url: str,
+    *,
+    timeout: float,
+    allowed_hosts,
+    headers: dict | None = None,
+    content: bytes | None = None,
+) -> httpx.Response:
     _check_url(url, allowed_hosts)
+    with make_secure_client(timeout=timeout, follow_redirects=True) as client:
+        req = client.build_request(
+            method, url, headers=headers or {}, content=content
+        )
+        resp = client.send(req)
+        _validate(resp, allowed_hosts)
+        return resp
 
-    # Per-request client so timeout/headers don't leak across calls. The
-    # shared SSL_CTX is reused; connection pooling is not critical for the
-    # launcher's low-concurrency workload and simplifies mocking in tests
-    # (callers monkeypatch this function directly).
-    with make_secure_client(timeout=timeout) as client:
-        # Use get() for the compat path — callers expect a buffered response.
-        # Redirect history is available via ``response.history``.
-        response = client.get(url, headers=headers)
-        # Enforce HTTPS on every redirect hop (request hook already checked
-        # the final request, but be explicit for the history).
-        for hist in response.history:
-            loc = hist.headers.get("location")
-            if loc:
-                # ``loc`` may be relative; resolve against history URL.
-                try:
-                    # Absolute URL required for validation.
-                    if loc.startswith("http"):
-                        _check_url(loc, None)
-                    elif not loc.startswith("/"):
-                        _check_url(str(hist.url), None)
-                except RuntimeError:
-                    response.close()
-                    raise
-        # Final URL must still be HTTPS (hook guarantees it, double-check).
-        if response.url.scheme != "https":
-            response.close()
-            raise RuntimeError(f"Refusing non-HTTPS URL: {response.url}")
 
-        if response.status_code >= 400:
-            # Preserve urllib contract for callers that branch on HTTPError.
-            url_str = str(response.url)
-            # Close before raising to avoid leaking the connection.
-            # Re-raise as HTTPError with the original response closed.
-            status = response.status_code
-            reason = response.reason_phrase
-            hdrs = dict(response.headers)
-            response.close()
-            raise urllib.error.HTTPError(url_str, status, reason, hdrs, None)  # type: ignore[arg-type]
+def secure_urlopen(req, timeout, allowed_hosts=None):
+    import urllib.request
 
-        # Buffer into compat wrapper; caller will read via read_capped().
-        return _HttpxCompatResponse(response)
+    if isinstance(req, urllib.request.Request):
+        url = req.full_url  # type: ignore[attr-defined]
+        headers = dict(req.headers)
+        method = req.get_method() if hasattr(req, "get_method") else "GET"
+        data = getattr(req, "data", None)
+    else:
+        url, headers, method, data = req, {}, "GET", None
+    resp = _request(
+        method,
+        url,
+        timeout=timeout,
+        allowed_hosts=allowed_hosts,
+        headers=headers,
+        content=data,
+    )
+    return _HttpxResponseWrapper(resp)
+
+
+class _HttpxResponseWrapper:
+    def __init__(self, resp: httpx.Response) -> None:
+        self._resp = resp
+        self.headers = resp.headers
+        self.status = resp.status_code
+        self._content: bytes | None = None
+        self._pos = 0
+        self._consumed = False
+
+    def getcode(self):
+        return self._resp.status_code
+
+    def read(self, amt: int | None = None) -> bytes:
+        if self._content is None:
+            self._content = self._resp.content if not self._consumed else b""
+            self._consumed = True
+        if amt is None:
+            data = self._content[self._pos :]
+            self._pos = len(self._content)
+            return data
+        data = self._content[self._pos : self._pos + amt]
+        self._pos += len(data)
+        return data
+
+    def iter_bytes(self, chunk_size=65536):
+        if self._content is not None:
+            for i in range(0, len(self._content), chunk_size):
+                yield self._content[i : i + chunk_size]
+            return
+        yield from self._resp.iter_bytes(chunk_size)
+
+    def close(self):
+        self._resp.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+
+# Compatibility alias for refactor branch imports
+_HttpxCompatResponse = _HttpxResponseWrapper
+
+
+class _CompatBytesIO(io.BytesIO):
+    """Alias for tests that import io.BytesIO wrapper."""
+
+    pass
+
+
+def secure_get(
+    url: str, *, timeout=10.0, allowed_hosts=None, headers=None, max_bytes=None
+) -> httpx.Response:
+    resp = _request(
+        "GET",
+        url,
+        timeout=timeout,
+        allowed_hosts=allowed_hosts,
+        headers=headers,
+    )
+    if max_bytes is not None and len(resp.content) > max_bytes:
+        raise RuntimeError(
+            f"Response exceeded the {max_bytes // 1024} KiB limit."
+        )
+    return resp
+
+
+def secure_head(
+    url: str, *, timeout=10.0, allowed_hosts=None, headers=None
+) -> httpx.Response:
+    return _request(
+        "HEAD",
+        url,
+        timeout=timeout,
+        allowed_hosts=allowed_hosts,
+        headers=headers,
+    )

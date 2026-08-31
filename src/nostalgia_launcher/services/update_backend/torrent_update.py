@@ -23,23 +23,18 @@ wanted piece is in place.
 
 import hashlib
 import os
-import queue
 import shutil
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
-
-import httpx
 
 from ...core import profiles
 from ...core.constants import DOWNLOAD_TIMEOUT, UA
 from ...core.filesystem import atomic_write_bytes as _atomic_write_bytes
 from ...core.helpers import fmt_size, fmt_speed, redact_url
-from ...core.security_http import (
-    _check_url,
-    allowed_download_hosts,
-    make_secure_client,
-)
+from ...core.security_http import allowed_download_hosts, secure_urlopen
 from .worker_base import WorkerBase
 
 # Inactivity guard: if no wanted bytes arrive for this long, the swarm is dead
@@ -268,23 +263,26 @@ def _fetch_torrent_url(torrent_url: str, log) -> "TorrentSnapshot":
     """Fetch the ``.torrent`` at ``torrent_url`` over HTTPS, parse it with
     libtorrent, and return a :class:`TorrentSnapshot`."""
     log(f"  Fetching torrent: {redact_url(torrent_url)}", "dim")
+    req = urllib.request.Request(torrent_url, headers={"User-Agent": UA})
     try:
-        _check_url(torrent_url, allowed_download_hosts())
-        with make_secure_client(timeout=DOWNLOAD_TIMEOUT) as client:
-            with client.stream("GET", torrent_url) as resp:
-                resp.raise_for_status()
-                # Stream the torrent file with a size cap to avoid loading a
-                # malicious oversized response into memory.
-                max_size = 5 * 1024 * 1024  # 5 MiB cap for .torrent files
-                data = bytearray()
-                for chunk in resp.iter_bytes(chunk_size=65536):
-                    data.extend(chunk)
-                    if len(data) > max_size:
-                        raise TorrentFetchError(
-                            f"Torrent file exceeds maximum size of {max_size} bytes"
-                        )
+        with secure_urlopen(
+            req,
+            timeout=DOWNLOAD_TIMEOUT,
+            allowed_hosts=allowed_download_hosts(),
+        ) as r:
+            # Stream the torrent file with a size cap to avoid loading a
+            # malicious oversized response into memory.
+            max_size = 5 * 1024 * 1024  # 5 MiB cap for .torrent files
+            data = bytearray()
+            for chunk in iter(lambda: r.read(65536), b""):
+                data.extend(chunk)
+                if len(data) > max_size:
+                    raise TorrentFetchError(
+                        f"Torrent file exceeds maximum size of {max_size} bytes"
+                    )
     except (
-        httpx.HTTPError,
+        urllib.error.HTTPError,
+        urllib.error.URLError,
         OSError,
         RuntimeError,
     ) as exc:
@@ -368,7 +366,7 @@ def _resolve_magnet(
     tmp_dir = tempfile.mkdtemp(prefix="nostalgia-magnet-")
     try:
         ses = _wrap_session_error(
-            lambda: lt.session(_network_session_settings()),
+            lambda: lt.session(_network_session_settings()),  # type: ignore[call-overload]
             "Failed to create libtorrent session",
         )
         h = None
@@ -689,14 +687,14 @@ class TorrentVerifier(WorkerBase):
     final integrity.
     """
 
-    def __init__(self, out_dir: str, log_q: queue.Queue, prog_q: queue.Queue):
-        super().__init__(out_dir, log_q, prog_q)
+    def __init__(self, out_dir: str, dispatcher):
+        super().__init__(out_dir, dispatcher)
         self.snapshot: TorrentSnapshot | None = None
 
     def _session(self):
-        import libtorrent as lt
+        import libtorrent as lt  # type: ignore[import-not-found]
 
-        return lt.session(
+        return lt.session(  # type: ignore[call-overload]
             {
                 "listen_interfaces": "",
                 "user_agent": UA,
@@ -753,12 +751,12 @@ class TorrentVerifier(WorkerBase):
                 torrent_url, self.log, cancel=lambda: self._cancel
             )
         self.snapshot = snapshot
-        ti = snapshot.torrent_info
+        ti = snapshot.torrent_info  # type: ignore[attr-defined]
         marker = root_marker or _configured_root_marker()
-        _remap_torrent_to_out_dir(ti, self.out_dir, marker)
-        files = ti.files()
-        piece_length = ti.piece_length()
-        total_pieces = ti.num_pieces()
+        _remap_torrent_to_out_dir(ti, self.out_dir, marker)  # type: ignore[arg-type]
+        files = ti.files()  # type: ignore[attr-defined]
+        piece_length = ti.piece_length()  # type: ignore[attr-defined]
+        total_pieces = ti.num_pieces()  # type: ignore[attr-defined]
 
         ses = _wrap_session_error(
             self._session, "Failed to create libtorrent session"
@@ -766,8 +764,8 @@ class TorrentVerifier(WorkerBase):
 
         h = None
         try:
-            atp = lt.add_torrent_params()
-            atp.ti = ti
+            atp = lt.add_torrent_params()  # type: ignore[attr-defined]
+            atp.ti = ti  # type: ignore[attr-defined]
             atp.save_path = self.out_dir
             # Pieces must be "wanted" (priority > 0) for force_recheck() to
             # hash the on-disk files against the torrent's piece hashes. A
@@ -885,8 +883,8 @@ class TorrentVerifier(WorkerBase):
 
 
 class TorrentDownloader(WorkerBase):
-    def __init__(self, out_dir: str, log_q: queue.Queue, prog_q: queue.Queue):
-        super().__init__(out_dir, log_q, prog_q)
+    def __init__(self, out_dir: str, dispatcher):
+        super().__init__(out_dir, dispatcher)
         self.snapshot: TorrentSnapshot | None = None
 
     def _priorities(
@@ -929,9 +927,9 @@ class TorrentDownloader(WorkerBase):
         ]
 
     def _session(self):
-        import libtorrent as lt
+        import libtorrent as lt  # type: ignore[import-not-found]
 
-        return lt.session(_network_session_settings())
+        return lt.session(_network_session_settings())  # type: ignore[call-overload]
 
     def download(
         self,
@@ -942,12 +940,11 @@ class TorrentDownloader(WorkerBase):
         """Download the wanted files from the torrent at ``torrent_url`` into
         ``out_dir``. ``wanted=None`` downloads the whole torrent. Returns an
         empty list on success and raises RuntimeError on failure or
-        cancellation. The caller already knows the wanted paths. Completed
-        files are still rechecked against the update manifest by the HTTP
-        update worker.
+        cancellation. The caller already knows the wanted paths.         Piece hashes of the TLS-fetched ``.torrent`` (or magnet metadata that
+        hashes to the configured btih) are the integrity guarantee.
 
         Resume data is intentionally not persisted — libtorrent re-derives
-        piece state from disk on add (see BITTORRENT_UPDATER_NOTES.md P5).
+        piece state from disk on add (see bittorrent-notes.md P5).
         The fetched :class:`TorrentSnapshot` is stored on ``self.snapshot``
         so its identity can be cached for later verifies."""
         import libtorrent as lt
@@ -958,9 +955,9 @@ class TorrentDownloader(WorkerBase):
             torrent_url, self.log, cancel=lambda: self._cancel
         )
         self.snapshot = snapshot
-        ti = snapshot.torrent_info
+        ti = snapshot.torrent_info  # type: ignore[attr-defined]
         marker = root_marker or _configured_root_marker()
-        _remap_torrent_to_out_dir(ti, self.out_dir, marker)
+        _remap_torrent_to_out_dir(ti, self.out_dir, marker)  # type: ignore[arg-type]
 
         ses = _wrap_session_error(
             self._session, "Failed to create libtorrent session"
@@ -968,12 +965,12 @@ class TorrentDownloader(WorkerBase):
 
         h = None
         try:
-            atp = lt.add_torrent_params()
-            priorities = self._priorities(ti, wanted, marker)
-            atp.ti = ti
-            atp.save_path = self.out_dir
-            atp.file_priorities = priorities
-            files = ti.files()
+            atp = lt.add_torrent_params()  # type: ignore[attr-defined]
+            priorities = self._priorities(ti, wanted, marker)  # type: ignore[arg-type]
+            atp.ti = ti  # type: ignore[attr-defined]
+            atp.save_path = self.out_dir  # type: ignore[attr-defined]
+            atp.file_priorities = priorities  # type: ignore[attr-defined]
+            files = ti.files()  # type: ignore[attr-defined]
             total_wanted = sum(
                 files.file_size(i)
                 for i in range(files.num_files())
@@ -1087,4 +1084,5 @@ class TorrentDownloader(WorkerBase):
             if elapsed > timeout:
                 raise TorrentStalledError(peers=s.num_peers)
             ses.wait_for_alert(ALERT_POLL_MS)
-        self._raise_cancelled(h)
+        self._raise_cancelled(h)  # type: ignore[arg-type]
+        return []

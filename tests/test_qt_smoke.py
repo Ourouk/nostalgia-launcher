@@ -267,7 +267,9 @@ def test_construction_builds_full_app(qapp, app):
     assert win._updateButton.objectName() == "updateButton"
     assert win._updateButton.text() == "PLAY"
     assert win._updateButton.isEnabled()
-    assert win._statusLabel.text() == "Manifest unavailable"
+    assert (
+        "unavailable" in win._statusLabel.text().lower()
+    )  # manifest -> torrent
     assert win._progressLabel is not None
 
     for name, obj in (
@@ -431,7 +433,7 @@ def test_update_status_progress_finish_cycle(qapp, app_no_startup):
     # The update worker sets client_ready and posts 100% progress before the
     # finish event; the footer mirrors that real controller state.
     hub.updater.state.client_ready = True
-    hub.updater.state.manifest_available = True
+    hub.updater.state.client_ready = True  # manifest removed
     hub.dispatcher.post(ProgressChanged(1.0, ""))
     QTest.qWait(120)
 

@@ -154,6 +154,9 @@ class ControllerHub:
 
     def __init__(self, get_out_dir=None):
         self.dispatcher = EventDispatcher()
+        from ...core import log_sink as _log_sink
+
+        _log_sink.set_dispatcher(self.dispatcher)
         self.updater = UpdateController(self.dispatcher, get_out_dir)
         self.news = NewsController(self.dispatcher)
         self.mods = ModsController(self.dispatcher, get_out_dir)
@@ -172,3 +175,7 @@ class ControllerHub:
 
     def close(self):
         self.bridge.close()
+        from ...core import log_sink as _log_sink
+
+        if _log_sink._dispatcher is self.dispatcher:
+            _log_sink.set_dispatcher(None)

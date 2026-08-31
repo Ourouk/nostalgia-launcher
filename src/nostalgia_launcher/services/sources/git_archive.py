@@ -15,13 +15,14 @@ import json
 import os
 import subprocess
 import time
+import urllib.request
 from urllib.parse import quote, urlsplit
 
 from ...core.config_store import load_config, update_config
-from ...core.constants import GITHUB_API
+from ...core.constants import GITHUB_API, UA
 from ...core.errors import describe_net_error
 from ...core.log_sink import log
-from ...core.security_http import _check_url, make_secure_client
+from ...core.security_http import read_capped, secure_urlopen
 from .base import FetchResult, SourceBackend, register
 
 ADDON_SHA_CACHE_TTL = 3600
@@ -74,15 +75,9 @@ def git_parts(git_url: str):
 
 
 def _api_json(url: str, timeout=10):
-    _check_url(url, None)
-    with make_secure_client(timeout=timeout) as client:
-        resp = client.get(url)
-        resp.raise_for_status()
-        if len(resp.content) > _API_MAX_BYTES:
-            raise RuntimeError(
-                f"Response exceeded the {_API_MAX_BYTES // 1024} KiB limit."
-            )
-        return json.loads(resp.content)
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with secure_urlopen(req, timeout=timeout) as r:
+        return json.loads(read_capped(r, _API_MAX_BYTES))
 
 
 def _config_git_hosts() -> set | None:
@@ -148,8 +143,11 @@ class GitArchiveBackend(SourceBackend):
     ) -> str | None:
         """The remote commit sha for an entry carrying {git, branch, ref}."""
         src = entry.get("source") or entry
+        git = src.get("git")
+        if not isinstance(git, str):
+            return None
         return self.remote_sha(
-            src.get("git"),
+            git,
             branch=src.get("branch"),
             ref=src.get("ref"),
             force=force,
@@ -164,8 +162,10 @@ class GitArchiveBackend(SourceBackend):
     ):
         src = entry.get("source") or entry
         git_url = src.get("git")
+        if not isinstance(git_url, str) or not git_url:
+            raise RuntimeError("git_archive requires a git URL")
         sha = src.get("sha1") or src.get("sha")
-        if not sha:
+        if not isinstance(sha, str) or not sha:
             raise RuntimeError(
                 "git_archive requires a pinned commit sha to fetch"
             )
@@ -284,15 +284,9 @@ class GitArchiveBackend(SourceBackend):
         with the addon archive-CDN allowlist extended by config hosts."""
         url = self.zip_url(git_url, sha)
         hosts = set(ADDON_ZIP_HOSTS) | (_config_git_hosts() or set())
-        _check_url(url, hosts)
-        with make_secure_client(timeout=120) as client:
-            resp = client.get(url)
-            resp.raise_for_status()
-            if len(resp.content) > _ARCHIVE_MAX_BYTES:
-                raise RuntimeError(
-                    f"Response exceeded the {_ARCHIVE_MAX_BYTES // 1024} KiB limit."
-                )
-            return resp.content
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with secure_urlopen(req, timeout=120, allowed_hosts=hosts) as r:
+            return read_capped(r, _ARCHIVE_MAX_BYTES)
 
 
 # The zip-archive hosts extend the git-host allowlist with the Git hosts'

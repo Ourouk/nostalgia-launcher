@@ -17,25 +17,18 @@ reported stale; a missing file is a missing install, not an update.
 
 import os
 import time
+import urllib.request
 
 from ..core.config_store import update_config
+from ..core.constants import UA
 from ..core.filesystem import cached_sha1
 from ..core.log_sink import log
 from ..core.security_http import (
-    _check_url,
     allowed_download_hosts,
-    make_secure_client,
+    secure_urlopen,
 )
 from . import catalog
 from .sources import deploy
-
-
-def _checked_rel(dest_rel) -> str:
-    """Validate a client-dir-relative install target before it is joined
-    onto `client_dir` (a compromised catalog must not write outside the
-    client folder). Delegates to the shared deploy validator."""
-    return deploy.checked_rel(dest_rel)
-
 
 # ── registry loading ─────────────────────────────────────────────────────────
 
@@ -140,7 +133,7 @@ def install_asset(asset: dict, client_dir: str) -> dict:
     ``probe`` carries the response headers for the opt-in drift probe
     (empty dict when the server sent none).
     """
-    dest_rel = _checked_rel(asset["dest"])
+    dest_rel = deploy.checked_rel(asset["dest"])
     source: dict = {
         "kind": "direct_file",
         "url": asset["url"],
@@ -190,11 +183,15 @@ def remote_probe_state(url: str) -> dict | None:
     (whichever headers arrive). None on any failure — probes are advisory
     only and must never block anything."""
     try:
-        _check_url(url, allowed_download_hosts())
-        with make_secure_client(timeout=10) as client:
-            resp = client.head(url)
-            resp.raise_for_status()
-            h = resp.headers
+        req = urllib.request.Request(
+            url, headers={"User-Agent": UA}, method="HEAD"
+        )
+        with secure_urlopen(
+            req,
+            timeout=10,
+            allowed_hosts=allowed_download_hosts(),
+        ) as r:
+            h = r.headers
             state: dict = {}
             cl = h.get("Content-Length")
             if cl is not None:

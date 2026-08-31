@@ -8,9 +8,10 @@ end-user installation and usage, see the [README](../README.md).
 Nostalgia Launcher is a PySide6 desktop app (updater + mod manager for the
 Vanilla WoW client). Runtime dependencies are **PySide6** (GUI) and
 **libtorrent** (the BitTorrent backend for client updates). libtorrent is
-imported lazily — the client-update path degrades to per-file HTTP downloads
-when it isn't installed, so tests never need it. Business logic is otherwise
-pure stdlib.
+imported lazily — incremental updates are torrent-only, so without it only
+the single-zip HTTP fallback (`server.download.http.fallback`) for a
+first-time install remains. Tests never need the real libtorrent (faked via
+`sys.modules`).
 
 ### Source layout (`src/` layout)
 
@@ -54,9 +55,8 @@ auto-discovery on later runs.
 
 Every endpoint the launcher talks to is a **direct, fully-qualified URL** — there
 is no base-URL derivation and no mirrors. The optional `server.url` is
-identity/display only (and falls back to the manifest host when omitted); it is
-never used to build other endpoints. Client acquisition is described entirely by
-the `server.download` block:
+identity/display only; it is never used to build other endpoints. Client
+acquisition is described entirely by the `server.download` block:
 
 ```json
 {
@@ -78,10 +78,9 @@ the `server.download` block:
         "magnet": "magnet:?xt=urn:btih:EXAMPLEINFOHASH&dn=client"
       },
       "http": {
-        "manifest": "https://server.example/api/file/latest/manifest.json",
-        "client": "https://server.example/client/latest"
+        "fallback": "https://server.example/client/latest/client.zip"
       },
-      "content": { "type": "folder" }
+      "content": { "type": "zip" }
     }
   },
   "discord_url": "https://discord.gg/example",
@@ -98,22 +97,21 @@ Key points:
 - `server.download.update` (bool, default `true`) is the server-level "should the
   launcher verify/update the client" flag. A per-profile user override
   (`client_update_enabled` in the profile config) wins when set; otherwise this
-  default applies. Updates are only meaningful when a source exists (a torrent
-  snapshot or an HTTP manifest). When `update` is `false` the client is never
-  verified/updated — but a first-time acquisition is still offered via the
-  configured torrent (`torrent_url`/`magnet`) when no playable client is
-  installed.
-- The `server.download.http` block gives the explicit `manifest` (per-file
-  SHA-1 tree) and `client` (base the per-file downloads are joined to) URLs.
-  There is no mirror failover; the single source is what the updater uses.
-- The optional `server.download.torrent` advertises a BitTorrent snapshot: an
+  default applies. Incremental updates are torrent-only; a first-time install
+  without an existing client may use `http.fallback`.
+- The `server.download.torrent` block advertises the BitTorrent snapshot: an
   HTTPS `torrent_url` and/or a `magnet` (`magnet:?xt=urn:btih:…`). A torrent has
-  one swarm, so the HTTPS `.torrent` wins when both are present. This is also
-  the only first-time acquisition path when `update` is `false`.
+  one swarm, so the HTTPS `.torrent` wins when both are present. Optional
+  `torrent.update` controls incremental semantics — explicit `false` means
+  first-time-only, explicit `true` forces incremental, absent infers
+  `bool(torrent_url)` so magnet-only defaults to first-time-only.
+- The `server.download.http` block carries a **single** `fallback` URL
+  (`client.zip`/`rar`). It is fetched only when no playable client (`WoW.exe`)
+  is present. There is no per-file HTTP `traverse()` and no mirror failover.
 - `server.download.content.type` is one of `folder` | `zip` | `rar` and
-  describes how the delivered client is packaged (`folder` = already extracted;
-  `zip`/`rar` = the acquired payload is an archive the launcher extracts into
-  the game folder).
+  describes how the `fallback` archive is packaged (`folder` = already
+  extracted; `zip`/`rar` = the launcher extracts the archive into the game
+  folder). It does not affect the torrent path.
 - The optional `theme` object overrides the app's color theme per server:
   color slots named like `C_GOLD` (each a `#rrggbb` hex) plus an optional
   `logo` URL shown as the header wordmark. It is cosmetic and never validated
@@ -134,33 +132,35 @@ Key points:
 
 ## Client Update Pipeline
 
-The client-update engine lives in `services/update_backend/http_update.py`.
-The shared backend package also defines the lightweight `UpdateBackend`
-protocol in `services/update_backend/protocol.py`:
+The client-update engine lives in `services/update/workflow.py`
+(`VerifyWorker` + `UpdateWorker`) on top of
+`services/update_backend/torrent_update.py`
+(`TorrentVerifier` + `TorrentDownloader`) and `services/update/http.py`
+(single-zip fallback). Successful install = download →
+`core/safety.extract_client_payload` (`zip`/`rar`/`folder`) →
+`core/filesystem.pick_game_executable` / `external_launcher_executables` →
+`UpdateCompleted`.
 
-1. **Verify / diff**: `VerifyWorker` fetches the manifest from the selected
-   download source and reports which files differ against the local SHA-1
-   cache.
-2. **Torrent bulk-download**: when the active source advertises a torrent
-   snapshot (a `server.download.torrent.torrent_url` or a `magnet`) and
-   libtorrent is importable, `UpdateWorker` bulk-downloads
-   the stale files via `services/update_backend/torrent_update.py` before its per-file HTTP
-   `traverse()`. Per-file priorities keep only the pieces covering stale files
-   downloading (`wanted` set).
-3. **HTTP resume + re-verify**: `traverse()` still re-verifies every file
-   against the manifest's SHA-1 and HTTP-resumes anything the torrent missed.
-4. **Recovery**: when the manifest itself can't be fetched but the active
-   source advertises a torrent snapshot (`torrent_url` or a
-   `magnet`) and libtorrent is present,
-   `UpdateWorker._recovery_download()` downloads the *whole* torrent
-   (`TorrentDownloader.download(url, None)`). The torrent's piece hashes (the
-   `.torrent` arrived over TLS, or magnet metadata that had to hash to the
-   configured btih) stand in for the manifest's per-file SHA-1. It
-   posts `__TORRENT_RECOVERY_DONE__` (the controller keeps
-   `manifest_available=False`). A failed verify offers this via an enabled
-   UPDATE button when `torrent_recovery_available()`
-   (`LauncherConfig.has_torrent()` + libtorrent present, network-free) and the
-   client isn't known-ready.
+1. **Verify (torrent-only)**: `VerifyWorker` runs `TorrentVerifier` (offline
+   libtorrent recheck against the piece hashes of the TLS-fetched `.torrent`
+   or magnet-resolved metadata). It reports a stale file list (root-stripped)
+   and emits `TorrentDiffReady` / `TorrentUpToDate` / `Torrent*` failure
+   events. No network activity beyond fetching/resolving the `.torrent` itself.
+2. **First-install fallback**: when torrent verification cannot run (no source
+   or libtorrent missing) and no playable `WoW.exe` is present, `VerifyWorker`
+   resolves `server.download.http.fallback` via `DownloadSource` → `http.py`
+   streams the single zip with `httpx` + `tenacity` + host-allowlisted
+   `secure_urlopen`, then extracts per `content.type`. Otherwise the install
+   cannot proceed and the controller offers a disabled VERIFY prompt.
+3. **Update (torrent-only)**: `UpdateWorker` bulk-downloads the stale set via
+   `TorrentDownloader` (selective piece priorities keep only gaps downloading;
+   the TLS-fetched `.torrent` / btih-verified magnet metadata's piece hashes
+   are the integrity guarantee). On success it posts `UpdateCompleted` with
+   the version read from `WoW.exe`.
+4. **Fallback download inside update**: the same single-zip `http.fallback`
+   path is available from `UpdateWorker._http_fallback_download` when the
+   torrent is unavailable and no client exists. Piece-hash / zip integrity is
+   still the guarantee — there is no per-file HTTP `traverse()` any more.
 
 ### BitTorrent backend (`services/update_backend/torrent_update.py`)
 
@@ -175,9 +175,9 @@ protocol in `services/update_backend/protocol.py`:
   resolution, verify/download behave exactly like the URL path; identity
   reuse keys on the info-hash alone.
 - Peers in the swarm are untrusted — a malicious peer can only inject data
-  that fails the piece hashes embedded in the `.torrent`. The caller still
-  re-verifies every file against the manifest's SHA-1 afterwards, so the
-  torrent backend cannot weaken the integrity guarantee of the HTTP path.
+  that fails the piece hashes embedded in the `.torrent`. Those piece hashes
+  (TLS-fetched or btih-verified) are the sole integrity guarantee; there is no
+  subsequent per-file manifest re-verification.
 - **Torrent root auto-detection**: the launcher locates the unique `WoW.exe`
   file in the torrent (case-insensitive). Its parent directory is the *root*
   — all torrent paths are mapped into the selected WoW folder by stripping
@@ -192,7 +192,7 @@ protocol in `services/update_backend/protocol.py`:
   session enables networking. Sole exception: a magnet source must contact
   the swarm once during verify to download its metadata (see above).
 - `download(url, wanted)` accepts `wanted=None` to mean the whole torrent
-  (every file at max priority) — used by the no-manifest recovery path.
+  (every file at max priority).
   File priorities are computed from the auto-detected root mapping.
 - An inactivity guard (`STALL_TIMEOUT`) falls back to HTTP if no wanted bytes
   arrive, and `h.cancel()` on user cancellation.
@@ -294,7 +294,7 @@ features) and requires explicit acceptance before it is persisted.
   scheme/port/path). `LauncherConfig.addon_git_host_set()` exposes the
   effective set. The configuration cannot silently widen the host set to a
   raw IP or unrelated domain beyond what it names.
-- Metadata responses — client manifests, mod/addon catalogs, news feeds, and
+- Metadata responses — torrent snapshots, mod/addon catalogs, news feeds, and
   the logo image — are size-capped (`core/security_http.read_capped`) to
   bound memory and blunt decompression-bomb surfaces on small JSON/image
   endpoints. Large binary downloads (game files, mod/addon archives) are

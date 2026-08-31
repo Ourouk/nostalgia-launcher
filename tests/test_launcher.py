@@ -50,8 +50,7 @@ def test_explicit_endpoints_used_verbatim():
                         "torrent_url": "https://cdn.example/c.torrent"
                     },
                     "http": {
-                        "manifest": "https://cdn.example/m.json",
-                        "client": "https://cdn.example/client",
+                        "fallback": "https://cdn.example/client.zip",
                     },
                     "content": {"type": "zip"},
                 },
@@ -69,8 +68,7 @@ def test_explicit_endpoints_used_verbatim():
     # download block
     assert cfg.download_update is False
     assert cfg.download_torrent_url == "https://cdn.example/c.torrent"
-    assert cfg.download_manifest_url == "https://cdn.example/m.json"
-    assert cfg.download_client_url == "https://cdn.example/client"
+    assert cfg.download_fallback_url == "https://cdn.example/client.zip"
     assert cfg.download_content_type == "zip"
     assert cfg.has_torrent() is True
     assert cfg.download_capable() is True
@@ -167,17 +165,13 @@ def test_download_http_endpoints_explicit():
                 "url": "https://srv.example",
                 "download": {
                     "http": {
-                        "manifest": "https://cdn.example/api/manifest.json",
-                        "client": "https://dl.example/client/latest",
+                        "fallback": "https://cdn.example/client.zip",
                     }
                 },
             }
         }
     )
-    assert cfg.download_manifest_url == (
-        "https://cdn.example/api/manifest.json"
-    )
-    assert cfg.download_client_url == "https://dl.example/client/latest"
+    assert cfg.download_fallback_url == "https://cdn.example/client.zip"
 
 
 # ── embedded mods (top-level "mods") ─────────────────────────────────────────
@@ -311,8 +305,7 @@ def test_download_defaults_when_block_absent():
     assert cfg.download_update is True
     assert cfg.download_content_type == "folder"
     assert cfg.download_torrent_url is None
-    assert cfg.download_manifest_url is None
-    assert cfg.download_client_url is None
+    assert cfg.download_fallback_url is None
     assert cfg.download_capable() is False
 
 
@@ -370,8 +363,7 @@ def test_download_hosts_cover_explicit_endpoints():
                 "download": {
                     "torrent": {"torrent_url": "https://t.example/c.torrent"},
                     "http": {
-                        "manifest": "https://m.example/m.json",
-                        "client": "https://dl.example/client",
+                        "fallback": "https://dl.example/client.zip",
                     },
                 },
             }
@@ -381,7 +373,6 @@ def test_download_hosts_cover_explicit_endpoints():
     assert "srv.example" in hosts
     assert "news.example" in hosts
     assert "t.example" in hosts
-    assert "m.example" in hosts
     assert "dl.example" in hosts
 
 

@@ -570,7 +570,7 @@ def _summary_text(
         ),
         "Addon catalog(s): "
         + _addons_catalog_summary(cfg.addons_registry_urls, cfg),
-        f"Download source: {_yes(bool(cfg.download_manifest_url or cfg.download_client_url or cfg.has_torrent()))}",
+        f"Download source: {_yes(bool(cfg.download_fallback_url or cfg.has_torrent()))}",
     ]
     if cfg.assets_registry_url or cfg.embedded_assets:
         lines.append(

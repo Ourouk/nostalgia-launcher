@@ -22,15 +22,6 @@ from .sources import deploy
 from .sources import get as _source_get
 from .sources import hooks as _hooks
 
-
-def _checked_rel(dest_rel) -> str:
-    """Validate a client-dir-relative install target (a release-asset name
-    or a catalog `dest`) before it is joined onto `client_dir`. A
-    compromised mod upstream must not be able to write outside the client
-    folder via a crafted filename (`../../evil.dll`)."""
-    return deploy.checked_rel(dest_rel)
-
-
 # The per-user custom mod file (a JSON list, one entry per mod, using the
 # same shape the mod catalog uses). Written empty on first use via Settings.
 
@@ -165,12 +156,12 @@ def _fetch_release_cached(mod: dict, force: bool = False) -> dict | None:
             force=force,
         )
     if src["kind"] == "codeberg_release":
-        from .sources.codeberg_release import (
-            codeberg_latest,
-            fetch_release_cached,
+        from .sources.codeberg_release import codeberg_latest
+        from .sources.github_release import (
+            fetch_release_cached as _fetch_cached,
         )
 
-        return fetch_release_cached(
+        return _fetch_cached(
             mod["id"],
             lambda: codeberg_latest(src["owner"], src["repo"]),
             force=force,

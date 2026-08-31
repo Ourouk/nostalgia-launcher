@@ -139,4 +139,5 @@ def resolve_logo(spec) -> str | None:
     value = spec.get(LOGO_KEY)
     if not _valid_logo_url(value):
         return None
+    assert isinstance(value, str)
     return value.strip()

@@ -7,9 +7,11 @@ list and needs prerelease/draft filtering).
 """
 
 import json
+import urllib.request
 
+from ...core.constants import UA
 from ...core.errors import describe_net_error
-from ...core.security_http import _check_url, make_secure_client
+from ...core.security_http import read_capped, secure_urlopen
 from .github_release import _API_MAX_BYTES, GitHubReleaseBackend
 
 
@@ -19,15 +21,9 @@ def codeberg_latest(owner: str, repo: str, raise_errors=False) -> dict | None:
         f"{owner}/{repo}/releases?limit=10&pre-release=false"
     )
     try:
-        _check_url(url, None)
-        with make_secure_client(timeout=10) as client:
-            resp = client.get(url)
-            resp.raise_for_status()
-            if len(resp.content) > _API_MAX_BYTES:
-                raise RuntimeError(
-                    f"Response exceeded the {_API_MAX_BYTES // 1024} KiB limit."
-                )
-            releases = json.loads(resp.content)
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with secure_urlopen(req, timeout=10) as r:
+            releases = json.loads(read_capped(r, _API_MAX_BYTES))
         for rel in releases:
             if not rel.get("prerelease", False) and not rel.get(
                 "draft", False

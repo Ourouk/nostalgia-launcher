@@ -61,7 +61,9 @@ def run(name: str, client_dir: str) -> list[str]:
     fn = _HOOKS.get(name)
     if fn is None:
         raise RuntimeError(f"Unknown post-install hook: {name!r}")
-    return fn(client_dir) or []
+    assert callable(fn)
+    result = fn(client_dir)
+    return result or []  # type: ignore[no-untyped-call]
 
 
 register("write_dxvk_conf", _write_dxvk_conf)

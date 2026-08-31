@@ -1,6 +1,6 @@
 # Nostalgia Launcher
 
-Nostalgia Launcher is a desktop application that helps you verify, update,
+<img src="NostalgiaLauncher.svg" alt="Nostalgia Launcher logo" align="left" width="180" /> Nostalgia Launcher is a desktop application that helps you verify, update,
 and configure a game installation — for example a Vanilla WoW (1.12.1)
 client — against a **configuration that you supply yourself**. It is a local
 tool: it does not include, host, or distribute any game files, and it does
@@ -13,12 +13,14 @@ not maintain or recommend any server directory.
 
 ## What it does
 
-- Verifies a selected game folder and updates only the files that changed,
-  against a manifest **you configure**. The folder must be confirmed once in
+- Verifies a selected game folder via BitTorrent piece hashes against a
+  snapshot **your configuration advertises** (`server.download.torrent`).
+  Incremental updates are torrent-only. The folder must be confirmed once in
   Settings — the launcher never downloads anywhere until you choose where,
   and the active folder stays visible in the footer.
-- Bulk-downloads changed files over BitTorrent when your configuration
-  advertises a snapshot, falling back to plain HTTP automatically.
+- For a first-time install (no playable client), downloads a single archive
+  over HTTPS (`server.download.http.fallback` + `server.download.content.type`)
+  and extracts it. There is no per-file HTTP update path.
 - Installs and updates mods and addons from catalogs **your configuration
   points at** (Git hosts, validated by host allowlist).
 - Runs **multiple isolated profiles** — one per server/community, each with
@@ -49,8 +51,8 @@ Nostalgia Launcher (local tool)
   (local .json file, or an https URL you type)
         │
         ▼
-  optional, validated content/update sources
-  (manifest, catalogs, news — all named by the config)
+   optional, validated content/update sources
+  (torrent snapshot or fallback archive, catalogs, news — all named by the config)
 ```
 
 The core repository does not know which servers or communities exist. A
@@ -122,11 +124,13 @@ itself printed.
 
 ### Verification and updates
 
-The launcher compares the files in your game folder against the manifest
-**your configuration points at**, and downloads only the missing or changed
-files. Downloads resume after an interruption and are re-checked after
-downloading. This is a generic installation-verification capability; the
-launcher never creates or distributes game content on its own.
+The launcher verifies a selected folder against a BitTorrent snapshot
+**your configuration points at** (`torrent_url` and/or `magnet`) by hashing
+local files against the snapshot's piece hashes. Only missing/changed pieces
+are fetched (peer data that fails piece hashes is rejected). For a first-time
+install with no playable client, it fetches a single `fallback` archive
+(`client.zip`/`rar` or `folder`) over HTTPS and extracts it per
+`content.type`. Incremental updates never use per-file HTTP.
 
 ### Mods and addons
 
@@ -156,7 +160,7 @@ Unified Launcher for Windows Games). The play button appears only when
 
 - Downloads use HTTPS with host restrictions derived from your
   configuration; redirects stay HTTPS-only; TLS is verified (≥ TLS 1.2).
-- Metadata responses (manifests, catalogs, news, logos) are size-capped.
+- Metadata responses (torrent, catalogs, news, logos) are size-capped.
 - Extracted archives are guarded against path traversal; installed files
   are confined to the selected game folder.
 - The launcher retrieves content only from the URLs your configuration

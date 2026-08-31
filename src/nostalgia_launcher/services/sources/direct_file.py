@@ -18,12 +18,10 @@ wire kind (its catalog entries always carry an ``extract_map``).
 import hashlib
 import os
 import tempfile
+import urllib.request
 
-from ...core.security_http import (
-    _check_url,
-    allowed_download_hosts,
-    make_secure_client,
-)
+from ...core.constants import UA
+from ...core.security_http import allowed_download_hosts, secure_urlopen
 from .base import FetchResult, SourceBackend, StreamedFile, register
 from .safety import https_url, safe_relpath, valid_extract_map, valid_sha1
 
@@ -115,19 +113,22 @@ class DirectFileBackend(SourceBackend):
         hasher = hashlib.sha1()
         got = 0
         header_map: dict = {}
+        req = urllib.request.Request(src["url"], headers={"User-Agent": UA})
         try:
-            _check_url(src["url"], allowed_download_hosts())
-            with make_secure_client(timeout=120) as client:
-                with client.stream("GET", src["url"]) as resp:
-                    resp.raise_for_status()
-                    header_map = {
-                        k.lower(): v for k, v in resp.headers.items()
-                    }
-                    with open(stage, "wb") as f:
-                        for chunk in resp.iter_bytes(chunk_size=256 * 1024):
-                            f.write(chunk)
-                            hasher.update(chunk)
-                            got += len(chunk)
+            with secure_urlopen(
+                req,
+                timeout=120,
+                allowed_hosts=allowed_download_hosts(),
+            ) as r:
+                header_map = _fetch_headers(r)
+                with open(stage, "wb") as f:
+                    while True:
+                        chunk = r.read(256 * 1024)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        hasher.update(chunk)
+                        got += len(chunk)
         except Exception:
             self._discard(stage)
             raise

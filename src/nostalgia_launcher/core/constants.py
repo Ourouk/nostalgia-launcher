@@ -22,10 +22,18 @@ DOWNLOAD_TIMEOUT = 10  # seconds without any data before a transfer aborts
 
 GITHUB_API = "https://api.github.com"
 
+
 # Session log (see core/log_sink.py): appended by every run, rotated to
 # launcher.log.old when it outgrows the size cap. Lives next to the config
 # so diagnostics survive cache clears and can be printed via the CLI.
-LOG_FILE = os.path.join(config_dir(), "launcher.log")
+def log_file() -> str:
+    """Live session-log path — computed via ``config_dir()`` so a
+    ``HOME``/``APPDATA`` redirection is always reflected."""
+    return os.path.join(config_dir(), "launcher.log")
+
+
+# Deprecated alias — import-time frozen, use ``log_file()`` instead.
+LOG_FILE = log_file()
 
 # News feed timings (endpoints come from the launcher configuration).
 NEWS_TIMEOUT = 8

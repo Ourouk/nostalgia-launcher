@@ -7,8 +7,11 @@ AssetsLoaded and the worker outcome as OperationFinished("assets", …) on
 the shared EventDispatcher; the Qt panel renders them. No GUI toolkit.
 """
 
+from __future__ import annotations
+
 import os
 import threading
+from collections.abc import Callable
 
 from ..core import config_store
 from ..core.errors import describe_install_error
@@ -33,7 +36,11 @@ class AssetsController:
     UI's default.
     """
 
-    def __init__(self, dispatcher: EventDispatcher, get_out_dir=None):
+    def __init__(
+        self,
+        dispatcher: EventDispatcher,
+        get_out_dir: Callable[[], str] | None = None,
+    ) -> None:
         self._dispatcher = dispatcher
         self.state = AssetsState()
         self._busy = False
@@ -43,8 +50,11 @@ class AssetsController:
         self._verdict_cache: dict[str, bool] = {}
         if get_out_dir is None:
 
-            def get_out_dir():
-                return config_store.load_config().get("out_dir", "")
+            def _default_get_out_dir() -> str:
+                val = config_store.load_config().get("out_dir", "")
+                return val if isinstance(val, str) else ""
+
+            get_out_dir = _default_get_out_dir
 
         self._get_out_dir = get_out_dir
         self.state.records = self._load_records()

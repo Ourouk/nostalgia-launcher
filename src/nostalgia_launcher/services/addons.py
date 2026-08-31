@@ -19,12 +19,14 @@ ships.
 import json
 import os
 import time
+import urllib.request
 
 from ..core import config_store as _config_store
 from ..core import launcher
 from ..core.config_store import load_config, update_config
+from ..core.constants import UA
 from ..core.log_sink import log
-from ..core.security_http import _check_url, make_secure_client
+from ..core.security_http import read_capped, secure_urlopen
 from . import catalog
 from .sources import deploy as _sources_deploy
 from .sources.git_archive import (
@@ -129,13 +131,9 @@ def _fetch_url_catalog(url: str, force: bool, now: float) -> list:
     ):
         return entry["catalog"]
     try:
-        _check_url(url, None)
-        with make_secure_client(timeout=10) as client:
-            resp = client.get(url)
-            resp.raise_for_status()
-            if len(resp.content) > 2 * 1024 * 1024:
-                raise RuntimeError("Response exceeded the 2048 KiB limit.")
-            raw = json.loads(resp.content)
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with secure_urlopen(req, timeout=10) as r:
+            raw = json.loads(read_capped(r, 2 * 1024 * 1024))
     except Exception:
         # offline — serve the last good cached copy for this URL
         return entry.get("catalog") or []
@@ -223,11 +221,12 @@ def catalog_last_updated() -> float | None:
     """The newest per-URL catalog fetch timestamp (epoch), or None when no
     catalog was ever fetched. Network-free."""
     cache = _config_store.load_config().get("addons_catalog_cache", {}) or {}
-    stamps = [
-        e.get("timestamp")
-        for e in cache.values()
-        if isinstance(e, dict) and isinstance(e.get("timestamp"), (int, float))
-    ]
+    stamps: list[float] = []
+    for e in cache.values():
+        if isinstance(e, dict):
+            ts = e.get("timestamp")
+            if isinstance(ts, (int, float)):
+                stamps.append(float(ts))
     return max(stamps) if stamps else None
 
 

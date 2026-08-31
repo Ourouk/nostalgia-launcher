@@ -1,15 +1,18 @@
 """Update/verify orchestration controller.
 
 Owns the verify/update lifecycle: starting VerifyWorker/UpdateWorker,
-polling their queues, computing the footer READY/PLAY/UPDATE button state
-and publishing everything as events on the shared EventDispatcher. No GUI
-toolkit: the controller never touches widgets, it only posts events and
-mutates its own UpdateState.
+computing the footer READY/PLAY/UPDATE button state and publishing
+everything as events on the shared EventDispatcher. Workers post typed
+lifecycle events directly to the dispatcher; the controller subscribes and
+mutates UpdateState. No GUI toolkit: the controller never touches widgets,
+it only posts events and mutates its own UpdateState.
 """
 
+from __future__ import annotations
+
 import os
-import queue
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..core.config_store import load_config, update_config
@@ -18,20 +21,21 @@ from ..core.filesystem import (
     pick_game_executable,
     remove_wdb,
 )
-from ..core.log_sink import debug_emit, log
+from ..core.log_sink import log
 from ..core.platform_support import can_launch_client, is_linux
 from ..services import mods
 from ..services.self_update import (
     fetch_updater_latest_tag,
     updater_update_available,
 )
-from ..services.update_backend import markers
 from ..services.update_backend.http_update import (
     UpdateWorker,
     VerifyWorker,
     torrent_recovery_available,
 )
 from ..state.events import (
+    ClientVersionReady,
+    Event,
     EventDispatcher,
     GameExited,
     GameLaunched,
@@ -40,7 +44,21 @@ from ..state.events import (
     OperationFinished,
     ProgressChanged,
     StatusChanged,
+    TorrentCorrupt,
+    TorrentDiffReady,
+    TorrentDiskError,
+    TorrentReachable,
+    TorrentRecoveryDone,
+    TorrentSessionError,
+    TorrentStalled,
+    TorrentUnavailable,
+    TorrentUpToDate,
+    TorrentVerifyFailed,
+    UpdateCompleted,
+    UpdateFailed,
     UpdateFilesList,
+    UpdateRequired,
+    VerificationUpToDate,
 )
 from ..state.models import UpdateState
 
@@ -64,27 +82,6 @@ class Readiness:
 _CHILD_OUTPUT_MAX_LINES = 800
 
 
-def _flatten_diff_tree(nodes, prefix=()) -> list[str]:
-    """Flatten a diff tree (as returned by __DIFF_TREE__) into a list of
-    relative file paths (e.g. "Data/foo.mpq", "WoW.exe").
-
-    Node ``name`` values are basenames, so the recursion carries the parent
-    directory chain to rebuild the full path (matching the relative paths the
-    HTTP downloader streams via ``current_file``)."""
-    paths: list[str] = []
-    for node in nodes:
-        t = node.get("type", "")
-        name = node.get("name", "")
-        cur = prefix + (name,)
-        if t == "file" or t == "del":
-            paths.append("/".join(cur))
-        elif t == "mpq":
-            paths.append("/".join(cur) + ".mpq")
-        elif t == "dir":
-            paths.extend(_flatten_diff_tree(node.get("files", []), cur))
-    return paths
-
-
 class UpdateController:
     """Owns the verify/update flow; speaks to the UI only through events.
 
@@ -94,23 +91,32 @@ class UpdateController:
     UI's default.
     """
 
-    def __init__(self, dispatcher: EventDispatcher, get_out_dir=None):
+    def __init__(
+        self,
+        dispatcher: EventDispatcher,
+        get_out_dir: Callable[[], str] | None = None,
+    ) -> None:
+        import threading
+
         self._dispatcher = dispatcher
         self.state = UpdateState()
-        self._log_q: queue.Queue = queue.Queue()
-        self._prog_q: queue.Queue = queue.Queue()
+        self._lock = threading.Lock()
         self._worker: UpdateWorker | None = None
         self._verify_worker: VerifyWorker | None = None
         self._op: str | None = None
         # Set by check_updater_update(): a newer updater release exists and
         # the header "Update available!" label should be shown.
-        self.updater_update_available = False
+        self.updater_update_available: bool = False
         if get_out_dir is None:
 
-            def get_out_dir():
-                return load_config().get("out_dir", "")
+            def _default_get_out_dir() -> str:
+                val = load_config().get("out_dir", "")
+                return val if isinstance(val, str) else ""
 
-        self._get_out_dir = get_out_dir
+            get_out_dir = _default_get_out_dir
+
+        self._get_out_dir: Callable[[], str] = get_out_dir
+        self._dispatcher.subscribe(self._on_event)
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -126,10 +132,6 @@ class UpdateController:
     def client_update_enabled(self) -> bool:
         return self._client_updates_enabled()
 
-    @property
-    def diff_nodes(self):
-        return self.state.diff_nodes
-
     def start_verify(self, overwrite_config: bool = False):
         if not self._client_updates_enabled():
             return
@@ -137,8 +139,7 @@ class UpdateController:
         if not out:
             return
         self.state.verify_out_dir = out
-        # Cancel any verify already in flight before swapping the queues, so
-        # a stale worker can't keep writing to a queue we no longer poll.
+        # Cancel any verify already in flight.
         if self._verify_worker is not None:
             self._verify_worker.cancel()
         # Clear torrent state from previous attempts
@@ -148,14 +149,13 @@ class UpdateController:
         self.state.running = True
         self._op = "verify"
         self.state.status = "Verifying…"
-        self.state.manifest_available = False  # a fresh verify re-fetches it
-        self._log_q = queue.Queue()
-        self._prog_q = queue.Queue()
+        from ..services.update_backend.sources import _download_source
+
         worker = VerifyWorker(
             out,
-            self._log_q,
-            self._prog_q,
+            self._dispatcher,
             overwrite_config=overwrite_config,
+            source=_download_source(),
         )
         self._verify_worker = worker
         threading.Thread(target=worker.run, daemon=True).start()
@@ -177,11 +177,10 @@ class UpdateController:
             )
             return False
         if (
-            self.state.diff_nodes is not None
+            self.state.torrent_stale is not None
             and self.state.verify_out_dir != out
         ):
-            # The cached diff tree belongs to another folder — never apply
-            # a stale file list to a different path; re-verify instead.
+            # The cached stale set belongs to another folder — re-verify.
             self._dispatcher.post(
                 LogMessage(
                     "Game folder changed since the last verify — "
@@ -214,20 +213,18 @@ class UpdateController:
         self.state.running = True
         self._op = "update"
         self.state.status = "Updating…"
-        self._log_q = queue.Queue()
-        self._prog_q = queue.Queue()
+        from ..services.update_backend.sources import _download_source
+
         worker = UpdateWorker(
             out,
-            self._log_q,
-            self._prog_q,
+            self._dispatcher,
+            source=_download_source(),
         )
         self._worker = worker
-        diff = self.state.diff_nodes
-        self.state.diff_nodes = None
         self.state.torrent_stale = None
         threading.Thread(
             target=worker.run,
-            args=(diff, torrent_wanted),
+            args=(None, torrent_wanted),
             daemon=True,
         ).start()
         self._dispatcher.post(StatusChanged("Updating…"))
@@ -263,9 +260,9 @@ class UpdateController:
         self.state.running = True
         self._op = "download"
         self.state.status = "Downloading client…"
-        self._log_q = queue.Queue()
-        self._prog_q = queue.Queue()
-        worker = UpdateWorker(out, self._log_q, self._prog_q)
+        from ..services.update_backend.sources import _download_source
+
+        worker = UpdateWorker(out, self._dispatcher, source=_download_source())
         self._worker = worker
         threading.Thread(
             target=worker.run, kwargs={"recovery_full": True}, daemon=True
@@ -275,31 +272,31 @@ class UpdateController:
         return True
 
     def cancel(self):
-        """Ask every live worker to stop; the queues are drained as normal."""
+        """Ask every live worker to stop."""
         for worker in (self._verify_worker, self._worker):
             if worker is not None:
                 worker.cancel()
 
     def invalidate(self):
-        """Drop readiness and the cached diff tree (game folder changed or a
-        verify-game-files recheck)."""
+        """Drop readiness and the cached torrent state (game folder changed
+        or a verify-game-files recheck)."""
         self.cancel()
-        # Workers may still enqueue one final marker after cooperative cancel;
-        # stop polling their queues before clearing the state they could alter.
-        self._log_q = queue.Queue()
-        self._prog_q = queue.Queue()
         self._worker = None
         self._verify_worker = None
         self._op = None
         self.state.running = False
         self.state.client_ready = False
-        self.state.manifest_available = False
-        self.state.diff_nodes = None
         self.state.verify_out_dir = ""
-        # Also clear torrent state
         self.state.torrent_reachable = None
         self.state.torrent_error = None
         self.state.torrent_stale = None
+
+    def close(self):
+        """Unsubscribe from dispatcher (call on shutdown)."""
+        try:
+            self._dispatcher.unsubscribe(self._on_event)
+        except Exception:
+            pass
 
     def read_client_version(self) -> str:
         """The client version straight from disk, cached on state (footer
@@ -602,6 +599,7 @@ class UpdateController:
             from ..services import umu
 
             try:
+                assert pid is not None and pgid is not None
                 umu.kill_game(pid, pgid)
             except Exception as e:
                 self._dispatcher.post(
@@ -611,52 +609,67 @@ class UpdateController:
         threading.Thread(target=_killer, daemon=True).start()
         return True
 
-    def poll(self):
-        """Drain the worker queues once and post the resulting events."""
-        try:
-            while True:
-                msg, tag = self._log_q.get_nowait()
-                self._handle_log(msg, tag)
-        except queue.Empty:
-            pass
-
-        latest = None
-        try:
-            while True:
-                latest = self._prog_q.get_nowait()
-        except queue.Empty:
-            pass
-        if latest is not None:
-            val, lbl = latest[:2]
-            details = latest[2] if len(latest) > 2 else {}
-            self.state.progress = max(0.0, min(1.0, val))
-            self.state.progress_label = lbl
-            phase = details.get("phase", "")
-            transport = details.get("transport", "")
-            self.state.progress_file = details.get("current_file", "")
-            self.state.progress_downloaded = details.get("downloaded", 0)
-            self.state.progress_total = details.get("total", 0)
-            self.state.progress_speed = details.get("speed", 0.0)
-            self.state.progress_peers = details.get("peers", 0)
-            self.state.progress_verified_pieces = details.get(
-                "verified_pieces", 0
-            )
-            self.state.progress_total_pieces = details.get("total_pieces", 0)
-            self._dispatcher.post(
-                ProgressChanged(
-                    val,
-                    lbl,
-                    phase=phase,
-                    transport=transport,
-                    current_file=self.state.progress_file,
-                    downloaded=self.state.progress_downloaded,
-                    total=self.state.progress_total,
-                    speed=self.state.progress_speed,
-                    peers=self.state.progress_peers,
-                    verified_pieces=self.state.progress_verified_pieces,
-                    total_pieces=self.state.progress_total_pieces,
-                )
-            )
+    def _on_event(self, event: Event) -> None:
+        """Subscribed handler for typed worker lifecycle events (UI thread)."""
+        # State is mutated only on the dispatcher thread (bridge 50ms or test
+        # direct dispatch_all). Guard with lock for test parallelism.
+        with self._lock:
+            if isinstance(event, ProgressChanged):
+                self.state.progress = max(0.0, min(1.0, event.value))
+                self.state.progress_label = event.label
+                self.state.progress_file = event.current_file
+                self.state.progress_downloaded = event.downloaded
+                self.state.progress_total = event.total
+                self.state.progress_speed = event.speed
+                self.state.progress_peers = event.peers
+                self.state.progress_verified_pieces = event.verified_pieces
+                self.state.progress_total_pieces = event.total_pieces
+                return
+            if isinstance(event, ClientVersionReady):
+                self.state.client_version = event.version
+                return
+            if isinstance(event, VerificationUpToDate):
+                self._on_up_to_date(event)
+                return
+            if isinstance(event, UpdateRequired):
+                self._on_update_needed(event)
+                return
+            if isinstance(event, TorrentReachable):
+                self._on_torrent_reachable(event)
+                return
+            if isinstance(event, TorrentUnavailable):
+                self._on_torrent_unreachable(event)
+                return
+            if isinstance(event, TorrentCorrupt):
+                self._on_torrent_corrupt(event)
+                return
+            if isinstance(event, TorrentStalled):
+                self._on_torrent_stalled(event)
+                return
+            if isinstance(event, TorrentSessionError):
+                self._on_torrent_session_error(event)
+                return
+            if isinstance(event, TorrentDiskError):
+                self._on_torrent_disk_error(event)
+                return
+            if isinstance(event, TorrentVerifyFailed):
+                self._on_torrent_verify_failed(event)
+                return
+            if isinstance(event, TorrentDiffReady):
+                self._on_torrent_diff(event)
+                return
+            if isinstance(event, TorrentUpToDate):
+                self._on_torrent_up_to_date(event)
+                return
+            if isinstance(event, TorrentRecoveryDone):
+                self._on_torrent_recovery_done(event)
+                return
+            if isinstance(event, UpdateCompleted):
+                self._on_done(event)
+                return
+            if isinstance(event, UpdateFailed):
+                self._on_error(event)
+                return
 
     def compute_readiness(self, addons_installing: bool = False) -> Readiness:
         """Footer button/status decision for the current state.
@@ -677,7 +690,7 @@ class UpdateController:
             label = {
                 "update": "Updating…",
                 "download": "Downloading…",
-            }.get(self._op, "Checking…")
+            }.get(self._op or "", "Checking…")
             return Readiness("busy", label, self.state.status)
         if not self._client_updates_enabled():
             if not self._playable_client_present():
@@ -710,97 +723,95 @@ class UpdateController:
             if not can_launch_client():
                 return Readiness("busy", "READY", "Client updates disabled")
             return Readiness("play", "PLAY", "Client updates disabled")
-        if not self.state.manifest_available:
-            # Disabled till verification for torrent-only (cache makes this
-            # instant via TORRENT_VALIDATION_CACHE_KEY). Magnet-only with
-            # torrent.update=false skips incremental verify → Download.
-            if (
-                self.state.torrent_stale is None
-                and self.state.torrent_reachable is None
-                and self.state.torrent_error is None
-                and not self.state.client_ready
-            ):
-                from ..core import launcher as _launcher_v
+        # Torrent-only readiness (no manifest/diff).
+        # Disabled till verification (cache makes this instant via
+        # TORRENT_VALIDATION_CACHE_KEY). Magnet-only with
+        # torrent.update=false skips incremental verify → Download.
+        if (
+            self.state.torrent_stale is None
+            and self.state.torrent_reachable is None
+            and self.state.torrent_error is None
+            and not self.state.client_ready
+        ):
+            from ..core import launcher as _launcher_v
 
-                _vcfg = _launcher_v.config()
-                # Only when torrent is the expected path (no manifest URL)
-                _torrent_only = bool(
-                    _vcfg
-                    and _vcfg.has_torrent()
-                    and not _vcfg.download_manifest_url
-                )
-                if _torrent_only:
-                    # Respect torrent.update flag; magnet-only first-time-only
-                    # still shows Download via BitTorrent, not Verifying.
-                    if _vcfg.torrent_update_allowed():
-                        if not self._playable_client_present():
-                            return Readiness(
-                                "disabled", "UPDATE", "Verifying…"
-                            )
-                        return Readiness("disabled", "PLAY", "Verifying…")
-            # No manifest → can't verify via SHA-1, but a torrent-only verify
-            # may have established readiness or a stale-file list.
-            if self.state.torrent_stale:
-                # Magnet-only first-time-only: don't offer incremental
-                # torrent updates (server.download.torrent.update).
-                from ..core import launcher as _launcher_cfg
+            _vcfg = _launcher_v.config()
+            _torrent_only = bool(_vcfg and _vcfg.has_torrent())
+            if _torrent_only:
+                # Respect torrent.update flag; magnet-only first-time-only
+                # still shows Download via BitTorrent, not Verifying.
+                if _vcfg is not None and _vcfg.torrent_update_allowed():
+                    if not self._playable_client_present():
+                        return Readiness("disabled", "UPDATE", "Verifying…")
+                    return Readiness("disabled", "PLAY", "Verifying…")
+        if self.state.torrent_stale:
+            # Magnet-only first-time-only: don't offer incremental
+            # torrent updates (server.download.torrent.update).
+            from ..core import launcher as _launcher_cfg
 
-                _cfg = _launcher_cfg.config()
-                if _cfg is not None and not _cfg.torrent_update_allowed():
-                    pass  # fall through — no torrent update for magnet-only
-                else:
-                    n = len(self.state.torrent_stale)
-                    error_suffix = ""
-                    if self.state.torrent_error:
-                        error_suffix = f" ({self.state.torrent_error})"
-                    return Readiness(
-                        "update",
-                        "UPDATE",
-                        f"{n} file(s) to update via BitTorrent{error_suffix}",
-                    )
-            if self.state.torrent_reachable is False:
-                # Neither the manifest nor the BitTorrent snapshot is
-                # reachable — there is no update to offer. Play if we can,
-                # otherwise gray the button.
-                error_detail = (
-                    f": {self.state.torrent_error}"
-                    if self.state.torrent_error
-                    else ""
-                )
-                if not can_launch_client():
-                    return Readiness(
-                        "disabled",
-                        "UPDATE",
-                        f"Torrent unavailable{error_detail}",
-                    )
-                return Readiness(
-                    "play", "PLAY", f"Torrent unavailable{error_detail}"
-                )
-            if self.state.torrent_error and self.state.torrent_stale is None:
-                # Torrent reachable but had an error (stalled, session, disk,
-                # verify failed). Offer recovery so the user can retry — but
-                # never at the cost of stranding an installed client: with a
-                # game executable on disk, PLAY wins (Force recheck remains
-                # the repair path).
-                if self._playable_client_present():
-                    return Readiness(
-                        "play",
-                        "PLAY",
-                        "Verification failed — playing installed client",
-                    )
+            _cfg = _launcher_cfg.config()
+            if _cfg is not None and not _cfg.torrent_update_allowed():
+                pass  # fall through — no torrent update for magnet-only
+            else:
+                n = len(self.state.torrent_stale)
+                error_suffix = ""
+                if self.state.torrent_error:
+                    error_suffix = f" ({self.state.torrent_error})"
                 return Readiness(
                     "update",
                     "UPDATE",
-                    f"Download via BitTorrent ({self.state.torrent_error})",
+                    f"{n} file(s) to update via BitTorrent{error_suffix}",
                 )
-            if not self.state.client_ready and torrent_recovery_available():
-                if self._playable_client_present():
-                    return Readiness(
-                        "play",
-                        "PLAY",
-                        "Manifest unavailable — playing unverified client",
-                    )
-                return Readiness("update", "UPDATE", "Download via BitTorrent")
+        if self.state.torrent_reachable is False:
+            error_detail = (
+                f": {self.state.torrent_error}"
+                if self.state.torrent_error
+                else ""
+            )
+            if not can_launch_client():
+                return Readiness(
+                    "disabled",
+                    "UPDATE",
+                    f"Torrent unavailable{error_detail}",
+                )
+            return Readiness(
+                "play", "PLAY", f"Torrent unavailable{error_detail}"
+            )
+        if self.state.torrent_error and self.state.torrent_stale is None:
+            # Torrent reachable but had an error (stalled, session, disk,
+            # verify failed). Offer recovery so the user can retry — but
+            # never at the cost of stranding an installed client: with a
+            # game executable on disk, PLAY wins (Force recheck remains
+            # the repair path).
+            if self._playable_client_present():
+                return Readiness(
+                    "play",
+                    "PLAY",
+                    "Verification failed — playing installed client",
+                )
+            return Readiness(
+                "update",
+                "UPDATE",
+                f"Download via BitTorrent ({self.state.torrent_error})",
+            )
+        if not self.state.client_ready and torrent_recovery_available():
+            if self._playable_client_present():
+                return Readiness(
+                    "play",
+                    "PLAY",
+                    "Torrent unavailable — playing unverified client",
+                )
+            return Readiness("update", "UPDATE", "Download via BitTorrent")
+        # Fallback zip for first-install when torrent unavailable
+        if not self.state.client_ready:
+            from ..core import launcher as _launcher_f
+
+            _cfg_f = _launcher_f.config()
+            _fallback = _cfg_f.download_fallback_url if _cfg_f else None
+            if _fallback and not self._playable_client_present():
+                return Readiness(
+                    "update", "UPDATE", "Download via HTTP fallback"
+                )
             if not can_launch_client():
                 reason = (
                     "umu-run not found"
@@ -808,13 +819,13 @@ class UpdateController:
                     else "launching unsupported on this platform"
                 )
                 return Readiness(
-                    "disabled", "UPDATE", f"Manifest unavailable — {reason}"
+                    "disabled", "UPDATE", f"Torrent unavailable — {reason}"
                 )
-            if not self.state.client_ready:
-                return Readiness("play", "PLAY", "Manifest unavailable")
-            return Readiness("play", "PLAY", "Everything up to date!")
-        if not self.state.client_ready:
-            return Readiness("update", "UPDATE", "Update available!")
+            if self._playable_client_present():
+                return Readiness(
+                    "play", "PLAY", "Torrent unavailable — playing client"
+                )
+            return Readiness("play", "PLAY", "Torrent unavailable")
         if self._mods_have_errors():
             return Readiness("busy", "PLAY", "Mod errors — check MODS tab")
         if not can_launch_client():
@@ -841,124 +852,75 @@ class UpdateController:
 
         return launcher.effective_client_updates_enabled()
 
-    def _handle_log(self, msg: str, tag: str):
-        if markers.is_version(msg):
-            self.state.client_version = markers.version_of(msg)
-            return
-        handler = self._MARKER_HANDLERS.get(msg)
-        if handler is not None:
-            handler(self, tag)
-        else:
-            debug_emit(msg)
-            self._dispatcher.post(LogMessage(msg, tag))
-
-    def _on_done(self, tag: str):
+    def _on_done(self, event: UpdateCompleted):
+        if event.version:
+            self.state.client_version = event.version
         self.state.running = False
         self.state.client_ready = True
-        self.state.manifest_available = True
         self._op = None
         self._dispatcher.post(ProgressChanged(1.0, ""))
         self._dispatcher.post(OperationFinished("update", True))
 
-    def _on_error(self, tag: str):
-        op = self._op or "update"
+    def _on_error(self, event: UpdateFailed):
+        op = event.op or self._op or "update"
         self.state.running = False
         self.state.client_ready = False
         self._op = None
         self._dispatcher.post(ProgressChanged(0.0, ""))
-        self._dispatcher.post(OperationFailed(op, ""))
+        self._dispatcher.post(OperationFailed(op, event.message))
 
-    def _on_manifest_available(self, tag: str):
-        # A valid manifest was fetched and parsed — the update button may
-        # offer its real verdict again.
-        self.state.manifest_available = True
-
-    def _on_manifest_unavailable(self, tag: str):
-        # The manifest couldn't be fetched/parsed — treat the client as
-        # never verified and gray out the update button.
-        self.state.manifest_available = False
-        self.state.client_ready = False
-        self.state.running = False
-        self._op = None
-        self._dispatcher.post(ProgressChanged(0.0, ""))
-        self._dispatcher.post(OperationFinished("verify", False))
-
-    def _on_up_to_date(self, tag: str):
+    def _on_up_to_date(self, event: VerificationUpToDate):
         self.state.running = False
         self.state.client_ready = True
-        self.state.manifest_available = True
         self._op = None
         self._dispatcher.post(ProgressChanged(1.0, ""))
         self._dispatcher.post(OperationFinished("verify", True))
 
-    def _on_update_needed(self, tag: str):
+    def _on_update_needed(self, event: UpdateRequired):
         self.state.running = False
         self.state.client_ready = False
-        self.state.manifest_available = True
         self._op = None
         self._dispatcher.post(ProgressChanged(0.0, ""))
         self._dispatcher.post(OperationFinished("verify", False))
 
-    def _on_diff_tree(self, tag: str):
-        self.state.diff_nodes = tag
-        if tag:
-            self._dispatcher.post(UpdateFilesList(_flatten_diff_tree(tag)))
-
-    def _on_torrent_reachable(self, tag: str):
+    def _on_torrent_reachable(self, event: TorrentReachable):
         self.state.torrent_reachable = True
 
-    def _on_torrent_unreachable(self, tag: str):
-        # No manifest and the BitTorrent snapshot can't be fetched — don't
-        # offer a dead recovery download; the UI falls back to PLAY (or a
-        # disabled UPDATE) instead.
-        self._torrent_failure(tag, reachable=False)
+    def _on_torrent_unreachable(self, event: TorrentUnavailable):
+        self._torrent_failure(event.message, reachable=False)
 
-    def _on_torrent_corrupt(self, tag: str):
-        # Torrent file downloaded but malformed — cannot use for recovery.
-        self._torrent_failure(tag, reachable=False)
+    def _on_torrent_corrupt(self, event: TorrentCorrupt):
+        self._torrent_failure(event.message, reachable=False)
 
-    def _on_torrent_stalled(self, tag: str):
-        # Verification stalled (low/no peers) — torrent reachable, offer
-        # recovery download on next launch.
-        self._torrent_failure(tag, reachable=True)
+    def _on_torrent_stalled(self, event: TorrentStalled):
+        self._torrent_failure(event.message, reachable=True)
 
-    def _on_torrent_session_error(self, tag: str):
-        # Session creation failed — torrent reachable, offer retry.
-        self._torrent_failure(tag, reachable=True)
+    def _on_torrent_session_error(self, event: TorrentSessionError):
+        self._torrent_failure(event.message, reachable=True)
 
-    def _on_torrent_disk_error(self, tag: str):
-        # Disk full / permission denied — torrent reachable, show error.
-        self._torrent_failure(tag, reachable=True)
+    def _on_torrent_disk_error(self, event: TorrentDiskError):
+        self._torrent_failure(event.message, reachable=True)
 
-    def _on_torrent_verify_failed(self, tag: str):
-        # The snapshot was fetched but libtorrent recheck failed — the
-        # torrent IS reachable, so offer recovery download.
-        self._torrent_failure(tag, reachable=True)
+    def _on_torrent_verify_failed(self, event: TorrentVerifyFailed):
+        self._torrent_failure(event.message, reachable=True)
 
-    def _torrent_failure(self, tag: str, *, reachable: bool):
-        """Common landing for failed torrent verifications: end the
-        operation, remember the error, and gate the recovery offer on
-        whether the snapshot itself was reachable."""
+    def _torrent_failure(self, message: str, *, reachable: bool):
+        """Common landing for failed torrent verifications."""
+
         self.state.running = False
         self.state.client_ready = False
-        self.state.manifest_available = False
         self.state.torrent_reachable = reachable
-        self.state.torrent_error = tag or None
+        self.state.torrent_error = message or None
         self.state.torrent_stale = None
         op = self._op or "verify"
         self._op = None
         self._dispatcher.post(ProgressChanged(0.0, ""))
         self._dispatcher.post(OperationFinished(op, False))
 
-    def _on_torrent_diff(self, tag: str):
-        # A manifest-less verify against the BitTorrent snapshot found
-        # stale files: remember which ones so the update only fetches
-        # them. The manifest stays unavailable so a later verify still
-        # re-checks, but the client is not ready yet.
+    def _on_torrent_diff(self, event: TorrentDiffReady):
         self.state.running = False
         self.state.client_ready = False
-        self.state.manifest_available = False
-        self.state.torrent_stale = list(tag) if tag else []
+        self.state.torrent_stale = list(event.stale) if event.stale else []
         self._op = None
         self._dispatcher.post(ProgressChanged(0.0, ""))
         self._dispatcher.post(
@@ -966,48 +928,21 @@ class UpdateController:
         )
         self._dispatcher.post(OperationFinished("verify", False))
 
-    def _on_torrent_up_to_date(self, tag: str):
-        # The client already matches the BitTorrent snapshot even though
-        # no manifest was ever fetched.
+    def _on_torrent_up_to_date(self, event: TorrentUpToDate):
         self.state.running = False
         self.state.client_ready = True
-        self.state.manifest_available = False
         self.state.torrent_stale = None
         self._op = None
         self._dispatcher.post(ProgressChanged(1.0, ""))
         self._dispatcher.post(OperationFinished("verify", True))
 
-    def _on_torrent_recovery_done(self, tag: str):
-        # A manifest-less BitTorrent recovery install finished: the client
-        # files are present and piece-hash verified, but no manifest was
-        # ever fetched — keep manifest_available False so the next verify
-        # still re-checks everything.
+    def _on_torrent_recovery_done(self, event: TorrentRecoveryDone):
         self.state.running = False
         self.state.client_ready = True
-        self.state.manifest_available = False
+        self.state.torrent_stale = None
         self._op = None
         self._dispatcher.post(ProgressChanged(1.0, ""))
         self._dispatcher.post(OperationFinished("update", True))
-
-    _MARKER_HANDLERS = {
-        markers.DONE: _on_done,
-        markers.ERROR: _on_error,
-        markers.MANIFEST_AVAILABLE: _on_manifest_available,
-        markers.MANIFEST_UNAVAILABLE: _on_manifest_unavailable,
-        markers.UP_TO_DATE: _on_up_to_date,
-        markers.UPDATE_NEEDED: _on_update_needed,
-        markers.DIFF_TREE: _on_diff_tree,
-        markers.TORRENT_REACHABLE: _on_torrent_reachable,
-        markers.TORRENT_UNREACHABLE: _on_torrent_unreachable,
-        markers.TORRENT_CORRUPT: _on_torrent_corrupt,
-        markers.TORRENT_STALLED: _on_torrent_stalled,
-        markers.TORRENT_SESSION_ERROR: _on_torrent_session_error,
-        markers.TORRENT_DISK_ERROR: _on_torrent_disk_error,
-        markers.TORRENT_VERIFY_FAILED: _on_torrent_verify_failed,
-        markers.TORRENT_DIFF: _on_torrent_diff,
-        markers.TORRENT_UP_TO_DATE: _on_torrent_up_to_date,
-        markers.TORRENT_RECOVERY_DONE: _on_torrent_recovery_done,
-    }
 
     def _mods_have_errors(self) -> bool:
         return any(

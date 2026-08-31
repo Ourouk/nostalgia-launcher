@@ -189,13 +189,15 @@ def _first_launch(show_log: bool = False) -> int:
         # Reuse the config the wizard already fetched when possible,
         # otherwise fetch it now (e.g. a non-interactive selection).
         raw = chosen.get("raw")
-        if not raw:
-            _data, raw, err = config_import.fetch_config_url(
+        if not isinstance(raw, str) or not raw:
+            _data, raw_fetched, err = config_import.fetch_config_url(
                 chosen["config_url"]
             )
             if err:
                 sys.stderr.write(f"{err}\n")
                 return 1
+            raw = raw_fetched
+        assert isinstance(raw, str)
         _cfg = launcher.configure_from_dict(json.loads(raw))
         if _cfg is None:
             sys.stderr.write(
@@ -328,7 +330,9 @@ def _run_backend(show_log: bool = False) -> int:
             )
             return 1
         if relay is not None and relay is not _GUARD_BUSY:
-            relay.message.connect(_make_raise_handler(app))
+            relay.message.connect(  # type: ignore[attr-defined]  # noqa: B009
+                _make_raise_handler(app)
+            )
         app.show()
         rc = app.run()
         return rc

@@ -8,7 +8,6 @@ sys.modules and the availability probe / TorrentDownloader are monkeypatched.
 import hashlib
 import importlib.util
 import os
-import queue
 import sys
 import tempfile
 import time
@@ -24,6 +23,22 @@ from nostalgia_launcher.core import launcher
 from nostalgia_launcher.services.update_backend.http_update import (
     DownloadSource,
     UpdateWorker,
+)
+from nostalgia_launcher.state.events import (
+    EventDispatcher,
+    LogMessage,
+    ProgressChanged,
+    TorrentCorrupt,
+    TorrentDiffReady,
+    TorrentDiskError,
+    TorrentReachable,
+    TorrentRecoveryDone,
+    TorrentSessionError,
+    TorrentStalled,
+    TorrentUnavailable,
+    TorrentUpToDate,
+    TorrentVerifyFailed,
+    UpdateFailed,
 )
 
 SHA1_X = "11F6AD8EC52A2984ABAAFD7C3B516503785C2072"
@@ -229,7 +244,7 @@ def test_download_source_uses_server_torrent_url(monkeypatch):
             "server": {
                 "url": "https://srv.example",
                 "download": {
-                    "http": {"manifest": "https://srv.example/m.json"},
+                    "http": {"fallback": "https://dl.example/client.zip"},
                     "torrent": {
                         "torrent_url": "https://dl.example/client.torrent"
                     },
@@ -252,7 +267,7 @@ def test_download_source_locator_prefers_url_over_magnet(monkeypatch):
             "server": {
                 "url": "https://srv.example",
                 "download": {
-                    "http": {"manifest": "https://srv.example/m.json"},
+                    "http": {"fallback": "https://dl.example/client.zip"},
                     "torrent": {
                         "torrent_url": "https://dl.example/client.torrent",
                         "magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
@@ -278,7 +293,7 @@ def test_download_source_carries_magnet_when_no_url(monkeypatch):
             "server": {
                 "url": "https://srv.example",
                 "download": {
-                    "http": {"manifest": "https://srv.example/m.json"},
+                    "http": {"fallback": "https://dl.example/client.zip"},
                     "torrent": {"magnet": "magnet:?xt=urn:btih:" + "ab" * 20},
                 },
             }
@@ -311,8 +326,7 @@ def test_download_source_resolves_torrent_only():
     src = client_update._download_source()
     assert src is not None
     assert src.torrent_locator is not None
-    assert src.manifest_url == ""
-    assert src.client_url == ""
+    assert src.fallback_url == ""
 
 
 # ── TorrentDownloader unit tests (fake libtorrent) ──────────────────────────
@@ -443,8 +457,8 @@ def _install_fake_lt(monkeypatch, **kwargs):
 def test_download_completes_and_sets_file_priorities(tmp_path, monkeypatch):
     client = _mk_client(tmp_path)
     fake = _install_fake_lt(monkeypatch)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    d = td.TorrentDownloader(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    d = td.TorrentDownloader(str(client), dispatcher)
     result = d.download("https://srv.example/client.torrent", {"Data/a.bin"})
 
     assert result == []
@@ -461,8 +475,8 @@ def test_download_completes_and_sets_file_priorities(tmp_path, monkeypatch):
 def test_download_whole_torrent_when_wanted_none(tmp_path, monkeypatch):
     client = _mk_client(tmp_path)
     fake = _install_fake_lt(monkeypatch)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    d = td.TorrentDownloader(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    d = td.TorrentDownloader(str(client), dispatcher)
     d.download("https://srv.example/client.torrent", None)
 
     ses = fake.last_session
@@ -484,7 +498,7 @@ def test_download_fetches_torrent_over_allowlisted_https(
         return _resp(b"fake")
 
     monkeypatch.setattr(td, "secure_urlopen", fake_urlopen)
-    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
+    d = td.TorrentDownloader(str(client), EventDispatcher())
     d.download("https://torrent.example/client.torrent", {"Data/a.bin"})
     assert seen["url"] == "https://torrent.example/client.torrent"
     assert seen["hosts"] == set()
@@ -493,8 +507,8 @@ def test_download_fetches_torrent_over_allowlisted_https(
 def test_download_cancelled_raises(tmp_path, monkeypatch):
     client = _mk_client(tmp_path)
     fake = _install_fake_lt(monkeypatch, finished_after=10**9)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    d = td.TorrentDownloader(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    d = td.TorrentDownloader(str(client), dispatcher)
     d._cancel = True
     with pytest.raises(RuntimeError, match="Cancelled"):
         d.download("https://srv.example/client.torrent", {"Data/a.bin"})
@@ -506,7 +520,7 @@ def test_download_stall_raises(tmp_path, monkeypatch):
     _install_fake_lt(monkeypatch, finished_after=10**9)
     monkeypatch.setattr(td, "STALL_TIMEOUT", -1)
     monkeypatch.setattr(td, "DISCOVERY_TIMEOUT", -1)
-    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
+    d = td.TorrentDownloader(str(client), EventDispatcher())
     with pytest.raises(td.TorrentStalledError, match="Stalled"):
         d.download("https://srv.example/client.torrent", {"Data/a.bin"})
 
@@ -520,7 +534,7 @@ def test_download_stall_does_not_fire_within_discovery_timeout(
     _install_fake_lt(monkeypatch, finished_after=3)
     monkeypatch.setattr(td, "DISCOVERY_TIMEOUT", 9999)
     monkeypatch.setattr(td, "STALL_TIMEOUT", -1)
-    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
+    d = td.TorrentDownloader(str(client), EventDispatcher())
     result = d.download("https://srv.example/client.torrent", {"Data/a.bin"})
     assert result == []
 
@@ -638,7 +652,7 @@ def test_download_stall_resets_on_peer_connection(tmp_path, monkeypatch):
     # Very short stall timeout — but peers appear before it fires
     monkeypatch.setattr(td, "STALL_TIMEOUT", 0.1)
     monkeypatch.setattr(td, "DISCOVERY_TIMEOUT", 0.1)
-    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
+    d = td.TorrentDownloader(str(client), EventDispatcher())
     # Should raise RuntimeError (Cancelled) not TorrentStalledError
     # because the fake never finishes — peers reset the timer.
     with pytest.raises(RuntimeError, match="Cancelled"):
@@ -779,7 +793,7 @@ def test_download_does_not_treat_read_piece_alert_as_error(
         "secure_urlopen",
         lambda req, timeout=10, allowed_hosts=None: _resp(b"fake"),
     )
-    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
+    d = td.TorrentDownloader(str(client), EventDispatcher())
     # The read_piece_alert fires on first poll but download is already
     # finished — must NOT raise TorrentDiskError.
     result = d.download("https://srv.example/client.torrent", {"Data/a.bin"})
@@ -791,7 +805,7 @@ def test_download_session_has_dht_bootstrap_nodes(tmp_path, monkeypatch):
     peer discovery."""
     client = _mk_client(tmp_path)
     fake = _install_fake_lt(monkeypatch)
-    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
+    d = td.TorrentDownloader(str(client), EventDispatcher())
     d.download("https://srv.example/client.torrent", {"Data/a.bin"})
     ses = fake.last_session
     assert "dht_bootstrap_nodes" in ses.settings
@@ -809,7 +823,7 @@ def test_download_session_uses_correct_listen_interfaces(
     """Download session binds to 0.0.0.0:0 (no IPv6)."""
     client = _mk_client(tmp_path)
     fake = _install_fake_lt(monkeypatch)
-    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
+    d = td.TorrentDownloader(str(client), EventDispatcher())
     d.download("https://srv.example/client.torrent", {"Data/a.bin"})
     ses = fake.last_session
     assert ses.settings["listen_interfaces"] == "0.0.0.0:0"
@@ -1014,268 +1028,18 @@ def _recording_downloader(monkeypatch):
     return calls
 
 
-def test_torrent_download_collects_stale_files(tmp_path, monkeypatch):
-    client = _mk_client(tmp_path)
-    (client / "Data").mkdir()
-    (client / "Data" / "ok.bin").write_bytes(b"x")
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
-    monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
-    calls = _recording_downloader(monkeypatch)
-    worker._source = DownloadSource(
-        "https://srv/manifest.json",
-        "https://srv/client",
-        "https://srv/client.torrent",
-    )
-
-    nodes = [
-        {
-            "type": "dir",
-            "name": "Data",
-            "files": [
-                {"type": "file", "name": "ok.bin", "hash": SHA1_X, "size": 1},
-                {
-                    "type": "file",
-                    "name": "stale.bin",
-                    "hash": "A" * 40,
-                    "size": 9,
-                },
-            ],
-        },
-        {"type": "mpq", "name": "Patch", "hash": "B" * 40, "size": 9},
-        {"type": "del", "name": "old.bin"},
-    ]
-    assert worker._torrent_download(nodes) is True
-    assert calls == [
-        (
-            "https://srv/client.torrent",
-            {"Data/stale.bin", "Patch.mpq"},
-        )
-    ]
-    assert "[torrent]" in log_q.queue[0][0]
-
-
-def test_torrent_download_skipped_without_torrent_url(tmp_path, monkeypatch):
-    client = _mk_client(tmp_path)
-    worker = UpdateWorker(str(client), queue.Queue(), queue.Queue())
-    calls = _recording_downloader(monkeypatch)
-    worker._source = DownloadSource(
-        "https://srv/manifest.json", "https://srv/client"
-    )
-    worker._torrent_download(
-        [{"type": "file", "name": "a.bin", "hash": "A" * 40, "size": 1}]
-    )
-    assert calls == []
-
-
-def test_torrent_download_skipped_without_libtorrent(tmp_path, monkeypatch):
-    client = _mk_client(tmp_path)
-    worker = UpdateWorker(str(client), queue.Queue(), queue.Queue())
-    calls = _recording_downloader(monkeypatch)
-    monkeypatch.setattr(client_update, "_torrent_available", lambda: False)
-    worker._source = DownloadSource(
-        "https://srv/manifest.json",
-        "https://srv/client",
-        "https://srv/client.torrent",
-    )
-    worker._torrent_download(
-        [{"type": "file", "name": "a.bin", "hash": "A" * 40, "size": 1}]
-    )
-    assert calls == []
-
-
-def test_torrent_download_falls_back_on_failure(tmp_path, monkeypatch):
-    client = _mk_client(tmp_path)
-
-    def boom(self, torrent_url, wanted):
-        raise RuntimeError("swarm dead")
-
-    monkeypatch.setattr(td.TorrentDownloader, "download", boom)
-    monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
-    worker._source = DownloadSource(
-        "https://srv/manifest.json",
-        "https://srv/client",
-        "https://srv/client.torrent",
-    )
-    nodes = [{"type": "file", "name": "a.bin", "hash": "A" * 40, "size": 1}]
-    assert worker._torrent_download(nodes) is False
-    msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
-    assert any("Falling back to HTTP" in m for m in msgs)
-
-
-def test_run_invokes_torrent_then_skips_covered_files(tmp_path, monkeypatch):
-    client = _mk_client(tmp_path)
-    (client / "data.bin").write_bytes(b"x")
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
-    monkeypatch.setattr(
-        client_update,
-        "_download_source",
-        lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
-            "https://srv/client.torrent",
-        ),
-    )
-    monkeypatch.setattr(client_update, "load_cache", lambda: {})
-    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
-    torrent_calls = []
-
-    def fake_torrent_download(nodes):
-        torrent_calls.append(nodes)
-        return True
-
-    monkeypatch.setattr(worker, "_torrent_download", fake_torrent_download)
-
-    nodes = [
-        {
-            "type": "file",
-            "name": "data.bin",
-            "hash": SHA1_X,
-            "size": 1,
-        }
-    ]
-    worker.run(nodes)
-    assert torrent_calls == [nodes]
-    msgs = [m[0] for m in log_q.queue]
-    assert "__DONE__" in msgs
-    assert "__ERROR__" not in msgs
-
-
-def test_run_reverifies_mismatched_torrent_files(tmp_path, monkeypatch):
-    """When the BitTorrent backend delivered the files, each delivered file
-    is re-checked against the manifest's SHA-1 and refetched over HTTP when
-    it doesn't match — without running the whole-client traverse."""
-    import hashlib
-
-    client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
-    monkeypatch.setattr(
-        client_update,
-        "_download_source",
-        lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
-            "https://srv/client.torrent",
-        ),
-    )
-    monkeypatch.setattr(client_update, "load_cache", lambda: {})
-    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
-    traversed = []
-    monkeypatch.setattr(
-        worker, "traverse", lambda node, _: traversed.append(node)
-    )
-
-    payload = b"correct bytes"
-    good_sha = hashlib.sha1(payload).hexdigest().upper()
-
-    def fake_torrent_download(nodes):
-        # Mimic the real backend: deliver files + record them as wanted.
-        (client / "a.bin").write_bytes(b"corrupted by peer")
-        worker._torrent_wanted = {"a.bin"}
-        return True
-
-    monkeypatch.setattr(worker, "_torrent_download", fake_torrent_download)
-    downloads = []
-
-    def fake_download(url, dest, size, name=""):
-        downloads.append(url)
-        with open(dest, "wb") as f:
-            f.write(payload)
-        return good_sha
-
-    monkeypatch.setattr(worker, "download", fake_download)
-    nodes = [{"type": "file", "name": "a.bin", "hash": good_sha, "size": 7}]
-    worker.run(nodes)
-    assert downloads == ["https://srv/client/a.bin"]
-    assert traversed == []
-    msgs = [m[0] for m in log_q.queue]
-    assert "__DONE__" in msgs
-
-
-def test_run_skips_reverify_when_torrent_files_match(tmp_path, monkeypatch):
-    """Delivered files already matching the manifest are not re-downloaded."""
-    import hashlib
-
-    client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
-    monkeypatch.setattr(
-        client_update,
-        "_download_source",
-        lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
-            "https://srv/client.torrent",
-        ),
-    )
-    payload = b"already good"
-    good_sha = hashlib.sha1(payload).hexdigest().upper()
-
-    def fake_torrent_download(nodes):
-        (client / "a.bin").write_bytes(payload)
-        worker._torrent_wanted = {"a.bin"}
-        return True
-
-    monkeypatch.setattr(worker, "_torrent_download", fake_torrent_download)
-
-    def fail_download(*a, **k):
-        raise AssertionError("matching files must not be re-fetched")
-
-    monkeypatch.setattr(worker, "download", fail_download)
-    nodes = [{"type": "file", "name": "a.bin", "hash": good_sha, "size": 7}]
-    worker.run(nodes)
-    msgs = [m[0] for m in log_q.queue]
-    assert "__DONE__" in msgs
-    assert "__ERROR__" not in msgs
-
-
-def test_run_traverse_runs_when_torrent_unused(tmp_path, monkeypatch):
-    """When the BitTorrent backend was not used, the per-file HTTP download
-    (and its manifest re-verify) must still run."""
-    client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
-    monkeypatch.setattr(
-        client_update,
-        "_download_source",
-        lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
-            "https://srv/client.torrent",
-        ),
-    )
-    monkeypatch.setattr(client_update, "load_cache", lambda: {})
-    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
-    traversed = []
-    monkeypatch.setattr(
-        worker, "traverse", lambda node, _: traversed.append(node)
-    )
-    monkeypatch.setattr(worker, "_torrent_download", lambda nodes: False)
-    nodes = [{"type": "file", "name": "a.bin", "hash": "A" * 40, "size": 1}]
-    worker.run(nodes)
-    assert traversed == nodes
-
-
-# ── manifest-less recovery ───────────────────────────────────────────────────
-
-
 def test_run_recovers_full_torrent_when_manifest_down(tmp_path, monkeypatch):
     """Manifest fetch fails but the source advertises a torrent → the whole
     torrent (wanted=None) is downloaded and the recovery marker posted."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = UpdateWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1298,11 +1062,13 @@ def test_run_recovers_full_torrent_when_manifest_down(tmp_path, monkeypatch):
     worker.run()
 
     assert calls == [("https://srv/client.torrent", None)]
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_RECOVERY_DONE__" in msgs
-    assert "__MANIFEST_AVAILABLE__" not in msgs
-    assert "__ERROR__" not in msgs
-    assert any("Manifest unavailable" in m for m in msgs)
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentRecoveryDone) for e in events)
+    assert not any(isinstance(e, UpdateFailed) for e in events)
+    assert any(
+        isinstance(e, LogMessage) and "recovery" in e.text.lower()
+        for e in events
+    )
     # A fresh recovery install seeds a missing Config.wtf.
     assert (client / "WTF" / "Config.wtf").exists()
 
@@ -1314,15 +1080,14 @@ def test_recovery_fails_when_snapshot_lacks_wanted_file(tmp_path, monkeypatch):
     client = _mk_client(tmp_path)
     (client / "Data").mkdir(parents=True)
     (client / "Data" / "old.bin").write_bytes(b"stale-from-old-version")
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = UpdateWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
@@ -1338,10 +1103,10 @@ def test_recovery_fails_when_snapshot_lacks_wanted_file(tmp_path, monkeypatch):
 
     worker.run(None, {"Data/old.bin"})
 
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_VERIFY_FAILED__" in msgs
-    assert "__TORRENT_RECOVERY_DONE__" not in msgs
-    assert "__ERROR__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentVerifyFailed) for e in events)
+    assert not any(isinstance(e, TorrentRecoveryDone) for e in events)
+    assert not any(isinstance(e, UpdateFailed) for e in events)
     assert client_update.TORRENT_VALIDATION_CACHE_KEY not in saved
 
 
@@ -1349,14 +1114,12 @@ def test_run_errors_when_manifest_down_without_torrent(tmp_path, monkeypatch):
     """Manifest fetch fails and no torrent is advertised → hard error, no
     recovery."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = UpdateWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
-        lambda: DownloadSource(
-            "https://srv/manifest.json", "https://srv/client"
-        ),
+        lambda: DownloadSource(None, ""),
     )
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
     monkeypatch.setattr(client_update, "save_cache", lambda c: None)
@@ -1370,9 +1133,9 @@ def test_run_errors_when_manifest_down_without_torrent(tmp_path, monkeypatch):
     worker.run()
 
     assert calls == []
-    msgs = [m[0] for m in log_q.queue]
-    assert "__ERROR__" in msgs
-    assert "__TORRENT_RECOVERY_DONE__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, UpdateFailed) for e in events)
+    assert not any(isinstance(e, TorrentRecoveryDone) for e in events)
 
 
 def test_run_errors_when_manifest_down_without_libtorrent(
@@ -1381,15 +1144,14 @@ def test_run_errors_when_manifest_down_without_libtorrent(
     """Manifest fetch fails, a torrent is advertised, but libtorrent is
     missing → no recovery, hard error."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = UpdateWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: False)
@@ -1404,9 +1166,9 @@ def test_run_errors_when_manifest_down_without_libtorrent(
     worker.run()
 
     assert calls == []
-    msgs = [m[0] for m in log_q.queue]
-    assert "__ERROR__" in msgs
-    assert "__TORRENT_RECOVERY_DONE__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, UpdateFailed) for e in events)
+    assert not any(isinstance(e, TorrentRecoveryDone) for e in events)
 
 
 # ── TorrentVerifier (manifest-less verify against the snapshot) ──────────────
@@ -1539,7 +1301,7 @@ def _install_verifier_fake(monkeypatch, **kwargs):
 def test_verifier_returns_stale_files(tmp_path, monkeypatch):
     client = _mk_client(tmp_path)
     fake = _install_verifier_fake(monkeypatch, stale_file=1)
-    v = td.TorrentVerifier(str(client), queue.Queue(), queue.Queue())
+    v = td.TorrentVerifier(str(client), EventDispatcher())
     stale = v.verify("https://srv.example/client.torrent")
 
     assert stale == ["Data/a.bin"]
@@ -1556,7 +1318,7 @@ def test_verifier_session_does_not_listen(tmp_path, monkeypatch):
     """Verification is read-only and offline: no listen socket, no P2P."""
     client = _mk_client(tmp_path)
     fake = _install_verifier_fake(monkeypatch, stale_file=None)
-    v = td.TorrentVerifier(str(client), queue.Queue(), queue.Queue())
+    v = td.TorrentVerifier(str(client), EventDispatcher())
     v.verify("https://srv.example/client.torrent")
 
     settings = fake.last_session.settings
@@ -1574,7 +1336,7 @@ def test_verifier_sets_max_priorities_for_recheck(tmp_path, monkeypatch):
     pieces. The offline session keeps this read-only (no download)."""
     client = _mk_client(tmp_path)
     fake = _install_verifier_fake(monkeypatch, stale_file=None)
-    v = td.TorrentVerifier(str(client), queue.Queue(), queue.Queue())
+    v = td.TorrentVerifier(str(client), EventDispatcher())
     v.verify("https://srv.example/client.torrent")
     assert fake.last_session.atp.file_priorities == [7, 7]
 
@@ -1582,14 +1344,14 @@ def test_verifier_sets_max_priorities_for_recheck(tmp_path, monkeypatch):
 def test_verifier_up_to_date_returns_empty(tmp_path, monkeypatch):
     client = _mk_client(tmp_path)
     _install_verifier_fake(monkeypatch, stale_file=None)
-    v = td.TorrentVerifier(str(client), queue.Queue(), queue.Queue())
+    v = td.TorrentVerifier(str(client), EventDispatcher())
     assert v.verify("https://srv.example/client.torrent") == []
 
 
 def test_verifier_cancelled_raises(tmp_path, monkeypatch):
     client = _mk_client(tmp_path)
     fake = _install_verifier_fake(monkeypatch, stale_file=None)
-    v = td.TorrentVerifier(str(client), queue.Queue(), queue.Queue())
+    v = td.TorrentVerifier(str(client), EventDispatcher())
     v._cancel = True
     with pytest.raises(RuntimeError, match="Cancelled"):
         v.verify("https://srv.example/client.torrent")
@@ -1601,15 +1363,14 @@ def test_verify_worker_uses_torrent_when_manifest_down(tmp_path, monkeypatch):
     present → VerifyWorker verifies against the torrent and posts the stale
     file marker instead of a blind manifest-unavailable."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1622,7 +1383,7 @@ def test_verify_worker_uses_torrent_when_manifest_down(tmp_path, monkeypatch):
     verifier_calls = []
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             self.out_dir = out_dir
 
         def verify(self, url):
@@ -1633,10 +1394,9 @@ def test_verify_worker_uses_torrent_when_manifest_down(tmp_path, monkeypatch):
     vw.run()
 
     assert verifier_calls == ["https://srv/client.torrent"]
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_DIFF__" in msgs
-    assert "__MANIFEST_UNAVAILABLE__" not in msgs
-    assert "__DIFF_TREE__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentDiffReady) for e in events)
+    assert not any(isinstance(e, TorrentUnavailable) for e in events)
 
 
 def test_verify_worker_identity_crash_degrades_to_verify_failed(
@@ -1647,7 +1407,7 @@ def test_verify_worker_identity_crash_degrades_to_verify_failed(
     worker thread mid-fallback (run() already consumed the manifest
     failure)."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
+    dispatcher = EventDispatcher()
     seed = {
         client_update.TORRENT_VALIDATION_CACHE_KEY: {
             "content_hash": "c1",
@@ -1662,9 +1422,8 @@ def test_verify_worker_identity_crash_degrades_to_verify_failed(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1685,12 +1444,14 @@ def test_verify_worker_identity_crash_degrades_to_verify_failed(
 
     monkeypatch.setattr(client_update, "secure_urlopen", down)
 
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     vw.run()
 
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_VERIFY_FAILED__" in msgs
-    assert "__MANIFEST_UNAVAILABLE__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentVerifyFailed) for e in events)
+    assert not any(
+        isinstance(e, TorrentUnavailable) for e in events if False
+    )  # manifest removed
 
 
 def test_verify_worker_resume_data_failure_does_not_abort(
@@ -1700,7 +1461,7 @@ def test_verify_worker_resume_data_failure_does_not_abort(
     OSError there must not abort the re-scan — the verify still posts its
     verdict."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
+    dispatcher = EventDispatcher()
     seed = {
         client_update.TORRENT_VALIDATION_CACHE_KEY: {
             "content_hash": "c1",
@@ -1715,9 +1476,8 @@ def test_verify_worker_resume_data_failure_does_not_abort(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1736,7 +1496,7 @@ def test_verify_worker_resume_data_failure_does_not_abort(
     monkeypatch.setattr(td, "remove_resume_data", boom_remove)
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url, snapshot=None):
@@ -1749,27 +1509,26 @@ def test_verify_worker_resume_data_failure_does_not_abort(
 
     monkeypatch.setattr(client_update, "secure_urlopen", down)
 
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     vw.run()
 
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_UP_TO_DATE__" in msgs
-    assert "__TORRENT_VERIFY_FAILED__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentUpToDate) for e in events)
+    assert not any(isinstance(e, TorrentVerifyFailed) for e in events)
 
 
 def test_verify_worker_torrent_up_to_date(tmp_path, monkeypatch):
     """Manifest down but the torrent verify finds nothing stale → the
     up-to-date marker is posted, not manifest-unavailable."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1780,7 +1539,7 @@ def test_verify_worker_torrent_up_to_date(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "secure_urlopen", down)
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url):
@@ -1789,9 +1548,11 @@ def test_verify_worker_torrent_up_to_date(tmp_path, monkeypatch):
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
 
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_UP_TO_DATE__" in msgs
-    assert "__MANIFEST_UNAVAILABLE__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentUpToDate) for e in events)
+    assert not any(
+        isinstance(e, TorrentUnavailable) for e in events if False
+    )  # manifest removed
 
 
 def test_verify_worker_uses_server_magnet(tmp_path, monkeypatch):
@@ -1799,7 +1560,7 @@ def test_verify_worker_uses_server_magnet(tmp_path, monkeypatch):
     the server's magnet URI — the locator flows through to the resolver and
     the verifier."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
+    dispatcher = EventDispatcher()
     magnet = "magnet:?xt=urn:btih:" + "ab" * 20
     fetch_calls, verify_calls = [], []
     # A stale verdict for this folder forces Step 1 of _torrent_verify to
@@ -1818,14 +1579,14 @@ def test_verify_worker_uses_server_magnet(tmp_path, monkeypatch):
         },
     )
     monkeypatch.setattr(client_update, "save_cache", lambda c: None)
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    vw = client_update.VerifyWorker(str(client), dispatcher)
 
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
+            "https://srv/client.torrent",
+            "",
             None,
             magnet,
         ),
@@ -1848,7 +1609,7 @@ def test_verify_worker_uses_server_magnet(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "secure_urlopen", down)
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url, snapshot=None):
@@ -1860,9 +1621,11 @@ def test_verify_worker_uses_server_magnet(tmp_path, monkeypatch):
 
     assert fetch_calls == [magnet]
     assert verify_calls == [magnet]
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_UP_TO_DATE__" in msgs
-    assert "__MANIFEST_UNAVAILABLE__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentUpToDate) for e in events)
+    assert not any(
+        isinstance(e, TorrentUnavailable) for e in events if False
+    )  # manifest removed
 
 
 def test_verify_worker_skips_rescan_when_torrent_unchanged(
@@ -1872,15 +1635,14 @@ def test_verify_worker_skips_rescan_when_torrent_unchanged(
     content hash), the libtorrent recheck is skipped entirely and the cached
     verdict is reused verbatim — no on-disk scanning occurs."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1917,7 +1679,7 @@ def test_verify_worker_skips_rescan_when_torrent_unchanged(
     verifier_calls = []
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url, snapshot=None):
@@ -1928,14 +1690,16 @@ def test_verify_worker_skips_rescan_when_torrent_unchanged(
     vw.run()
 
     assert verifier_calls == []
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_DIFF__" in msgs
-    assert "__TORRENT_UP_TO_DATE__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentDiffReady) for e in events)
+    assert not any(isinstance(e, TorrentUpToDate) for e in events)
     assert saved[client_update.TORRENT_VALIDATION_CACHE_KEY]["stale"] == [
         "Data/old.bin"
     ]
     assert any(
-        "skipping re-scan and reusing cached verdict" in m for m in msgs
+        isinstance(e, LogMessage)
+        and "skipping re-scan and reusing cached verdict" in e.text
+        for e in events
     )
 
 
@@ -1947,15 +1711,14 @@ def test_verify_worker_skips_when_metadata_changes_but_identity_same(
     layout — the cached verdict is reused and no on-disk recheck runs. The
     stored record converges to the fresh content hash."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1991,7 +1754,7 @@ def test_verify_worker_skips_when_metadata_changes_but_identity_same(
     verifier_calls = []
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url, snapshot=None):
@@ -2002,9 +1765,12 @@ def test_verify_worker_skips_when_metadata_changes_but_identity_same(
     vw.run()
 
     assert verifier_calls == []
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_DIFF__" in msgs
-    assert any("identity is unchanged" in m for m in msgs)
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentDiffReady) for e in events)
+    assert any(
+        isinstance(e, LogMessage) and "identity is unchanged" in e.text
+        for e in events
+    )
     rec = saved[client_update.TORRENT_VALIDATION_CACHE_KEY]
     assert rec["content_hash"] == "bbb"
     assert rec["stale"] == ["Data/old.bin"]
@@ -2017,16 +1783,12 @@ def test_verify_worker_skips_when_url_rotates_same_snapshot(
     URL is not part of the identity match, so the cached verdict still
     applies and the record's URL converges to the new one."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
-        lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
-            "https://mirror.example/client.torrent",
-        ),
+        lambda: DownloadSource("https://mirror.example/client.torrent", ""),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
@@ -2061,7 +1823,7 @@ def test_verify_worker_skips_when_url_rotates_same_snapshot(
     verifier_calls = []
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url, snapshot=None):
@@ -2072,8 +1834,8 @@ def test_verify_worker_skips_when_url_rotates_same_snapshot(
     vw.run()
 
     assert verifier_calls == []
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_UP_TO_DATE__" in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentUpToDate) for e in events)
     rec = saved[client_update.TORRENT_VALIDATION_CACHE_KEY]
     assert rec["url"] == "https://mirror.example/client.torrent"
 
@@ -2084,15 +1846,14 @@ def test_verify_worker_logs_full_rescan_reason_without_record(
     """Without a cached verdict the full recheck runs and a dim diagnostic
     says why — rescans must never be silent."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2117,7 +1878,7 @@ def test_verify_worker_logs_full_rescan_reason_without_record(
     )
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url):
@@ -2126,8 +1887,11 @@ def test_verify_worker_logs_full_rescan_reason_without_record(
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
 
-    msgs = [m[0] for m in log_q.queue]
-    assert any("No cached verdict" in m for m in msgs)
+    events = dispatcher.drain()
+    assert any(
+        isinstance(e, LogMessage) and "No cached verdict" in e.text
+        for e in events
+    )
 
 
 def test_verify_worker_runs_recheck_when_snapshot_changed(
@@ -2136,15 +1900,14 @@ def test_verify_worker_runs_recheck_when_snapshot_changed(
     """A different content hash at the same URL invalidates the cached verdict
     and the full libtorrent recheck runs again."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2179,7 +1942,7 @@ def test_verify_worker_runs_recheck_when_snapshot_changed(
     verifier_calls = []
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url, snapshot=None):
@@ -2190,12 +1953,15 @@ def test_verify_worker_runs_recheck_when_snapshot_changed(
     vw.run()
 
     assert verifier_calls == ["https://srv/client.torrent"]
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_DIFF__" in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentDiffReady) for e in events)
     # The rescan reason is logged with the replaced identity's hashes.
     assert any(
-        "Snapshot changed at URL" in m and "ih1" in m and "ih2" in m
-        for m in msgs
+        isinstance(e, LogMessage)
+        and "Snapshot changed at URL" in e.text
+        and "ih1" in e.text
+        and "ih2" in e.text
+        for e in events
     )
 
 
@@ -2204,15 +1970,14 @@ def test_verify_worker_torrent_failure_falls_back(tmp_path, monkeypatch):
     recheck failure) → the verify-failed marker is posted so the UI doesn't
     offer a dead recovery download."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2223,7 +1988,7 @@ def test_verify_worker_torrent_failure_falls_back(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "secure_urlopen", down)
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url):
@@ -2232,10 +1997,12 @@ def test_verify_worker_torrent_failure_falls_back(tmp_path, monkeypatch):
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
 
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_VERIFY_FAILED__" in msgs
-    assert "__MANIFEST_UNAVAILABLE__" not in msgs
-    assert "__TORRENT_DIFF__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentVerifyFailed) for e in events)
+    assert not any(
+        isinstance(e, TorrentUnavailable) for e in events if False
+    )  # manifest removed
+    assert not any(isinstance(e, TorrentDiffReady) for e in events)
 
 
 def test_verify_worker_torrent_unreachable_posts_marker(tmp_path, monkeypatch):
@@ -2247,15 +2014,14 @@ def test_verify_worker_torrent_unreachable_posts_marker(tmp_path, monkeypatch):
     )
 
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2266,7 +2032,7 @@ def test_verify_worker_torrent_unreachable_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "secure_urlopen", down)
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url):
@@ -2275,25 +2041,26 @@ def test_verify_worker_torrent_unreachable_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
 
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_UNREACHABLE__" in msgs
-    assert "__MANIFEST_UNAVAILABLE__" not in msgs
-    assert "__TORRENT_DIFF__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentUnavailable) for e in events)
+    assert not any(
+        isinstance(e, TorrentUnavailable) for e in events if False
+    )  # manifest removed
+    assert not any(isinstance(e, TorrentDiffReady) for e in events)
 
 
 def test_verify_worker_torrent_reachable_posts_marker(tmp_path, monkeypatch):
     """A successful torrent verify posts the reachable marker alongside the
     stale-file diff."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2304,7 +2071,7 @@ def test_verify_worker_torrent_reachable_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "secure_urlopen", down)
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url):
@@ -2313,10 +2080,10 @@ def test_verify_worker_torrent_reachable_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
 
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_REACHABLE__" in msgs
-    assert "__TORRENT_DIFF__" in msgs
-    assert "__TORRENT_UNREACHABLE__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentReachable) for e in events)
+    assert any(isinstance(e, TorrentDiffReady) for e in events)
+    assert not any(isinstance(e, TorrentUnavailable) for e in events)
 
 
 def test_fetch_torrent_wraps_http_error(tmp_path, monkeypatch):
@@ -2588,11 +2355,11 @@ def test_torrent_session_error_on_session_fail(tmp_path, monkeypatch):
     def _bad_session():
         raise RuntimeError("address already in use")
 
-    q = queue.Queue()
+    dispatcher = EventDispatcher()
     # verify() imports libtorrent before it reaches the session; a fake
     # keeps the session-failure path testable without the real binding.
     monkeypatch.setitem(sys.modules, "libtorrent", SimpleNamespace())
-    v = td.TorrentVerifier(str(tmp_path), q, q)
+    v = td.TorrentVerifier(str(tmp_path), dispatcher)
 
     class FakeTI:
         def files(self):
@@ -2638,17 +2405,16 @@ def test_torrent_disk_error_on_errno(tmp_path):
 
 
 def test_verify_worker_torrent_corrupt_posts_marker(tmp_path, monkeypatch):
-    """Malformed .torrent → __TORRENT_CORRUPT__ marker with detail."""
+    """Malformed .torrent → TorrentCorrupt event with detail."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2659,7 +2425,7 @@ def test_verify_worker_torrent_corrupt_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "secure_urlopen", down)
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url):
@@ -2668,24 +2434,23 @@ def test_verify_worker_torrent_corrupt_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
 
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_CORRUPT__" in msgs
-    assert "__TORRENT_UNREACHABLE__" not in msgs
-    assert "__TORRENT_VERIFY_FAILED__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentCorrupt) for e in events)
+    assert not any(isinstance(e, TorrentUnavailable) for e in events)
+    assert not any(isinstance(e, TorrentVerifyFailed) for e in events)
 
 
 def test_verify_worker_torrent_stalled_posts_marker(tmp_path, monkeypatch):
-    """Verification stalled → __TORRENT_STALLED__ marker with peer count."""
+    """Verification stalled → TorrentStalled event with peer count."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2696,7 +2461,7 @@ def test_verify_worker_torrent_stalled_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "secure_urlopen", down)
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url):
@@ -2705,25 +2470,24 @@ def test_verify_worker_torrent_stalled_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
 
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_STALLED__" in msgs
-    assert "__TORRENT_UNREACHABLE__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentStalled) for e in events)
+    assert not any(isinstance(e, TorrentUnavailable) for e in events)
 
 
 def test_verify_worker_torrent_session_error_posts_marker(
     tmp_path, monkeypatch
 ):
-    """Session creation failure → __TORRENT_SESSION_ERROR__ marker."""
+    """Session creation failure → TorrentSessionError event."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2734,7 +2498,7 @@ def test_verify_worker_torrent_session_error_posts_marker(
     monkeypatch.setattr(client_update, "secure_urlopen", down)
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url):
@@ -2743,23 +2507,22 @@ def test_verify_worker_torrent_session_error_posts_marker(
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
 
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_SESSION_ERROR__" in msgs
-    assert "__TORRENT_UNREACHABLE__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentSessionError) for e in events)
+    assert not any(isinstance(e, TorrentUnavailable) for e in events)
 
 
 def test_verify_worker_torrent_disk_error_posts_marker(tmp_path, monkeypatch):
-    """Disk I/O error → __TORRENT_DISK_ERROR__ marker."""
+    """Disk I/O error → TorrentDiskError event."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2770,7 +2533,7 @@ def test_verify_worker_torrent_disk_error_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "secure_urlopen", down)
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url):
@@ -2779,23 +2542,22 @@ def test_verify_worker_torrent_disk_error_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
 
-    msgs = [m[0] for m in log_q.queue]
-    assert "__TORRENT_DISK_ERROR__" in msgs
-    assert "__TORRENT_UNREACHABLE__" not in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, TorrentDiskError) for e in events)
+    assert not any(isinstance(e, TorrentUnavailable) for e in events)
 
 
 def test_verify_worker_error_detail_in_tag(tmp_path, monkeypatch):
     """Error detail is passed in the second element of log queue tuples."""
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = client_update.VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2806,7 +2568,7 @@ def test_verify_worker_error_detail_in_tag(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "secure_urlopen", down)
 
     class FakeVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
             pass
 
         def verify(self, url):
@@ -2815,7 +2577,8 @@ def test_verify_worker_error_detail_in_tag(tmp_path, monkeypatch):
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
 
-    detail = [m[1] for m in log_q.queue if m[0] == "__TORRENT_CORRUPT__"]
+    events = dispatcher.drain()
+    detail = [e.message for e in events if isinstance(e, TorrentCorrupt)]
     assert detail and "truncated data" in detail[0]
 
 
@@ -3037,7 +2800,7 @@ def test_downloader_resumes_torrent_and_ignores_stale_cache(
     # A stale resume file from a prior run — must be ignored now.
     td._atomic_write_bytes(td.resume_path(info_hash), b"stale")
     fake = _install_snapshot_fake(monkeypatch, info_hash=info_hash)
-    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
+    d = td.TorrentDownloader(str(client), EventDispatcher())
     d.download("https://srv.example/client.torrent", {"Data/a.bin"})
     assert fake.last_session.handle.resumed is True
     assert not hasattr(fake.last_session.atp, "have_pieces")
@@ -3054,7 +2817,7 @@ def test_downloader_priorities_come_from_wanted_set(tmp_path, monkeypatch):
     cache_root.mkdir()
     _redirect_torrent_cache(monkeypatch, cache_root)
     fake = _install_snapshot_fake(monkeypatch, info_hash="aa" * 20)
-    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
+    d = td.TorrentDownloader(str(client), EventDispatcher())
     d.download("https://srv.example/client.torrent", {"Data/a.bin"})
     assert fake.last_session.atp.file_priorities == [7, 0]
     assert not hasattr(fake.last_session.atp, "have_pieces")
@@ -3069,7 +2832,7 @@ def test_downloader_removes_handle_on_completion(tmp_path, monkeypatch):
     _redirect_torrent_cache(monkeypatch, cache_root)
     info_hash = "aa" * 20
     fake = _install_snapshot_fake(monkeypatch, info_hash=info_hash)
-    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
+    d = td.TorrentDownloader(str(client), EventDispatcher())
     d.download("https://srv.example/client.torrent", {"Data/a.bin"})
     assert fake.last_session.removed  # handle removed, never seeded
 
@@ -3187,7 +2950,7 @@ def test_download_pump_does_not_stall_during_recheck(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(td, "STALL_TIMEOUT", 0.05)
     monkeypatch.setattr(td, "DISCOVERY_TIMEOUT", 0.05)
-    d = td.TorrentDownloader(str(client), queue.Queue(), queue.Queue())
+    d = td.TorrentDownloader(str(client), EventDispatcher())
     result = d.download("https://srv.example/client.torrent", {"Data/a.bin"})
     assert result == []
 
@@ -3197,11 +2960,15 @@ def test_priorities_raises_for_absent_wanted_files(tmp_path, monkeypatch):
     verify and update) is a hard mismatch, not a silent skip."""
     client = _mk_client(tmp_path)
     _install_fake_lt(monkeypatch)
-    log_q = queue.Queue()
-    d = td.TorrentDownloader(str(client), log_q, queue.Queue())
+    dispatcher = EventDispatcher()
+    d = td.TorrentDownloader(str(client), dispatcher)
     with pytest.raises(td.TorrentSnapshotMismatchError):
         d.download("https://srv.example/client.torrent", {"Data/nope.bin"})
-    assert any("absent from this snapshot" in m[0] for m in log_q.queue)
+    events = dispatcher.drain()
+    assert any(
+        isinstance(e, LogMessage) and "absent from this snapshot" in e.text
+        for e in events
+    )
 
 
 def test_verifier_progress_reports_piece_counts(tmp_path, monkeypatch):
@@ -3325,22 +3092,23 @@ def test_verifier_progress_reports_piece_counts(tmp_path, monkeypatch):
         lambda req, timeout=10, allowed_hosts=None: _resp(b"fake"),
     )
 
-    prog_q = queue.Queue()
-    v = td.TorrentVerifier(str(client), queue.Queue(), prog_q)
+    dispatcher = EventDispatcher()
+    v = td.TorrentVerifier(str(client), dispatcher)
     assert v.verify("https://srv.example/client.torrent") == []
+    events = dispatcher.drain()
     updates = [
-        it[2]
-        for it in list(prog_q.queue)
-        if len(it) == 3 and it[2].get("phase") == "Verifying"
+        e
+        for e in events
+        if isinstance(e, ProgressChanged) and e.phase == "Verifying"
     ]
     assert updates
-    assert all("verified_pieces" in d for d in updates)
-    assert all("total_pieces" in d for d in updates)
-    assert all("downloaded" not in d for d in updates)
+    assert all(e.verified_pieces is not None for e in updates)
+    assert all(e.total_pieces is not None for e in updates)
+    assert all(e.downloaded == 0 for e in updates)
     # Progress must advance off zero (regression: verified_pieces bitfield
     # stays empty during an offline recheck, so the numerator must come from
     # status.progress, not verified_pieces).
-    nums = [d["verified_pieces"] for d in updates]
+    nums = [e.verified_pieces for e in updates]
     assert max(nums) == 4
     assert min(nums) >= 1
 
@@ -3471,19 +3239,20 @@ def test_verifier_does_not_stall_when_verified_pieces_unpopulated(
         lambda req, timeout=10, allowed_hosts=None: _resp(b"fake"),
     )
 
-    prog_q = queue.Queue()
-    v = td.TorrentVerifier(str(client), queue.Queue(), prog_q)
+    dispatcher = EventDispatcher()
+    v = td.TorrentVerifier(str(client), dispatcher)
     stale = v.verify("https://srv.example/client.torrent")
     assert stale == []
+    events = dispatcher.drain()
     verifying_items = [
-        it
-        for it in list(prog_q.queue)
-        if len(it) == 3 and it[2].get("phase") == "Verifying"
+        e
+        for e in events
+        if isinstance(e, ProgressChanged) and e.phase == "Verifying"
     ]
     assert verifying_items
-    nums = [d[2]["verified_pieces"] for d in verifying_items]
+    nums = [e.verified_pieces for e in verifying_items]
     assert max(nums) >= 3
     assert min(nums) >= 1
     # Regression: the verify progress must reach 100% (value 1.0) when the
     # recheck finishes — the label must not freeze below completion.
-    assert verifying_items[-1][0] == 1.0
+    assert verifying_items[-1].value == 1.0

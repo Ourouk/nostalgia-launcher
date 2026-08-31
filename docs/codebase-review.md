@@ -64,11 +64,11 @@ defense-in-depth on archive extraction; hardened TLS + HTTPS-only + host
 allowlist transfer layer; offline-first caching; comprehensive test coverage
 (with the e2e path properly isolated); thorough documentation.
 
-**Weaknesses / risks.** A string-"marker" protocol (`__DONE__`, `__ERROR__`,
-`__MANIFEST_AVAILABLE__`, …) shuttles control state through worker log queues
+**Weaknesses / risks.** A typed event protocol (`ManifestAvailable`, `VerificationUpToDate`,
+`TorrentDiffReady` …) carries control state via typed events on EventDispatcher
 — powerful but brittle and under-tested **(hardened 2026-08-22: constants
-live in `services/update_backend/markers.py`, `_handle_log` is a dispatch
-table, `tests/test_markers.py` enforces completeness)**. Several large modules mix concerns
+live in `state/events.py`, `_on_event` is a dispatch
+table (no marker file); deleted with `services/update_backend/markers.py`)**. Several large modules mix concerns
 (`http_update.py` ~1070 lines; `controllers/addons.py` `verify()` worker ~250
 lines with duplication) **(partially addressed 2026-08-22: source probing
 extracted to `update_backend/sources.py`; addons verify de-duplicated)**. A handful of **real bugs and dead code** exist
@@ -236,13 +236,13 @@ only stdlib + platform). **[verified]**
 ### 4.2 Event-driven control flow (verified)
 
 Controllers spawn `threading.Thread` worker functions. Workers push progress
-and log tuples into per-controller `queue.Queue`s, plus special
+and typed events directly to the shared `EventDispatcher`.
 `"__MARKER__"` string messages, and also post `Event` dataclasses to the shared
 `EventDispatcher`. The Qt side polls on timers:
 
 - `MainWindow._logTimer` (50 ms) drains `core/log_sink._LOG_Q` → renders log.
-- `MainWindow._pollTimer` (50 ms) calls `UpdateController.poll()` → drains the
-  update log/prog queues and posts `ProgressChanged`/`LogMessage`.
+- `ControllerBridge._timer` (50 ms) drains `EventDispatcher` → posts `ProgressChanged`/`LogMessage`/`OperationFinished`.
+
 - `ControllerBridge` `QTimer` (50 ms) drains the `EventDispatcher` → re-emits
   `Qt` signals consumed by `MainWindow` and panels.
 
@@ -266,7 +266,7 @@ sequenceDiagram
 
 ### 4.3 Why it matters for an agent
 
-The **string-marker protocol** is the linchpin of the update lifecycle. A
+The **typed event protocol** is the linchpin of the update lifecycle. A
 worker emits `"__DONE__"`, `"__ERROR__"`, `"__MANIFEST_AVAILABLE__"`,
 `"__MANIFEST_UNAVAILABLE__"`, `"__UPDATE_NEEDED__"`, `"__DIFF_TREE__"`,
 `"__TORRENT_REACHABLE__/UNREACHABLE/CORRUPT/STALLED/SESSION_ERROR/DISK_ERROR/VERIFY_FAILED/DIFF/UP_TO_DATE/RECOVERY_DONE__"`, and `"__VERSION__<ver>"`.
@@ -481,7 +481,7 @@ the mirror-probe thread. All daemon threads. **[verified]**
 - `update.py` (UpdateController): owns verify/update lifecycle, readiness
   state machine (`compute_readiness` → mode `play`/`update`/`busy`/`disabled`/
   `terminate`), game launch (`_launch_game_windows`/`_launch_game_via_umu`),
-  `_watch_game`, `terminate_game`, `poll()`.
+  `_watch_game`, `terminate_game`.
 - `mods.py` (ModsController): registry, latest-version fetch, pending toggles,
   `_apply_worker` install/uninstall/update sequence, required-mods seeding,
   unknown-mod removal.
@@ -742,7 +742,7 @@ precedence custom > embedded > remote — see `docs/agents-architecture.md`).
 - Torrent verifier/download: stall timeouts `STALL_TIMEOUT=60`,
   `DISCOVERY_TIMEOUT=180`; distinct typed exceptions
   (`TorrentCorrupt/Fetch/Stalled/Session/Disk/Layout/MismatchError`) mapped to
-  distinct `__TORRENT_*__` markers so the UI can offer the right fallback.
+  distinct `Torrent*` events so the UI can offer the right fallback.
 - Offline-first caching: every catalog/sha/news/mirror failure falls back to
   the last cached copy or an empty list rather than crashing.
 
@@ -932,8 +932,8 @@ with `WoW.exe`-presence gate before marking ready.
   isolation.
 
 **Problematic areas.**
-1. **String-marker control protocol** (`__DONE__`, `__ERROR__`, `__TORRENT_*__`,
-   `__VERSION__…`) flows through the *log* queue and is dispatched by
+1. **Typed event control protocol** (`UpdateCompleted`, `UpdateFailed`, `Torrent*`,
+   `ClientVersionReady`) flows via `EventDispatcher` and is dispatched by
    `UpdateController._handle_log` (~40-branch `if/elif`). It is powerful but
    brittle: a typo or missing handler silently mis-transitions `UpdateState`.
    Tests cover much of it (`test_client_update.py`, `test_update_controller.py`)

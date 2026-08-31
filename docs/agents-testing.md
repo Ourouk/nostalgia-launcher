@@ -34,7 +34,7 @@ Commands live in `AGENTS.md`; read it first.
 - Download-source probing lives in `update_backend/sources.py`. Faking the
   network for *mirror probing* requires patching
   `nostalgia_launcher.services.update_backend.sources.secure_urlopen`;
-  patching `http_update.secure_urlopen` only covers manifest/file fetches.
+  patching `http_update.secure_urlopen` only covers fallback-zip fetches.
 - libtorrent is faked via `sys.modules["libtorrent"]`; the real library is
   never needed to run the suite (only the e2e tests use it).
 - Tests redirect config to `tmp_path` via `config_store.configure(...)`.

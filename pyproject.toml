@@ -14,17 +14,16 @@ dependencies = [
     # certifi supplies a current CA bundle so TLS verification works even on
     # platforms with a stale/incomplete system root store (e.g. Windows).
     "certifi>=2024.0",
+    "pydantic>=2.8",
+    "platformdirs>=4.2",
+    "filelock>=3.15",
+    "httpx>=0.28",
+    "tenacity>=9.0",
+    "packaging>=24.0",
     # libtorrent only ships wheels for CPython 3.10-3.13; on newer
     # interpreters the client update path degrades to per-file HTTP
     # downloads (services/update_backend/torrent_update.available()).
     "libtorrent; python_version < '3.14'",
-    # Third-party first: delegate well-solved infrastructure to mature libs
-    # instead of bespoke stdlib plumbing.
-    "platformdirs>=4.0",
-    "packaging>=24.0",
-    "httpx>=0.27",
-    "tenacity>=8.0",
-    "pydantic>=2.0",
 ]
 
 [project.scripts]
@@ -38,6 +37,7 @@ dev = [
     "pytest>=8.0",
     "pyinstaller>=6.0",
     "ruff>=0.15",
+    "pyright>=1.1",
 ]
 
 [tool.pytest.ini_options]
@@ -58,3 +58,21 @@ exclude = ["dist", "build"]
 # Core correctness (E4/E7/E9/F) plus import sorting, whitespace nits and the
 # low-risk modernisations (UP) / bugbear (B) rule families.
 select = ["E4", "E7", "E9", "F", "I", "W", "UP", "B"]
+
+[tool.pyright]
+typeCheckingMode = "standard"
+include = ["src/nostalgia_launcher"]
+# UI excluded: PySide6 stubs are incomplete (317 attribute errors at
+# standard) — genuinely untyped external boundary, isolated per task
+# guidance. Core/services/controllers/state are strictly checked; ui would
+# require vendored stubs. Re-enable when PySide6 ships py.typed.
+exclude = ["packaging", "context", "tests", "src/nostalgia_launcher/ui"]
+# Standard+ hardening: fail on missing imports/stubs so third-party
+# dependencies (PySide6, libtorrent, certifi, future libs) must be declared
+# and typed. Verified 0 errors with ui excluded; strict on this subset is
+# 3149 errors — promote to strict per-module via overrides once annotated.
+reportMissingImports = true
+reportMissingTypeStubs = true
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"

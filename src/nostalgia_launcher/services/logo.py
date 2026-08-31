@@ -8,15 +8,17 @@ layer turns the returned file path into a pixmap.
 """
 
 import os
+import urllib.request
 from urllib.parse import urlsplit
 
 from ..core import profiles
+from ..core.constants import UA
 from ..core.filesystem import atomic_write_bytes
 from ..core.log_sink import log
 from ..core.security_http import (
-    _check_url,
     allowed_download_hosts,
-    make_secure_client,
+    read_capped,
+    secure_urlopen,
 )
 
 
@@ -50,13 +52,11 @@ def fetch_logo(url: str) -> str | None:
     except ValueError:
         host = None
     try:
-        _check_url(url, frozenset(hosts))
-        with make_secure_client(timeout=10) as client:
-            resp = client.get(url)
-            resp.raise_for_status()
-            if len(resp.content) > 8 * 1024 * 1024:
-                raise RuntimeError("Response exceeded the 8192 KiB limit.")
-            data = resp.content
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with secure_urlopen(
+            req, timeout=10, allowed_hosts=frozenset(hosts)
+        ) as r:
+            data = read_capped(r, 8 * 1024 * 1024)
         if not data:
             raise RuntimeError("empty logo response")
         atomic_write_bytes(dest, data)

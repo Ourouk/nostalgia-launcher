@@ -38,7 +38,8 @@ How to run:
   uv run pytest tests/test_qt_display.py -v -rs
 
 The human check that Qt's DPR matches the OS scaling setting (100/125/150/
-200%, Retina 2x) is recorded in docs/DISPLAY_TEST_MATRIX.md.
+200%, Retina 2x) is manual — compare the DPR printed by the Part B tests
+with the OS display-scale setting.
 """
 
 import os
@@ -345,7 +346,8 @@ def test_real_display_scale_factor_matches_os_setting(qapp, app_no_startup):
     # Qt's native scale factor — the direct counterpart of the OS scaling
     # setting (1.0 @100%, 1.25 @125%, 1.5 @150%, 2.0 @200% / Retina). The
     # test only asserts it is a plausible, positive value; the maintainer
-    # confirms it matches the OS setting in docs/DISPLAY_TEST_MATRIX.md.
+    # confirms it matches the OS setting manually (compare printed DPR to
+    # the OS scale).
     assert dpr > 0.0
     assert dpr <= 4.0
     assert abs(qapp.devicePixelRatio() - dpr) < 1e-6

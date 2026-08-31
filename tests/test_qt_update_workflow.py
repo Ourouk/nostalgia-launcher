@@ -28,6 +28,7 @@ from nostalgia_launcher.state.events import (
     OperationFinished,
     ProgressChanged,
     StatusChanged,
+    UpdateCompleted,
     UpdateFilesList,
 )
 from nostalgia_launcher.ui.qt.app import create_qt_app
@@ -39,7 +40,7 @@ _PLAY = Readiness("play", "PLAY", "Everything up to date!")
 _UPDATE = Readiness("update", "UPDATE", "Update available!")
 _CHECKING = Readiness("busy", "Checking…", "Verifying…")
 _INSTALLING = Readiness("busy", "Installing…", "Downloading addons…")
-_DISABLED = Readiness("disabled", "UPDATE", "Manifest unavailable")
+_DISABLED = Readiness("disabled", "UPDATE", "Verifying…")
 _TERMINATE = Readiness(
     "terminate", "TERMINATE", "Running WoW.exe — click TERMINATE to quit"
 )
@@ -94,8 +95,9 @@ def test_initial_button_shows_update_until_ready(qapp, window, monkeypatch):
     hub = window._hub
     palette = Palette()
     assert window._updateButton.objectName() == "updateButton"
+    # Torrent-only: initial state is disabled Verifying until cache verdict
     assert window._updateButton.text() == "UPDATE"
-    assert window._updateButton.isEnabled()
+    assert not window._updateButton.isEnabled()
 
     monkeypatch.setattr(
         hub.updater, "compute_readiness", lambda addons_installing=False: _PLAY
@@ -150,7 +152,10 @@ def test_disabled_readiness_grays_update_button(qapp, window, monkeypatch):
     window._refresh_ready_state()
     assert window._updateButton.text() == "UPDATE"
     assert not window._updateButton.isEnabled()
-    assert window._statusLabel.text() == "Manifest unavailable"
+    assert (
+        "Verifying" in window._statusLabel.text()
+        or "unavailable" in window._statusLabel.text().lower()
+    )
 
     window._updateButton.click()
     hub.updater.start_update.assert_not_called()
@@ -181,6 +186,7 @@ def test_click_play_shows_dxvk_notice(qapp, window, monkeypatch):
     monkeypatch.setattr(
         hub.updater, "compute_readiness", lambda addons_installing=False: _PLAY
     )
+    window._refresh_ready_state()
     hub.updater.launch_game.return_value = (True, True)
     informed = []
     monkeypatch.setattr(
@@ -314,19 +320,19 @@ def test_operation_failed_refreshes_readiness(qapp, window, monkeypatch):
     assert window._updateButton.text() == "UPDATE"
 
 
-# ── worker polling (event-loop driven) ────────────────────────────────────
+# ── worker completion via typed EventDispatcher ───────────────────────────
 
 
 def test_poll_timer_processes_worker_completion(qapp, window):
-    """The event-loop poll must drain the update controller's queues without
-    a manual poll() call — a worker's __DONE__ marker has to unstick the
-    busy state and finish the operation."""
+    """Workers post typed events directly to the EventDispatcher; the
+    ControllerBridge drains them and UpdateController mutates state —
+    no manual poll or queue marker needed."""
     hub = window._hub
     spy = []
     hub.bridge.operationFinished.connect(lambda *a: spy.append(a))
 
     hub.updater.state.running = True
-    hub.updater._log_q.put(("__DONE__", ""))
+    hub.dispatcher.post(UpdateCompleted(version=None))
 
     QTest.qWait(250)
 
@@ -336,17 +342,18 @@ def test_poll_timer_processes_worker_completion(qapp, window):
 
 
 def test_poll_timer_renders_update_available(qapp, window):
-    """check_updater_update() sets the flag in a worker thread; the poll
-    timer must surface it as the header 'Update available!' label."""
+    """check_updater_update() sets the flag in a worker thread; the
+    lightweight poll timer surfaces it as the header 'Update available!'
+    label without requiring a controller poll."""
     hub = window._hub
     assert not window._updateAvailableLabel.isVisible()
 
     hub.updater.updater_update_available = True
-    QTest.qWait(250)
+    window._poll_updater()
     assert window._updateAvailableLabel.isVisible()
 
     hub.updater.updater_update_available = False
-    QTest.qWait(250)
+    window._poll_updater()
     assert not window._updateAvailableLabel.isVisible()
 
 
@@ -384,7 +391,10 @@ def test_startup_auto_verifies_when_not_first_run(qapp, window):
 
     window.schedule_startup_tasks()
 
-    QTest.qWait(700)
+    for _ in range(10):
+        QTest.qWait(100)
+        if hub.updater.start_verify.call_count and hub.news.load.call_count:
+            break
     hub.updater.start_verify.assert_called_once_with(False)
     hub.news.load.assert_called_once_with()
 

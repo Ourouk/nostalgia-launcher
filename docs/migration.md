@@ -60,17 +60,20 @@ Minimal configuration:
     "url": "https://launcher.your-community.example",
     "download": {
       "update": true,
+      "torrent": {
+        "torrent_url": "https://launcher.your-community.example/client/latest/client.torrent"
+      },
       "http": {
-        "manifest": "https://launcher.your-community.example/api/file/latest/manifest.json",
-        "client": "https://launcher.your-community.example/client/latest"
-      }
+        "fallback": "https://launcher.your-community.example/client/latest/client.zip"
+      },
+      "content": { "type": "zip" }
     }
   }
 }
 ```
 
 Every endpoint is a direct, fully-qualified HTTPS URL — there is no `base_url`
-derivation and no mirrors. See `docs/DEVELOPER.md` for the full schema.
+derivation and no mirrors. See `docs/developer-guide.md` for the full schema.
 
 ### New optional configuration keys
 

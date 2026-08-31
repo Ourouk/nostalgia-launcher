@@ -43,6 +43,13 @@ def prof_home(tmp_path, monkeypatch):
             profiles.profile_root(profiles.DEFAULT_PROFILE),
         ),
     )
+    # Hardened active() now requires explicit activation — keep the
+    # auto-activated default in sync with the redirected root.
+    if profiles._ACTIVE is not None:
+        try:
+            profiles._ACTIVE = profiles.default_profile()
+        except Exception:
+            pass
     return root
 
 

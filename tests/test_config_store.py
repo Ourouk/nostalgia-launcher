@@ -85,7 +85,9 @@ def test_apply_confirmed_out_dir_writes_flag_and_wipes_folder_scope(
     config_store.save_config({"untouched": True})
     config_store.apply_confirmed_out_dir(str(other), "/games/wow/")
     cfg = json.loads(other.read_text(encoding="utf-8"))
-    assert cfg["out_dir"] == "/games/wow"  # normalized
+    assert (
+        cfg["out_dir"].replace("\\", "/") == "/games/wow"
+    )  # normalized, platform-agnostic
     assert cfg["out_dir_user_set"] is True
     for scoped in ("mods", "addons", "assets", "asset_probe_cache"):
         assert scoped not in cfg

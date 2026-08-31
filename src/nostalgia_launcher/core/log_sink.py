@@ -1,9 +1,11 @@
 """One thread-safe log sink for the whole app.
 
-Any function — worker thread or main — calls `log()`; the GUI drains
-`_LOG_Q` on the main thread and renders each line. This keeps all UI access
-on the main thread without threading a log_fn argument through every
-function.
+Any function — worker thread or main — calls `log()`; it posts a
+`LogMessage` event onto the shared dispatcher (set once at startup
+via `set_dispatcher()`) and optionally mirrors to stdout or the
+session-log file. This keeps a single structured communication
+channel for log output instead of a separate queue that the UI has
+to drain independently.
 
 Two optional mirrors:
 - stdout, when `NOSTALGIA_DEBUG` is set (any value except 0/false/no), so a
@@ -16,18 +18,26 @@ Two optional mirrors:
 """
 
 import os
-import queue
 import sys
 import threading
 
+from ..state.events import LogMessage
 from .constants import LOG_FILE
 
-_LOG_Q: queue.Queue = queue.Queue()
+# Dispatcher set once at startup by the controller hub.
+_dispatcher = None
 
 # File sink — disabled until configure_file() sets the target path.
 _sink_path: str | None = None
 _MAX_BYTES = 512 * 1024
 _lock = threading.Lock()
+
+
+def set_dispatcher(dispatcher) -> None:
+    """Register the shared EventDispatcher for log output. Called
+    once at startup by the controller hub."""
+    global _dispatcher
+    _dispatcher = dispatcher
 
 
 def debug_enabled() -> bool:
@@ -84,9 +94,10 @@ def _append_file(msg: str):
 
 def log(msg: str, tag: str = ""):
     """Append a line to the app log. Thread-safe; safe to call before the
-    GUI exists (the queue just buffers until it's drained) and before or
-    without configure_file() (the file mirror is simply skipped)."""
-    _LOG_Q.put((msg, tag))
+    GUI exists (the event is buffered until the dispatcher is set) and
+    before or without configure_file() (the file mirror is simply skipped)."""
+    if _dispatcher is not None:
+        _dispatcher.post(LogMessage(msg, tag))
     debug_emit(msg)
     if _sink_path is not None:
         with _lock:
