@@ -1,10 +1,6 @@
-<p align="center">
-  <img src="NostalgiaLauncher.svg" alt="Nostalgia Launcher logo" width="128" />
-</p>
-
 # Nostalgia Launcher
 
-Nostalgia Launcher is a desktop application that helps you verify, update,
+<img src="NostalgiaLauncher.svg" alt="Nostalgia Launcher logo" align="left" width="180" /> Nostalgia Launcher is a desktop application that helps you verify, update,
 and configure a game installation — for example a Vanilla WoW (1.12.1)
 client — against a **configuration that you supply yourself**. It is a local
 tool: it does not include, host, or distribute any game files, and it does
