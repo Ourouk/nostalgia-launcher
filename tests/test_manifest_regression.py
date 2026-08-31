@@ -1,8 +1,16 @@
-"""Manifest parsing/validation regression tests."""
+"""Manifest parsing/validation regression tests (manifest removed —
+torrent-only)."""
 
 import pytest
 
-from nostalgia_launcher.state.manifest import parse_manifest
+pytestmark = pytest.mark.skip(reason="manifest removed — torrent-only")
+
+try:
+    from nostalgia_launcher.state.manifest import (
+        parse_manifest,  # type: ignore  # noqa: F401
+    )
+except ImportError:
+    parse_manifest = None  # type: ignore
 
 
 def test_parse_valid_manifest():

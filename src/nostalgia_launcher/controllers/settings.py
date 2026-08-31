@@ -261,16 +261,13 @@ class SettingsController:
         ).start()
 
     def _http_mirror_names(self) -> list:
-        """Name of the configured download source (the server). Mirrors are
-        gone; the single source's reachability is what we report."""
+        """Name of the configured download source (the server). Mirrors
+        are gone; the single source's reachability is what we report."""
+
         cfg = launcher.config()
         if cfg is None:
             return []
-        if (
-            cfg.download_manifest_url
-            or cfg.download_client_url
-            or cfg.has_torrent()
-        ):
+        if cfg.download_fallback_url or cfg.has_torrent():
             return [cfg.server_name or "server"]
         return []
 
@@ -636,10 +633,11 @@ class SettingsController:
             return False
 
     def _mirror_probe_url(self, name: str) -> str:
-        """The client-files endpoint of the configured download source (the
-        server). Mirrors are gone, so this is always the server's ``client``
-        URL."""
+        """The client-files endpoint of the configured download source
+        (the server). Mirrors are gone, so this is always the server's
+        fallback or torrent URL."""
+
         cfg = launcher.config()
         if cfg is None:
             return ""
-        return cfg.download_client_url or ""
+        return cfg.download_fallback_url or cfg.download_torrent_url or ""

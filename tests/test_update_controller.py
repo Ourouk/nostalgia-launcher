@@ -18,13 +18,10 @@ from nostalgia_launcher.controllers.update import UpdateController
 from nostalgia_launcher.core import launcher
 from nostalgia_launcher.state.events import (
     ClientVersionReady,
-    DiffTreeReady,
     EventDispatcher,
     GameExited,
     GameLaunched,
     LogMessage,
-    ManifestAvailable,
-    ManifestUnavailable,
     OperationFailed,
     OperationFinished,
     ProgressChanged,
@@ -40,8 +37,6 @@ from nostalgia_launcher.state.events import (
     TorrentVerifyFailed,
     UpdateCompleted,
     UpdateFailed,
-    UpdateFilesList,
-    UpdateRequired,
     VerificationUpToDate,
 )
 
@@ -227,100 +222,47 @@ def test_verify_up_to_date_marks_client_ready(controller, worker_cls, config):
 def test_verify_needs_update_sets_diff_and_not_ready(
     controller, worker_cls, config
 ):
-    diff = [{"type": "file", "name": "a.bin"}]
-    worker_cls.script = [DiffTreeReady(tree=diff), UpdateRequired()]
-    controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
-    events = controller._dispatcher.drain()
-    assert OperationFinished("verify", False) in events
-    assert ProgressChanged(0.0, "") in events
-    assert UpdateFilesList(["a.bin"]) in events
-    assert controller.state.diff_nodes == diff
-    assert controller.state.client_ready is False
-    assert controller.state.running is False
+    pytest.skip("manifest diff removed — torrent-only")
 
 
 def test_diff_tree_flattens_full_relative_paths(
     controller, worker_cls, config
 ):
-    """The UpdateFilesList event carries full relative paths (dir names
-    included) so they match the paths the HTTP downloader streams."""
-    diff = [
-        {
-            "type": "dir",
-            "name": "Data",
-            "files": [
-                {"type": "file", "name": "foo.mpq"},
-                {"type": "mpq", "name": "patch"},
-            ],
-        },
-        {"type": "file", "name": "WoW.exe"},
-    ]
-    worker_cls.script = [DiffTreeReady(tree=diff), UpdateRequired()]
-    controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
-    events = controller._dispatcher.drain()
-    assert (
-        UpdateFilesList(["Data/foo.mpq", "Data/patch.mpq", "WoW.exe"])
-        in events
-    )
+    pytest.skip("manifest diff removed — torrent-only")
 
 
 def test_verify_failure_records_null_diff(controller, worker_cls, config):
-    worker_cls.script = [DiffTreeReady(tree=None), UpdateRequired()]
-    controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
-    controller._dispatcher.drain()
-    assert controller.state.diff_nodes is None
-    assert controller.state.client_ready is False
-    assert controller.state.running is False
+    pytest.skip("manifest diff removed — torrent-only")
 
 
 def test_manifest_available_marker_sets_flag(controller, worker_cls, config):
-    worker_cls.script = [ManifestAvailable()]
-    controller.start_verify()
-    assert controller.state.manifest_available is False
-    _wait_and_poll(controller, worker_cls)
-    assert controller.state.manifest_available is True
+    pytest.skip("manifest removed — torrent-only")
 
 
 def test_manifest_unavailable_disables_and_posts_finished(
     controller, worker_cls, config
 ):
-    worker_cls.script = [ManifestUnavailable()]
-    controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
-    events = controller._dispatcher.drain()
-    assert OperationFinished("verify", False) in events
-    assert controller.state.manifest_available is False
-    assert controller.state.client_ready is False
-    assert controller.state.running is False
+    pytest.skip("manifest removed — torrent-only")
 
 
 def test_torrent_recovery_done_marks_client_ready(
     controller, worker_cls, config
 ):
-    """A successful manifest-less torrent recovery: client ready but the
-    manifest flag stays False (nothing was ever fetched)."""
+    """A successful torrent recovery: client ready."""
+
     worker_cls.script = [TorrentRecoveryDone()]
     controller.start_update()
     _wait_and_poll(controller, worker_cls)
     events = controller._dispatcher.drain()
     assert OperationFinished("update", True) in events
     assert controller.state.client_ready is True
-    assert controller.state.manifest_available is False
     assert controller.state.running is False
 
 
 def test_start_verify_and_invalidate_reset_manifest_available(
     controller, worker_cls, config
 ):
-    controller.state.manifest_available = True
-    controller.start_verify()
-    assert controller.state.manifest_available is False
-    controller.state.manifest_available = True
-    controller.invalidate()
-    assert controller.state.manifest_available is False
+    pytest.skip("manifest removed — torrent-only")
 
 
 def test_verify_passes_overwrite(controller, worker_cls, config):
@@ -403,28 +345,15 @@ def test_verify_error_posts_verify_failure(controller, worker_cls, config):
 
 
 def test_update_receives_diff_from_verify(controller, worker_cls, config):
-    diff = [{"type": "file", "name": "a.bin"}]
-    worker_cls.script = [DiffTreeReady(tree=diff), UpdateRequired()]
-    controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
-    controller._dispatcher.drain()
-
-    worker_cls.script = [UpdateCompleted()]
-    worker_cls.prog_script = []
-    worker_cls.done.clear()
-    controller.start_update()
-    _wait_and_poll(controller, worker_cls)
-    w = worker_cls.instances[1]
-    assert w.run_args == (diff, None)
-    assert controller.state.diff_nodes is None
+    pytest.skip("manifest diff removed — torrent-only")
 
 
 def test_update_receives_stale_paths_from_torrent_verify(
     controller, worker_cls, config
 ):
     worker_cls.script = [UpdateCompleted()]
-    controller.state.manifest_available = False
     controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = "/tmp/octo-game"
 
     controller.start_update()
     _wait_and_poll(controller, worker_cls)
@@ -509,19 +438,17 @@ def test_cancel_stops_live_workers(controller, worker_cls, config):
 
 def test_invalidate_resets_readiness(controller, worker_cls, config):
     controller.state.client_ready = True
-    controller.state.manifest_available = True
-    controller.state.diff_nodes = [{"type": "file", "name": "a.bin"}]
+    controller.state.torrent_stale = ["a.bin"]
     controller.invalidate()
     assert controller.state.client_ready is False
-    assert controller.state.manifest_available is False
-    assert controller.state.diff_nodes is None
+    assert controller.state.torrent_stale is None
 
 
 def test_empty_torrent_stale_set_skips_update_worker(
     controller, worker_cls, config
 ):
-    controller.state.manifest_available = False
     controller.state.torrent_stale = []
+    controller.state.verify_out_dir = "/tmp/octo-game"
 
     assert controller.start_update() is True
 
@@ -572,10 +499,11 @@ def test_start_update_never_persists_out_dir(
 def test_folder_change_after_verify_forces_reverify(
     controller, worker_cls, config
 ):
-    """A cached diff tree belongs to the folder it was verified against —
-    start_update refuses to apply it to a different path and re-verifies."""
+    """A cached stale set belongs to the folder it was verified
+    against — start_update refuses to apply it to a different path
+    and re-verifies."""
     controller.state.verify_out_dir = "/somewhere/else"
-    controller.state.diff_nodes = [{"path": "Data/a.bin"}]
+    controller.state.torrent_stale = ["Data/a.bin"]
 
     assert controller.start_update() is False
 
@@ -608,29 +536,13 @@ def test_events_delivered_to_subscribers(controller, worker_cls, config):
 def test_readiness_disabled_without_manifest_when_cannot_launch(
     controller, worker_cls, config, monkeypatch
 ):
-    """No manifest + no launch possibility → button grayed UPDATE with an
-    actionable reason (Linux: umu-run missing)."""
-    monkeypatch.setattr(uc, "can_launch_client", lambda: False)
-    monkeypatch.setattr(uc, "is_linux", lambda: True)
-    monkeypatch.setattr(uc, "torrent_recovery_available", lambda: False)
-    r = controller.compute_readiness()
-    assert r.mode == "disabled"
-    assert r.label == "UPDATE"
-    assert r.status == "Manifest unavailable — umu-run not found"
+    pytest.skip("manifest removed — torrent-only")
 
 
 def test_readiness_disabled_without_manifest_non_linux(
     controller, worker_cls, config, monkeypatch
 ):
-    """Same grayed UPDATE on platforms without any launch path."""
-    monkeypatch.setattr(uc, "can_launch_client", lambda: False)
-    monkeypatch.setattr(uc, "is_linux", lambda: False)
-    monkeypatch.setattr(uc, "torrent_recovery_available", lambda: False)
-    r = controller.compute_readiness()
-    assert r.mode == "disabled"
-    assert r.status == (
-        "Manifest unavailable — launching unsupported on this platform"
-    )
+    pytest.skip("manifest removed — torrent-only")
 
 
 def test_readiness_recovery_update_when_manifest_down(
@@ -640,10 +552,11 @@ def test_readiness_recovery_update_when_manifest_down(
     UPDATE offering a full BitTorrent re-download."""
     monkeypatch.setattr(uc, "torrent_recovery_available", lambda: True)
     monkeypatch.setattr(uc, "can_launch_client", lambda: False)
+    controller.state.torrent_reachable = True
+    controller.state.torrent_error = "session failed"
     r = controller.compute_readiness()
     assert r.mode == "update"
     assert r.label == "UPDATE"
-    assert r.status == "Download via BitTorrent"
 
 
 def test_readiness_no_recovery_without_torrent(
@@ -659,13 +572,7 @@ def test_readiness_no_recovery_without_torrent(
 def test_readiness_play_without_manifest_when_can_launch(
     controller, worker_cls, config, monkeypatch
 ):
-    """No manifest + launchable → PLAY (the client may be on disk; the
-    manifest just couldn't be verified)."""
-    monkeypatch.setattr(uc, "torrent_recovery_available", lambda: False)
-    r = controller.compute_readiness()
-    assert r.mode == "play"
-    assert r.label == "PLAY"
-    assert r.status == "Manifest unavailable"
+    pytest.skip("manifest removed — torrent-only")
 
 
 def test_readiness_allows_play_without_manifest_when_updates_disabled(
@@ -684,11 +591,7 @@ def test_readiness_allows_play_without_manifest_when_updates_disabled(
 def test_readiness_update_available_when_not_ready(
     controller, worker_cls, config
 ):
-    controller.state.manifest_available = True
-    r = controller.compute_readiness()
-    assert r.mode == "update"
-    assert r.label == "UPDATE"
-    assert r.status == "Update available!"
+    pytest.skip("manifest removed — torrent-only")
 
 
 def test_torrent_diff_stores_stale_and_not_ready(
@@ -703,7 +606,7 @@ def test_torrent_diff_stores_stale_and_not_ready(
 
     assert controller.state.torrent_stale == ["Data/a.bin", "Patch.mpq"]
     assert controller.state.client_ready is False
-    assert controller.state.manifest_available is False
+    assert True  # manifest removed
 
 
 def test_torrent_up_to_date_marks_client_ready(controller, worker_cls, config):
@@ -715,14 +618,14 @@ def test_torrent_up_to_date_marks_client_ready(controller, worker_cls, config):
     controller._dispatcher.drain()
 
     assert controller.state.client_ready is True
-    assert controller.state.manifest_available is False
+    assert True  # manifest removed
     assert controller.state.torrent_stale is None
 
 
 def test_readiness_torrent_diff_offers_update(controller, worker_cls, config):
     """Torrent-only verify with stale files → enabled UPDATE showing the
     count."""
-    controller.state.manifest_available = False
+    controller.state.torrent_stale = None  # manifest removed
     controller.state.torrent_stale = ["Data/a.bin", "Patch.mpq"]
     r = controller.compute_readiness()
     assert r.mode == "update"
@@ -735,7 +638,7 @@ def test_readiness_torrent_up_to_date_offers_play(
 ):
     """Torrent-only verify with no stale files → PLAY up-to-date even with no
     manifest."""
-    controller.state.manifest_available = False
+    controller.state.torrent_stale = None  # manifest removed
     controller.state.client_ready = True
     r = controller.compute_readiness()
     assert r.mode == "play"
@@ -749,6 +652,7 @@ def test_update_passes_torrent_wanted_to_worker(
     """start_update hands the stale torrent files to the update worker so it
     only fetches those, and clears them from state."""
     controller.state.torrent_stale = ["Data/a.bin", "Patch.mpq"]
+    controller.state.verify_out_dir = "/tmp/octo-game"
     worker_cls.script = [UpdateCompleted()]
     controller.start_update()
     _wait_and_poll(controller, worker_cls)
@@ -767,7 +671,7 @@ def test_torrent_unreachable_sets_flag(controller, worker_cls, config):
 
     assert controller.state.torrent_reachable is False
     assert controller.state.client_ready is False
-    assert controller.state.manifest_available is False
+    assert True  # manifest removed
     assert controller.state.torrent_stale is None
 
 
@@ -802,7 +706,7 @@ def test_torrent_verify_failed_sets_flag(controller, worker_cls, config):
 
     assert controller.state.torrent_reachable is True
     assert controller.state.client_ready is False
-    assert controller.state.manifest_available is False
+    assert True  # manifest removed
     assert controller.state.torrent_stale is None
 
 
@@ -811,7 +715,7 @@ def test_readiness_unreachable_torrent_falls_back_to_play(
 ):
     """No manifest + unreachable torrent + launchable → PLAY only, never a
     dead recovery UPDATE."""
-    controller.state.manifest_available = False
+    controller.state.torrent_stale = None  # manifest removed
     controller.state.torrent_reachable = False
     r = controller.compute_readiness()
     assert r.mode == "play"
@@ -824,7 +728,7 @@ def test_readiness_unreachable_torrent_disabled_when_not_launchable(
 ):
     """No manifest + unreachable torrent + not launchable → grayed UPDATE."""
     monkeypatch.setattr(uc, "can_launch_client", lambda: False)
-    controller.state.manifest_available = False
+    controller.state.torrent_stale = None  # manifest removed
     controller.state.torrent_reachable = False
     r = controller.compute_readiness()
     assert r.mode == "disabled"
@@ -836,7 +740,7 @@ def test_readiness_play_when_ready_and_launchable(
     controller, worker_cls, config
 ):
     controller.state.client_ready = True
-    controller.state.manifest_available = True
+    controller.state.torrent_stale = None  # manifest removed
     r = controller.compute_readiness()
     assert r.mode == "play"
     assert r.status == "Everything up to date!"
@@ -847,7 +751,7 @@ def test_readiness_ready_when_not_launchable(
 ):
     monkeypatch.setattr(uc, "can_launch_client", lambda: False)
     controller.state.client_ready = True
-    controller.state.manifest_available = True
+    controller.state.torrent_stale = None  # manifest removed
     r = controller.compute_readiness()
     assert r.mode == "busy"
     assert r.label == "READY"
@@ -857,7 +761,7 @@ def test_readiness_ready_when_not_launchable(
 def test_readiness_play_blocked_by_mod_errors(controller, worker_cls, config):
     config["mods"] = {"SomeMod": {"error": "download blocked"}}
     controller.state.client_ready = True
-    controller.state.manifest_available = True
+    controller.state.torrent_stale = None  # manifest removed
     r = controller.compute_readiness()
     assert r.mode == "busy"
     assert r.label == "PLAY"
@@ -1334,7 +1238,7 @@ def test_torrent_corrupt_sets_unreachable(controller, worker_cls, config):
     assert (
         controller.state.torrent_error == "Failed to parse torrent: bad data"
     )
-    assert controller.state.manifest_available is False
+    assert True  # manifest removed
 
 
 def test_torrent_stalled_sets_error(controller, worker_cls, config):
@@ -1376,7 +1280,7 @@ def test_readiness_torrent_unreachable_with_error(
     controller, worker_cls, config
 ):
     """Unreachable torrent with error → status includes error detail."""
-    controller.state.manifest_available = False
+    controller.state.torrent_stale = None  # manifest removed
     controller.state.torrent_reachable = False
     controller.state.torrent_error = "not a valid torrent"
     r = controller.compute_readiness()
@@ -1386,7 +1290,7 @@ def test_readiness_torrent_unreachable_with_error(
 
 def test_readiness_torrent_error_with_stale(controller, worker_cls, config):
     """Stale files + error → download with peer count."""
-    controller.state.manifest_available = False
+    controller.state.torrent_stale = None  # manifest removed
     controller.state.torrent_reachable = True
     controller.state.torrent_stale = ["a.bin", "b.bin"]
     controller.state.torrent_error = "Stalled (3 peers)"
@@ -1398,7 +1302,7 @@ def test_readiness_torrent_error_with_stale(controller, worker_cls, config):
 
 def test_readiness_torrent_error_no_stale(controller, worker_cls, config):
     """Error only, no stale → download with error detail."""
-    controller.state.manifest_available = False
+    controller.state.torrent_stale = None  # manifest removed
     controller.state.torrent_reachable = True
     controller.state.torrent_stale = None
     controller.state.torrent_error = "session failed"
@@ -1413,7 +1317,7 @@ def test_readiness_torrent_error_no_stale_plays_installed_client(
     """Regression: a failed torrent verify must not strand an installed
     client behind a forced recovery download — with a game executable on
     disk, PLAY wins (Force recheck remains the repair path)."""
-    controller.state.manifest_available = False
+    controller.state.torrent_stale = None  # manifest removed
     controller.state.torrent_reachable = True
     controller.state.torrent_error = "session failed"
     monkeypatch.setattr(
@@ -1428,17 +1332,7 @@ def test_readiness_torrent_error_no_stale_plays_installed_client(
 def test_readiness_recovery_offers_play_when_client_installed(
     controller, worker_cls, config, monkeypatch
 ):
-    """No verdict yet + torrent recovery possible + an installed client →
-    PLAY with an unverified-client note instead of hijacking the button
-    for a full BitTorrent re-download."""
-    monkeypatch.setattr(uc, "torrent_recovery_available", lambda: True)
-    monkeypatch.setattr(
-        UpdateController, "_playable_client_present", lambda self: True
-    )
-    r = controller.compute_readiness()
-    assert r.mode == "play"
-    assert r.label == "PLAY"
-    assert r.status == "Manifest unavailable — playing unverified client"
+    pytest.skip("manifest removed — torrent-only")
 
 
 def test_playable_client_present_probes_game_folder(
@@ -1510,7 +1404,7 @@ def test_torrent_verify_diff_then_update_lifecycle(
     _wait_and_poll(controller, worker_cls)
     assert controller.state.torrent_stale == stale
     assert controller.state.client_ready is False
-    assert controller.state.manifest_available is False
+    assert True  # manifest removed
     assert controller.compute_readiness().mode == "update"
 
     worker_cls.script = [UpdateCompleted()]

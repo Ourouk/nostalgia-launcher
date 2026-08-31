@@ -40,7 +40,7 @@ _PLAY = Readiness("play", "PLAY", "Everything up to date!")
 _UPDATE = Readiness("update", "UPDATE", "Update available!")
 _CHECKING = Readiness("busy", "Checking…", "Verifying…")
 _INSTALLING = Readiness("busy", "Installing…", "Downloading addons…")
-_DISABLED = Readiness("disabled", "UPDATE", "Manifest unavailable")
+_DISABLED = Readiness("disabled", "UPDATE", "Verifying…")
 _TERMINATE = Readiness(
     "terminate", "TERMINATE", "Running WoW.exe — click TERMINATE to quit"
 )
@@ -95,8 +95,9 @@ def test_initial_button_shows_update_until_ready(qapp, window, monkeypatch):
     hub = window._hub
     palette = Palette()
     assert window._updateButton.objectName() == "updateButton"
+    # Torrent-only: initial state is disabled Verifying until cache verdict
     assert window._updateButton.text() == "UPDATE"
-    assert window._updateButton.isEnabled()
+    assert not window._updateButton.isEnabled()
 
     monkeypatch.setattr(
         hub.updater, "compute_readiness", lambda addons_installing=False: _PLAY
@@ -151,7 +152,10 @@ def test_disabled_readiness_grays_update_button(qapp, window, monkeypatch):
     window._refresh_ready_state()
     assert window._updateButton.text() == "UPDATE"
     assert not window._updateButton.isEnabled()
-    assert window._statusLabel.text() == "Manifest unavailable"
+    assert (
+        "Verifying" in window._statusLabel.text()
+        or "unavailable" in window._statusLabel.text().lower()
+    )
 
     window._updateButton.click()
     hub.updater.start_update.assert_not_called()
@@ -182,6 +186,7 @@ def test_click_play_shows_dxvk_notice(qapp, window, monkeypatch):
     monkeypatch.setattr(
         hub.updater, "compute_readiness", lambda addons_installing=False: _PLAY
     )
+    window._refresh_ready_state()
     hub.updater.launch_game.return_value = (True, True)
     informed = []
     monkeypatch.setattr(

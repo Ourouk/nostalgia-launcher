@@ -27,10 +27,9 @@ LAUNCHER_TEST_CONFIG = {
                 "magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
             },
             "http": {
-                "manifest": "https://launcher.test/api/file/latest/manifest.json",
-                "client": "https://launcher.test/client/latest",
+                "fallback": "https://launcher.test/client/latest/client.zip",
             },
-            "content": {"type": "folder"},
+            "content": {"type": "zip"},
         },
     },
 }

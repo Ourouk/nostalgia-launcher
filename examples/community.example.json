@@ -16,10 +16,9 @@
         "update": true
       },
       "http": {
-        "manifest": "https://launcher.example.com/api/file/latest/manifest.json",
-        "client": "https://launcher.example.com/client/latest"
+        "fallback": "https://launcher.example.com/client/latest/client.zip"
       },
-      "content": { "type": "folder" }
+      "content": { "type": "zip" }
     }
   },
   "addons": [

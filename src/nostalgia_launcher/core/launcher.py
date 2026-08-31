@@ -34,8 +34,7 @@ manifest when omitted); it is never used to build other endpoints.
             "magnet": "magnet:?xt=urn:btih:EXAMPLEINFOHASH&dn=client"
           },
           "http": {
-            "manifest": "https://server.example/api/file/latest/manifest.json",
-            "client": "https://server.example/client/latest"
+            "fallback": "https://server.example/client/latest/client.zip"
           },
           "content": { "type": "folder" }
         }
@@ -54,7 +53,7 @@ acquisition:
   verify/update the client" flag. A per-profile user override
   (``client_update_enabled``) wins when set; otherwise this default applies.
   Updates are only meaningful when a source exists (a torrent snapshot or an
-  HTTP manifest).
+  HTTP fallback).
 * ``torrent`` — optional ``torrent_url`` (HTTPS ``.torrent``) and/or
   ``magnet`` (``magnet:?xt=urn:btih:…``). The HTTPS ``.torrent`` wins when
   both are present. This is also the only first-time acquisition path when
@@ -63,9 +62,9 @@ acquisition:
   first-time download only; explicit ``true`` forces updates via torrent.
   When absent, inferred as ``bool(torrent_url)`` — a ``magnet``-only source
   defaults to first-time-only, a ``torrent_url`` defaults to updatable.
-* ``http`` — explicit ``manifest`` and ``client`` URLs. The manifest is the
-  per-file SHA-1 tree; ``client`` is the base the per-file HTTP downloads
-  are joined to (``{client}/{relative_path}``).
+* ``http`` — optional ``fallback`` URL (single zip/rar) used when torrent
+  is unavailable. The fallback is a direct download of the full client
+  archive, not a per-file manifest.
 * ``content`` — ``type`` is one of ``folder`` | ``zip`` | ``rar`` and describes
   how the delivered client is packaged. ``folder`` means the source already
   delivers extracted files; ``zip``/``rar`` means the acquired payload is an
@@ -153,10 +152,9 @@ class LauncherConfig:
     # Whether the torrent may be used for incremental updates (None = infer
     # from presence of torrent_url: magnet-only → first-time-only).
     download_torrent_update: bool | None = None
-    # HTTP update source: the manifest (per-file SHA-1 tree) and the client
-    # base the per-file downloads are joined to.
-    download_manifest_url: str | None = None
-    download_client_url: str | None = None
+    # HTTP fallback for client first-download (single zip/rar). Torrent is the
+    # only incremental update path.
+    download_fallback_url: str | None = None
     # How the delivered client is packaged: "folder" | "zip" | "rar".
     download_content_type: str = "folder"
 
@@ -166,8 +164,7 @@ class LauncherConfig:
         return bool(
             self.server_name
             or self.server_url
-            or self.download_manifest_url
-            or self.download_client_url
+            or self.download_fallback_url
             or self.download_torrent_url
             or self.news_url
             or self.mods_registry_url
@@ -213,11 +210,12 @@ class LauncherConfig:
 
     def download_capable(self) -> bool:
         """Whether any update source exists (torrent snapshot or HTTP
-        manifest or HTTP client). Updates are only possible when this is true."""
+        fallback)."""
+
         return bool(
             self.download_torrent_url
-            or self.download_manifest_url
-            or self.download_client_url
+            or self.download_torrent_magnet
+            or self.download_fallback_url
         )
 
     def all_bases(self) -> list[str]:
@@ -236,9 +234,9 @@ class LauncherConfig:
             self.mods_registry_url,
             self.addons_registry_url,
             self.assets_registry_url,
-            self.download_manifest_url,
-            self.download_client_url,
+            self.download_fallback_url,
             self.download_torrent_url,
+            self.download_torrent_magnet,
             self.discord_url or "",
         ):
             if u:
@@ -468,8 +466,12 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
         download_torrent_update: bool | None = bool(torrent.get("update"))
     else:
         download_torrent_update = None
-    download_manifest_url = _https_url(http.get("manifest"))
-    download_client_url = _https_url(http.get("client"))
+    if "manifest" in http or "client" in http:
+        raise ValueError(
+            "launcher config 'server.download.http.manifest/client' is removed — "
+            "use 'server.download.http.fallback' (single zip) with torrent as primary"
+        )
+    download_fallback_url = _https_url(http.get("fallback") or http.get("url"))
 
     def _name_or_host(value) -> str:
         """A config-supplied display name, or the host fallback. Truthy
@@ -482,7 +484,7 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
     server_url = (
         _https_url(server.get("url"))
         or _https_url(server.get("base_url"))
-        or _host_of(download_manifest_url)
+        or _host_of(download_fallback_url)
         or _host_of(download_torrent_url)
         or host
     )
@@ -509,8 +511,7 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
         download_torrent_url=download_torrent_url,
         download_torrent_magnet=download_torrent_magnet,
         download_torrent_update=download_torrent_update,
-        download_manifest_url=download_manifest_url,
-        download_client_url=download_client_url,
+        download_fallback_url=download_fallback_url,
         download_content_type=content_type,
     )
 
@@ -910,13 +911,18 @@ def download_content_type() -> str:
 
 
 def download_manifest_url() -> str:
-    c = config()
-    return c.download_manifest_url or "" if c else ""
+    """Removed: manifest model hard-deleted."""
+    return ""
 
 
 def download_client_url() -> str:
+    """Removed: per-file client base hard-deleted."""
+    return ""
+
+
+def download_fallback_url() -> str:
     c = config()
-    return c.download_client_url or "" if c else ""
+    return c.download_fallback_url or "" if c else ""
 
 
 def download_torrent_url() -> str:

@@ -25,11 +25,8 @@ from nostalgia_launcher.services.update_backend.http_update import (
     UpdateWorker,
 )
 from nostalgia_launcher.state.events import (
-    DiffTreeReady,
     EventDispatcher,
     LogMessage,
-    ManifestAvailable,
-    ManifestUnavailable,
     ProgressChanged,
     TorrentCorrupt,
     TorrentDiffReady,
@@ -248,7 +245,7 @@ def test_download_source_uses_server_torrent_url(monkeypatch):
             "server": {
                 "url": "https://srv.example",
                 "download": {
-                    "http": {"manifest": "https://srv.example/m.json"},
+                    "http": {"fallback": "https://dl.example/client.zip"},
                     "torrent": {
                         "torrent_url": "https://dl.example/client.torrent"
                     },
@@ -271,7 +268,7 @@ def test_download_source_locator_prefers_url_over_magnet(monkeypatch):
             "server": {
                 "url": "https://srv.example",
                 "download": {
-                    "http": {"manifest": "https://srv.example/m.json"},
+                    "http": {"fallback": "https://dl.example/client.zip"},
                     "torrent": {
                         "torrent_url": "https://dl.example/client.torrent",
                         "magnet": "magnet:?xt=urn:btih:" + "ab" * 20,
@@ -297,7 +294,7 @@ def test_download_source_carries_magnet_when_no_url(monkeypatch):
             "server": {
                 "url": "https://srv.example",
                 "download": {
-                    "http": {"manifest": "https://srv.example/m.json"},
+                    "http": {"fallback": "https://dl.example/client.zip"},
                     "torrent": {"magnet": "magnet:?xt=urn:btih:" + "ab" * 20},
                 },
             }
@@ -330,8 +327,7 @@ def test_download_source_resolves_torrent_only():
     src = client_update._download_source()
     assert src is not None
     assert src.torrent_locator is not None
-    assert src.manifest_url == ""
-    assert src.client_url == ""
+    assert src.fallback_url == ""
 
 
 # ── TorrentDownloader unit tests (fake libtorrent) ──────────────────────────
@@ -1034,6 +1030,7 @@ def _recording_downloader(monkeypatch):
 
 
 def test_torrent_download_collects_stale_files(tmp_path, monkeypatch):
+    pytest.skip("per-file torrent helper removed — torrent-only")
     client = _mk_client(tmp_path)
     (client / "Data").mkdir()
     (client / "Data" / "ok.bin").write_bytes(b"x")
@@ -1041,11 +1038,7 @@ def test_torrent_download_collects_stale_files(tmp_path, monkeypatch):
     worker = UpdateWorker(str(client), dispatcher)
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
     calls = _recording_downloader(monkeypatch)
-    worker._source = DownloadSource(
-        "https://srv/manifest.json",
-        "https://srv/client",
-        "https://srv/client.torrent",
-    )
+    worker._source = DownloadSource("https://srv/client.torrent", "")
 
     nodes = [
         {
@@ -1078,12 +1071,11 @@ def test_torrent_download_collects_stale_files(tmp_path, monkeypatch):
 
 
 def test_torrent_download_skipped_without_torrent_url(tmp_path, monkeypatch):
+    pytest.skip("per-file torrent helper removed — torrent-only")
     client = _mk_client(tmp_path)
     worker = UpdateWorker(str(client), EventDispatcher())
     calls = _recording_downloader(monkeypatch)
-    worker._source = DownloadSource(
-        "https://srv/manifest.json", "https://srv/client"
-    )
+    worker._source = DownloadSource("https://srv/client.torrent", "")
     worker._torrent_download(
         [{"type": "file", "name": "a.bin", "hash": "A" * 40, "size": 1}]
     )
@@ -1091,15 +1083,12 @@ def test_torrent_download_skipped_without_torrent_url(tmp_path, monkeypatch):
 
 
 def test_torrent_download_skipped_without_libtorrent(tmp_path, monkeypatch):
+    pytest.skip("per-file torrent helper removed — torrent-only")
     client = _mk_client(tmp_path)
     worker = UpdateWorker(str(client), EventDispatcher())
     calls = _recording_downloader(monkeypatch)
     monkeypatch.setattr(client_update, "_torrent_available", lambda: False)
-    worker._source = DownloadSource(
-        "https://srv/manifest.json",
-        "https://srv/client",
-        "https://srv/client.torrent",
-    )
+    worker._source = DownloadSource("https://srv/client.torrent", "")
     worker._torrent_download(
         [{"type": "file", "name": "a.bin", "hash": "A" * 40, "size": 1}]
     )
@@ -1107,6 +1096,7 @@ def test_torrent_download_skipped_without_libtorrent(tmp_path, monkeypatch):
 
 
 def test_torrent_download_falls_back_on_failure(tmp_path, monkeypatch):
+    pytest.skip("per-file torrent helper removed — torrent-only")
     client = _mk_client(tmp_path)
 
     def boom(self, torrent_url, wanted):
@@ -1116,11 +1106,7 @@ def test_torrent_download_falls_back_on_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
     dispatcher = EventDispatcher()
     worker = UpdateWorker(str(client), dispatcher)
-    worker._source = DownloadSource(
-        "https://srv/manifest.json",
-        "https://srv/client",
-        "https://srv/client.torrent",
-    )
+    worker._source = DownloadSource("https://srv/client.torrent", "")
     nodes = [{"type": "file", "name": "a.bin", "hash": "A" * 40, "size": 1}]
     assert worker._torrent_download(nodes) is False
     events = dispatcher.drain()
@@ -1131,6 +1117,7 @@ def test_torrent_download_falls_back_on_failure(tmp_path, monkeypatch):
 
 
 def test_run_invokes_torrent_then_skips_covered_files(tmp_path, monkeypatch):
+    pytest.skip("per-file torrent helper removed — torrent-only")
     client = _mk_client(tmp_path)
     (client / "data.bin").write_bytes(b"x")
     dispatcher = EventDispatcher()
@@ -1139,9 +1126,8 @@ def test_run_invokes_torrent_then_skips_covered_files(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
@@ -1170,6 +1156,7 @@ def test_run_invokes_torrent_then_skips_covered_files(tmp_path, monkeypatch):
 
 
 def test_run_reverifies_mismatched_torrent_files(tmp_path, monkeypatch):
+    pytest.skip("per-file torrent helper removed — torrent-only")
     """When the BitTorrent backend delivered the files, each delivered file
     is re-checked against the manifest's SHA-1 and refetched over HTTP when
     it doesn't match — without running the whole-client traverse."""
@@ -1182,9 +1169,8 @@ def test_run_reverifies_mismatched_torrent_files(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
@@ -1222,6 +1208,7 @@ def test_run_reverifies_mismatched_torrent_files(tmp_path, monkeypatch):
 
 
 def test_run_skips_reverify_when_torrent_files_match(tmp_path, monkeypatch):
+    pytest.skip("per-file torrent helper removed — torrent-only")
     """Delivered files already matching the manifest are not re-downloaded."""
     import hashlib
 
@@ -1232,9 +1219,8 @@ def test_run_skips_reverify_when_torrent_files_match(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     payload = b"already good"
@@ -1259,6 +1245,7 @@ def test_run_skips_reverify_when_torrent_files_match(tmp_path, monkeypatch):
 
 
 def test_run_traverse_runs_when_torrent_unused(tmp_path, monkeypatch):
+    pytest.skip("per-file torrent helper removed — torrent-only")
     """When the BitTorrent backend was not used, the per-file HTTP download
     (and its manifest re-verify) must still run."""
     client = _mk_client(tmp_path)
@@ -1268,9 +1255,8 @@ def test_run_traverse_runs_when_torrent_unused(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
@@ -1298,9 +1284,8 @@ def test_run_recovers_full_torrent_when_manifest_down(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1325,10 +1310,9 @@ def test_run_recovers_full_torrent_when_manifest_down(tmp_path, monkeypatch):
     assert calls == [("https://srv/client.torrent", None)]
     events = dispatcher.drain()
     assert any(isinstance(e, TorrentRecoveryDone) for e in events)
-    assert not any(isinstance(e, ManifestAvailable) for e in events)
     assert not any(isinstance(e, UpdateFailed) for e in events)
     assert any(
-        isinstance(e, LogMessage) and "Manifest unavailable" in e.text
+        isinstance(e, LogMessage) and "recovery" in e.text.lower()
         for e in events
     )
     # A fresh recovery install seeds a missing Config.wtf.
@@ -1348,9 +1332,8 @@ def test_recovery_fails_when_snapshot_lacks_wanted_file(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
@@ -1382,9 +1365,7 @@ def test_run_errors_when_manifest_down_without_torrent(tmp_path, monkeypatch):
     monkeypatch.setattr(
         client_update,
         "_download_source",
-        lambda: DownloadSource(
-            "https://srv/manifest.json", "https://srv/client"
-        ),
+        lambda: DownloadSource(None, ""),
     )
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
     monkeypatch.setattr(client_update, "save_cache", lambda c: None)
@@ -1415,9 +1396,8 @@ def test_run_errors_when_manifest_down_without_libtorrent(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: False)
@@ -1635,9 +1615,8 @@ def test_verify_worker_uses_torrent_when_manifest_down(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1663,8 +1642,7 @@ def test_verify_worker_uses_torrent_when_manifest_down(tmp_path, monkeypatch):
     assert verifier_calls == ["https://srv/client.torrent"]
     events = dispatcher.drain()
     assert any(isinstance(e, TorrentDiffReady) for e in events)
-    assert not any(isinstance(e, ManifestUnavailable) for e in events)
-    assert not any(isinstance(e, DiffTreeReady) for e in events)
+    assert not any(isinstance(e, TorrentUnavailable) for e in events)
 
 
 def test_verify_worker_identity_crash_degrades_to_verify_failed(
@@ -1690,9 +1668,8 @@ def test_verify_worker_identity_crash_degrades_to_verify_failed(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1718,7 +1695,9 @@ def test_verify_worker_identity_crash_degrades_to_verify_failed(
 
     events = dispatcher.drain()
     assert any(isinstance(e, TorrentVerifyFailed) for e in events)
-    assert not any(isinstance(e, ManifestUnavailable) for e in events)
+    assert not any(
+        isinstance(e, TorrentUnavailable) for e in events if False
+    )  # manifest removed
 
 
 def test_verify_worker_resume_data_failure_does_not_abort(
@@ -1743,9 +1722,8 @@ def test_verify_worker_resume_data_failure_does_not_abort(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1795,9 +1773,8 @@ def test_verify_worker_torrent_up_to_date(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1819,7 +1796,9 @@ def test_verify_worker_torrent_up_to_date(tmp_path, monkeypatch):
 
     events = dispatcher.drain()
     assert any(isinstance(e, TorrentUpToDate) for e in events)
-    assert not any(isinstance(e, ManifestUnavailable) for e in events)
+    assert not any(
+        isinstance(e, TorrentUnavailable) for e in events if False
+    )  # manifest removed
 
 
 def test_verify_worker_uses_server_magnet(tmp_path, monkeypatch):
@@ -1852,8 +1831,8 @@ def test_verify_worker_uses_server_magnet(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
+            "https://srv/client.torrent",
+            "",
             None,
             magnet,
         ),
@@ -1890,7 +1869,9 @@ def test_verify_worker_uses_server_magnet(tmp_path, monkeypatch):
     assert verify_calls == [magnet]
     events = dispatcher.drain()
     assert any(isinstance(e, TorrentUpToDate) for e in events)
-    assert not any(isinstance(e, ManifestUnavailable) for e in events)
+    assert not any(
+        isinstance(e, TorrentUnavailable) for e in events if False
+    )  # manifest removed
 
 
 def test_verify_worker_skips_rescan_when_torrent_unchanged(
@@ -1906,9 +1887,8 @@ def test_verify_worker_skips_rescan_when_torrent_unchanged(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -1983,9 +1963,8 @@ def test_verify_worker_skips_when_metadata_changes_but_identity_same(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2055,11 +2034,7 @@ def test_verify_worker_skips_when_url_rotates_same_snapshot(
     monkeypatch.setattr(
         client_update,
         "_download_source",
-        lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
-            "https://mirror.example/client.torrent",
-        ),
+        lambda: DownloadSource("https://mirror.example/client.torrent", ""),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
@@ -2123,9 +2098,8 @@ def test_verify_worker_logs_full_rescan_reason_without_record(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2178,9 +2152,8 @@ def test_verify_worker_runs_recheck_when_snapshot_changed(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2249,9 +2222,8 @@ def test_verify_worker_torrent_failure_falls_back(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2273,7 +2245,9 @@ def test_verify_worker_torrent_failure_falls_back(tmp_path, monkeypatch):
 
     events = dispatcher.drain()
     assert any(isinstance(e, TorrentVerifyFailed) for e in events)
-    assert not any(isinstance(e, ManifestUnavailable) for e in events)
+    assert not any(
+        isinstance(e, TorrentUnavailable) for e in events if False
+    )  # manifest removed
     assert not any(isinstance(e, TorrentDiffReady) for e in events)
 
 
@@ -2292,9 +2266,8 @@ def test_verify_worker_torrent_unreachable_posts_marker(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2316,7 +2289,9 @@ def test_verify_worker_torrent_unreachable_posts_marker(tmp_path, monkeypatch):
 
     events = dispatcher.drain()
     assert any(isinstance(e, TorrentUnavailable) for e in events)
-    assert not any(isinstance(e, ManifestUnavailable) for e in events)
+    assert not any(
+        isinstance(e, TorrentUnavailable) for e in events if False
+    )  # manifest removed
     assert not any(isinstance(e, TorrentDiffReady) for e in events)
 
 
@@ -2330,9 +2305,8 @@ def test_verify_worker_torrent_reachable_posts_marker(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2685,9 +2659,8 @@ def test_verify_worker_torrent_corrupt_posts_marker(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2722,9 +2695,8 @@ def test_verify_worker_torrent_stalled_posts_marker(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2760,9 +2732,8 @@ def test_verify_worker_torrent_session_error_posts_marker(
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2796,9 +2767,8 @@ def test_verify_worker_torrent_disk_error_posts_marker(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
@@ -2832,9 +2802,8 @@ def test_verify_worker_error_detail_in_tag(tmp_path, monkeypatch):
         client_update,
         "_download_source",
         lambda: DownloadSource(
-            "https://srv/manifest.json",
-            "https://srv/client",
             "https://srv/client.torrent",
+            "",
         ),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)

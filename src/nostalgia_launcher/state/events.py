@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .manifest import ManifestNode
     from .models import AddonsState, AssetsState, ModsState, NewsResult
 
 
@@ -133,39 +132,19 @@ class GameExited(Event):
     exit_code: int | None = None
 
 
-# ── Update lifecycle (typed events replacing the old string protocol) ─────
+# ── Update lifecycle (torrent-primary, HTTP fallback) ─────
 # Workers post these directly to the shared EventDispatcher; UpdateController
-# subscribes and mutates UpdateState. Payloads are typed (tree/stale list)
-# instead of encoded strings.
-
-
-@dataclass
-class ManifestAvailable(Event):
-    """Manifest fetched and parsed successfully."""
-
-
-@dataclass
-class ManifestUnavailable(Event):
-    """Manifest could not be fetched or parsed."""
-
-    message: str = ""
+# subscribes and mutates UpdateState.
 
 
 @dataclass
 class VerificationUpToDate(Event):
-    """Local files match the manifest — nothing to do."""
+    pass
 
 
 @dataclass
 class UpdateRequired(Event):
-    """Local files differ from manifest and need updating."""
-
-
-@dataclass
-class DiffTreeReady(Event):
-    """Diff tree of stale nodes (typed, not encoded)."""
-
-    tree: list[ManifestNode] | None = None
+    pass
 
 
 @dataclass

@@ -17,11 +17,8 @@ from ...core.security_http import (
     secure_urlopen,
 )
 from ..tweaks import write_config_wtf, write_realmlist_wtf
-from ..update.http import download_file, fetch_manifest
-
-# New canonical locations
-from ..update.manifest import checked_node_rel as _checked_node_rel
-from ..update.manifest import checked_node_size as _checked_node_size
+from ..update.http import checked_node_size as _checked_node_size
+from ..update.http import download_file
 from ..update.torrent import is_available as _torrent_available
 from ..update.torrent import safe_identity as _safe_identity
 from ..update.torrent import torrent_identity as _torrent_identity
@@ -33,6 +30,13 @@ from ..update.workflow import (
 )
 from .sources import DownloadSource, _download_source
 from .worker_base import WorkerBase
+
+# Removed manifest helpers — stubs for import compat
+
+
+def _checked_node_rel(*_a, **_kw):  # type: ignore[no-untyped-def]
+    raise RuntimeError("_checked_node_rel removed — torrent-only")
+
 
 __all__ = [
     "DownloadSource",
@@ -54,6 +58,11 @@ __all__ = [
     "read_capped",
     "write_config_wtf",
     "write_realmlist_wtf",
-    "fetch_manifest",
     "download_file",
 ]
+
+
+def fetch_manifest(*_a, **_kw):  # type: ignore[no-untyped-def]
+    """Removed — torrent-only."""
+
+    raise RuntimeError("fetch_manifest removed — torrent-only")

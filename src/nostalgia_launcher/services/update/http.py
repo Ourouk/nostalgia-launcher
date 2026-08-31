@@ -20,7 +20,20 @@ from ...core.constants import DOWNLOAD_RETRY, DOWNLOAD_TIMEOUT, UA
 from ...core.helpers import fmt_size, fmt_speed, redact_url
 from ...core.security_http import SSL_CTX, _check_url, allowed_download_hosts
 from ...core.security_http import secure_urlopen as _secure_impl
-from .manifest import checked_node_size
+
+_MAX_NODE_SIZE = 64 * 1024 * 1024 * 1024
+
+
+def checked_node_size(size: object) -> int:
+    """Coerce size to sane non-negative int (0 when unusable)."""
+
+    if isinstance(size, bool) or not isinstance(size, (int, float)):
+        return 0
+    assert isinstance(size, (int, float))
+    size_int = int(size)
+    if size_int < 0:
+        return 0
+    return min(size_int, _MAX_NODE_SIZE)
 
 
 def _hu_attr(name, fallback):
@@ -50,31 +63,9 @@ if TYPE_CHECKING:
 
 
 def fetch_manifest(url: str, dispatcher=None):
-    import json
-    import urllib.request
+    """Removed: manifest model hard-deleted."""
 
-    from ...core.security_http import read_capped
-    from ...state.manifest import parse_manifest
-
-    sec = _get_secure_urlopen()
-    if sec is not _secure_impl:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with sec(
-            req, timeout=DOWNLOAD_TIMEOUT, allowed_hosts=_get_allowed_hosts()()
-        ) as r:
-            return parse_manifest(json.loads(read_capped(r, 16 * 1024 * 1024)))
-    _check_url(url, _get_allowed_hosts()())
-    with httpx.Client(
-        verify=SSL_CTX,
-        timeout=httpx.Timeout(DOWNLOAD_TIMEOUT),
-        follow_redirects=True,
-    ) as client:
-        resp = client.get(url, headers={"User-Agent": UA})
-        resp.raise_for_status()
-        for hist in resp.history:
-            _check_url(str(hist.url), _get_allowed_hosts()())
-        _check_url(str(resp.url), _get_allowed_hosts()())
-        return parse_manifest(json.loads(read_capped(resp, 16 * 1024 * 1024)))
+    raise RuntimeError("fetch_manifest removed — torrent-only")
 
 
 def download_file(

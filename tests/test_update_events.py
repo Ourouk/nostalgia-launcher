@@ -8,11 +8,8 @@ import pytest
 from nostalgia_launcher.controllers.update import UpdateController
 from nostalgia_launcher.services.update_backend.worker_base import WorkerBase
 from nostalgia_launcher.state.events import (
-    DiffTreeReady,
     EventDispatcher,
     LogMessage,
-    ManifestAvailable,
-    ManifestUnavailable,
     ProgressChanged,
     TorrentDiffReady,
     TorrentReachable,
@@ -74,7 +71,6 @@ def test_verify_completion_up_to_date(controller, dispatcher):
     dispatcher.post(VerificationUpToDate())
     dispatcher.dispatch_all()
     assert controller.state.client_ready is True
-    assert controller.state.manifest_available is True
     assert controller.state.running is False
     # OperationFinished posted for UI; check via fresh controller
     disp2 = EventDispatcher()
@@ -103,17 +99,11 @@ def test_update_completion(controller, dispatcher):
 
 
 def test_verify_failure_manifest_unavailable(controller, dispatcher):
-    dispatcher.post(ManifestUnavailable(message="network down"))
-    dispatcher.dispatch_all()
-    assert controller.state.manifest_available is False
-    assert controller.state.client_ready is False
-    assert controller.state.running is False
+    pytest.skip("manifest removed — torrent-only")
 
 
 def test_manifest_available_sets_flag(controller, dispatcher):
-    dispatcher.post(ManifestAvailable())
-    dispatcher.dispatch_all()
-    assert controller.state.manifest_available is True
+    pytest.skip("manifest removed — torrent-only")
 
 
 def test_torrent_reachable(controller, dispatcher):
@@ -136,7 +126,6 @@ def test_torrent_stale_file_result(controller, dispatcher):
     dispatcher.dispatch_all()
     assert controller.state.torrent_stale == ["Data/a.mpq", "WoW.exe"]
     assert controller.state.client_ready is False
-    assert controller.state.manifest_available is False
     # Verify UpdateFilesList and OperationFinished were posted
     disp2 = EventDispatcher()
     ctrl2 = UpdateController(disp2)
@@ -160,7 +149,6 @@ def test_torrent_recovery_completion(controller, dispatcher):
     dispatcher.dispatch_all()
     assert controller.state.running is False
     assert controller.state.client_ready is True
-    assert controller.state.manifest_available is False
 
 
 def test_cancellation_via_update_failed(controller, dispatcher):
@@ -173,10 +161,7 @@ def test_cancellation_via_update_failed(controller, dispatcher):
 
 
 def test_diff_tree_ready_sets_diff_nodes(controller, dispatcher):
-    tree = [{"type": "file", "name": "a", "hash": "abc", "size": 1}]
-    dispatcher.post(DiffTreeReady(tree=tree))
-    dispatcher.dispatch_all()
-    assert controller.state.diff_nodes == tree
+    pytest.skip("manifest diff removed — torrent-only")
 
 
 def test_dispatcher_handler_failure_no_recursive_log(capsys):

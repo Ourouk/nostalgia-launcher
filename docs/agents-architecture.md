@@ -285,22 +285,23 @@ the QLocalServer guard remains authoritative there.
   `EventDispatcher` (`state/events.py`) from worker threads; they never touch
   widgets. The Qt side (`ui/qt/bridge.py`) converts events to Qt signals on the
   main thread.
-- Client updates get a second download backend: when the active download
-  source advertises a torrent snapshot — a `torrent_url` and/or `magnet` in
-  `server.download.torrent` (`magnet:?xt=…`;
-  a torrent has one swarm, so an HTTPS `.torrent` URL wins when both are set;
-  optional `torrent.update` controls incremental updates — explicit `false`
-  means first-time download only, explicit `true` forces updates, absent
-  infers `bool(torrent_url)` so magnet-only defaults to first-time-only)
-  and libtorrent is importable,
-  `UpdateWorker` bulk-downloads the stale files via
-  `services/update_backend/torrent_update.py`, then re-verifies exactly the
-  delivered files against the manifest's SHA-1 (`_reverify_torrent_files`)
-  and HTTP-refetches any mismatch; the whole-client per-file HTTP
-  `traverse()` runs only when the torrent backend wasn't used. In the
-  manifest-less recovery path there is no manifest to check — the piece
-  hashes of the TLS-fetched `.torrent` (or of magnet metadata that must
-  hash to the configured btih) are the guarantee.
+- Client updates are **torrent-only for incremental**
+  + single-zip HTTP fallback for first install: the active
+  download source is `server.download.torrent` (`torrent_url`
+  and/or `magnet` in `magnet:?xt=…`; HTTPS `.torrent` wins when
+  both are set; optional `torrent.update` controls incremental —
+  explicit `false` means first-time only, explicit `true` forces
+  incremental, absent infers `bool(torrent_url)` so magnet-only
+  defaults to first-time-only) and `server.download.http.fallback`
+  (single `client.zip`/`rar`). Incremental updates go through
+  `services/update_backend/torrent_update.py` (`TorrentVerifier` +
+  `TorrentDownloader`); the piece hashes of the TLS-fetched
+  `.torrent` (or magnet metadata that must hash to the configured
+  btih) are the integrity guarantee. When torrent is unavailable
+  and no `WoW.exe` is present, `UpdateWorker` fetches the fallback
+  zip via HTTP and extracts per `server.download.content.type`
+  (`folder`/`zip`/`rar`); incremental HTTP per-file `traverse()` no
+  longer exists.
 - The torrent root is **auto-detected** from the unique marker-file position
   in the torrent: the parent of the marker (case-insensitive) is the root
   prefix stripped from every torrent path when mapping to the selected WoW
@@ -329,17 +330,17 @@ the QLocalServer guard remains authoritative there.
   download the metadata — into a throwaway save path, upload-mode when the
   binding exposes it — before the same offline recheck runs; peers cannot
   forge metadata that doesn't hash to the magnet's configured btih.
-- When the manifest itself can't be fetched, the update falls back to a
-  manifest-less **BitTorrent recovery**: if the active source advertises a
-  torrent snapshot (`torrent_url` / server `torrent_magnet`) and libtorrent is
-  importable, `UpdateWorker._recovery_download()`
-  downloads the *whole* torrent (`TorrentDownloader.download(url, None)`),
-  whose piece hashes (the `.torrent` arrived over TLS, or the metadata hashed
-  to the magnet's btih) stand in for the manifest's
-  per-file SHA-1. It posts `TorrentRecoveryDone` (controller keeps
-  `manifest_available=False`); a failed verify offers this via an enabled
-  UPDATE button when `torrent_recovery_available()` (`LauncherConfig.has_torrent()`
-  + libtorrent present, network-free) and the client isn't known-ready.
+- When torrent verification cannot run (no source or
+  libtorrent missing) and no `WoW.exe` is present, the update
+  falls back to **single-zip HTTP** (`server.download.http.fallback`);
+  otherwise the BitTorrent recovery path downloads the *whole*
+  torrent (`TorrentDownloader.download(url, None)`), whose piece
+  hashes (the `.torrent` arrived over TLS, or the metadata hashed
+  to the magnet's btih) are the integrity guarantee. It posts
+  `TorrentRecoveryDone`; a failed verify offers recovery via an
+  enabled UPDATE button when `torrent_recovery_available()`
+  (`LauncherConfig.has_torrent()` + libtorrent present,
+  network-free) and the client isn't known-ready.
 - Download-source probing lives in `update_backend/sources.py`
   (`DownloadSource`/`_download_source`, re-exported by `http_update` so
   controllers/tests keep importing from there).
@@ -356,16 +357,16 @@ the QLocalServer guard remains authoritative there.
 ## Update lifecycle & game launch
 
 - **Update workers are event-driven**: `VerifyWorker`/`UpdateWorker`
-  post typed lifecycle events (`ManifestAvailable`, `VerificationUpToDate`,
-  `DiffTreeReady`, `TorrentReachable`/`TorrentDiffReady`/`TorrentUpToDate`,
+  post typed lifecycle events (`VerificationUpToDate`,
+  `TorrentReachable`/`TorrentDiffReady`/`TorrentUpToDate`,
   `UpdateCompleted`/`UpdateFailed`, `ClientVersionReady`, etc.) directly to
   the shared `EventDispatcher`.   `UpdateController` subscribes via
   `_on_event` and mutates `UpdateState`; the Qt `ControllerBridge` drains the
   dispatcher every 50 ms and re-emits Qt signals. The single path is
   `worker → typed event → EventDispatcher → ControllerBridge → Qt`.
 - **Typed lifecycle events only** (`state/events.py`): every worker→controller
-  outcome is a dataclass (payload typed, e.g. `DiffTreeReady(tree)` carries the
-  tree, `TorrentDiffReady(stale)` the stale list). Adding a lifecycle outcome
+  outcome is a dataclass (payload typed, e.g. `TorrentDiffReady(stale)` the
+  stale list). Adding a lifecycle outcome
   = new dataclass + `UpdateController._on_event` branch + handler. The old
   `services/update_backend/markers.py` string protocol (`__DONE__`,
   `__TORRENT_*__`, `__VERSION__…`) has been deleted.

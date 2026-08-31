@@ -1,21 +1,6 @@
-"""Update subsystem: manifest, planner, transports, workflow."""
+"""Update subsystem: transports + workflow (torrent-only incremental, zip fallback)."""
 
-from .http import download_file, fetch_manifest
-from .manifest import (
-    FileNode,
-    Manifest,
-    ManifestNode,
-    MPQNode,
-    checked_node_rel,
-    checked_node_size,
-    parse_manifest,
-)
-from .planner import (
-    collect_wanted,
-    flatten_diff_tree,
-    stale_tree,
-    sum_needed_bytes,
-)
+from .http import download_file
 from .torrent import (
     is_available,
     recovery_available,
@@ -30,19 +15,7 @@ from .workflow import (
 )
 
 __all__ = [
-    "FileNode",
-    "Manifest",
-    "ManifestNode",
-    "MPQNode",
-    "checked_node_rel",
-    "checked_node_size",
-    "parse_manifest",
-    "stale_tree",
-    "sum_needed_bytes",
-    "collect_wanted",
-    "flatten_diff_tree",
     "download_file",
-    "fetch_manifest",
     "is_available",
     "recovery_available",
     "safe_identity",

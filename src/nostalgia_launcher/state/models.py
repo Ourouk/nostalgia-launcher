@@ -9,10 +9,7 @@ the controllers keep.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
-
-if TYPE_CHECKING:
-    from .manifest import ManifestNode
+from typing import cast
 
 # ── update / verification flow ────────────────────────────────────────────────
 
@@ -21,7 +18,7 @@ if TYPE_CHECKING:
 class UpdateState:
     """Footer state: status text, progress, and the verify/update lifecycle
     flags (_status_var / _pb_val / _prog_label_var / _running /
-    _client_ready / _diff_nodes / _client_ver_var)."""
+    _client_ready / _client_ver_var)."""
 
     status: str = "Ready to update"
     progress: float = 0.0
@@ -35,8 +32,6 @@ class UpdateState:
     progress_total_pieces: int = 0
     running: bool = False
     client_ready: bool = False
-    manifest_available: bool = False
-    diff_nodes: list[ManifestNode] | None = None
     torrent_stale: list[str] | None = None
     torrent_reachable: bool | None = None
     torrent_error: str | None = None
