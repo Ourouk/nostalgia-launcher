@@ -85,6 +85,51 @@ PY
   rm -rf "$TMP"
 fi
 
+# Merge pydantic_core if single-arch (same issue as libtorrent).
+echo "==> Merging pydantic_core into a universal2 binary (if needed)"
+PYDANTIC_SO="$("$PYTHON" -c 'import os, pydantic_core; print(os.path.join(os.path.dirname(pydantic_core.__file__), "_pydantic_core.cpython-312-darwin.so"))' 2>/dev/null || echo "")"
+if [[ -n "$PYDANTIC_SO" && -f "$PYDANTIC_SO" ]]; then
+  if lipo -info "$PYDANTIC_SO" 2>/dev/null | grep -q "in the fat file"; then
+    echo "    pydantic_core is already universal; skipping merge"
+  else
+    CUR_ARCH="$(lipo -info "$PYDANTIC_SO" 2>/dev/null | tr -d ' ' | awk -F: '/Non-fat/{print $NF; exit}' || echo "arm64")"
+    if [[ "$CUR_ARCH" == "arm64" ]]; then WANT_ARCH="x86_64"; else WANT_ARCH="arm64"; fi
+    echo "    installed pydantic_core is ${CUR_ARCH}-only; merging ${WANT_ARCH}"
+    PYDANTIC_VER="$("$PYTHON" -c 'import importlib.metadata; print(importlib.metadata.version("pydantic-core"))')"
+    PY_TAG="$("$PYTHON" -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')"
+    URL_INFO="$("$PYTHON" - "$PYDANTIC_VER" "$PY_TAG" "$WANT_ARCH" <<'PY'
+import json, sys, urllib.request
+version, py_tag, want = sys.argv[1], sys.argv[2], sys.argv[3]
+with urllib.request.urlopen(f"https://pypi.org/pypi/pydantic-core/{version}/json") as resp:
+    data = json.load(resp)
+for u in data["urls"]:
+    fn = u["filename"]
+    if "macos" in fn and fn.endswith(f"{want}.whl") and py_tag in fn:
+        print(u["url"], u["digests"]["sha256"])
+        break
+else:
+    sys.exit(f"no {want} macOS wheel for pydantic_core {version}")
+PY
+)"
+    read -r URL WANT_SHA <<<"$URL_INFO"
+    TMP2="$(mktemp -d /tmp/pydantic-merge-XXXXXX)"
+    trap 'rm -rf "$TMP2"' EXIT
+    curl -sL -o "$TMP2/pydantic.whl" "$URL"
+    echo "$WANT_SHA  $TMP2/pydantic.whl" | shasum -a 256 --check --strict
+    unzip -q -o "$TMP2/pydantic.whl" -d "$TMP2/extra"
+    EXTRA_SO2="$(find "$TMP2/extra" -name '_pydantic_core*.so' | head -n 1)"
+    if [[ -n "$EXTRA_SO2" && -f "$EXTRA_SO2" ]]; then
+      lipo -create "$PYDANTIC_SO" "$EXTRA_SO2" -output "$TMP2/merged.so"
+      mv "$TMP2/merged.so" "$PYDANTIC_SO"
+      echo "    merged pydantic_core arches: $(lipo -info "$PYDANTIC_SO" | awk -F: '/fat file/{print $NF; exit}' || lipo -info "$PYDANTIC_SO")"
+    else
+      echo "    warning: could not find pydantic_core extra arch binary"
+    fi
+    trap - EXIT
+    rm -rf "$TMP2"
+  fi
+fi
+
 # --no-sync: an implicit sync here would reinstall the single-arch wheel
 # and silently undo the lipo merge above.
 uv run --no-sync pyinstaller --noconfirm --clean NostalgiaLauncher-macos.spec
