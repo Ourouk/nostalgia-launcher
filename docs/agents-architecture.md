@@ -2,7 +2,7 @@
 
 Scope: package layout, launcher config, catalogs, client-update backends,
 game launch. Read together with `AGENTS.md` (commands + conventions).
-The libtorrent pitfall list lives in `docs/BITTORRENT_UPDATER_NOTES.md`.
+The libtorrent pitfall list lives in `docs/bittorrent-notes.md`.
 
 ## Layout & configuration
 
@@ -314,7 +314,7 @@ the QLocalServer guard remains authoritative there.
   remaps the torrent's file paths to `out_dir/local` with `torrent_info.remap_files`.
   Without it, libtorrent reads at `out_dir/client/...` (double prefix) and the
   whole client reports stale — the bug that spawned
-  `docs/BITTORRENT_UPDATER_NOTES.md`. The remap is guarded by
+  `docs/bittorrent-notes.md`. The remap is guarded by
   `hasattr(ti, "remap_files")` so the unit-test fakes (which lack it) are a
   no-op. See that file for the full libtorrent pitfall list.
 - **libtorrent 2.x gotchas** (verified against `2.1.1.0`): `torrent_status.pieces`

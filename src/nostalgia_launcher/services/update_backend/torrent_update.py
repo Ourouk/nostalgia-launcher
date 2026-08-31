@@ -940,12 +940,11 @@ class TorrentDownloader(WorkerBase):
         """Download the wanted files from the torrent at ``torrent_url`` into
         ``out_dir``. ``wanted=None`` downloads the whole torrent. Returns an
         empty list on success and raises RuntimeError on failure or
-        cancellation. The caller already knows the wanted paths. Completed
-        files are still rechecked against the update manifest by the HTTP
-        update worker.
+        cancellation. The caller already knows the wanted paths.         Piece hashes of the TLS-fetched ``.torrent`` (or magnet metadata that
+        hashes to the configured btih) are the integrity guarantee.
 
         Resume data is intentionally not persisted — libtorrent re-derives
-        piece state from disk on add (see BITTORRENT_UPDATER_NOTES.md P5).
+        piece state from disk on add (see bittorrent-notes.md P5).
         The fetched :class:`TorrentSnapshot` is stored on ``self.snapshot``
         so its identity can be cached for later verifies."""
         import libtorrent as lt
