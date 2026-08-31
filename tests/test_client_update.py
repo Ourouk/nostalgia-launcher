@@ -100,14 +100,6 @@ def test_verify_worker_up_to_date(tmp_path, monkeypatch):
     assert not any(isinstance(e, TorrentDiffReady) for e in events)
 
 
-def test_verify_worker_manifest_overflow_marks_unavailable(
-    tmp_path, monkeypatch
-):
-    """Manifest removed — overflow case no longer applies (torrent-only)."""
-
-    pytest.skip("manifest removed — torrent-only")
-
-
 def test_verify_worker_detects_stale_file(tmp_path, monkeypatch):
     """Torrent verify finds stale files → diff ready."""
 
@@ -233,10 +225,6 @@ def test_update_worker_downloads_and_verifies(tmp_path, monkeypatch):
     )
     assert digest == hashlib.sha1(payload).hexdigest().upper()
     assert (client / "data.bin").read_bytes() == payload
-
-
-def test_update_worker_traverse_skips_up_to_date(tmp_path, monkeypatch):
-    pytest.skip("per-file traverse removed — torrent-only")
 
 
 def test_verify_worker_cancelled_torrent_posts_error_not_failure_marker(
@@ -429,10 +417,6 @@ def test_verify_uses_selected_manifest_url(monkeypatch, tmp_path):
     assert True
 
 
-def test_traverse_downloads_from_configured_client_url(monkeypatch, tmp_path):
-    pytest.skip("per-file traverse removed — torrent-only")
-
-
 def _manifest_resp(manifest):
     return _BodyResp(json.dumps(manifest).encode())
 
@@ -466,36 +450,3 @@ def test_verify_worker_reserves_progress_bar_for_update(tmp_path, monkeypatch):
     assert "Verifying" in phases
     # Verified phase may be posted after torrent verify; at least Verifying
     assert phases
-
-
-def test_sum_needed_bytes_excludes_up_to_date(tmp_path, monkeypatch):
-    pytest.skip("per-file manifest sizing removed — torrent-only")
-
-
-def test_update_progress_spans_needed_files_only(tmp_path, monkeypatch):
-    pytest.skip("per-file HTTP progress removed — torrent-only")
-
-
-# ── torrent-only: manifest tests removed ────────────────────────────────
-
-
-def test_verify_refuses_unsafe_manifest_paths(tmp_path, monkeypatch):
-    pytest.skip("manifest removed — torrent-only")
-
-
-def test_update_traverse_never_writes_outside_out_dir(tmp_path, monkeypatch):
-    pytest.skip("per-file traverse removed — torrent-only")
-
-
-def test_sum_needed_bytes_nested_mpq_uses_mpq_suffix(tmp_path, monkeypatch):
-    pytest.skip("per-file manifest sizing removed — torrent-only")
-
-
-def test_traverse_delete_failure_does_not_abort_update(tmp_path, monkeypatch):
-    pytest.skip("per-file traverse removed — torrent-only")
-
-
-def test_verify_malformed_manifest_shape_reports_unavailable(
-    tmp_path, monkeypatch
-):
-    pytest.skip("manifest removed — torrent-only")

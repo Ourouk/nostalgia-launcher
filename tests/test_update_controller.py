@@ -219,32 +219,6 @@ def test_verify_up_to_date_marks_client_ready(controller, worker_cls, config):
     assert controller.state.running is False
 
 
-def test_verify_needs_update_sets_diff_and_not_ready(
-    controller, worker_cls, config
-):
-    pytest.skip("manifest diff removed — torrent-only")
-
-
-def test_diff_tree_flattens_full_relative_paths(
-    controller, worker_cls, config
-):
-    pytest.skip("manifest diff removed — torrent-only")
-
-
-def test_verify_failure_records_null_diff(controller, worker_cls, config):
-    pytest.skip("manifest diff removed — torrent-only")
-
-
-def test_manifest_available_marker_sets_flag(controller, worker_cls, config):
-    pytest.skip("manifest removed — torrent-only")
-
-
-def test_manifest_unavailable_disables_and_posts_finished(
-    controller, worker_cls, config
-):
-    pytest.skip("manifest removed — torrent-only")
-
-
 def test_torrent_recovery_done_marks_client_ready(
     controller, worker_cls, config
 ):
@@ -257,12 +231,6 @@ def test_torrent_recovery_done_marks_client_ready(
     assert OperationFinished("update", True) in events
     assert controller.state.client_ready is True
     assert controller.state.running is False
-
-
-def test_start_verify_and_invalidate_reset_manifest_available(
-    controller, worker_cls, config
-):
-    pytest.skip("manifest removed — torrent-only")
 
 
 def test_verify_passes_overwrite(controller, worker_cls, config):
@@ -342,10 +310,6 @@ def test_verify_error_posts_verify_failure(controller, worker_cls, config):
 
     events = controller._dispatcher.drain()
     assert OperationFailed("verify", "") in events
-
-
-def test_update_receives_diff_from_verify(controller, worker_cls, config):
-    pytest.skip("manifest diff removed — torrent-only")
 
 
 def test_update_receives_stale_paths_from_torrent_verify(
@@ -533,18 +497,6 @@ def test_events_delivered_to_subscribers(controller, worker_cls, config):
 # ── compute_readiness ────────────────────────────────────────────────────
 
 
-def test_readiness_disabled_without_manifest_when_cannot_launch(
-    controller, worker_cls, config, monkeypatch
-):
-    pytest.skip("manifest removed — torrent-only")
-
-
-def test_readiness_disabled_without_manifest_non_linux(
-    controller, worker_cls, config, monkeypatch
-):
-    pytest.skip("manifest removed — torrent-only")
-
-
 def test_readiness_recovery_update_when_manifest_down(
     controller, worker_cls, config, monkeypatch
 ):
@@ -569,12 +521,6 @@ def test_readiness_no_recovery_without_torrent(
     assert r.mode == "disabled"
 
 
-def test_readiness_play_without_manifest_when_can_launch(
-    controller, worker_cls, config, monkeypatch
-):
-    pytest.skip("manifest removed — torrent-only")
-
-
 def test_readiness_allows_play_without_manifest_when_updates_disabled(
     controller, worker_cls, config, monkeypatch
 ):
@@ -586,12 +532,6 @@ def test_readiness_allows_play_without_manifest_when_updates_disabled(
     r = controller.compute_readiness()
     assert r.mode == "play"
     assert r.status == "Client updates disabled"
-
-
-def test_readiness_update_available_when_not_ready(
-    controller, worker_cls, config
-):
-    pytest.skip("manifest removed — torrent-only")
 
 
 def test_torrent_diff_stores_stale_and_not_ready(
@@ -1327,12 +1267,6 @@ def test_readiness_torrent_error_no_stale_plays_installed_client(
     assert r.mode == "play"
     assert r.label == "PLAY"
     assert r.status == "Verification failed — playing installed client"
-
-
-def test_readiness_recovery_offers_play_when_client_installed(
-    controller, worker_cls, config, monkeypatch
-):
-    pytest.skip("manifest removed — torrent-only")
 
 
 def test_playable_client_present_probes_game_folder(

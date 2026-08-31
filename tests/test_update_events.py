@@ -98,14 +98,6 @@ def test_update_completion(controller, dispatcher):
     assert controller.state.client_version == "1.12.1"
 
 
-def test_verify_failure_manifest_unavailable(controller, dispatcher):
-    pytest.skip("manifest removed — torrent-only")
-
-
-def test_manifest_available_sets_flag(controller, dispatcher):
-    pytest.skip("manifest removed — torrent-only")
-
-
 def test_torrent_reachable(controller, dispatcher):
     dispatcher.post(TorrentReachable())
     dispatcher.dispatch_all()
@@ -158,10 +150,6 @@ def test_cancellation_via_update_failed(controller, dispatcher):
     dispatcher.dispatch_all()
     assert controller.state.running is False
     assert controller.state.client_ready is False
-
-
-def test_diff_tree_ready_sets_diff_nodes(controller, dispatcher):
-    pytest.skip("manifest diff removed — torrent-only")
 
 
 def test_dispatcher_handler_failure_no_recursive_log(capsys):

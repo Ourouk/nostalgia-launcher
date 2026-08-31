@@ -30,24 +30,6 @@ class _Resp:
         return b""
 
 
-def test_update_worker_falls_back_when_torrent_stalls(tmp_path, monkeypatch):
-    import pytest
-
-    pytest.skip("per-file torrent helper removed — torrent-only")
-
-
-def test_update_worker_torrent_not_available_fallback(tmp_path, monkeypatch):
-    import pytest
-
-    pytest.skip("per-file torrent helper removed — torrent-only")
-
-
-def test_update_final_verification_failure_after_retry(tmp_path, monkeypatch):
-    import pytest
-
-    pytest.skip("per-file verification removed — torrent-only")
-
-
 def test_update_recovery_download_torrent_failure_posts_failure(
     tmp_path, monkeypatch
 ):
