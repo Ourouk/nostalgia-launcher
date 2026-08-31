@@ -745,7 +745,9 @@ def test_apply_failure_records_error_and_posts_finished(
 
     assert controller.apply([rec]) is True
     collected = _drain_for(
-        controller._dispatcher, lambda e: isinstance(e, OperationFinished)
+        controller._dispatcher,
+        lambda e: isinstance(e, OperationFinished),
+        timeout=5.0,
     )
     assert (
         OperationFinished("addons", False, "Failed addons: Foo") in collected
@@ -760,9 +762,22 @@ def test_apply_failure_records_error_and_posts_finished(
     assert cfg["addons"] == {}
 
     # The follow-up re-verify synthesizes an available row carrying the error.
-    collected = _drain_for(
-        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
-    )
+    # _drain_for drains ALL pending events; if the re-verify's AddonsLoaded
+    # arrived fast enough to be in the same batch as OperationFinished,
+    # the first drain already consumed it — don't wait for a second one
+    # that will never come (the classic fast/slow race that flakes under
+    # full-suite load on macOS).
+    if not any(isinstance(e, AddonsLoaded) for e in collected):
+        _wait_verify_done(controller, timeout=5.0)
+        more = _drain_for(
+            controller._dispatcher,
+            lambda e: isinstance(e, AddonsLoaded),
+            timeout=5.0,
+        )
+        collected = collected + more
+    else:
+        _wait_verify_done(controller, timeout=5.0)
+        collected.extend(controller._dispatcher.drain())
     avail = {a.folder: a for a in controller.state.available}
     assert "Foo" in avail
     assert avail["Foo"].error == "download blocked"
