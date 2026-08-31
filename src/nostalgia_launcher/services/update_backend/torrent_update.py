@@ -23,7 +23,6 @@ wanted piece is in place.
 
 import hashlib
 import os
-import queue
 import shutil
 import tempfile
 import time
@@ -688,15 +687,8 @@ class TorrentVerifier(WorkerBase):
     final integrity.
     """
 
-    def __init__(
-        self,
-        out_dir: str,
-        log_q: queue.Queue | None = None,
-        prog_q: queue.Queue | None = None,
-        *,
-        dispatcher=None,
-    ):
-        super().__init__(out_dir, log_q, prog_q, dispatcher=dispatcher)
+    def __init__(self, out_dir: str, dispatcher):
+        super().__init__(out_dir, dispatcher)
         self.snapshot: TorrentSnapshot | None = None
 
     def _session(self):
@@ -891,15 +883,8 @@ class TorrentVerifier(WorkerBase):
 
 
 class TorrentDownloader(WorkerBase):
-    def __init__(
-        self,
-        out_dir: str,
-        log_q: queue.Queue | None = None,
-        prog_q: queue.Queue | None = None,
-        *,
-        dispatcher=None,
-    ):
-        super().__init__(out_dir, log_q, prog_q, dispatcher=dispatcher)
+    def __init__(self, out_dir: str, dispatcher):
+        super().__init__(out_dir, dispatcher)
         self.snapshot: TorrentSnapshot | None = None
 
     def _priorities(

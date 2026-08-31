@@ -10,7 +10,7 @@ Thematic guides (**read the relevant one before touching that area**):
 
 | File | Read before working on |
 |------|------------------------|
-| `docs/agents-architecture.md` | launcher config, **profiles & single-instance guard**, catalogs/content repos, update backends, torrent, umu launch, marker protocol |
+| `docs/agents-architecture.md` | launcher config, **profiles & single-instance guard**, catalogs/content repos, update backends, torrent, umu launch, typed event lifecycle |
 | `docs/agents-testing.md` | writing/running tests, fixtures, monkeypatch seams |
 | `docs/agents-packaging.md` | PyInstaller specs, AppImage/DMG, CI/CD, version bumps |
 | `docs/agents-ui.md` | anything in `ui/qt/` — QSS, dialogs, widget conventions |
@@ -29,9 +29,9 @@ uv run ruff format .               # pep8-style 79-col wrapping ([tool.ruff])
 uv run ruff check .                # lint gate — run after every edit batch
 ```
 
-- **Ruff is the only lint/format gate — there is no type checker** (no mypy/
-  pyright in the toolchain). Selects E4/E7/E9/F/I/W/UP/B,
-  `line-length = 79`, `target-version = "py310"` (`pyproject.toml`).
+- **Ruff is the CI lint/format gate**; `pyproject.toml` also configures
+  `pyright` (`typeCheckingMode = "standard"`) for local checks. Selects
+  E4/E7/E9/F/I/W/UP/B, `line-length = 79`, `target-version = "py310"`.
 - Manual run against a real server config (the only full launcher-config
   example; `examples/` also carries mods/addons catalog examples):
   `uv run nostalgia-launcher --launcher-config examples/community.example.json`
@@ -57,8 +57,9 @@ uv run ruff check .                # lint gate — run after every edit batch
   Switching = confirm → persist pointer → detached relaunch via
   `ui/qt/profiles_ui.py::switch_profile` — don't spawn app restarts
   anywhere else. Details: `docs/agents-architecture.md`.
-- Never write raw `"__…__"` marker strings outside
-  `services/update_backend/markers.py` — use its constants.
+- Workers post typed lifecycle events from `state/events.py`
+  (e.g. `ManifestAvailable`, `TorrentDiffReady`); never use string markers
+  (`__DONE__` etc. — deleted with `services/update_backend/markers.py`).
 - Git-ignored, hands-off: `context/` (third-party reference sources + real
   client data for e2e — never execute/lint it) and `todo/` (work-order
   consigns; annotate, never commit).

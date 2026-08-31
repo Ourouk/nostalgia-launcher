@@ -125,6 +125,127 @@ class GameExited(Event):
     exit_code: int | None = None
 
 
+# ── Update lifecycle (typed events replacing the old string protocol) ─────
+# Workers post these directly to the shared EventDispatcher; UpdateController
+# subscribes and mutates UpdateState. Payloads are typed (tree/stale list)
+# instead of encoded strings.
+
+
+@dataclass
+class ManifestAvailable(Event):
+    """Manifest fetched and parsed successfully."""
+
+
+@dataclass
+class ManifestUnavailable(Event):
+    """Manifest could not be fetched or parsed."""
+
+    message: str = ""
+
+
+@dataclass
+class VerificationUpToDate(Event):
+    """Local files match the manifest — nothing to do."""
+
+
+@dataclass
+class UpdateRequired(Event):
+    """Local files differ from manifest and need updating."""
+
+
+@dataclass
+class DiffTreeReady(Event):
+    """Diff tree of stale nodes (typed, not encoded)."""
+
+    tree: object = None
+
+
+@dataclass
+class TorrentReachable(Event):
+    """BitTorrent snapshot is reachable."""
+
+
+@dataclass
+class TorrentUnavailable(Event):
+    """BitTorrent snapshot cannot be fetched."""
+
+    message: str = ""
+
+
+@dataclass
+class TorrentCorrupt(Event):
+    """BitTorrent snapshot is malformed."""
+
+    message: str = ""
+
+
+@dataclass
+class TorrentStalled(Event):
+    """BitTorrent verification stalled (no/low peers)."""
+
+    message: str = ""
+
+
+@dataclass
+class TorrentSessionError(Event):
+    """libtorrent session creation failed."""
+
+    message: str = ""
+
+
+@dataclass
+class TorrentDiskError(Event):
+    """Disk I/O error during torrent verify/download."""
+
+    message: str = ""
+
+
+@dataclass
+class TorrentVerifyFailed(Event):
+    """Generic torrent verification failure."""
+
+    message: str = ""
+
+
+@dataclass
+class TorrentDiffReady(Event):
+    """Torrent verify found stale files (replaces DIFF + TORRENT_DIFF)."""
+
+    stale: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TorrentUpToDate(Event):
+    """Client matches BitTorrent snapshot."""
+
+
+@dataclass
+class TorrentRecoveryDone(Event):
+    """Manifest-less BitTorrent recovery completed."""
+
+
+@dataclass
+class ClientVersionReady(Event):
+    """WoW.exe version read after update."""
+
+    version: str = ""
+
+
+@dataclass
+class UpdateCompleted(Event):
+    """Incremental update or recovery completed."""
+
+    version: str | None = None
+
+
+@dataclass
+class UpdateFailed(Event):
+    """Update/verify/download failed or cancelled."""
+
+    message: str = ""
+    op: str = "update"
+
+
 class EventDispatcher:
     """Thread-safe, non-blocking event bus.
 
@@ -172,8 +293,10 @@ class EventDispatcher:
         every subscribed handler when omitted. Events posted during delivery
         stay queued for the next call. Returns the dispatched events. A
         raising handler never strands its siblings: each event/handler pair
-        is delivered independently and the failure is logged."""
-        from ..core.log_sink import log
+        is delivered independently and the failure is reported on stderr
+        without posting back into the dispatcher (avoids a self-sustaining
+        LogMessage loop when the log handler itself is broken)."""
+        import sys
 
         events = self.drain()
         if not events:
@@ -187,7 +310,9 @@ class EventDispatcher:
             try:
                 fn(event)
             except Exception as e:
-                log(f"Event handler failed for {event!r}: {e}", "err")
+                print(
+                    f"Event handler failed for {event!r}: {e}", file=sys.stderr
+                )
                 traceback.print_exc()
 
         for event in events:

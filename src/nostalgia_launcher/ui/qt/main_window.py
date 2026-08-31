@@ -123,11 +123,11 @@ class MainWindow(QMainWindow):
         self._sync_folder_label()
         self._refresh_ready_state()
 
-        # Update workers publish into UpdateController's queues; poll them on
-        # the Qt event loop so verify/update progress, completion markers and
-        # the self-update-available flag are actually processed.
+        # Workers post typed events to the shared EventDispatcher; the
+        # ControllerBridge drains them every 50 ms. Only the self-update
+        # availability label still needs a lightweight poll.
         self._pollTimer = QTimer(self)
-        self._pollTimer.setInterval(50)
+        self._pollTimer.setInterval(500)
         self._pollTimer.timeout.connect(self._poll_updater)
         self._pollTimer.start()
 
@@ -692,9 +692,7 @@ class MainWindow(QMainWindow):
         self._render_log(text, tag)
 
     def _poll_updater(self):
-        """Process the update controller's worker queues and render the
-        self-update availability flag (driven by _pollTimer)."""
-        self._hub.updater.poll()
+        """Render the self-update availability label (driven by _pollTimer)."""
         available = self._hub.updater.updater_update_available
         if available != self._updateAvailableShown:
             self._updateAvailableShown = available

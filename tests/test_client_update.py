@@ -2,7 +2,6 @@
 
 import json
 import os
-import queue
 import urllib.request
 
 import pytest
@@ -14,6 +13,17 @@ from nostalgia_launcher.services.update_backend.http_update import (
     DownloadSource,
     UpdateWorker,
     VerifyWorker,
+)
+from nostalgia_launcher.state.events import (
+    DiffTreeReady,
+    EventDispatcher,
+    ManifestAvailable,
+    ManifestUnavailable,
+    ProgressChanged,
+    TorrentVerifyFailed,
+    UpdateFailed,
+    UpdateRequired,
+    VerificationUpToDate,
 )
 
 
@@ -90,14 +100,14 @@ def test_verify_worker_up_to_date(tmp_path, monkeypatch):
         client_update, "secure_urlopen", lambda *a, **k: fake_resp
     )
 
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = VerifyWorker(str(client), dispatcher)
     vw.run()
+    events = dispatcher.drain()
 
-    msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
-    assert "__UP_TO_DATE__" in msgs
-    assert "__MANIFEST_AVAILABLE__" in msgs
-    assert "__DIFF_TREE__" not in msgs
+    assert any(isinstance(e, VerificationUpToDate) for e in events)
+    assert any(isinstance(e, ManifestAvailable) for e in events)
+    assert not any(isinstance(e, DiffTreeReady) and e.tree for e in events)
 
 
 def test_verify_worker_manifest_overflow_marks_unavailable(
@@ -111,13 +121,13 @@ def test_verify_worker_manifest_overflow_marks_unavailable(
         client_update, "secure_urlopen", lambda *a, **k: fake_resp
     )
 
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = VerifyWorker(str(client), dispatcher)
     vw.run()
+    events = dispatcher.drain()
 
-    msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
-    assert "__MANIFEST_UNAVAILABLE__" in msgs
-    assert "__MANIFEST_AVAILABLE__" not in msgs
+    assert any(isinstance(e, ManifestUnavailable) for e in events)
+    assert not any(isinstance(e, ManifestAvailable) for e in events)
 
 
 def test_verify_worker_detects_stale_file(tmp_path, monkeypatch):
@@ -141,14 +151,14 @@ def test_verify_worker_detects_stale_file(tmp_path, monkeypatch):
         client_update, "secure_urlopen", lambda *a, **k: fake_resp
     )
 
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = VerifyWorker(str(client), dispatcher)
     vw.run()
+    events = dispatcher.drain()
 
-    msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
-    assert "__UPDATE_NEEDED__" in msgs
-    assert "__MANIFEST_AVAILABLE__" in msgs
-    assert "__DIFF_TREE__" in msgs
+    assert any(isinstance(e, UpdateRequired) for e in events)
+    assert any(isinstance(e, ManifestAvailable) for e in events)
+    assert any(isinstance(e, DiffTreeReady) and e.tree for e in events)
 
 
 def test_verify_worker_manifest_failure_marks_unavailable(
@@ -163,14 +173,14 @@ def test_verify_worker_manifest_failure_marks_unavailable(
 
     monkeypatch.setattr(client_update, "secure_urlopen", boom)
 
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = VerifyWorker(str(client), dispatcher)
     vw.run()
+    events = dispatcher.drain()
 
-    msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
-    assert "__MANIFEST_UNAVAILABLE__" in msgs
-    assert "__UPDATE_NEEDED__" not in msgs
-    assert "__MANIFEST_AVAILABLE__" not in msgs
+    assert any(isinstance(e, ManifestUnavailable) for e in events)
+    assert not any(isinstance(e, UpdateRequired) for e in events)
+    assert not any(isinstance(e, ManifestAvailable) for e in events)
 
 
 def test_verify_worker_config_wtf_created_when_missing(tmp_path, monkeypatch):
@@ -181,8 +191,8 @@ def test_verify_worker_config_wtf_created_when_missing(tmp_path, monkeypatch):
         client_update, "secure_urlopen", lambda *a, **k: fake_resp
     )
 
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = VerifyWorker(str(client), dispatcher)
     vw.run()
     assert (client / "WTF" / "Config.wtf").exists()
 
@@ -202,13 +212,13 @@ def test_verify_worker_seeds_wtf_even_when_manifest_fails(
 
     monkeypatch.setattr(client_update, "secure_urlopen", boom)
 
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = VerifyWorker(str(client), dispatcher)
     vw.run()
 
     assert (client / "WTF" / "Config.wtf").exists()
-    msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
-    assert "__MANIFEST_UNAVAILABLE__" in msgs
+    events = dispatcher.drain()
+    assert any(isinstance(e, ManifestUnavailable) for e in events)
 
 
 def test_update_worker_downloads_and_verifies(tmp_path, monkeypatch):
@@ -243,8 +253,8 @@ def test_update_worker_downloads_and_verifies(tmp_path, monkeypatch):
 
     monkeypatch.setattr(client_update, "secure_urlopen", fake_urlopen)
 
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = UpdateWorker(str(client), dispatcher)
     import hashlib
 
     digest = worker.download(
@@ -273,8 +283,8 @@ def test_update_worker_traverse_skips_up_to_date(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(client_update, "secure_urlopen", fail)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = UpdateWorker(str(client), dispatcher)
     worker.traverse(node, [])
     assert (client / "data.bin").read_bytes() == b"x"
 
@@ -283,8 +293,8 @@ def test_verify_worker_cancelled_torrent_posts_error_not_failure_marker(
     tmp_path, monkeypatch
 ):
     client = _mk_client(tmp_path)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = VerifyWorker(str(client), dispatcher)
     monkeypatch.setattr(
         client_update,
         "_download_source",
@@ -304,20 +314,20 @@ def test_verify_worker_cancelled_torrent_posts_error_not_failure_marker(
     )
 
     class CancelledVerifier:
-        def __init__(self, out_dir, log_q, prog_q):
+        def __init__(self, out_dir, dispatcher=None, *a, **kw):
             pass
 
-        def verify(self, url):
+        def verify(self, url, snapshot=None):
             raise RuntimeError("Cancelled")
 
     monkeypatch.setattr(td, "TorrentVerifier", CancelledVerifier)
     worker._cancel = True
 
     worker.run()
+    events = dispatcher.drain()
 
-    messages = [msg for msg, _tag in log_q.queue]
-    assert "__ERROR__" in messages
-    assert "__TORRENT_VERIFY_FAILED__" not in messages
+    assert any(isinstance(e, UpdateFailed) for e in events)
+    assert not any(isinstance(e, TorrentVerifyFailed) for e in events)
 
 
 def test_update_worker_uses_verified_torrent_paths_without_manifest(
@@ -336,8 +346,8 @@ def test_update_worker_uses_verified_torrent_paths_without_manifest(
         lambda *args, **kwargs: pytest.fail("manifest must not be fetched"),
     )
     recovered = []
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = UpdateWorker(str(client), dispatcher)
     monkeypatch.setattr(
         worker,
         "_recovery_download",
@@ -347,10 +357,12 @@ def test_update_worker_uses_verified_torrent_paths_without_manifest(
     worker.run(None, {"Data/a.bin"})
 
     assert recovered == [{"Data/a.bin"}]
-    value, label, details = prog_q.get_nowait()
-    assert value == 0.02
-    assert label == "Downloading via BitTorrent…"
-    assert details["phase"] == "BitTorrent"
+    events = dispatcher.drain()
+    progress_events = [e for e in events if isinstance(e, ProgressChanged)]
+    assert progress_events
+    assert progress_events[0].value == 0.02
+    assert progress_events[0].label == "Downloading via BitTorrent…"
+    assert progress_events[0].phase == "BitTorrent"
 
 
 # ── download source resolution (single source, no mirror failover) ───────────
@@ -457,8 +469,8 @@ def test_verify_uses_selected_manifest_url(monkeypatch, tmp_path):
 
     client = tmp_path / "client"
     client.mkdir()
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = client_update.VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = client_update.VerifyWorker(str(client), dispatcher)
     worker.run()
     assert any(
         u.startswith("https://m1.example/custom/manifest.json")
@@ -501,8 +513,8 @@ def test_traverse_downloads_from_configured_client_url(monkeypatch, tmp_path):
             open(dest, "wb").close()
             return "A" * 40
 
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = _RecordingWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = _RecordingWorker(str(client), dispatcher)
     worker.traverse(
         {"type": "file", "name": "data.bin", "size": 1, "hash": "A" * 40}, []
     )
@@ -535,14 +547,15 @@ def test_verify_worker_reserves_progress_bar_for_update(tmp_path, monkeypatch):
         "secure_urlopen",
         lambda *a, **k: _manifest_resp(manifest),
     )
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    VerifyWorker(str(client), log_q, prog_q).run()
+    dispatcher = EventDispatcher()
+    VerifyWorker(str(client), dispatcher).run()
+    events = dispatcher.drain()
+    progress_events = [e for e in events if isinstance(e, ProgressChanged)]
 
-    items = list(prog_q.queue)
     # No full-bar sweep during verification: every progress value stays at 0.
-    assert items, "verify should have emitted progress"
-    assert all(it[0] == 0.0 for it in items)
-    phases = [it[2].get("phase") for it in items if len(it) == 3]
+    assert progress_events, "verify should have emitted progress"
+    assert all(e.value == 0.0 for e in progress_events)
+    phases = [e.phase for e in progress_events]
     assert "Verifying" in phases
     assert "Verified" in phases
 
@@ -553,7 +566,8 @@ def test_sum_needed_bytes_excludes_up_to_date(tmp_path, monkeypatch):
     client = _mk_client(tmp_path)
     (client / "ok.bin").write_bytes(b"x")  # already matches the manifest
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
-    worker = UpdateWorker(str(client), queue.Queue(), queue.Queue())
+    dispatcher = EventDispatcher()
+    worker = UpdateWorker(str(client), dispatcher)
     nodes = [
         {
             "type": "file",
@@ -611,18 +625,19 @@ def test_update_progress_spans_needed_files_only(tmp_path, monkeypatch):
         )()
 
     monkeypatch.setattr(client_update, "secure_urlopen", _resp)
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = UpdateWorker(str(client), dispatcher)
     nodes = [{"type": "file", "name": "a.bin", "hash": h, "size": size}]
     worker.run(nodes)
 
-    items = list(prog_q.queue)
+    events = dispatcher.drain()
+    progress_events = [e for e in events if isinstance(e, ProgressChanged)]
     # The final overall progress reaches 100%.
-    assert items[-1][0] == 1.0
+    assert progress_events[-1].value == 1.0
     # An aggregate item reports the needed-file total, not the whole client.
-    agg = [it for it in items if len(it) == 3 and it[2].get("total") == size]
+    agg = [e for e in progress_events if e.total == size]
     assert agg, "expected an aggregate progress item for the needed file"
-    assert all(it[2].get("transport") == "HTTP" for it in agg)
+    assert all(e.transport == "HTTP" for e in agg)
 
 
 # ── hostile-manifest hardening (regression tests) ────────────────────────
@@ -658,13 +673,13 @@ def test_verify_refuses_unsafe_manifest_paths(tmp_path, monkeypatch):
         client_update, "secure_urlopen", lambda *a, **k: fake_resp
     )
 
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = VerifyWorker(str(client), dispatcher)
     vw.run()
+    events = dispatcher.drain()
 
-    msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
-    assert "__UP_TO_DATE__" in msgs
-    assert "__DIFF_TREE__" not in msgs
+    assert any(isinstance(e, VerificationUpToDate) for e in events)
+    assert not any(isinstance(e, DiffTreeReady) and e.tree for e in events)
     assert outside.read_bytes() == b"old"
 
 
@@ -684,8 +699,8 @@ def test_update_traverse_never_writes_outside_out_dir(tmp_path, monkeypatch):
             "size": len(data),
         }
     ]
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = UpdateWorker(str(client), dispatcher)
     # A usable-looking source: if the unsafe node were not rejected, the
     # flow would proceed to _skip_download/_download_verified.
     worker._source = type("S", (), {"client_url": "https://x.test/client"})()
@@ -706,7 +721,8 @@ def test_sum_needed_bytes_nested_mpq_uses_mpq_suffix(tmp_path, monkeypatch):
     f.write_bytes(b"x")
     sha = hashlib.sha1(b"x").hexdigest().upper()
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
-    worker = UpdateWorker(str(client), queue.Queue(), queue.Queue())
+    dispatcher = EventDispatcher()
+    worker = UpdateWorker(str(client), dispatcher)
     nodes = [
         {
             "type": "dir",
@@ -748,8 +764,8 @@ def test_traverse_delete_failure_does_not_abort_update(tmp_path, monkeypatch):
             fh.write(data)
         return h
 
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    worker = UpdateWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    worker = UpdateWorker(str(client), dispatcher)
     worker.download = fake_download
     worker._source = type("S", (), {"client_url": "https://x.test/client"})()
     nodes = [
@@ -775,10 +791,10 @@ def test_verify_malformed_manifest_shape_reports_unavailable(
         client_update, "secure_urlopen", lambda *a, **k: fake_resp
     )
 
-    log_q, prog_q = queue.Queue(), queue.Queue()
-    vw = VerifyWorker(str(client), log_q, prog_q)
+    dispatcher = EventDispatcher()
+    vw = VerifyWorker(str(client), dispatcher)
     vw.run()
+    events = dispatcher.drain()
 
-    msgs = [log_q.get_nowait()[0] for _ in range(log_q.qsize())]
-    assert "__MANIFEST_UNAVAILABLE__" in msgs
-    assert "__UPDATE_NEEDED__" not in msgs
+    assert any(isinstance(e, ManifestUnavailable) for e in events)
+    assert not any(isinstance(e, UpdateRequired) for e in events)

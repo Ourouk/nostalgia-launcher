@@ -28,6 +28,7 @@ from nostalgia_launcher.state.events import (
     OperationFinished,
     ProgressChanged,
     StatusChanged,
+    UpdateCompleted,
     UpdateFilesList,
 )
 from nostalgia_launcher.ui.qt.app import create_qt_app
@@ -314,19 +315,19 @@ def test_operation_failed_refreshes_readiness(qapp, window, monkeypatch):
     assert window._updateButton.text() == "UPDATE"
 
 
-# ── worker polling (event-loop driven) ────────────────────────────────────
+# ── worker completion via typed EventDispatcher ───────────────────────────
 
 
 def test_poll_timer_processes_worker_completion(qapp, window):
-    """The event-loop poll must drain the update controller's queues without
-    a manual poll() call — a worker's __DONE__ marker has to unstick the
-    busy state and finish the operation."""
+    """Workers post typed events directly to the EventDispatcher; the
+    ControllerBridge drains them and UpdateController mutates state —
+    no manual poll or queue marker needed."""
     hub = window._hub
     spy = []
     hub.bridge.operationFinished.connect(lambda *a: spy.append(a))
 
     hub.updater.state.running = True
-    hub.updater._log_q.put(("__DONE__", ""))
+    hub.dispatcher.post(UpdateCompleted(version=None))
 
     QTest.qWait(250)
 
@@ -336,17 +337,18 @@ def test_poll_timer_processes_worker_completion(qapp, window):
 
 
 def test_poll_timer_renders_update_available(qapp, window):
-    """check_updater_update() sets the flag in a worker thread; the poll
-    timer must surface it as the header 'Update available!' label."""
+    """check_updater_update() sets the flag in a worker thread; the
+    lightweight poll timer surfaces it as the header 'Update available!'
+    label without requiring a controller poll."""
     hub = window._hub
     assert not window._updateAvailableLabel.isVisible()
 
     hub.updater.updater_update_available = True
-    QTest.qWait(250)
+    window._poll_updater()
     assert window._updateAvailableLabel.isVisible()
 
     hub.updater.updater_update_available = False
-    QTest.qWait(250)
+    window._poll_updater()
     assert not window._updateAvailableLabel.isVisible()
 
 

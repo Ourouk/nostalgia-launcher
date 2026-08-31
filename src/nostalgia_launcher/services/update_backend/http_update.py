@@ -6,9 +6,9 @@ the changed files, verifies SHA-1s, and clears the WDB cache. When the
 manifest cannot be fetched but the active source advertises a BitTorrent
 snapshot (an HTTPS ``torrent_url`` or a ``torrent_magnet``, with libtorrent
 available) the update falls back to a full BitTorrent recovery download of
-the client files, verified against the torrent's piece hashes. Both speak to
-the GUI exclusively through the log/progress queues using the documented
-message protocol.
+the client files, verified against the torrent's piece hashes. Both post
+typed lifecycle events and LogMessage/ProgressChanged directly to the
+shared EventDispatcher.
 
 Every destination path rebuilt from manifest nodes passes through
 `_checked_node_rel` — a hostile manifest must not be able to write or
@@ -18,7 +18,6 @@ delete outside the selected game folder.
 import hashlib
 import json
 import os
-import queue
 import shutil
 import time
 import urllib.request
@@ -41,8 +40,27 @@ from ...core.security_http import (
     read_capped,
     secure_urlopen,
 )
+from ...state.events import (
+    ClientVersionReady,
+    DiffTreeReady,
+    ManifestAvailable,
+    ManifestUnavailable,
+    TorrentCorrupt,
+    TorrentDiffReady,
+    TorrentDiskError,
+    TorrentReachable,
+    TorrentRecoveryDone,
+    TorrentSessionError,
+    TorrentStalled,
+    TorrentUnavailable,
+    TorrentUpToDate,
+    TorrentVerifyFailed,
+    UpdateCompleted,
+    UpdateFailed,
+    UpdateRequired,
+    VerificationUpToDate,
+)
 from ..tweaks import write_config_wtf, write_realmlist_wtf
-from . import markers
 from .sources import DownloadSource, _download_source
 from .worker_base import WorkerBase
 
@@ -116,13 +134,10 @@ class VerifyWorker(WorkerBase):
     def __init__(
         self,
         out_dir: str,
-        log_q: queue.Queue | None = None,
-        prog_q: queue.Queue | None = None,
+        dispatcher,
         overwrite_config: bool = False,
-        *,
-        dispatcher=None,
     ):
-        super().__init__(out_dir, log_q, prog_q, dispatcher=dispatcher)
+        super().__init__(out_dir, dispatcher)
         self.overwrite_config = overwrite_config
         self._cache: dict = load_cache()
 
@@ -202,14 +217,14 @@ class VerifyWorker(WorkerBase):
                 )
                 if _can_torrent_update and self._torrent_verify(src):
                     return
-                self.log_q.put((markers.MANIFEST_UNAVAILABLE, ""))
+                self._dispatcher.post(ManifestUnavailable())
                 if torrent_recovery_available():
                     self.log(
                         "Manifest unavailable — a full re-download via "
                         "BitTorrent is available (UPDATE).",
                         "dim",
                     )
-                self.log_q.put((markers.DIFF_TREE, None))
+                self._dispatcher.post(DiffTreeReady(tree=None))
                 return
             req = urllib.request.Request(
                 src.manifest_url, headers={"User-Agent": UA}
@@ -227,7 +242,7 @@ class VerifyWorker(WorkerBase):
             if not isinstance(manifest.get("root"), dict):
                 raise ValueError("malformed manifest: 'root' is not an object")
             manifest_ok = True
-            self.log_q.put((markers.MANIFEST_AVAILABLE, ""))
+            self._dispatcher.post(ManifestAvailable())
             self.progress(0.0, "Verifying…", phase="Verifying")
 
             stale_nodes = [
@@ -244,21 +259,21 @@ class VerifyWorker(WorkerBase):
 
             if stale_nodes:
                 self.log("Update available.", "acct")
-                self.log_q.put((markers.UPDATE_NEEDED, ""))
-                self.log_q.put((markers.DIFF_TREE, stale_nodes))
+                self._dispatcher.post(UpdateRequired())
+                self._dispatcher.post(DiffTreeReady(tree=stale_nodes))
             else:
                 self.log("Everything is up to date!", "ok")
-                self.log_q.put((markers.UP_TO_DATE, ""))
+                self._dispatcher.post(VerificationUpToDate())
         except Exception as e:
             self.log(f"Verification failed: {e}", "err")
             # A failed manifest fetch must not masquerade as "update needed":
-            # the controller uses __MANIFEST_UNAVAILABLE__ to gray out the
+            # the controller uses ManifestUnavailable to gray out the
             # update button. Failures *after* the manifest parsed are a
             # genuine "update needed" verdict.
             if not manifest_ok:
                 if self._torrent_verify(src):
                     return
-                self.log_q.put((markers.MANIFEST_UNAVAILABLE, ""))
+                self._dispatcher.post(ManifestUnavailable(message=str(e)))
                 if torrent_recovery_available():
                     self.log(
                         "Manifest unavailable — a full re-download via "
@@ -266,8 +281,8 @@ class VerifyWorker(WorkerBase):
                         "dim",
                     )
             else:
-                self.log_q.put((markers.UPDATE_NEEDED, ""))
-            self.log_q.put((markers.DIFF_TREE, None))
+                self._dispatcher.post(UpdateRequired())
+            self._dispatcher.post(DiffTreeReady(tree=None))
 
     def _torrent_verify(self, src) -> bool:
         """When no manifest is available, verify the client against the
@@ -288,32 +303,32 @@ class VerifyWorker(WorkerBase):
         Trade-off: on-disk drift between verifies is only detected once the
         torrent's identity changes.
 
-        Posting:
-        * reachable snapshot with stale files → ``__TORRENT_REACHABLE__``
-          + ``__TORRENT_DIFF__``
-        * reachable snapshot, nothing stale → ``__TORRENT_REACHABLE__``
-          + ``__TORRENT_UP_TO_DATE__``
-        * snapshot cannot be fetched (network/TLS/allowlist) →
-          ``__TORRENT_UNREACHABLE__``
-        * snapshot fetched but libtorrent recheck failed →
-          ``__TORRENT_VERIFY_FAILED__``
-        * snapshot corrupt → ``__TORRENT_CORRUPT__``
-        * verification stalled → ``__TORRENT_STALLED__``
-        * session error → ``__TORRENT_SESSION_ERROR__``
-        * disk I/O error → ``__TORRENT_DISK_ERROR__``"""
+        Posting typed events:
+        * reachable snapshot with stale files → TorrentReachable + TorrentDiffReady
+        * reachable snapshot, nothing stale → TorrentReachable + TorrentUpToDate
+        * snapshot cannot be fetched (network/TLS/allowlist) → TorrentUnavailable
+        * snapshot fetched but libtorrent recheck failed → TorrentVerifyFailed
+        * snapshot corrupt → TorrentCorrupt
+        * verification stalled → TorrentStalled
+        * session error → TorrentSessionError
+        * disk I/O error → TorrentDiskError"""
         if src is None or not src.torrent_locator:
             return False
         if not _torrent_available():
             return False
         from .torrent_update import (
             TorrentCorruptError,
-            TorrentDiskError,
             TorrentFetchError,
-            TorrentSessionError,
             TorrentStalledError,
             TorrentVerifier,
             _fetch_torrent,
             remove_resume_data,
+        )
+        from .torrent_update import (
+            TorrentDiskError as TorrentDiskErrorExc,
+        )
+        from .torrent_update import (
+            TorrentSessionError as TorrentSessionErrorExc,
         )
 
         cached = self._cache.get(TORRENT_VALIDATION_CACHE_KEY)
@@ -341,14 +356,14 @@ class VerifyWorker(WorkerBase):
                 )
             except TorrentCorruptError as e:
                 return self._post_torrent_error(
-                    markers.TORRENT_CORRUPT,
+                    TorrentCorrupt(message=str(e)),
                     e,
                     f"Torrent file corrupt: {e}",
                     "No usable torrent snapshot — update unavailable.",
                 )
             except TorrentFetchError as e:
                 return self._post_torrent_error(
-                    markers.TORRENT_UNREACHABLE,
+                    TorrentUnavailable(message=str(e)),
                     e,
                     f"BitTorrent snapshot unreachable: {e}",
                     "No manifest and no reachable torrent — update "
@@ -453,17 +468,10 @@ class VerifyWorker(WorkerBase):
         # Run the full libtorrent recheck of the on-disk files (None snapshot
         # lets the verifier fetch it; a pre-fetched snapshot is reused).
         try:
-            try:
-                verifier = TorrentVerifier(
-                    self.out_dir,
-                    self.log_q,
-                    self.prog_q,
-                    dispatcher=self._dispatcher,
-                )
-            except TypeError:
-                verifier = TorrentVerifier(
-                    self.out_dir, self.log_q, self.prog_q
-                )
+            verifier = TorrentVerifier(
+                self.out_dir,
+                dispatcher=self._dispatcher,
+            )
             self.log(
                 "Manifest unavailable — verifying client against the "
                 "BitTorrent snapshot…",
@@ -475,14 +483,14 @@ class VerifyWorker(WorkerBase):
                 stale = verifier.verify(src.torrent_locator, snapshot)
         except TorrentCorruptError as e:
             return self._post_torrent_error(
-                markers.TORRENT_CORRUPT,
+                TorrentCorrupt(message=str(e)),
                 e,
                 f"Torrent file corrupt: {e}",
                 "No usable torrent snapshot — update unavailable.",
             )
         except TorrentFetchError as e:
             return self._post_torrent_error(
-                markers.TORRENT_UNREACHABLE,
+                TorrentUnavailable(message=str(e)),
                 e,
                 f"BitTorrent snapshot unreachable: {e}",
                 "No manifest and no reachable torrent — update "
@@ -491,29 +499,29 @@ class VerifyWorker(WorkerBase):
         except TorrentStalledError as e:
             return self._torrent_verify_failed(
                 e,
-                markers.TORRENT_STALLED,
+                TorrentStalled(message=str(e)),
                 f"BitTorrent verification stalled: {e}",
                 "No manifest and torrent verification stalled — "
                 "update unavailable.",
             )
-        except TorrentSessionError as e:
+        except TorrentSessionErrorExc as e:
             return self._torrent_verify_failed(
                 e,
-                markers.TORRENT_SESSION_ERROR,
+                TorrentSessionError(message=str(e)),
                 f"BitTorrent session error: {e}",
                 "No manifest and torrent session error — update unavailable.",
             )
-        except TorrentDiskError as e:
+        except TorrentDiskErrorExc as e:
             return self._torrent_verify_failed(
                 e,
-                markers.TORRENT_DISK_ERROR,
+                TorrentDiskError(message=str(e)),
                 f"Disk I/O error: {e}",
                 "No manifest and disk error — update unavailable.",
             )
         except Exception as e:
             return self._torrent_verify_failed(
                 e,
-                markers.TORRENT_VERIFY_FAILED,
+                TorrentVerifyFailed(message=str(e)),
                 f"BitTorrent verification failed: {e}",
                 "Torrent snapshot fetched but verification failed — "
                 "update unavailable via BitTorrent.",
@@ -546,15 +554,18 @@ class VerifyWorker(WorkerBase):
 
     def _torrent_recheck_failed(self, err) -> bool:
         """Generic-Exception landing for steps that run outside the recheck
-        ladder (snapshot-identity parsing). Same message + marker pairing
-        as the ladder tail so every failure posts a coherent verdict."""
-        return self._torrent_verify_failed(
-            err,
-            markers.TORRENT_VERIFY_FAILED,
-            f"BitTorrent verification failed: {err}",
+        ladder (snapshot-identity parsing)."""
+        if self._cancel:
+            return self._cancel_torrent_verify()
+        msg = str(err)
+        self.log(f"BitTorrent verification failed: {err}", "err")
+        self.log(
             "Torrent snapshot fetched but verification failed — "
             "update unavailable via BitTorrent.",
+            "err",
         )
+        self._dispatcher.post(TorrentVerifyFailed(message=msg))
+        return True
 
     def _persist_torrent_validation(self):
         """Best-effort cache flush: a failing disk must not kill an
@@ -567,50 +578,44 @@ class VerifyWorker(WorkerBase):
             )
 
     def _post_torrent_error(
-        self, marker, err, err_log: str, notice: str
+        self, event, err, err_log: str, notice: str
     ) -> bool:
-        """Log a torrent failure, post its ``marker``, and return ``True``.
-
-        Shared by the duplicate ``TorrentCorruptError``/``TorrentFetchError``
-        handlers (pre-fetch and recheck) so the exact same message + marker
-        pairing lives in one place."""
+        """Log a torrent failure and post its typed event."""
         if self._cancel:
             return self._cancel_torrent_verify()
         self.log(err_log, "err")
         self.log(notice, "err")
-        self.log_q.put((marker, str(err)))
+        self._dispatcher.post(event)
         return True
 
     def _torrent_verify_failed(
-        self, err, marker, err_log: str, notice: str
+        self, err, event, err_log: str, notice: str
     ) -> bool:
-        """A recheck failure that leaves the client untouched: log the error
-        and its consequence, post ``marker``, report the update unavailable.
-        The generic-Exception ladder tail shares this path."""
+        """A recheck failure that leaves the client untouched."""
         if self._cancel:
             return self._cancel_torrent_verify()
         self.log(err_log, "err")
         self.log(notice, "err")
-        self.log_q.put((marker, str(err)))
+        self._dispatcher.post(event)
         return True
 
     def _post_torrent_verdict(self, stale: list[str]):
-        self.log_q.put((markers.TORRENT_REACHABLE, ""))
+        self._dispatcher.post(TorrentReachable())
         if not stale:
             self.log("Everything is up to date (BitTorrent snapshot).", "ok")
-            self.log_q.put((markers.TORRENT_UP_TO_DATE, ""))
+            self._dispatcher.post(TorrentUpToDate())
         else:
             self.log(
                 f"Update available — {len(stale)} stale file(s) vs the "
                 "BitTorrent snapshot.",
                 "acct",
             )
-            self.log_q.put((markers.TORRENT_DIFF, sorted(stale)))
+            self._dispatcher.post(TorrentDiffReady(stale=sorted(stale)))
 
     def _cancel_torrent_verify(self) -> bool:
         """Finish a cancelled torrent verify without reporting a failure."""
         self.log("\nVerify cancelled.", "err")
-        self.log_q.put((markers.ERROR, ""))
+        self._dispatcher.post(UpdateFailed(message="", op="verify"))
         return True
 
 
@@ -618,12 +623,9 @@ class UpdateWorker(WorkerBase):
     def __init__(
         self,
         out_dir: str,
-        log_q: queue.Queue | None = None,
-        prog_q: queue.Queue | None = None,
-        *,
-        dispatcher=None,
+        dispatcher,
     ):
-        super().__init__(out_dir, log_q, prog_q, dispatcher=dispatcher)
+        super().__init__(out_dir, dispatcher)
         self._cache: dict = load_cache()
         self._source: DownloadSource | None = None
         # Total bytes of the files that actually need downloading, and how many
@@ -843,15 +845,10 @@ class UpdateWorker(WorkerBase):
         try:
             from .torrent_update import TorrentDownloader
 
-            try:
-                dl = TorrentDownloader(
-                    self.out_dir,
-                    self.log_q,
-                    self.prog_q,
-                    dispatcher=self._dispatcher,
-                )
-            except TypeError:
-                dl = TorrentDownloader(self.out_dir, self.log_q, self.prog_q)
+            dl = TorrentDownloader(
+                self.out_dir,
+                dispatcher=self._dispatcher,
+            )
             dl.download(src.torrent_locator, wanted)
             self._torrent_wanted = wanted
             self.log("[torrent] BitTorrent download complete.", "ok")
@@ -1012,28 +1009,25 @@ class UpdateWorker(WorkerBase):
             raise RuntimeError(f"Hash mismatch after redownload: {rel}")
 
     def _cancelled_abort(self) -> bool:
-        """Standard cancelled-update bail-out: log it, reset progress and
-        post ``__ERROR__``. Always True so callers can ``return`` directly."""
+        """Standard cancelled-update bail-out."""
         self.log("\nUpdate cancelled.", "err")
         self.progress(0.0, "Cancelled")
-        self.log_q.put((markers.ERROR, ""))
+        self._dispatcher.post(UpdateFailed(message="", op="update"))
         return True
 
-    def _recovery_failed(self, err, marker, err_log: str):
-        """A recovery-download failure that leaves the client as it was:
-        re-raise on cancellation (the caller's handler turns that into an
-        ``__ERROR__``), otherwise log and post ``marker``."""
+    def _recovery_failed(self, err, event, err_log: str):
+        """A recovery-download failure that leaves the client as it was."""
         if self._cancel:
             raise err
         self.log(err_log, "err")
-        self.log_q.put((marker, str(err)))
+        self._dispatcher.post(event)
 
     def _report_client_version(self):
         """Log + post the WoW.exe version read after a finished update."""
         client_ver = get_client_version(self.out_dir)
         if client_ver:
             self.log(f"Client version: {client_ver}", "dim")
-            self.log_q.put((markers.VERSION_PREFIX + client_ver, ""))
+            self._dispatcher.post(ClientVersionReady(version=client_ver))
         else:
             self.log("Could not read client version from WoW.exe", "dim")
 
@@ -1102,67 +1096,68 @@ class UpdateWorker(WorkerBase):
         verified against the torrent's embedded piece hashes (the ``.torrent``
         itself arrived over TLS); there is no per-file manifest SHA-1 to
         check against in this degraded path. Raises on failure/cancellation,
-        which the caller's except block turns into an ``__ERROR__``.
+        which the caller's except block turns into UpdateFailed.
 
         Not part of the HTTP fallback; torrent recovery has no manifest.
         """
         from .torrent_update import (
             TorrentCorruptError,
-            TorrentDiskError,
             TorrentDownloader,
             TorrentFetchError,
-            TorrentSessionError,
             TorrentStalledError,
         )
+        from .torrent_update import (
+            TorrentDiskError as TorrentDiskErrorExc,
+        )
+        from .torrent_update import (
+            TorrentSessionError as TorrentSessionErrorExc,
+        )
 
-        try:
-            dl = TorrentDownloader(
-                self.out_dir,
-                self.log_q,
-                self.prog_q,
-                dispatcher=self._dispatcher,
-            )
-        except TypeError:
-            dl = TorrentDownloader(self.out_dir, self.log_q, self.prog_q)
+        dl = TorrentDownloader(
+            self.out_dir,
+            dispatcher=self._dispatcher,
+        )
         scope = "full client" if wanted is None else f"{len(wanted)} file(s)"
         self.log(f"[torrent] Starting recovery download ({scope}).", "acct")
         try:
             dl.download(self._source.torrent_locator, wanted)
         except TorrentCorruptError as e:
             self._recovery_failed(
-                e, markers.TORRENT_CORRUPT, f"Torrent file corrupt: {e}"
+                e,
+                TorrentCorrupt(message=str(e)),
+                f"Torrent file corrupt: {e}",
             )
             return
         except TorrentStalledError as e:
             self._recovery_failed(
                 e,
-                markers.TORRENT_STALLED,
+                TorrentStalled(message=str(e)),
                 f"BitTorrent download stalled: {e}",
             )
             return
-        except TorrentSessionError as e:
+        except TorrentSessionErrorExc as e:
             self._recovery_failed(
                 e,
-                markers.TORRENT_SESSION_ERROR,
+                TorrentSessionError(message=str(e)),
                 f"BitTorrent session error: {e}",
             )
             return
-        except TorrentDiskError as e:
+        except TorrentDiskErrorExc as e:
             self._recovery_failed(
-                e, markers.TORRENT_DISK_ERROR, f"Disk I/O error: {e}"
+                e, TorrentDiskError(message=str(e)), f"Disk I/O error: {e}"
             )
             return
         except TorrentFetchError as e:
             self._recovery_failed(
                 e,
-                markers.TORRENT_UNREACHABLE,
+                TorrentUnavailable(message=str(e)),
                 f"Torrent unreachable during download: {e}",
             )
             return
         except Exception as e:
             self._recovery_failed(
                 e,
-                markers.TORRENT_VERIFY_FAILED,
+                TorrentVerifyFailed(message=str(e)),
                 f"BitTorrent download failed: {e}",
             )
             return
@@ -1190,7 +1185,7 @@ class UpdateWorker(WorkerBase):
                 except (RuntimeError, OSError) as e:
                     self._recovery_failed(
                         e,
-                        markers.TORRENT_VERIFY_FAILED,
+                        TorrentVerifyFailed(message=str(e)),
                         f"BitTorrent recovery failed: {e}",
                     )
                     return
@@ -1200,7 +1195,9 @@ class UpdateWorker(WorkerBase):
         exe = os.path.join(self.out_dir, "WoW.exe")
         if not os.path.isfile(exe):
             self.log("Recovered client has no WoW.exe — update failed.", "err")
-            self.log_q.put((markers.ERROR, ""))
+            self._dispatcher.post(
+                UpdateFailed(message="no WoW.exe", op="update")
+            )
             return
         self.log("  BitTorrent recovery download complete.", "ok")
         remove_wdb(self.out_dir)
@@ -1241,7 +1238,7 @@ class UpdateWorker(WorkerBase):
         )
         self._extract_payload()
         self._report_client_version()
-        self.log_q.put((markers.TORRENT_RECOVERY_DONE, ""))
+        self._dispatcher.post(TorrentRecoveryDone())
 
     def _extract_payload(self):
         """Extract a zip/rar client payload per the configured content type
@@ -1298,7 +1295,7 @@ class UpdateWorker(WorkerBase):
                         "ok",
                     )
                     self.progress(1.0, "")
-                    self.log_q.put((markers.TORRENT_UP_TO_DATE, ""))
+                    self._dispatcher.post(TorrentUpToDate())
                     return
                 self.progress(
                     0.02,
@@ -1376,7 +1373,7 @@ class UpdateWorker(WorkerBase):
                             raise
                 if not torrent_recovery:
                     self._cache.pop(TORRENT_VALIDATION_CACHE_KEY, None)
-                    self.log_q.put((markers.MANIFEST_AVAILABLE, ""))
+                    self._dispatcher.post(ManifestAvailable())
                     self.log("Manifest received.", "ok")
                     self.progress(0.05, "Downloading…", phase="Downloading")
                     self.log("\nStarting client update…\n")
@@ -1437,9 +1434,13 @@ class UpdateWorker(WorkerBase):
             self._extract_payload()
             self.log("\n✓  Everything is up to date!", "ok")
             self._report_client_version()
-            self.log_q.put((markers.DONE, ""))
+            self._dispatcher.post(
+                UpdateCompleted(
+                    version=get_client_version(self.out_dir) or None
+                )
+            )
 
         except Exception as e:
             self.log(f"\n✗  {e}", "err")
             self.progress(0.0, "")
-            self.log_q.put((markers.ERROR, ""))
+            self._dispatcher.post(UpdateFailed(message=str(e), op="update"))
