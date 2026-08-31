@@ -1,6 +1,4 @@
-"""Unit tests for the hardened HTTP layer."""
-
-import urllib.request
+"""Unit tests for the hardened HTTP layer (httpx-backed)."""
 
 import pytest
 
@@ -48,38 +46,49 @@ def test_secure_urlopen_rejects_bad_initial_host():
 
 def test_allowed_download_hosts_include_launcher_and_git_hosts():
     hosts = security_http.allowed_download_hosts()
-    # The launcher-configured server (from the test conftest) joins the git
-    # hosts in the runtime allowlist.
     assert "launcher.test" in hosts
     assert "github.com" in hosts
     assert "gitlab.com" in hosts
     assert "codeberg.org" in hosts
 
 
-def test_redirect_handler_forbids_https_downgrade():
-    handler = security_http._HttpsOnlyRedirectHandler()
+# redirect checks are now via _check_url / _check_redirect_chain
+def test_redirect_https_downgrade_blocked():
     with pytest.raises(RuntimeError, match="non-HTTPS"):
-        handler.redirect_request(
-            urllib.request.Request("https://a.example.com/x"),
-            fp=None,
-            code=302,
-            msg="Found",
-            headers={"Location": "http://b.example.com/y"},
-            newurl="http://b.example.com/y",
+        security_http._check_url("http://b.example.com/y", {"a.example.com"})
+
+
+def test_redirect_allowlist_enforced():
+    security_http._check_url(
+        "https://b.example.com/y", {"a.example.com", "b.example.com"}
+    )
+    with pytest.raises(RuntimeError, match="unexpected host"):
+        security_http._check_url(
+            "https://evil.example.com/y", {"a.example.com"}
         )
 
 
-def test_redirect_handler_allows_https_redirect_target():
-    handler = security_http._HttpsOnlyRedirectHandler()
-    req = handler.redirect_request(
-        urllib.request.Request("https://example.com/x"),
-        fp=None,
-        code=302,
-        msg="Found",
-        headers={"Location": "https://cdn.example.com/y"},
-        newurl="https://cdn.example.com/y",
-    )
-    assert req.full_url == "https://cdn.example.com/y"
+def test_redirect_case_insensitive_and_port():
+    security_http._check_url("https://EXAMPLE.COM/y", {"example.com"})
+    security_http._check_url("https://example.com:443/y", {"example.com"})
+
+
+@pytest.mark.parametrize(
+    "evil",
+    [
+        "https://evil.com.evil.example.com/x",
+        "https://example.com.evil.com/x",
+        "https://example.com@evil.com/x",
+    ],
+)
+def test_redirect_hostname_edge_cases_blocked(evil):
+    with pytest.raises(RuntimeError, match="unexpected host"):
+        security_http._check_url(evil, {"example.com"})
+
+
+def test_redirect_subdomain_not_allowed():
+    with pytest.raises(RuntimeError, match="unexpected host"):
+        security_http._check_url("https://sub.example.com/y", {"example.com"})
 
 
 class _FakeResp:
@@ -104,8 +113,6 @@ def test_read_capped_raises_when_over_limit():
 
 
 class _FakeResponse:
-    """A response whose ``read`` returns canned chunks, then EOF."""
-
     def __init__(self, chunks):
         self._chunks = list(chunks)
 
@@ -122,7 +129,6 @@ def test_read_capped_returns_full_body_when_under_limit():
 
 
 def test_read_capped_raises_on_overflow():
-    # Each chunk is 8 MiB; two of them already exceed the 16 MiB cap.
     big = b"x" * (8 * 1024 * 1024)
     r = _FakeResponse([big, big, big])
     with pytest.raises(RuntimeError, match="limit"):
@@ -133,178 +139,24 @@ def test_read_capped_empty_body():
     assert security_http.read_capped(_FakeResponse([]), 1024) == b""
 
 
-# ── redirect host enforcement (regression: Track 4) ──────────────────────────
+def test_check_redirect_chain_blocks_evil_history():
+    import httpx
 
-
-def test_redirect_allowed_to_allowed():
-    handler = security_http._HttpsOnlyRedirectHandler(
-        allowed_hosts={"a.example.com", "b.example.com"}
-    )
-    req = handler.redirect_request(
-        urllib.request.Request("https://a.example.com/x"),
-        fp=None,
-        code=302,
-        msg="Found",
-        headers={"Location": "https://b.example.com/y"},
-        newurl="https://b.example.com/y",
-    )
-    assert req.full_url == "https://b.example.com/y"
-
-
-def test_redirect_allowed_to_disallowed_blocks():
-    handler = security_http._HttpsOnlyRedirectHandler(
-        allowed_hosts={"a.example.com"}
-    )
+    req = httpx.Request("GET", "https://a.example.com/x")
+    hist_req = httpx.Request("GET", "https://evil.example.com/y")
+    hist_resp = httpx.Response(302, request=hist_req, headers={"location": "https://a.example.com/x"})
+    final_resp = httpx.Response(200, request=req)
+    final_resp.history = [hist_resp]  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError, match="unexpected host"):
-        handler.redirect_request(
-            urllib.request.Request("https://a.example.com/x"),
-            fp=None,
-            code=302,
-            msg="Found",
-            headers={"Location": "https://evil.example.com/y"},
-            newurl="https://evil.example.com/y",
-        )
+        security_http._check_redirect_chain(final_resp, {"a.example.com"})
 
 
-def test_redirect_allowed_to_http_blocks():
-    handler = security_http._HttpsOnlyRedirectHandler(
-        allowed_hosts={"a.example.com"}
-    )
-    with pytest.raises(RuntimeError, match="non-HTTPS"):
-        handler.redirect_request(
-            urllib.request.Request("https://a.example.com/x"),
-            fp=None,
-            code=302,
-            msg="Found",
-            headers={"Location": "http://a.example.com/y"},
-            newurl="http://a.example.com/y",
-        )
+def test_check_redirect_chain_allows_same_host_chain():
+    import httpx
 
-
-def test_redirect_multiple_redirects_last_blocks():
-    handler = security_http._HttpsOnlyRedirectHandler(
-        allowed_hosts={"a.example.com", "b.example.com"}
-    )
-    req1 = handler.redirect_request(
-        urllib.request.Request("https://a.example.com/x"),
-        fp=None,
-        code=302,
-        msg="Found",
-        headers={"Location": "https://b.example.com/y"},
-        newurl="https://b.example.com/y",
-    )
-    assert req1.full_url == "https://b.example.com/y"
-    with pytest.raises(RuntimeError, match="unexpected host"):
-        handler.redirect_request(
-            req1,
-            fp=None,
-            code=302,
-            msg="Found",
-            headers={"Location": "https://evil.test/z"},
-            newurl="https://evil.test/z",
-        )
-
-
-def test_redirect_attacker_https_cannot_escape():
-    handler = security_http._HttpsOnlyRedirectHandler(
-        allowed_hosts={"launcher.test"}
-    )
-    with pytest.raises(RuntimeError, match="unexpected host"):
-        handler.redirect_request(
-            urllib.request.Request("https://launcher.test/x"),
-            fp=None,
-            code=302,
-            msg="Found",
-            headers={"Location": "https://attacker.test/evil"},
-            newurl="https://attacker.test/evil",
-        )
-
-
-def test_redirect_case_insensitive_host():
-    handler = security_http._HttpsOnlyRedirectHandler(
-        allowed_hosts={"example.com"}
-    )
-    req = handler.redirect_request(
-        urllib.request.Request("https://example.com/x"),
-        fp=None,
-        code=302,
-        msg="Found",
-        headers={"Location": "https://EXAMPLE.COM/y"},
-        newurl="https://EXAMPLE.COM/y",
-    )
-    assert req.full_url == "https://EXAMPLE.COM/y"
-
-
-def test_redirect_subdomain_not_allowed():
-    handler = security_http._HttpsOnlyRedirectHandler(
-        allowed_hosts={"example.com"}
-    )
-    with pytest.raises(RuntimeError, match="unexpected host"):
-        handler.redirect_request(
-            urllib.request.Request("https://example.com/x"),
-            fp=None,
-            code=302,
-            msg="Found",
-            headers={"Location": "https://sub.example.com/y"},
-            newurl="https://sub.example.com/y",
-        )
-
-
-def test_redirect_port_stripped_allows_with_port():
-    handler = security_http._HttpsOnlyRedirectHandler(
-        allowed_hosts={"example.com"}
-    )
-    req = handler.redirect_request(
-        urllib.request.Request("https://example.com/x"),
-        fp=None,
-        code=302,
-        msg="Found",
-        headers={"Location": "https://example.com:443/y"},
-        newurl="https://example.com:443/y",
-    )
-    assert req.full_url == "https://example.com:443/y"
-
-
-@pytest.mark.parametrize(
-    "evil",
-    [
-        "https://evil.com.evil.example.com/x",
-        "https://example.com.evil.com/x",
-        "https://example.com@evil.com/x",
-    ],
-)
-def test_redirect_hostname_edge_cases_blocked(evil):
-    handler = security_http._HttpsOnlyRedirectHandler(
-        allowed_hosts={"example.com"}
-    )
-    with pytest.raises(RuntimeError, match="unexpected host"):
-        handler.redirect_request(
-            urllib.request.Request("https://example.com/x"),
-            fp=None,
-            code=302,
-            msg="Found",
-            headers={"Location": evil},
-            newurl=evil,
-        )
-
-
-def test_secure_urlopen_allows_redirect_within_allowlist(monkeypatch):
-    # Simulate a redirect via the handler directly: secure_urlopen
-    # checks initial host, then handler checks redirect host.
-    # We test the handler path, as secure_urlopen's opener uses it.
-    handler = security_http._HttpsOnlyRedirectHandler(
-        allowed_hosts={"a.example.com", "b.example.com"}
-    )
-    # initial check passes
-    security_http._check_url(
-        "https://a.example.com/x", {"a.example.com", "b.example.com"}
-    )
-    req = handler.redirect_request(
-        urllib.request.Request("https://a.example.com/x"),
-        fp=None,
-        code=302,
-        msg="Found",
-        headers={"Location": "https://b.example.com/y"},
-        newurl="https://b.example.com/y",
-    )
-    assert req.full_url == "https://b.example.com/y"
+    req1 = httpx.Request("GET", "https://a.example.com/x")
+    hist = httpx.Response(302, request=req1, headers={"location": "https://a.example.com/y"})
+    req2 = httpx.Request("GET", "https://a.example.com/y")
+    final = httpx.Response(200, request=req2)
+    final.history = [hist]  # type: ignore[attr-defined]
+    security_http._check_redirect_chain(final, {"a.example.com"})  # no raise

@@ -110,15 +110,19 @@ def test_config_dir_linux_uses_hidden_home_dir(
     fake_platform, monkeypatch, tmp_path
 ):
     fake_platform("linux")
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    assert config_dir() == str(tmp_path / "home" / ".nostalgia-launcher")
+    # platformdirs: XDG config dir defaults to ~/.config
+    assert config_dir() == str(
+        tmp_path / "home" / ".config" / "nostalgia-launcher"
+    )
 
 
 def test_config_dir_linux_ignores_xdg(fake_platform, monkeypatch, tmp_path):
     fake_platform("linux")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    assert config_dir() == str(tmp_path / "home" / ".nostalgia-launcher")
+    assert config_dir() == str(tmp_path / "xdg" / "nostalgia-launcher")
 
 
 def test_config_dir_macos_application_support(fake_platform, monkeypatch):

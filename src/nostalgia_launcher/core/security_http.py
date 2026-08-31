@@ -1,27 +1,17 @@
-"""Hardened HTTP: TLS verification, HTTPS-only enforcement, host allowlists.
+"""Hardened HTTP via httpx: HTTPS-only, host allowlist, capped reads."""
 
-Downloads and API calls go through `secure_urlopen()`, which refuses
-non-HTTPS URLs, optionally enforces a host allowlist on the *initial* URL,
-and keeps every redirect on HTTPS using a shared TLS context that verifies
-against the system trust store (plus certifi's roots when bundled).
-"""
+from __future__ import annotations
 
 import ssl
-import urllib.request
 from urllib.parse import urlsplit
+
+import httpx
 
 from . import launcher
 
-# Hardened TLS: verify the server certificate against the system trust store,
-# require the hostname to match, and refuse anything below TLS 1.2. This is
-# the primary defence against a man-in-the-middle tampering with downloads.
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = True
 SSL_CTX.verify_mode = ssl.CERT_REQUIRED
-# Trust certifi's curated roots *in addition to* the system store, so a stale
-# or incomplete Windows root store (Python's ssl uses a static snapshot and
-# never triggers Windows' on-demand root update) can't break verification.
-# If certifi isn't bundled, fall back to the system store alone.
 try:
     import certifi
 
@@ -33,11 +23,6 @@ try:
 except (AttributeError, ValueError):
     pass
 
-# Binaries may only be fetched from these hosts. TLS already stops a MITM from
-# impersonating them; this additionally stops a tampered API response from
-# redirecting a download (e.g. a mod DLL) to an unexpected host. The base set
-# covers the git hosts; the configured server/mirror hosts are added at call
-# time via allowed_download_hosts().
 ALLOWED_DOWNLOAD_HOSTS = {
     "github.com",
     "raw.githubusercontent.com",
@@ -48,9 +33,7 @@ ALLOWED_DOWNLOAD_HOSTS = {
 }
 
 
-def allowed_download_hosts() -> set:
-    """The full download allowlist: the base git hosts plus every host the
-    launcher configuration's server and mirrors may serve from."""
+def allowed_download_hosts() -> set[str]:
     hosts = set(ALLOWED_DOWNLOAD_HOSTS)
     c = launcher.config()
     if c is not None:
@@ -58,54 +41,67 @@ def allowed_download_hosts() -> set:
     return hosts
 
 
-def _check_url(url: str, allowed_hosts):
-    """Enforce HTTPS and (optionally) an allowlist on a URL."""
+def _check_url(url: str, allowed_hosts) -> None:
     parts = urlsplit(url)
     if parts.scheme != "https":
         raise RuntimeError(f"Refusing non-HTTPS URL: {url}")
     if allowed_hosts is not None:
         host = (parts.hostname or "").lower()
-        if host not in allowed_hosts:
+        if host not in {h.lower() for h in allowed_hosts}:
             raise RuntimeError(
                 f"Refusing download from unexpected host: {host}"
             )
 
 
-class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Require every redirect target to stay HTTPS and, when an allowlist
-    was given for the initial URL, to stay inside the same trust boundary.
-    This blocks an https→http downgrade and prevents an allowlisted host
-    from redirecting the download to an attacker-controlled host via
-    Location: https://evil.example.
-    """
+def _check_redirect_chain(resp: httpx.Response, allowed_hosts) -> None:
+    allowed = (
+        {h.lower() for h in allowed_hosts}
+        if allowed_hosts is not None
+        else None
+    )
+    for hist in resp.history:
+        _check_url(str(hist.url), allowed)
+        loc = str(hist.headers.get("location", ""))
+        if loc and "://" in loc:
+            _check_url(loc, allowed)
+    _check_url(str(resp.url), allowed)
 
+
+def _validate(resp: httpx.Response, allowed_hosts) -> None:
+    if allowed_hosts is not None:
+        _check_redirect_chain(resp, allowed_hosts)
+    else:
+        for hist in resp.history:
+            _check_url(str(hist.url), None)
+        _check_url(str(resp.url), None)
+
+
+# Deprecated alias for backward compat (old urllib handler)
+class _HttpsOnlyRedirectHandler:  # type: ignore[no-redef]
     def __init__(self, allowed_hosts=None):
-        super().__init__()
-        if allowed_hosts is not None:
-            self.allowed_hosts = {h.lower() for h in allowed_hosts}
-        else:
-            self.allowed_hosts = None
+        self.allowed_hosts = (
+            {h.lower() for h in allowed_hosts} if allowed_hosts else None
+        )
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
+        import urllib.request
+
         _check_url(newurl, self.allowed_hosts)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
-# Shared opener with the hardened TLS context and the HTTPS-only redirect
-# guard, built once. Used only when no host allowlist is required;
-# secure_urlopen builds a per-request opener when an allowlist is given
-# so redirects are checked against the same allowlist as the initial URL.
-_SECURE_OPENER = urllib.request.build_opener(
-    urllib.request.HTTPSHandler(context=SSL_CTX),
-    _HttpsOnlyRedirectHandler(),
-)
+        return urllib.request.Request(newurl, headers=dict(req.headers))
 
 
 def read_capped(r, max_bytes: int) -> bytes:
-    """Read `r` (an http response) in chunks, refusing responses longer than
-    `max_bytes`. Raises RuntimeError on overflow."""
-    chunks = []
-    total = 0
+    if hasattr(r, "iter_bytes"):
+        chunks, total = [], 0
+        for chunk in r.iter_bytes(65536):  # type: ignore[attr-defined]
+            total += len(chunk)
+            if total > max_bytes:
+                raise RuntimeError(
+                    f"Response exceeded the {max_bytes // 1024} KiB limit."
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
+    chunks, total = [], 0
     while True:
         chunk = r.read(65536)
         if not chunk:
@@ -119,16 +115,114 @@ def read_capped(r, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-def secure_urlopen(req, timeout, allowed_hosts=None):
-    """urlopen wrapper that enforces HTTPS + an optional host allowlist on the
-    initial URL, keeps redirects on HTTPS + allowlisted hosts, and uses the
-    hardened TLS context. `req` may be a URL string or a urllib Request."""
-    url = req.full_url if isinstance(req, urllib.request.Request) else req
+def _request(
+    method: str,
+    url: str,
+    *,
+    timeout: float,
+    allowed_hosts,
+    headers: dict | None = None,
+    content: bytes | None = None,
+) -> httpx.Response:
     _check_url(url, allowed_hosts)
-    if allowed_hosts is None:
-        return _SECURE_OPENER.open(req, timeout=timeout)
-    opener = urllib.request.build_opener(
-        urllib.request.HTTPSHandler(context=SSL_CTX),
-        _HttpsOnlyRedirectHandler(allowed_hosts),
+    with httpx.Client(
+        verify=SSL_CTX, timeout=httpx.Timeout(timeout), follow_redirects=True
+    ) as client:
+        req = client.build_request(
+            method, url, headers=headers or {}, content=content
+        )
+        resp = client.send(req)
+        _validate(resp, allowed_hosts)
+        return resp
+
+
+def secure_urlopen(req, timeout, allowed_hosts=None):
+    import urllib.request
+
+    if isinstance(req, urllib.request.Request):
+        url = req.full_url  # type: ignore[attr-defined]
+        headers = dict(req.headers)
+        method = req.get_method() if hasattr(req, "get_method") else "GET"
+        data = getattr(req, "data", None)
+    else:
+        url, headers, method, data = req, {}, "GET", None
+    resp = _request(
+        method,
+        url,
+        timeout=timeout,
+        allowed_hosts=allowed_hosts,
+        headers=headers,
+        content=data,
     )
-    return opener.open(req, timeout=timeout)
+    return _HttpxResponseWrapper(resp)
+
+
+class _HttpxResponseWrapper:
+    def __init__(self, resp: httpx.Response) -> None:
+        self._resp = resp
+        self.headers = resp.headers
+        self.status = resp.status_code
+        self._content: bytes | None = None
+        self._pos = 0
+        self._consumed = False
+
+    def getcode(self):
+        return self._resp.status_code
+
+    def read(self, amt: int | None = None) -> bytes:
+        if self._content is None:
+            self._content = self._resp.content if not self._consumed else b""
+            self._consumed = True
+        if amt is None:
+            data = self._content[self._pos :]
+            self._pos = len(self._content)
+            return data
+        data = self._content[self._pos : self._pos + amt]
+        self._pos += len(data)
+        return data
+
+    def iter_bytes(self, chunk_size=65536):
+        if self._content is not None:
+            for i in range(0, len(self._content), chunk_size):
+                yield self._content[i : i + chunk_size]
+            return
+        yield from self._resp.iter_bytes(chunk_size)
+
+    def close(self):
+        self._resp.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+
+def secure_get(
+    url: str, *, timeout=10.0, allowed_hosts=None, headers=None, max_bytes=None
+) -> httpx.Response:
+    resp = _request(
+        "GET",
+        url,
+        timeout=timeout,
+        allowed_hosts=allowed_hosts,
+        headers=headers,
+    )
+    if max_bytes is not None and len(resp.content) > max_bytes:
+        raise RuntimeError(
+            f"Response exceeded the {max_bytes // 1024} KiB limit."
+        )
+    return resp
+
+
+def secure_head(
+    url: str, *, timeout=10.0, allowed_hosts=None, headers=None
+) -> httpx.Response:
+    return _request(
+        "HEAD",
+        url,
+        timeout=timeout,
+        allowed_hosts=allowed_hosts,
+        headers=headers,
+    )

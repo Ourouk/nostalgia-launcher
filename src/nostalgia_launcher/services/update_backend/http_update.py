@@ -17,6 +17,7 @@ from ...core.security_http import (
     secure_urlopen,
 )
 from ..tweaks import write_config_wtf, write_realmlist_wtf
+from ..update.http import download_file, fetch_manifest
 
 # New canonical locations
 from ..update.manifest import checked_node_rel as _checked_node_rel
@@ -53,4 +54,6 @@ __all__ = [
     "read_capped",
     "write_config_wtf",
     "write_realmlist_wtf",
+    "fetch_manifest",
+    "download_file",
 ]

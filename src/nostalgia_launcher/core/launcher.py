@@ -305,27 +305,52 @@ def _parse_root_marker(value: object) -> str:
 def _https_url(value: object) -> str | None:
     if not isinstance(value, str):
         return None
-    url = value.strip().rstrip("/")
-    if not url:
+    v = value.strip().rstrip("/")
+    if not v:
         return None
-    parts = urlsplit(url)
-    if parts.scheme != "https" or not parts.hostname:
+    try:
+        from pydantic import TypeAdapter
+        from pydantic.networks import HttpUrl
+
+        p = TypeAdapter(HttpUrl).validate_python(v)
+        return v if p.scheme == "https" and p.host else None
+    except Exception:
         return None
-    return url
 
 
 def _magnet_uri(value: object) -> str | None:
     """Validate a ``magnet:`` URI: the scheme must be magnet and the query
     must carry at least one ``xt`` topic of ``urn:btih:`` (v1) or
-    ``urn:btmh:`` (v2) — the info-hash that authenticates swarm-served
-    metadata. Anything else is dropped (same silent-drop convention as
-    non-HTTPS URLs)."""
+    ``urn:btmh:`` (v2)."""
     if not isinstance(value, str):
         return None
     uri = value.strip()
     if not uri:
         return None
-    parts = urlsplit(uri)
+    # Use pydantic for scheme validation, then manual xt check
+    try:
+        from pydantic import BaseModel
+        from pydantic.networks import AnyUrl
+
+        class _MagnetModel(BaseModel):
+            url: AnyUrl
+
+        # AnyUrl will accept magnet:?xt=... without host; validate scheme
+        m = _MagnetModel(url=uri)  # type: ignore[arg-type]
+        if m.url.scheme != "magnet":
+            return None
+    except Exception:
+        # Fallback manual
+        try:
+            parts = urlsplit(uri)
+        except ValueError:
+            return None
+        if parts.scheme != "magnet" or not parts.query:
+            return None
+    try:
+        parts = urlsplit(uri)
+    except ValueError:
+        return None
     if parts.scheme != "magnet" or not parts.query:
         return None
     topics = [t.strip().lower() for t in parse_qs(parts.query).get("xt", [])]

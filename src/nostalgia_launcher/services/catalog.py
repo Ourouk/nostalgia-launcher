@@ -36,7 +36,6 @@ from ..core import config_store, launcher
 from ..core.constants import UA
 from ..core.log_sink import log
 from ..core.safety import safe_folder, safe_relpath
-from ..core.safety import valid_sha1 as _valid_sha1
 from ..core.security_http import read_capped, secure_urlopen
 from .sources import hooks as _hooks
 from .sources import kinds as _source_kinds
@@ -223,39 +222,36 @@ def _https_url(u) -> str | None:
 def validate_addon(entry: dict) -> dict | None:
     """Sanitize one addon catalog entry; None when unusable.
 
-    The slim output carries the keys the ADDONS panel/installer consume,
-    plus the optional ``recommended`` / ``blocked`` flags. Git hosts are
-    vetted by the addons service (which owns the host allowlist), so they
-    are only length-checked here.
+    Delegates to :class:`catalog_models.AddonModel` (Pydantic v2) which
+    composes ``safe_folder``/``safe_ref`` via ``AfterValidator``.
     """
-    name = _text(entry.get("name") or entry.get("folder"))
-    if not safe_folder(name):
-        return None
-    rec = {
-        "name": name,
-        "git": None,
-        "branch": None,
-        "ref": None,
-        "description": None,
-        "toc": {},
-        "recommended": False,
-        "blocked": False,
-    }
-    git = entry.get("git")
-    if isinstance(git, str) and git.strip():
-        rec["git"] = git.strip()
-    rec["branch"] = safe_ref(entry.get("branch"))
-    rec["ref"] = safe_ref(entry.get("ref"))
-    desc = entry.get("description")
-    rec["description"] = desc if isinstance(desc, str) else None
-    toc = entry.get("toc")
-    if isinstance(toc, dict):
-        rec["toc"] = {
-            k: toc[k] for k in ("Title", "Notes", "Interface") if k in toc
+    try:
+        from .catalog_models import AddonModel
+
+        name = _text(entry.get("name") or entry.get("folder"))
+        payload = {
+            "name": name,
+            "git": entry.get("git"),
+            "branch": entry.get("branch"),
+            "ref": entry.get("ref"),
+            "description": entry.get("description"),
+            "toc": entry.get("toc"),
+            "recommended": bool(entry.get("recommended", False)),
+            "blocked": bool(entry.get("blocked", False)),
         }
-    rec["recommended"] = bool(entry.get("recommended", False))
-    rec["blocked"] = bool(entry.get("blocked", False))
-    return rec
+        m = AddonModel.model_validate(payload)
+        return {
+            "name": m.name,
+            "git": m.git,
+            "branch": m.branch,
+            "ref": m.ref,
+            "description": m.description,
+            "toc": m.toc or {},
+            "recommended": bool(m.recommended),
+            "blocked": bool(m.blocked),
+        }
+    except Exception:
+        return None
 
 
 def merge_addons(remote: list, custom: list) -> list:
@@ -440,52 +436,52 @@ def merge_by_key(remote: list, custom: list, fields) -> list:
 
 
 def validate_asset(entry: dict) -> dict | None:
-    """Sanitize one asset catalog entry (server content patches such as
-    MPQs); None when unusable.
+    """Sanitize one asset catalog entry; None when unusable.
 
-    An asset is a single file fetched from a pinned HTTPS URL into a safe
-    relative destination inside the client folder. The optional integrity /
-    update metadata (`sha1` / `size` / `version` / `probe`) drives both the
-    download check and the staleness verdict — see `services/assets.py`
-    for the exact precedence.
+    Delegates to :class:`catalog_models.AssetModel` (Pydantic v2) which
+    composes ``safe_folder``/``safe_relpath``/``valid_sha1`` via validators.
     """
     if not isinstance(entry, dict):
         return None
-    aid = _text(entry.get("id"))
-    if not safe_folder(aid):
+    try:
+        from .catalog_models import AssetModel
+
+        payload = {
+            "id": _text(entry.get("id")),
+            "name": _text(entry.get("name") or entry.get("id")),
+            "essential": bool(entry.get("essential", False)),
+            "description": entry.get("description"),
+            "repo_url": entry.get("repo_url"),
+            "url": entry.get("url"),
+            "dest": entry.get("dest"),
+            "version": entry.get("version"),
+            "sha1": entry.get("sha1"),
+            "size": entry.get("size"),
+            "probe": bool(entry.get("probe", False)),
+        }
+        # Preserve malformed-sha1 rejection: raw present but normalized None
+        raw_sha1 = entry.get("sha1")
+        if raw_sha1 is not None:
+            from ..core.safety import valid_sha1 as _vs
+
+            if _vs(raw_sha1) is None:
+                return None
+        m = AssetModel.model_validate(payload)
+        return {
+            "id": m.id,
+            "name": m.name,
+            "essential": bool(m.essential),
+            "description": m.description or "",
+            "repo_url": m.repo_url,
+            "url": m.url,
+            "dest": m.dest,
+            "version": m.version,
+            "sha1": m.sha1,
+            "size": m.size,
+            "probe": bool(m.probe),
+        }
+    except Exception:
         return None
-    name = _text(entry.get("name") or aid)
-    if not name:
-        return None
-    url = _https_url(entry.get("url"))
-    dest = entry.get("dest")
-    if not url or not (isinstance(dest, str) and safe_relpath(dest)):
-        return None
-    sha1 = _valid_sha1(entry.get("sha1"))
-    raw_sha1 = entry.get("sha1")
-    if raw_sha1 is not None and sha1 is None:
-        return None  # a pin was given but it is malformed — refuse the entry
-    size = entry.get("size")
-    if size is not None and (
-        isinstance(size, bool) or not isinstance(size, int) or size <= 0
-    ):
-        return None
-    version = entry.get("version")
-    version = version.strip() if isinstance(version, str) else None
-    desc = entry.get("description")
-    return {
-        "id": aid,
-        "name": name,
-        "essential": bool(entry.get("essential", False)),
-        "description": desc if isinstance(desc, str) else "",
-        "repo_url": _https_url(entry.get("repo_url")),
-        "url": url,
-        "dest": dest,
-        "version": version,
-        "sha1": sha1,
-        "size": size,
-        "probe": bool(entry.get("probe", False)),
-    }
 
 
 def merge_assets(remote: list, custom: list) -> list:
