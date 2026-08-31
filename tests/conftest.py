@@ -126,6 +126,11 @@ def fake_home(tmp_path, monkeypatch):
     take precedence over USERPROFILE (platform_support reads %APPDATA%
     first), so without them every test would share the real per-user
     config dir and leak state across tests/runs.
+
+    Also isolates XDG vars for Linux: platform_support now honours
+    XDG_CONFIG_HOME etc., so they must be pointed into the fake home as
+    well, otherwise a real ~/.config/nostalgia-launcher would leak across
+    tests.
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -133,6 +138,9 @@ def fake_home(tmp_path, monkeypatch):
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
     monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(home / ".cache"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
     # The reserved default profile is a real directory; because its root is
     # resolved at import time it must be rebound to the (now redirected)
     # config dir so profile paths stay test-local.
