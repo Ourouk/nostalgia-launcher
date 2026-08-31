@@ -4,7 +4,9 @@ import os
 import subprocess
 import sys
 
-from platformdirs import PlatformDirs
+from platformdirs import (
+    PlatformDirs,  # noqa: F401 - Linux XDG logic mirrors PlatformDirs to respect fake_platform in tests
+)
 
 _UMU_PROBE = None
 
@@ -62,15 +64,12 @@ def config_dir() -> str:
         return os.path.join(
             h, "Library", "Application Support", "NostalgiaLauncher"
         )
-    # Linux: platformdirs XDG, but preserve existing installs under the
-    # legacy hidden dir (~/.nostalgia-launcher) until migrated.
-    new = PlatformDirs(
-        "nostalgia-launcher", appauthor=False, roaming=True
-    ).user_config_dir
-    legacy = os.path.join(
-        os.environ.get("HOME") or os.path.expanduser("~"),
-        ".nostalgia-launcher",
-    )
+    # Linux: XDG base, but preserve existing installs under legacy hidden dir.
+    h = os.environ.get("HOME") or os.path.expanduser("~")
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = xdg.strip() if xdg and xdg.strip() else os.path.join(h, ".config")
+    new = os.path.join(base, "nostalgia-launcher")
+    legacy = os.path.join(h, ".nostalgia-launcher")
     if os.path.exists(legacy) and not os.path.exists(new):
         return legacy
     return new
@@ -87,9 +86,10 @@ def cache_dir() -> str:
     if is_macos():
         h = os.environ.get("HOME") or os.path.expanduser("~")
         return os.path.join(h, "Library", "Caches", "NostalgiaLauncher")
-    return PlatformDirs(
-        "nostalgia-launcher", appauthor=False, roaming=True
-    ).user_cache_dir
+    h = os.environ.get("HOME") or os.path.expanduser("~")
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    base = xdg.strip() if xdg and xdg.strip() else os.path.join(h, ".cache")
+    return os.path.join(base, "nostalgia-launcher")
 
 
 def data_dir() -> str:
@@ -100,9 +100,14 @@ def data_dir() -> str:
         return os.path.join(
             h, "Library", "Application Support", "NostalgiaLauncher"
         )
-    return PlatformDirs(
-        "nostalgia-launcher", appauthor=False, roaming=True
-    ).user_data_dir
+    h = os.environ.get("HOME") or os.path.expanduser("~")
+    xdg = os.environ.get("XDG_DATA_HOME")
+    base = (
+        xdg.strip()
+        if xdg and xdg.strip()
+        else os.path.join(h, ".local", "share")
+    )
+    return os.path.join(base, "nostalgia-launcher")
 
 
 _ILLEGAL_DIR_CHARS = ':/\\*?"<>|'

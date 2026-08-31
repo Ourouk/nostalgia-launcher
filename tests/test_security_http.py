@@ -144,7 +144,9 @@ def test_check_redirect_chain_blocks_evil_history():
 
     req = httpx.Request("GET", "https://a.example.com/x")
     hist_req = httpx.Request("GET", "https://evil.example.com/y")
-    hist_resp = httpx.Response(302, request=hist_req, headers={"location": "https://a.example.com/x"})
+    hist_resp = httpx.Response(
+        302, request=hist_req, headers={"location": "https://a.example.com/x"}
+    )
     final_resp = httpx.Response(200, request=req)
     final_resp.history = [hist_resp]  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError, match="unexpected host"):
@@ -155,7 +157,9 @@ def test_check_redirect_chain_allows_same_host_chain():
     import httpx
 
     req1 = httpx.Request("GET", "https://a.example.com/x")
-    hist = httpx.Response(302, request=req1, headers={"location": "https://a.example.com/y"})
+    hist = httpx.Response(
+        302, request=req1, headers={"location": "https://a.example.com/y"}
+    )
     req2 = httpx.Request("GET", "https://a.example.com/y")
     final = httpx.Response(200, request=req2)
     final.history = [hist]  # type: ignore[attr-defined]

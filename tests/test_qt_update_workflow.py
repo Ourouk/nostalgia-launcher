@@ -386,7 +386,10 @@ def test_startup_auto_verifies_when_not_first_run(qapp, window):
 
     window.schedule_startup_tasks()
 
-    QTest.qWait(700)
+    for _ in range(10):
+        QTest.qWait(100)
+        if hub.updater.start_verify.call_count and hub.news.load.call_count:
+            break
     hub.updater.start_verify.assert_called_once_with(False)
     hub.news.load.assert_called_once_with()
 
