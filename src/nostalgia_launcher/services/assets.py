@@ -17,15 +17,14 @@ reported stale; a missing file is a missing install, not an update.
 
 import os
 import time
-import urllib.request
 
 from ..core.config_store import update_config
-from ..core.constants import UA
 from ..core.filesystem import cached_sha1
 from ..core.log_sink import log
 from ..core.security_http import (
+    _check_url,
     allowed_download_hosts,
-    secure_urlopen,
+    make_secure_client,
 )
 from . import catalog
 from .sources import deploy
@@ -191,15 +190,11 @@ def remote_probe_state(url: str) -> dict | None:
     (whichever headers arrive). None on any failure — probes are advisory
     only and must never block anything."""
     try:
-        req = urllib.request.Request(
-            url, headers={"User-Agent": UA}, method="HEAD"
-        )
-        with secure_urlopen(
-            req,
-            timeout=10,
-            allowed_hosts=allowed_download_hosts(),
-        ) as r:
-            h = r.headers
+        _check_url(url, allowed_download_hosts())
+        with make_secure_client(timeout=10) as client:
+            resp = client.head(url)
+            resp.raise_for_status()
+            h = resp.headers
             state: dict = {}
             cl = h.get("Content-Length")
             if cl is not None:

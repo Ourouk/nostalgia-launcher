@@ -14,10 +14,9 @@ one).
 """
 
 import json
-import urllib.request
 from urllib.parse import urlsplit
 
-from ..core.security_http import secure_urlopen
+from ..core.security_http import _check_url, make_secure_client
 
 CONFIG_FETCH_TIMEOUT = 15
 CONFIG_FETCH_MAX_BYTES = 1024 * 1024
@@ -52,24 +51,18 @@ def _https_get_capped(
     max_bytes: int = CONFIG_FETCH_MAX_BYTES,
 ) -> str:
     """HTTPS GET the configuration document, refusing responses larger than
-    `max_bytes` (read in chunks so an oversized body is detected without
-    buffering it whole)."""
-    req = urllib.request.Request(url, headers={"User-Agent": _FETCH_UA})
-    with secure_urlopen(req, timeout=timeout) as r:
-        chunks = []
-        total = 0
-        while True:
-            chunk = r.read(65536)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > max_bytes:
-                raise ConfigUrlError(
-                    f"The configuration is larger than "
-                    f"{max_bytes // 1024} KiB and was rejected."
-                )
-            chunks.append(chunk)
-    return b"".join(chunks).decode("utf-8")
+    `max_bytes`."""
+    _check_url(url, None)
+    with make_secure_client(timeout=timeout) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        if len(resp.content) > max_bytes:
+            raise ConfigUrlError(
+                f"The configuration is larger than "
+                f"{max_bytes // 1024} KiB and was rejected."
+            )
+        data = resp.content
+    return data.decode("utf-8")
 
 
 def fetch_config_url(url: str) -> tuple[dict | None, str | None, str]:

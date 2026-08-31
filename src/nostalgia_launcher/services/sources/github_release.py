@@ -13,16 +13,15 @@ filename instead.
 import json
 import re
 import time
-import urllib.request
 
 from ...core.config_store import load_config, update_config
-from ...core.constants import GITHUB_API, UA
+from ...core.constants import GITHUB_API
 from ...core.errors import describe_net_error
 from ...core.log_sink import log
 from ...core.security_http import (
+    _check_url,
     allowed_download_hosts,
-    read_capped,
-    secure_urlopen,
+    make_secure_client,
 )
 from .base import FetchResult, SourceBackend, register
 from .safety import safe_slug, valid_extract_map
@@ -38,9 +37,15 @@ _ASSET_MAX_BYTES = 512 * 1024 * 1024
 def github_latest(owner: str, repo: str, raise_errors=False) -> dict | None:
     url = f"{GITHUB_API}/repos/{owner}/{repo}/releases/latest"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with secure_urlopen(req, timeout=10) as r:
-            return json.loads(read_capped(r, _API_MAX_BYTES))
+        _check_url(url, None)
+        with make_secure_client(timeout=10) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            if len(resp.content) > _API_MAX_BYTES:
+                raise RuntimeError(
+                    f"Response exceeded the {_API_MAX_BYTES // 1024} KiB limit."
+                )
+            return json.loads(resp.content)
     except Exception as e:
         if raise_errors:
             raise RuntimeError(describe_net_error(e)) from e
@@ -99,11 +104,15 @@ def fetch_bytes(url: str) -> bytes:
     """Download one artifact through the hardened transfer layer (the base
     git-host allowlist plus the launcher config's own hosts), refusing
     responses over the asset size cap."""
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with secure_urlopen(
-        req, timeout=120, allowed_hosts=allowed_download_hosts()
-    ) as r:
-        return read_capped(r, _ASSET_MAX_BYTES)
+    _check_url(url, allowed_download_hosts())
+    with make_secure_client(timeout=120) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        if len(resp.content) > _ASSET_MAX_BYTES:
+            raise RuntimeError(
+                f"Response exceeded the {_ASSET_MAX_BYTES // 1024} KiB limit."
+            )
+        return resp.content
 
 
 def fetch_release_cached(

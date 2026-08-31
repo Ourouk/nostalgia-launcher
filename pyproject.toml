@@ -18,6 +18,13 @@ dependencies = [
     # interpreters the client update path degrades to per-file HTTP
     # downloads (services/update_backend/torrent_update.available()).
     "libtorrent; python_version < '3.14'",
+    # Third-party first: delegate well-solved infrastructure to mature libs
+    # instead of bespoke stdlib plumbing.
+    "platformdirs>=4.0",
+    "packaging>=24.0",
+    "httpx>=0.27",
+    "tenacity>=8.0",
+    "pydantic>=2.0",
 ]
 
 [project.scripts]

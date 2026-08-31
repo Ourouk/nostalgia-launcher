@@ -27,15 +27,19 @@ import queue
 import shutil
 import tempfile
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
+
+import httpx
 
 from ...core import profiles
 from ...core.constants import DOWNLOAD_TIMEOUT, UA
 from ...core.filesystem import atomic_write_bytes as _atomic_write_bytes
 from ...core.helpers import fmt_size, fmt_speed, redact_url
-from ...core.security_http import allowed_download_hosts, secure_urlopen
+from ...core.security_http import (
+    _check_url,
+    allowed_download_hosts,
+    make_secure_client,
+)
 from .worker_base import WorkerBase
 
 # Inactivity guard: if no wanted bytes arrive for this long, the swarm is dead
@@ -264,26 +268,23 @@ def _fetch_torrent_url(torrent_url: str, log) -> "TorrentSnapshot":
     """Fetch the ``.torrent`` at ``torrent_url`` over HTTPS, parse it with
     libtorrent, and return a :class:`TorrentSnapshot`."""
     log(f"  Fetching torrent: {redact_url(torrent_url)}", "dim")
-    req = urllib.request.Request(torrent_url, headers={"User-Agent": UA})
     try:
-        with secure_urlopen(
-            req,
-            timeout=DOWNLOAD_TIMEOUT,
-            allowed_hosts=allowed_download_hosts(),
-        ) as r:
-            # Stream the torrent file with a size cap to avoid loading a
-            # malicious oversized response into memory.
-            max_size = 5 * 1024 * 1024  # 5 MiB cap for .torrent files
-            data = bytearray()
-            for chunk in iter(lambda: r.read(65536), b""):
-                data.extend(chunk)
-                if len(data) > max_size:
-                    raise TorrentFetchError(
-                        f"Torrent file exceeds maximum size of {max_size} bytes"
-                    )
+        _check_url(torrent_url, allowed_download_hosts())
+        with make_secure_client(timeout=DOWNLOAD_TIMEOUT) as client:
+            with client.stream("GET", torrent_url) as resp:
+                resp.raise_for_status()
+                # Stream the torrent file with a size cap to avoid loading a
+                # malicious oversized response into memory.
+                max_size = 5 * 1024 * 1024  # 5 MiB cap for .torrent files
+                data = bytearray()
+                for chunk in resp.iter_bytes(chunk_size=65536):
+                    data.extend(chunk)
+                    if len(data) > max_size:
+                        raise TorrentFetchError(
+                            f"Torrent file exceeds maximum size of {max_size} bytes"
+                        )
     except (
-        urllib.error.HTTPError,
-        urllib.error.URLError,
+        httpx.HTTPError,
         OSError,
         RuntimeError,
     ) as exc:

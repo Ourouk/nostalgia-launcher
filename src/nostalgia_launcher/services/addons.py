@@ -19,14 +19,12 @@ ships.
 import json
 import os
 import time
-import urllib.request
 
 from ..core import config_store as _config_store
 from ..core import launcher
 from ..core.config_store import load_config, update_config
-from ..core.constants import UA
 from ..core.log_sink import log
-from ..core.security_http import read_capped, secure_urlopen
+from ..core.security_http import _check_url, make_secure_client
 from . import catalog
 from .sources import deploy as _sources_deploy
 from .sources.git_archive import (
@@ -131,9 +129,13 @@ def _fetch_url_catalog(url: str, force: bool, now: float) -> list:
     ):
         return entry["catalog"]
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with secure_urlopen(req, timeout=10) as r:
-            raw = json.loads(read_capped(r, 2 * 1024 * 1024))
+        _check_url(url, None)
+        with make_secure_client(timeout=10) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            if len(resp.content) > 2 * 1024 * 1024:
+                raise RuntimeError("Response exceeded the 2048 KiB limit.")
+            raw = json.loads(resp.content)
     except Exception:
         # offline — serve the last good cached copy for this URL
         return entry.get("catalog") or []

@@ -6,7 +6,10 @@ Lives outside `services/catalog.py` so the download backends
 `catalog.py` re-exports these under their historical names.
 """
 
+from typing import Annotated
 from urllib.parse import urlsplit
+
+from pydantic import AfterValidator
 
 
 def safe_folder(name) -> bool:
@@ -90,3 +93,51 @@ def valid_sha1(value) -> str | None:
     if len(v) != 40 or any(c not in "0123456789abcdef" for c in v):
         return None
     return v
+
+
+# ---------------------------------------------------------------------------
+# Pydantic validated types — thin wrappers around the procedural validators
+# above. They expose the same safety guarantees as ``Annotated`` types so
+# callers can migrate from ``if not safe_folder(x): return None`` to
+# ``SafeFolder`` field declarations.
+# ---------------------------------------------------------------------------
+
+
+def _v_safe_folder(v: str) -> str:
+    if not safe_folder(v):
+        raise ValueError("invalid folder name")
+    return v.strip()
+
+
+def _v_safe_relpath(v: str) -> str:
+    if not safe_relpath(v):
+        raise ValueError("invalid relative path")
+    return v
+
+
+def _v_https_url(v: str) -> str:
+    nv = https_url(v)
+    if nv is None:
+        raise ValueError("invalid https url")
+    return nv
+
+
+def _v_safe_slug(v: str) -> str:
+    nv = safe_slug(v)
+    if nv is None:
+        raise ValueError("invalid slug")
+    return nv
+
+
+def _v_sha1(v: str) -> str:
+    nv = valid_sha1(v)
+    if nv is None:
+        raise ValueError("invalid sha1")
+    return nv
+
+
+SafeFolderStr = Annotated[str, AfterValidator(_v_safe_folder)]
+SafeRelPathStr = Annotated[str, AfterValidator(_v_safe_relpath)]
+HttpsUrlStr = Annotated[str, AfterValidator(_v_https_url)]
+SafeSlugStr = Annotated[str, AfterValidator(_v_safe_slug)]
+Sha1Str = Annotated[str, AfterValidator(_v_sha1)]

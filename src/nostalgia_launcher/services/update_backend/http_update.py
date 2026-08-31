@@ -21,13 +21,13 @@ import os
 import queue
 import shutil
 import time
-import urllib.request
+
+import tenacity
 
 from ...core.config_store import load_cache, save_cache
 from ...core.constants import (
     DOWNLOAD_RETRY,
     DOWNLOAD_TIMEOUT,
-    UA,
 )
 from ...core.filesystem import (
     get_client_version,
@@ -36,9 +36,10 @@ from ...core.filesystem import (
 )
 from ...core.helpers import fmt_size, fmt_speed, redact_url
 from ...core.security_http import (
+    _check_url,
+    _is_retryable,
     allowed_download_hosts,
-    read_capped,
-    secure_urlopen,
+    make_secure_client,
 )
 from ..sources.safety import safe_relpath
 from ..tweaks import write_config_wtf, write_realmlist_wtf
@@ -209,15 +210,15 @@ class VerifyWorker(WorkerBase):
                     )
                 self.log_q.put((markers.DIFF_TREE, None))
                 return
-            req = urllib.request.Request(
-                src.manifest_url, headers={"User-Agent": UA}
-            )
-            with secure_urlopen(
-                req,
-                timeout=DOWNLOAD_TIMEOUT,
-                allowed_hosts=allowed_download_hosts(),
-            ) as r:
-                manifest = json.loads(read_capped(r, 16 * 1024 * 1024))
+            _check_url(src.manifest_url, allowed_download_hosts())
+            with make_secure_client(timeout=DOWNLOAD_TIMEOUT) as client:
+                resp = client.get(src.manifest_url)
+                resp.raise_for_status()
+                if len(resp.content) > 16 * 1024 * 1024:
+                    raise RuntimeError(
+                        "Response exceeded the 16384 KiB limit."
+                    )
+                manifest = json.loads(resp.content)
             # Shape-check BEFORE flipping manifest_ok: syntactically valid
             # JSON with a wrong shape must route to the "manifest
             # unavailable" path (torrent fallback), not to a bogus
@@ -629,154 +630,182 @@ class UpdateWorker(WorkerBase):
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         tmp = dest + ".tmp"
         name = name or os.path.basename(dest)
-        # A manifest carrying a junk size must not crash the transfer math;
-        # coerce to a sane int (0 → unknown-size semantics).
         size = _checked_node_size(size)
         total_str = fmt_size(size) if size else "?"
 
-        for attempt in range(1, DOWNLOAD_RETRY + 1):
-            if self._cancel:
-                raise RuntimeError("Cancelled")
-            try:
-                # Resume a previous partial download when one is present.
-                got = os.path.getsize(tmp) if os.path.exists(tmp) else 0
-                if size and got >= size:
-                    os.remove(tmp)  # oversized/stale leftover — start clean
-                    got = 0
-
-                headers = {"User-Agent": UA}
-                mode = "wb"
-                if got:
-                    headers["Range"] = f"bytes={got}-"
-                    mode = "ab"
-                    self.log(f"  Resuming ({fmt_size(got)} / {total_str})…")
-                else:
-                    self.log(f"  Downloading ({total_str})…")
-
-                req = urllib.request.Request(url, headers=headers)
-                downloaded = got
-                # Hash on the fly when starting from byte 0 — saves a full
-                # re-read of the file for verification. A resumed download
-                # can't be hashed incrementally (the prefix wasn't seen).
-                hasher = hashlib.sha1() if not got else None
-                # Speed sampling over a short sliding window.
-                t0 = time.monotonic()
-                bytes_at_t0 = downloaded
-                speed_str = ""
-                with secure_urlopen(
-                    req,
-                    timeout=DOWNLOAD_TIMEOUT,
-                    allowed_hosts=allowed_download_hosts(),
-                ) as r:
-                    status = getattr(r, "status", None) or r.getcode()
-                    if got and status != 206:
-                        # Server ignored the Range header — start over.
-                        downloaded, mode = 0, "wb"
-                        hasher = hashlib.sha1()
-                        bytes_at_t0 = 0
-                    with open(tmp, mode) as f:
-                        while True:
-                            if self._cancel:
-                                raise RuntimeError("Cancelled")
-                            chunk = r.read(256 * 1024)
-                            if not chunk:
-                                break
-                            f.write(chunk)
-                            if hasher is not None:
-                                hasher.update(chunk)
-                            downloaded += len(chunk)
-                            now = time.monotonic()
-                            dt = now - t0
-                            if dt >= 0.5:
-                                speed_str = "   •   " + fmt_speed(
-                                    (downloaded - bytes_at_t0) / dt
-                                )
-                                t0, bytes_at_t0 = now, downloaded
-                            if size:
-                                if self._total:
-                                    agg = self._downloaded + downloaded
-                                    self.progress(
-                                        agg / self._total,
-                                        f"{name}   •   "
-                                        f"{fmt_size(downloaded)}"
-                                        f" / {total_str}{speed_str}",
-                                        phase="Downloading",
-                                        transport="HTTP",
-                                        current_file=name,
-                                        downloaded=agg,
-                                        total=self._total,
-                                        speed=(downloaded - bytes_at_t0) / dt
-                                        if dt > 0
-                                        else 0.0,
-                                    )
-                                else:
-                                    self.progress(
-                                        downloaded / size,
-                                        f"{name}   •   "
-                                        f"{fmt_size(downloaded)}"
-                                        f" / {total_str}{speed_str}",
-                                        phase="Downloading",
-                                        transport="HTTP",
-                                        current_file=name,
-                                        downloaded=downloaded,
-                                        total=size,
-                                        speed=(downloaded - bytes_at_t0) / dt
-                                        if dt > 0
-                                        else 0.0,
-                                    )
-
-                # A dropped connection looks like a clean EOF — never accept
-                # a short file as a finished download.
-                if size and downloaded != size:
-                    raise OSError(
-                        "connection lost at "
-                        f"{fmt_size(downloaded)} / {total_str}"
-                    )
-
-                shutil.move(tmp, dest)
-                if self._total:
-                    prev = self._counted.get(dest, 0)
-                    self._counted[dest] = size
-                    self._downloaded += size - prev
-                    self.progress(
-                        min(1.0, self._downloaded / self._total),
-                        "Downloading…",
-                        phase="Downloading",
-                        transport="HTTP",
-                        downloaded=self._downloaded,
-                        total=self._total,
-                    )
-                if hasher is not None:
-                    digest = hasher.hexdigest().upper()
-                    try:
-                        # Seed the verify cache so the next verify pass
-                        # doesn't need to rehash this file either.
-                        self._cache[dest] = [digest, os.path.getmtime(dest)]
-                    except OSError:
-                        self._cache.pop(dest, None)
-                    return digest
-                self._cache.pop(dest, None)
-                return None
-            except Exception as e:
+        def _sleep_with_cancel(secs: float) -> None:
+            end = time.monotonic() + secs
+            while time.monotonic() < end:
                 if self._cancel:
-                    raise RuntimeError("Cancelled") from None
-                # Keep tmp — the next attempt resumes from where this one
-                # stopped instead of redownloading from zero.
-                self.log(f"  Attempt {attempt} failed: {e}", "err")
-                if attempt < DOWNLOAD_RETRY:
-                    wait = min(2**attempt, 10)
-                    part = os.path.getsize(tmp) if os.path.exists(tmp) else 0
-                    self.progress(
-                        (part / size) if size else 0.0,
-                        f"{name} — retrying ({attempt}/{DOWNLOAD_RETRY})…",
-                        phase="Retrying",
-                        transport="HTTP",
-                        current_file=name,
-                        downloaded=part,
-                        total=size,
-                    )
-                    self.log(f"  Retrying in {wait} s…", "dim")
-                    time.sleep(wait)
+                    raise RuntimeError("Cancelled")
+                time.sleep(min(0.05, end - time.monotonic()))
+
+        def _before_sleep(rs: tenacity.RetryCallState) -> None:
+            if self._cancel:
+                raise RuntimeError("Cancelled") from None
+            exc = rs.outcome.exception() if rs.outcome else None
+            n = rs.attempt_number
+            self.log(f"  Attempt {n} failed: {exc}", "err")
+            wait = 0.0
+            if rs.next_action is not None:
+                try:
+                    wait = float(getattr(rs.next_action, "sleep", 0) or 0)
+                except Exception:
+                    wait = 0.0
+            part = os.path.getsize(tmp) if os.path.exists(tmp) else 0
+            self.progress(
+                (part / size) if size else 0.0,
+                f"{name} — retrying ({n}/{DOWNLOAD_RETRY})…",
+                phase="Retrying",
+                transport="HTTP",
+                current_file=name,
+                downloaded=part,
+                total=size,
+            )
+            self.log(f"  Retrying in {wait:.1f} s…", "dim")
+
+        retrying = tenacity.Retrying(
+            stop=tenacity.stop_after_attempt(DOWNLOAD_RETRY),
+            wait=tenacity.wait_exponential(multiplier=1, min=1, max=10)
+            + tenacity.wait_random(0, 1),
+            retry=tenacity.retry_if_exception(_is_retryable),
+            reraise=True,
+            before_sleep=_before_sleep,
+            sleep=_sleep_with_cancel,
+        )
+
+        try:
+            for attempt in retrying:
+                with attempt:
+                    if self._cancel:
+                        raise RuntimeError("Cancelled")
+                    got = os.path.getsize(tmp) if os.path.exists(tmp) else 0
+                    if size and got >= size:
+                        os.remove(tmp)
+                        got = 0
+                    headers: dict[str, str] = {}
+                    mode = "wb"
+                    if got:
+                        headers["Range"] = f"bytes={got}-"
+                        mode = "ab"
+                        self.log(
+                            f"  Resuming ({fmt_size(got)} / {total_str})…"
+                        )
+                    else:
+                        self.log(f"  Downloading ({total_str})…")
+                    downloaded = got
+                    hasher = hashlib.sha1() if not got else None
+                    t0 = time.monotonic()
+                    bytes_at_t0 = downloaded
+                    speed_str = ""
+                    _check_url(url, allowed_download_hosts())
+                    with make_secure_client(
+                        timeout=DOWNLOAD_TIMEOUT
+                    ) as client:
+                        with client.stream(
+                            "GET", url, headers=headers
+                        ) as resp:
+                            resp.raise_for_status()
+                            if got and resp.status_code != 206:
+                                downloaded, mode = 0, "wb"
+                                hasher = hashlib.sha1()
+                                bytes_at_t0 = 0
+                            with open(tmp, mode) as f:
+                                for chunk in resp.iter_bytes(
+                                    chunk_size=256 * 1024
+                                ):
+                                    if self._cancel:
+                                        raise RuntimeError("Cancelled")
+                                    f.write(chunk)
+                                    if hasher is not None:
+                                        hasher.update(chunk)
+                                    downloaded += len(chunk)
+                                    now = time.monotonic()
+                                    dt = now - t0
+                                    if dt >= 0.5:
+                                        speed_str = "   •   " + fmt_speed(
+                                            (downloaded - bytes_at_t0) / dt
+                                        )
+                                        t0, bytes_at_t0 = now, downloaded
+                                    if size:
+                                        if self._total:
+                                            agg = self._downloaded + downloaded
+                                            self.progress(
+                                                agg / self._total,
+                                                f"{name}   •   "
+                                                f"{fmt_size(downloaded)}"
+                                                f" / {total_str}{speed_str}",
+                                                phase="Downloading",
+                                                transport="HTTP",
+                                                current_file=name,
+                                                downloaded=agg,
+                                                total=self._total,
+                                                speed=(
+                                                    downloaded - bytes_at_t0
+                                                )
+                                                / dt
+                                                if dt > 0
+                                                else 0.0,
+                                            )
+                                        else:
+                                            self.progress(
+                                                downloaded / size,
+                                                f"{name}   •   "
+                                                f"{fmt_size(downloaded)}"
+                                                f" / {total_str}{speed_str}",
+                                                phase="Downloading",
+                                                transport="HTTP",
+                                                current_file=name,
+                                                downloaded=downloaded,
+                                                total=size,
+                                                speed=(
+                                                    downloaded - bytes_at_t0
+                                                )
+                                                / dt
+                                                if dt > 0
+                                                else 0.0,
+                                            )
+                    if size and downloaded != size:
+                        raise OSError(
+                            "connection lost at "
+                            f"{fmt_size(downloaded)} / {total_str}"
+                        )
+                    shutil.move(tmp, dest)
+                    if self._total:
+                        prev = self._counted.get(dest, 0)
+                        self._counted[dest] = size
+                        self._downloaded += size - prev
+                        self.progress(
+                            min(1.0, self._downloaded / self._total),
+                            "Downloading…",
+                            phase="Downloading",
+                            transport="HTTP",
+                            downloaded=self._downloaded,
+                            total=self._total,
+                        )
+                    if hasher is not None:
+                        digest = hasher.hexdigest().upper()
+                        try:
+                            self._cache[dest] = [
+                                digest,
+                                os.path.getmtime(dest),
+                            ]
+                        except OSError:
+                            self._cache.pop(dest, None)
+                        return digest
+                    self._cache.pop(dest, None)
+                    return None
+        except Exception as e:
+            if self._cancel or (
+                isinstance(e, RuntimeError) and "Cancelled" in str(e)
+            ):
+                raise RuntimeError("Cancelled") from None
+            if _is_retryable(e):
+                raise RuntimeError(
+                    f"Download failed after {DOWNLOAD_RETRY} "
+                    f"attempts: {redact_url(url)}"
+                ) from e
+            raise
         raise RuntimeError(
             f"Download failed after {DOWNLOAD_RETRY} attempts: "
             f"{redact_url(url)}"
@@ -1279,18 +1308,20 @@ class UpdateWorker(WorkerBase):
                         )
                 else:
                     try:
-                        req = urllib.request.Request(
+                        _check_url(
                             self._source.manifest_url,
-                            headers={"User-Agent": UA},
+                            allowed_download_hosts(),
                         )
-                        with secure_urlopen(
-                            req,
-                            timeout=DOWNLOAD_TIMEOUT,
-                            allowed_hosts=allowed_download_hosts(),
-                        ) as r:
-                            manifest = json.loads(
-                                read_capped(r, 16 * 1024 * 1024)
-                            )
+                        with make_secure_client(
+                            timeout=DOWNLOAD_TIMEOUT
+                        ) as client:
+                            resp = client.get(self._source.manifest_url)
+                            resp.raise_for_status()
+                            if len(resp.content) > 16 * 1024 * 1024:
+                                raise RuntimeError(
+                                    "Response exceeded the 16384 KiB limit."
+                                )
+                            manifest = json.loads(resp.content)
                         # Same shape gate as the verify path: JSON that
                         # isn't a manifest is "unavailable", not "update
                         # needed".

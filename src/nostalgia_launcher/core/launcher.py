@@ -102,7 +102,16 @@ import os
 import sys
 import threading
 from dataclasses import dataclass, field
+from typing import Literal
 from urllib.parse import parse_qs, urlsplit
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+)
 
 from .filesystem import atomic_write_text
 from .helpers import redact_url
@@ -302,8 +311,8 @@ def _parse_root_marker(value) -> str:
     return "WoW.exe"
 
 
-def _https_url(value: str) -> str | None:
-    url = (value or "").strip().rstrip("/")
+def _https_url(value: str | None) -> str | None:
+    url = (value or "").strip().rstrip("/")  # type: ignore[arg-type]
     if not url:
         return None
     parts = urlsplit(url)
@@ -312,13 +321,13 @@ def _https_url(value: str) -> str | None:
     return url
 
 
-def _magnet_uri(value: str) -> str | None:
+def _magnet_uri(value: str | None) -> str | None:
     """Validate a ``magnet:`` URI: the scheme must be magnet and the query
     must carry at least one ``xt`` topic of ``urn:btih:`` (v1) or
     ``urn:btmh:`` (v2) — the info-hash that authenticates swarm-served
     metadata. Anything else is dropped (same silent-drop convention as
     non-HTTPS URLs)."""
-    uri = (value or "").strip()
+    uri = (value or "").strip()  # type: ignore[arg-type]
     if not uri:
         return None
     parts = urlsplit(uri)
@@ -332,136 +341,273 @@ def _magnet_uri(value: str) -> str | None:
     return uri
 
 
-def _host_of(url: str) -> str:
+def _host_of(url: str | None) -> str:
     """The hostname of a URL, or '' when it isn't a parseable http(s) URL."""
     if not url:
         return ""
     return urlsplit(url).hostname or ""
 
 
-def _derive(data: dict) -> LauncherConfig:
-    if not isinstance(data, dict):
-        raise ValueError("launcher config must be a JSON object")
-    server = data.get("server")
-    if not isinstance(server, dict):
-        raise ValueError("launcher config is missing the 'server' object")
+# ── Pydantic models — authoritative schema for launcher config ────────────
+# Structural validation (required fields, types, URL shape) is delegated to
+# these models. Silent-drop policy (invalid https → None/"") stays in the
+# field validators so ``_derive`` no longer needs repetitive
+# ``isinstance``/``_https_url`` chains. Security-context checks (host
+# allowlist) remain in domain logic, not the schema.
 
-    host = _host_of(_https_url(server.get("url")))
 
-    raw_discord_url = data.get("discord_url")
-    if raw_discord_url is None:
-        discord_url = None
-    elif isinstance(raw_discord_url, str) and raw_discord_url.strip():
-        discord_url = _https_url(raw_discord_url)
-        if discord_url is None:
-            raise ValueError(
-                "launcher config 'discord_url' must be an https URL"
-            )
-    elif isinstance(raw_discord_url, str):
-        discord_url = None
-    else:
-        raise ValueError("launcher config 'discord_url' must be an https URL")
+def _clean_https_or_none(v: object) -> str | None:
+    if not isinstance(v, str):
+        return None
+    return _https_url(v)
 
-    # Explicit, direct URLs only — no base_url suffix derivation.
-    news_url = _https_url(server.get("news_url")) or ""
-    featured_news_url = _https_url(server.get("featured_news_url")) or ""
-    mods_registry_url = _https_url(server.get("mods_registry_url")) or ""
-    addons_registry_url = _https_url(server.get("addons_registry_url")) or ""
 
-    addons_registry_urls: list[str] = []
-    raw_urls = server.get("addons_registry_urls")
-    if isinstance(raw_urls, list) and raw_urls:
-        for u in raw_urls:
-            https = _https_url(u)
+def _clean_https_or_empty(v: object) -> str:
+    if not isinstance(v, str):
+        return ""
+    return _https_url(v) or ""
+
+
+def _clean_addon_hosts(v: object) -> list[str]:
+    return _parse_git_hosts(v)
+
+
+def _clean_root_marker(v: object) -> str:
+    return _parse_root_marker(v) if isinstance(v, str) else "WoW.exe"
+
+
+class _LauncherTorrentModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    torrent_url: str | None = None
+    magnet: str | None = None
+    update: bool | None = None
+
+    @field_validator("torrent_url", mode="before")
+    @classmethod
+    def _v_url(cls, v: object) -> str | None:
+        return _clean_https_or_none(v)
+
+    @field_validator("magnet", mode="before")
+    @classmethod
+    def _v_magnet(cls, v: object) -> str | None:
+        if not isinstance(v, str):
+            return None
+        return _magnet_uri(v)
+
+
+class _LauncherHttpModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    manifest: str | None = None
+    client: str | None = None
+
+    @field_validator("manifest", "client", mode="before")
+    @classmethod
+    def _v_https(cls, v: object) -> str | None:
+        return _clean_https_or_none(v)
+
+
+class _LauncherContentModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    type: Literal["zip", "rar", "folder"] = "folder"
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _v_type(cls, v: object) -> str:
+        return v if v in ("zip", "rar", "folder") else "folder"
+
+
+class _LauncherDownloadModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    update: bool = True
+    torrent: _LauncherTorrentModel = Field(
+        default_factory=_LauncherTorrentModel
+    )
+    http: _LauncherHttpModel = Field(default_factory=_LauncherHttpModel)
+    content: _LauncherContentModel = Field(
+        default_factory=_LauncherContentModel
+    )
+
+
+class _LauncherServerModel(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    url: str | None = None
+    base_url: str | None = None
+    name: str | None = None
+    realm: str | None = None
+    news_url: str | None = None
+    featured_news_url: str | None = None
+    mods_registry_url: str | None = None
+    addons_registry_url: str | None = None
+    addons_registry_urls: list[str] | None = None
+    assets_registry_url: str | None = None
+    trusted_hosts: list[str] | None = None
+    torrent_root_marker: str | None = None
+    download: _LauncherDownloadModel | None = None
+
+    @field_validator(
+        "url",
+        "base_url",
+        "news_url",
+        "featured_news_url",
+        "mods_registry_url",
+        "addons_registry_url",
+        "assets_registry_url",
+        mode="before",
+    )
+    @classmethod
+    def _v_https_empty(cls, v: object) -> str:
+        return _clean_https_or_empty(v)
+
+    @field_validator("addons_registry_urls", mode="before")
+    @classmethod
+    def _v_addons_urls(cls, v: object) -> list[str] | None:
+        if not isinstance(v, list):
+            return None
+        out: list[str] = []
+        for u in v:
+            https = _https_url(u) if isinstance(u, str) else None
             if https:
-                addons_registry_urls.append(https)
-    if not addons_registry_urls:
-        addons_registry_urls = [addons_registry_url]
+                out.append(https)
+        return out or None
 
-    raw_theme = data.get("theme")
-    theme = raw_theme if isinstance(raw_theme, dict) else None
-
-    # Server-specific trusted hosts for downloads (beyond auto-derived ones)
-    raw_trusted_hosts = server.get("trusted_hosts")
-    trusted_hosts: set[str] = set()
-    if isinstance(raw_trusted_hosts, list):
-        for h in raw_trusted_hosts:
+    @field_validator("trusted_hosts", mode="before")
+    @classmethod
+    def _v_trusted(cls, v: object) -> list[str] | None:
+        if not isinstance(v, list):
+            return None
+        out: list[str] = []
+        for h in v:
             if isinstance(h, str):
                 h = h.strip().lower()
                 if h and _valid_host(h):
-                    trusted_hosts.add(h)
+                    out.append(h)
+        return out
 
-    # Asset registry URL — explicit only: a config without one simply has no
-    # remote asset catalog. Assets may also be embedded directly via the
-    # top-level "assets" list (kept raw; services/assets sanitizes them).
-    assets_registry_url = _https_url(server.get("assets_registry_url")) or ""
-    raw_embedded_assets = data.get("assets")
-    embedded_assets: list[dict] = (
-        [e for e in raw_embedded_assets if isinstance(e, dict)]
-        if isinstance(raw_embedded_assets, list)
-        else []
-    )
+    @field_validator("torrent_root_marker", mode="before")
+    @classmethod
+    def _v_marker(cls, v: object) -> str:
+        return _clean_root_marker(v)
 
-    # Mods/Addons embedded directly in the config (same shape as the remote
-    # catalogs; sanitized by services/mods, services/addons, services/assets).
-    raw_embedded_mods = data.get("mods")
-    embedded_mods: list[dict] = (
-        [e for e in raw_embedded_mods if isinstance(e, dict)]
-        if isinstance(raw_embedded_mods, list)
-        else []
-    )
-    raw_embedded_addons = data.get("addons")
-    embedded_addons: list[dict] = (
-        [e for e in raw_embedded_addons if isinstance(e, dict)]
-        if isinstance(raw_embedded_addons, list)
-        else []
-    )
 
-    addon_git_hosts = _parse_git_hosts(data.get("addon_git_hosts"))
-    torrent_root_marker = _parse_root_marker(server.get("torrent_root_marker"))
+class _LauncherDocModel(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    server: _LauncherServerModel
+    discord_url: str | None = None
+    theme: dict | None = None
+    addon_git_hosts: list[str] = Field(default_factory=list)
+    assets: list[dict] | None = None
+    mods: list[dict] | None = None
+    addons: list[dict] | None = None
 
-    # ── server.download block ──
-    dl = server.get("download")
-    dl = dl if isinstance(dl, dict) else {}
-    download_update = bool(dl.get("update", True))
-    torrent = dl.get("torrent")
-    torrent = torrent if isinstance(torrent, dict) else {}
-    http = dl.get("http")
-    http = http if isinstance(http, dict) else {}
-    content = dl.get("content")
-    content = content if isinstance(content, dict) else {}
-    content_type = content.get("type")
-    if content_type not in ("zip", "rar", "folder"):
-        content_type = "folder"
-    download_torrent_url = _https_url(torrent.get("torrent_url"))
-    download_torrent_magnet = _magnet_uri(torrent.get("magnet"))
-    if "update" in torrent:
-        download_torrent_update: bool | None = bool(torrent.get("update"))
-    else:
-        download_torrent_update = None
-    download_manifest_url = _https_url(http.get("manifest"))
-    download_client_url = _https_url(http.get("client"))
+    @field_validator("discord_url", mode="before")
+    @classmethod
+    def _v_discord(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        if isinstance(v, str) and v.strip():
+            https = _https_url(v)
+            if https is None:
+                raise ValueError(
+                    "launcher config 'discord_url' must be an https URL"
+                )
+            return https
+        raise ValueError("launcher config 'discord_url' must be an https URL")
 
-    def _name_or_host(value) -> str:
-        """A config-supplied display name, or the host fallback. Truthy
-        non-strings (e.g. a numeric name) fall back like absent ones
-        instead of crashing _derive with an AttributeError."""
+    @field_validator("theme", mode="before")
+    @classmethod
+    def _v_theme(cls, v: object) -> dict | None:
+        return v if isinstance(v, dict) else None
+
+    @field_validator("addon_git_hosts", mode="before")
+    @classmethod
+    def _v_git_hosts(cls, v: object) -> list[str]:
+        return _clean_addon_hosts(v)
+
+    @field_validator("assets", "mods", "addons", mode="before")
+    @classmethod
+    def _v_embedded(cls, v: object) -> list[dict] | None:
+        if isinstance(v, list):
+            return [e for e in v if isinstance(e, dict)]
+        return None
+
+
+def _derive(data: dict) -> LauncherConfig:
+    """Validate raw JSON via :class:`_LauncherDocModel` and map to
+    :class:`LauncherConfig`."""
+    if not isinstance(data, dict):
+        raise ValueError("launcher config must be a JSON object")
+    try:
+        doc = _LauncherDocModel.model_validate(data)
+    except ValidationError as e:
+        # Preserve historic error messages for the two cases tests assert.
+        msg = str(e)
+        if "server" in msg and "Field required" in msg:
+            raise ValueError(
+                "launcher config is missing the 'server' object"
+            ) from None
+        # ``discord_url`` validation error is already the historic message.
+        for err in e.errors():
+            if err.get("loc") == ("discord_url",) and "discord_url" in str(
+                err.get("ctx", {}).get("error", "")  # type: ignore[union-attr]
+            ):
+                raise ValueError(
+                    str(err.get("ctx", {}).get("error", ""))  # type: ignore[union-attr]
+                ) from None
+            if "discord_url" in str(err):
+                raise ValueError(
+                    "launcher config 'discord_url' must be an https URL"
+                ) from None
+        raise ValueError(f"launcher config invalid: {e}") from None
+    srv = doc.server
+    # ``server`` is required by the model; Pydantic already raised if missing.
+    host = _host_of(_https_url(srv.url) or "")
+
+    # Direct URLs — silent drop already handled by model validators.
+    news_url = srv.news_url or ""
+    featured_news_url = srv.featured_news_url or ""
+    mods_registry_url = srv.mods_registry_url or ""
+    addons_registry_url = srv.addons_registry_url or ""
+    addons_registry_urls = srv.addons_registry_urls or [addons_registry_url]
+    assets_registry_url = srv.assets_registry_url or ""
+    trusted_hosts = set(srv.trusted_hosts or [])
+    torrent_root_marker = srv.torrent_root_marker or "WoW.exe"
+
+    embedded_assets = doc.assets or []
+    embedded_mods = doc.mods or []
+    embedded_addons = doc.addons or []
+    addon_git_hosts = doc.addon_git_hosts or []
+    theme = doc.theme
+    discord_url = doc.discord_url
+
+    # server.download block — models provide defaults & silent-drop.
+    dl = srv.download or _LauncherDownloadModel()
+    download_update = bool(dl.update) if dl.update is not None else True
+    download_torrent_url = dl.torrent.torrent_url if dl.torrent else None
+    download_torrent_magnet = dl.torrent.magnet if dl.torrent else None
+    download_torrent_update = dl.torrent.update if dl.torrent else None
+    download_manifest_url = dl.http.manifest if dl.http else None
+    download_client_url = dl.http.client if dl.http else None
+    content_type = dl.content.type if dl.content else "folder"
+
+    def _name_or_host(value: object) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
         return host
 
     server_url = (
-        _https_url(server.get("url"))
-        or _https_url(server.get("base_url"))
-        or _host_of(download_manifest_url)
-        or _host_of(download_torrent_url)
+        _https_url(srv.url)
+        or _https_url(srv.base_url)
+        or _host_of(download_manifest_url or "")
+        or _host_of(download_torrent_url or "")
         or host
     )
 
     return LauncherConfig(
-        server_name=_name_or_host(server.get("name")),
+        server_name=_name_or_host(srv.name),
         server_url=server_url,
-        realm=_name_or_host(server.get("realm")),
+        realm=_name_or_host(srv.realm),
         news_url=news_url,
         featured_news_url=featured_news_url,
         mods_registry_url=mods_registry_url,

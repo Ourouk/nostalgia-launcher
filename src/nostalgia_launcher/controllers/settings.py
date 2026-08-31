@@ -12,13 +12,12 @@ import base64
 import functools
 import os
 import threading
-import urllib.request
-from urllib.error import HTTPError
+
+import httpx
 
 from ..core import config_store, filesystem, launcher, platform_support
-from ..core.constants import UA
 from ..core.errors import describe_net_error
-from ..core.security_http import secure_urlopen
+from ..core.security_http import _check_url, make_secure_client
 from ..services import addons, catalog, mods
 from ..state.events import (
     EventDispatcher,
@@ -627,10 +626,12 @@ class SettingsController:
         if not url:
             return False
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": UA})
-            with secure_urlopen(req, timeout=6):
+            _check_url(url, None)
+            with make_secure_client(timeout=6) as client:
+                resp = client.get(url)
+                resp.raise_for_status()
                 return True
-        except HTTPError:
+        except httpx.HTTPStatusError:
             return True
         except Exception:
             return False

@@ -29,16 +29,27 @@ vetted by `security_http` at fetch time.
 
 import json
 import time
-import urllib.request
+from typing import Literal
 from urllib.parse import urlsplit
 
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
+
 from ..core import config_store, launcher
-from ..core.constants import UA
 from ..core.log_sink import log
-from ..core.security_http import read_capped, secure_urlopen
+from ..core.security_http import _check_url, make_secure_client
 from .sources import hooks as _hooks
 from .sources import kinds as _source_kinds
 from .sources.safety import (  # noqa: F401 (safe_folder re-exported)
+    HttpsUrlStr,
+    SafeFolderStr,
+    SafeRelPathStr,
+    Sha1Str,
     safe_folder,
     safe_relpath,
 )
@@ -222,45 +233,225 @@ def _https_url(u) -> str | None:
     return https_url(u)
 
 
+# ── Pydantic models — authoritative schema for each catalog kind ────────────
+
+
+class _AddonModel(BaseModel):
+    """Pydantic model for an addon entry. Mirrors ``validate_addon``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: SafeFolderStr
+    git: str | None = None
+    branch: str | None = None
+    ref: str | None = None
+    description: str | None = None
+    toc: dict = Field(default_factory=dict)
+    recommended: bool = False
+    blocked: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            raise ValueError("not a dict")
+        raw = dict(data)
+        # name may be in "folder" for legacy entries
+        name = _text(raw.get("name") or raw.get("folder"))
+        raw["name"] = name
+        # git: any non-empty string trimmed, otherwise None
+        git = raw.get("git")
+        if isinstance(git, str) and git.strip():
+            raw["git"] = git.strip()
+        else:
+            raw["git"] = None
+        # branch/ref normalized via safe_ref (invalid → None)
+        raw["branch"] = safe_ref(raw.get("branch"))
+        raw["ref"] = safe_ref(raw.get("ref"))
+        # description: keep only str, else None
+        desc = raw.get("description")
+        raw["description"] = desc if isinstance(desc, str) else None
+        # toc: keep only allowlisted keys
+        toc = raw.get("toc")
+        if isinstance(toc, dict):
+            raw["toc"] = {
+                k: toc[k] for k in ("Title", "Notes", "Interface") if k in toc
+            }
+        else:
+            raw["toc"] = {}
+        raw["recommended"] = bool(raw.get("recommended", False))
+        raw["blocked"] = bool(raw.get("blocked", False))
+        return raw
+
+
+class _AssetModel(BaseModel):
+    """Pydantic model for an asset entry. Mirrors ``validate_asset``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: SafeFolderStr
+    name: str
+    essential: bool = False
+    description: str = ""
+    repo_url: str | None = None
+    url: HttpsUrlStr
+    dest: SafeRelPathStr
+    version: str | None = None
+    sha1: str | None = None
+    size: int | None = None
+    probe: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            raise ValueError("not a dict")
+        raw = dict(data)
+        aid = _text(raw.get("id"))
+        raw["id"] = aid
+        # name defaults to id
+        name = _text(raw.get("name") or aid)
+        raw["name"] = name
+        # repo_url: https only or None
+        raw["repo_url"] = _https_url(raw.get("repo_url"))
+        # url/dest handled by field types; keep raw for validation
+        # version: strip str or None
+        ver = raw.get("version")
+        raw["version"] = ver.strip() if isinstance(ver, str) else None
+        # sha1: normalize, but malformed pin must fail validation
+        sha = _valid_sha1(raw.get("sha1"))
+        raw_sha = raw.get("sha1")
+        if raw_sha is not None and sha is None:
+            raise ValueError("malformed sha1")
+        raw["sha1"] = sha
+        # size: must be int >0, not bool, else None; invalid fails
+        size = raw.get("size")
+        if size is not None:
+            if isinstance(size, bool) or not isinstance(size, int):
+                raise ValueError("size must be int")
+            if size <= 0:
+                raise ValueError("size must be >0")
+        # description: str or ""
+        desc = raw.get("description")
+        raw["description"] = desc if isinstance(desc, str) else ""
+        raw["essential"] = bool(raw.get("essential", False))
+        raw["probe"] = bool(raw.get("probe", False))
+        return raw
+
+
+class _ModModel(BaseModel):
+    """Pydantic model for a mod entry. Mirrors ``validate_mod``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: SafeFolderStr
+    name: str
+    type: Literal["mod", "external-launcher"] = "mod"
+    installation: Literal["required", "user_opt_in"] = "user_opt_in"
+    description: str = ""
+    repo_url: str | None = None
+    source: dict
+    register_dll: list[SafeRelPathStr] | None = None
+    installed_files: list[SafeRelPathStr] | None = None
+    executable: SafeRelPathStr | None = None
+    client_versions: list[str] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            raise ValueError("not a dict")
+        raw = dict(data)
+        mid = _text(raw.get("id"))
+        raw["id"] = mid
+        name = _text(raw.get("name") or mid)
+        if not name:
+            raise ValueError("missing name")
+        raw["name"] = name
+        # type / installation with defaults & normalization
+        t = raw.get("type") or "mod"
+        raw["type"] = t if isinstance(t, str) else "mod"
+        inst = raw.get("installation")
+        if isinstance(inst, str):
+            raw["installation"] = inst.lower()
+        else:
+            raw["installation"] = "user_opt_in"
+        # description
+        desc = raw.get("description")
+        raw["description"] = desc if isinstance(desc, str) else ""
+        raw["repo_url"] = _https_url(raw.get("repo_url"))
+        # source kind must be allowlisted and validated via backend
+        src = raw.get("source")
+        if not isinstance(src, dict):
+            raise ValueError("missing source")
+        kind = src.get("kind")
+        if kind not in MOD_SOURCE_KINDS:
+            raise ValueError("unknown source kind")
+        # delegate to backend validator
+        from .sources import get as _source_get
+
+        try:
+            cleaned = _source_get(kind).validate(src)
+        except Exception as e:
+            raise ValueError(f"source validate failed: {e}") from e
+        if cleaned is None:
+            raise ValueError("source invalid")
+        # Merge hooks validation
+        hooks = src.get("post_install") or []
+        if hooks:
+            if not isinstance(hooks, list) or not all(
+                h in MOD_POST_INSTALL_HOOKS for h in hooks
+            ):
+                raise ValueError("invalid post_install")
+            # backend may have already cleaned; ensure present
+            cleaned = dict(cleaned)
+            if "post_install" not in cleaned:
+                cleaned["post_install"] = list(hooks)
+            else:
+                # keep backend's cleaned version
+                pass
+        raw["source"] = cleaned
+        # optional list fields with validation
+        reg = raw.get("register_dll")
+        if reg is not None:
+            if (
+                not isinstance(reg, list)
+                or not reg
+                or not all(isinstance(d, str) and safe_relpath(d) for d in reg)
+            ):
+                raise ValueError("invalid register_dll")
+        files = raw.get("installed_files")
+        if files is not None:
+            if not isinstance(files, list) or not all(
+                isinstance(f, str) and safe_relpath(f) for f in files
+            ):
+                raise ValueError("invalid installed_files")
+        exe = raw.get("executable")
+        if exe is not None:
+            if not isinstance(exe, str) or not safe_relpath(exe):
+                raise ValueError("invalid executable")
+        cvs = raw.get("client_versions")
+        if cvs is not None:
+            if not isinstance(cvs, list) or not all(
+                isinstance(v, str) for v in cvs
+            ):
+                raise ValueError("invalid client_versions")
+        return raw
+
+
 # ── addon entries ────────────────────────────────────────────────────────────
 
 
 def validate_addon(entry: dict) -> dict | None:
     """Sanitize one addon catalog entry; None when unusable.
 
-    The slim output carries the keys the ADDONS panel/installer consume,
-    plus the optional ``recommended`` / ``blocked`` flags. Git hosts are
-    vetted by the addons service (which owns the host allowlist), so they
-    are only length-checked here.
+    Delegates structural validation to :class:`_AddonModel` — one
+    authoritative schema instead of duplicated procedural checks.
     """
-    name = _text(entry.get("name") or entry.get("folder"))
-    if not safe_folder(name):
+    try:
+        return _AddonModel.model_validate(entry).model_dump()
+    except (ValidationError, ValueError, TypeError):
         return None
-    rec = {
-        "name": name,
-        "git": None,
-        "branch": None,
-        "ref": None,
-        "description": None,
-        "toc": {},
-        "recommended": False,
-        "blocked": False,
-    }
-    git = entry.get("git")
-    if isinstance(git, str) and git.strip():
-        rec["git"] = git.strip()
-    rec["branch"] = safe_ref(entry.get("branch"))
-    rec["ref"] = safe_ref(entry.get("ref"))
-    desc = entry.get("description")
-    rec["description"] = desc if isinstance(desc, str) else None
-    toc = entry.get("toc")
-    if isinstance(toc, dict):
-        rec["toc"] = {
-            k: toc[k] for k in ("Title", "Notes", "Interface") if k in toc
-        }
-    rec["recommended"] = bool(entry.get("recommended", False))
-    rec["blocked"] = bool(entry.get("blocked", False))
-    return rec
 
 
 def merge_addons(remote: list, custom: list) -> list:
@@ -290,99 +481,17 @@ def merge_addons(remote: list, custom: list) -> list:
 
 
 def validate_mod(entry: dict) -> dict | None:
-    """Sanitize one mod catalog entry into the shape the mod installer uses;
-    None when unusable or when a field would break the installer.
-
-    Kind-specific source validation is delegated to the registered backend
-    (`services/sources`), so a new backend becomes catalog-usable without
-    touching this function.
-    """
-    if not isinstance(entry, dict):
-        return None
-    mid = _text(entry.get("id"))
-    if not safe_folder(mid):
-        return None
-    name = _text(entry.get("name") or mid)
-    if not name:
-        return None
-    source = entry.get("source")
-    if not isinstance(source, dict):
-        return None
-    kind = source.get("kind")
-    if kind not in MOD_SOURCE_KINDS:
-        return None
-
-    mod = {
-        "id": mid,
-        "name": name,
-        # Explicit null behaves like absence (the documented "default mod").
-        "type": entry.get("type") or "mod",
-        "installation": _mod_installation(entry),
-        "description": (
-            entry.get("description")
-            if isinstance(entry.get("description"), str)
-            else ""
-        ),
-        "repo_url": _https_url(entry.get("repo_url")),
-        "source": {},
-    }
-    if mod["type"] not in MOD_TYPES:
-        return None
-    if mod["installation"] not in MOD_INSTALLATIONS:
-        return None
-    hooks = source.get("post_install") or []
-    if hooks:
-        if not isinstance(hooks, list) or not all(
-            h in MOD_POST_INSTALL_HOOKS for h in hooks
-        ):
-            return None
-        mod["source"]["post_install"] = list(hooks)
-
-    from .sources import get as _source_get
-
+    """Sanitize one mod catalog entry via :class:`_ModModel`."""
     try:
-        cleaned_source = _source_get(kind).validate(source)
-    except Exception:
+        m = _ModModel.model_validate(entry)
+        data = m.model_dump(exclude_none=True)
+        # ``repo_url`` was historically always present (None when invalid)
+        # — ensure it survives ``exclude_none``.
+        if "repo_url" not in data:
+            data["repo_url"] = None
+        return data
+    except (ValidationError, ValueError, TypeError):
         return None
-    if cleaned_source is None:
-        return None
-    # The backend owns everything under "source"; keep only its cleaned
-    # view plus any hooks validated above.
-    mod["source"].update(cleaned_source)
-    if hooks and "post_install" not in mod["source"]:
-        mod["source"]["post_install"] = list(hooks)
-
-    register = entry.get("register_dll")
-    if register is not None:
-        if (
-            not isinstance(register, list)
-            or not register
-            or not all(
-                isinstance(d, str) and safe_relpath(d) for d in register
-            )
-        ):
-            return None
-        mod["register_dll"] = list(register)
-    files = entry.get("installed_files")
-    if files is not None:
-        if not isinstance(files, list) or not all(
-            isinstance(f, str) and safe_relpath(f) for f in files
-        ):
-            return None
-        mod["installed_files"] = list(files)
-    executable = entry.get("executable")
-    if executable is not None:
-        if not isinstance(executable, str) or not safe_relpath(executable):
-            return None
-        mod["executable"] = executable
-    client_versions = entry.get("client_versions")
-    if client_versions is not None:
-        if not isinstance(client_versions, list) or not all(
-            isinstance(v, str) for v in client_versions
-        ):
-            return None
-        mod["client_versions"] = list(client_versions)
-    return mod
 
 
 def _mod_installation(entry: dict) -> str:
@@ -445,52 +554,11 @@ def merge_by_key(remote: list, custom: list, fields) -> list:
 
 
 def validate_asset(entry: dict) -> dict | None:
-    """Sanitize one asset catalog entry (server content patches such as
-    MPQs); None when unusable.
-
-    An asset is a single file fetched from a pinned HTTPS URL into a safe
-    relative destination inside the client folder. The optional integrity /
-    update metadata (`sha1` / `size` / `version` / `probe`) drives both the
-    download check and the staleness verdict — see `services/assets.py`
-    for the exact precedence.
-    """
-    if not isinstance(entry, dict):
+    """Sanitize one asset catalog entry via :class:`_AssetModel`."""
+    try:
+        return _AssetModel.model_validate(entry).model_dump()
+    except (ValidationError, ValueError, TypeError):
         return None
-    aid = _text(entry.get("id"))
-    if not safe_folder(aid):
-        return None
-    name = _text(entry.get("name") or aid)
-    if not name:
-        return None
-    url = _https_url(entry.get("url"))
-    dest = entry.get("dest")
-    if not url or not (isinstance(dest, str) and safe_relpath(dest)):
-        return None
-    sha1 = _valid_sha1(entry.get("sha1"))
-    raw_sha1 = entry.get("sha1")
-    if raw_sha1 is not None and sha1 is None:
-        return None  # a pin was given but it is malformed — refuse the entry
-    size = entry.get("size")
-    if size is not None and (
-        isinstance(size, bool) or not isinstance(size, int) or size <= 0
-    ):
-        return None
-    version = entry.get("version")
-    version = version.strip() if isinstance(version, str) else None
-    desc = entry.get("description")
-    return {
-        "id": aid,
-        "name": name,
-        "essential": bool(entry.get("essential", False)),
-        "description": desc if isinstance(desc, str) else "",
-        "repo_url": _https_url(entry.get("repo_url")),
-        "url": url,
-        "dest": dest,
-        "version": version,
-        "sha1": sha1,
-        "size": size,
-        "probe": bool(entry.get("probe", False)),
-    }
 
 
 def merge_assets(remote: list, custom: list) -> list:
@@ -526,9 +594,15 @@ def fetch_url_catalog(
             f"{kind.capitalize()} catalog URL is not configured."
         )
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with secure_urlopen(req, timeout=10) as r:
-            raw = json.loads(read_capped(r, 2 * 1024 * 1024))
+        _check_url(url, None)
+        with make_secure_client(timeout=10) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            if len(resp.content) > 2 * 1024 * 1024:
+                raise RuntimeError(
+                    f"Response exceeded the {2 * 1024} KiB limit."
+                )
+            raw = json.loads(resp.content)
     except Exception:
         if cached is not None:
             return cached

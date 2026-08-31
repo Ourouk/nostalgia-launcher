@@ -1,7 +1,5 @@
 """Unit tests for the hardened HTTP layer."""
 
-import urllib.request
-
 import pytest
 
 import nostalgia_launcher.core.security_http as security_http
@@ -56,30 +54,20 @@ def test_allowed_download_hosts_include_launcher_and_git_hosts():
     assert "codeberg.org" in hosts
 
 
-def test_redirect_handler_forbids_https_downgrade():
-    handler = security_http._HttpsOnlyRedirectHandler()
+def test_enforce_https_request_forbids_http():
+    import httpx
+
+    req = httpx.Request("GET", "http://b.example.com/y")
     with pytest.raises(RuntimeError, match="non-HTTPS"):
-        handler.redirect_request(
-            urllib.request.Request("https://a.example.com/x"),
-            fp=None,
-            code=302,
-            msg="Found",
-            headers={"Location": "http://b.example.com/y"},
-            newurl="http://b.example.com/y",
-        )
+        security_http._enforce_https_request(req)
 
 
-def test_redirect_handler_allows_https_redirect_target():
-    handler = security_http._HttpsOnlyRedirectHandler()
-    req = handler.redirect_request(
-        urllib.request.Request("https://example.com/x"),
-        fp=None,
-        code=302,
-        msg="Found",
-        headers={"Location": "https://cdn.example.com/y"},
-        newurl="https://cdn.example.com/y",
-    )
-    assert req.full_url == "https://cdn.example.com/y"
+def test_enforce_https_request_allows_https():
+    import httpx
+
+    req = httpx.Request("GET", "https://cdn.example.com/y")
+    # Should not raise
+    security_http._enforce_https_request(req)
 
 
 class _FakeResp:

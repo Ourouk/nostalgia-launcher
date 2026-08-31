@@ -33,12 +33,32 @@ def fmt_speed(bytes_per_sec: float) -> str:
 
 def parse_version(v: str) -> tuple:
     """'v1.2.0' → (1, 2, 0); each dot-part contributes its LEADING digit run
-    ('2rc1' → 2, 'rc1' → 0) so qualifiers can't splice digits together."""
-    parts = []
-    for p in (v or "").strip().lstrip("vV").split("."):
-        m = re.match(r"\d+", p)
-        parts.append(int(m.group(0)) if m else 0)
-    return tuple(parts) or (0,)
+    ('2rc1' → 2, 'rc1' → 0) so qualifiers can't splice digits together.
+
+    Delegates to :mod:`packaging.version` when the tag is PEP 440
+    compliant (preserving the historical tuple contract) and falls back to
+    the original leading-digit heuristic for non-PEP-440 tags such as
+    ``"rc1"``.
+    """
+    raw = (v or "").strip().lstrip("vV")
+    if not raw:
+        return (0,)
+    try:
+        from packaging.version import Version
+
+        ver = Version(raw)
+        # ``Version.release`` is the normalized numeric tuple, e.g.
+        # ``"1.2.0" → (1,2,0)`` and ``"1.10b2" → (1,10)``.
+        release = ver.release
+        return release if release else (0,)
+    except Exception:
+        # Fallback for tags that packaging cannot parse (e.g. bare
+        # qualifiers or unusual suffixes) — use the historical heuristic.
+        parts: list[int] = []
+        for p in raw.split("."):
+            m = re.match(r"\d+", p)
+            parts.append(int(m.group(0)) if m else 0)
+        return tuple(parts) or (0,)
 
 
 def same_git_repo(a, b) -> bool:

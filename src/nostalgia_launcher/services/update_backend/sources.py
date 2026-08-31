@@ -7,13 +7,16 @@ separate from the worker engines so both `VerifyWorker` and `UpdateWorker`
 share one definition; `http_update` re-exports these names for compatibility.
 """
 
-import urllib.request
 from typing import NamedTuple
-from urllib.error import HTTPError
 
-from ...core.constants import UA
+import httpx
+
 from ...core.log_sink import debug_emit
-from ...core.security_http import allowed_download_hosts, secure_urlopen
+from ...core.security_http import (
+    _check_url,
+    allowed_download_hosts,
+    make_secure_client,
+)
 
 
 class DownloadSource(NamedTuple):
@@ -38,16 +41,13 @@ def _source_reachable(url: str) -> bool:
     """Whether a download source answers at `url`. Any HTTP response — even an
     error status (4xx/5xx) — proves the host is reachable; only transport
     failures (DNS, refused, timeout) count as down."""
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
     try:
-        with secure_urlopen(
-            req,
-            timeout=5,
-            allowed_hosts=allowed_download_hosts(),
-        ) as r:
-            r.read(1)
+        _check_url(url, allowed_download_hosts())
+        with make_secure_client(timeout=5) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
         return True
-    except HTTPError:
+    except httpx.HTTPStatusError:
         return True
     except Exception:
         return False

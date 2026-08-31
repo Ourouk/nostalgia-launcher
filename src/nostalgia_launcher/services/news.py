@@ -4,11 +4,10 @@ Endpoints come from the launcher configuration (`core/launcher.py`).
 """
 
 import json
-import urllib.request
 
 from ..core import launcher
-from ..core.constants import NEWS_TIMEOUT, UA
-from ..core.security_http import read_capped, secure_urlopen
+from ..core.constants import NEWS_TIMEOUT
+from ..core.security_http import _check_url, make_secure_client
 
 
 def fetch_news_items() -> list:
@@ -19,11 +18,14 @@ def fetch_news_items() -> list:
     """
     if not launcher.news_url_explicit():
         return []
-    req = urllib.request.Request(
-        launcher.news_url(), headers={"User-Agent": UA}
-    )
-    with secure_urlopen(req, timeout=NEWS_TIMEOUT) as r:
-        data = json.loads(read_capped(r, 1 * 1024 * 1024))
+    url = launcher.news_url()
+    _check_url(url, None)
+    with make_secure_client(timeout=NEWS_TIMEOUT) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        if len(resp.content) > 1 * 1024 * 1024:
+            raise RuntimeError("Response exceeded the 1024 KiB limit.")
+        data = json.loads(resp.content)
     # A shape-broken feed degrades to "no news" — never a crash in the
     # fetch path that the controller would misreport as a network failure.
     items = (
@@ -46,9 +48,12 @@ def fetch_featured_post() -> dict | None:
     """
     if not launcher.featured_news_url_explicit():
         return None
-    req = urllib.request.Request(
-        launcher.featured_news_url(), headers={"User-Agent": UA}
-    )
-    with secure_urlopen(req, timeout=NEWS_TIMEOUT) as r:
-        data = json.loads(read_capped(r, 1 * 1024 * 1024))
+    url = launcher.featured_news_url()
+    _check_url(url, None)
+    with make_secure_client(timeout=NEWS_TIMEOUT) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        if len(resp.content) > 1 * 1024 * 1024:
+            raise RuntimeError("Response exceeded the 1024 KiB limit.")
+        data = json.loads(resp.content)
     return data if isinstance(data, dict) and data.get("id") else None

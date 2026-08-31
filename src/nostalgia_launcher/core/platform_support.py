@@ -61,6 +61,11 @@ def config_dir() -> str:
     shared between users): Linux uses a hidden per-user dir
     (~/.nostalgia-launcher), Windows uses the roaming %APPDATA% dir, macOS
     uses ~/Library/Application Support.
+
+    Note: the Linux config dir intentionally does **not** follow XDG
+    (``~/.nostalgia-launcher`` is the legacy path) — this predates
+    ``platformdirs`` and is kept for backward compatibility. Cache/data dirs
+    below delegate to ``platformdirs`` where semantics align.
     """
     if is_windows():
         return os.path.join(_windows_roaming_dir(), "NostalgiaLauncher")
@@ -76,23 +81,25 @@ def config_dir() -> str:
 def cache_dir() -> str:
     """OS-appropriate directory for the SHA-1 hash cache — disposable data,
     kept separate from the config. Windows uses %LOCALAPPDATA%, macOS uses
-    ~/Library/Caches and Linux uses the XDG cache dir."""
+    ~/Library/Caches and Linux uses the XDG cache dir (via platformdirs)."""
     if is_windows():
         return os.path.join(_windows_local_dir(), "NostalgiaLauncher")
     if is_macos():
         home = os.environ.get("HOME") or os.path.expanduser("~")
         return os.path.join(home, "Library", "Caches", "NostalgiaLauncher")
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
-        os.path.expanduser("~"), ".cache"
-    )
-    return os.path.join(base, "nostalgia-launcher")
+    # Linux / generic Unix: delegate XDG resolution to platformdirs
+    # (XDG_CACHE_HOME → ~/.cache fallback, per XDG spec) instead of
+    # hand-rolling the same logic.
+    from platformdirs.unix import Unix
+
+    return Unix(appname="nostalgia-launcher").user_cache_dir
 
 
 def data_dir() -> str:
     """OS-appropriate directory for persistent, non-config runtime data the
     launcher owns (e.g. the umu-launcher WINEPREFIX). Windows uses
     %LOCALAPPDATA%, macOS uses ~/Library/Application Support and Linux uses
-    the XDG data dir."""
+    the XDG data dir (via platformdirs)."""
     if is_windows():
         return os.path.join(_windows_local_dir(), "NostalgiaLauncher")
     if is_macos():
@@ -100,10 +107,9 @@ def data_dir() -> str:
         return os.path.join(
             home, "Library", "Application Support", "NostalgiaLauncher"
         )
-    base = os.environ.get("XDG_DATA_HOME") or os.path.join(
-        os.path.expanduser("~"), ".local", "share"
-    )
-    return os.path.join(base, "nostalgia-launcher")
+    from platformdirs.unix import Unix
+
+    return Unix(appname="nostalgia-launcher").user_data_dir
 
 
 def _windows_roaming_dir() -> str:
