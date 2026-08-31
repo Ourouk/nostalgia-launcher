@@ -11,7 +11,6 @@ exposed as attributes for the settings and update workflows.
 """
 
 import os
-import queue
 import sys
 import threading
 import webbrowser
@@ -36,7 +35,7 @@ from PySide6.QtWidgets import (
 
 from ...core import launcher, profiles
 from ...core.constants import UPDATER_VERSION
-from ...core.log_sink import _LOG_Q, log
+from ...core.log_sink import log
 from ...services import logo
 from ...state.events import LogMessage
 from . import metrics
@@ -148,19 +147,11 @@ class MainWindow(QMainWindow):
         self._sync_folder_label()
         self._refresh_ready_state()
 
-        # Session-log drain: the global log_sink queue receives lines written
-        # from worker threads; a periodic QTimer drains it here and feeds the
-        # shared buffer.
-        self._logTimer = QTimer(self)
-        self._logTimer.setInterval(50)
-        self._logTimer.timeout.connect(self._drain_log_q)
-        self._logTimer.start()
-
-        # Update workers publish into UpdateController's queues; poll them on
-        # the Qt event loop so verify/update progress, completion markers and
-        # the self-update-available flag are actually processed.
+        # Workers post typed events to the shared EventDispatcher; the
+        # ControllerBridge drains them every 50 ms. Only the self-update
+        # availability label still needs a lightweight poll.
         self._pollTimer = QTimer(self)
-        self._pollTimer.setInterval(50)
+        self._pollTimer.setInterval(500)
         self._pollTimer.timeout.connect(self._poll_updater)
         self._pollTimer.start()
 
@@ -724,19 +715,8 @@ class MainWindow(QMainWindow):
     def _on_log_message(self, text: str, tag: str):
         self._render_log(text, tag)
 
-    def _drain_log_q(self):
-        """Drain the global worker log queue into the session buffer."""
-        try:
-            while True:
-                msg, tag = _LOG_Q.get_nowait()
-                self._render_log(msg, tag)
-        except queue.Empty:
-            pass
-
     def _poll_updater(self):
-        """Process the update controller's worker queues and render the
-        self-update availability flag (driven by _pollTimer)."""
-        self._hub.updater.poll()
+        """Render the self-update availability label (driven by _pollTimer)."""
         available = self._hub.updater.updater_update_available
         if available != self._updateAvailableShown:
             self._updateAvailableShown = available
@@ -1055,7 +1035,6 @@ class MainWindow(QMainWindow):
         self._hub.close()
 
     def _stop_timers(self):
-        self._logTimer.stop()
         self._pollTimer.stop()
         for timer in self._oneShotTimers:
             timer.stop()

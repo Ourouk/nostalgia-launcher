@@ -221,11 +221,12 @@ def catalog_last_updated() -> float | None:
     """The newest per-URL catalog fetch timestamp (epoch), or None when no
     catalog was ever fetched. Network-free."""
     cache = _config_store.load_config().get("addons_catalog_cache", {}) or {}
-    stamps = [
-        e.get("timestamp")
-        for e in cache.values()
-        if isinstance(e, dict) and isinstance(e.get("timestamp"), (int, float))
-    ]
+    stamps: list[float] = []
+    for e in cache.values():
+        if isinstance(e, dict):
+            ts = e.get("timestamp")
+            if isinstance(ts, (int, float)):
+                stamps.append(float(ts))
     return max(stamps) if stamps else None
 
 

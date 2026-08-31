@@ -1,4 +1,4 @@
-"""Unit tests for the global log sink: queue, stdout debug mirror and the
+"""Unit tests for the global log sink: stdout debug mirror and the
 optional on-disk session-log file (configure_file / read_lines)."""
 
 import os
@@ -9,18 +9,12 @@ import nostalgia_launcher.core.log_sink as log_sink
 from nostalgia_launcher.core.log_sink import debug_emit, debug_enabled, log
 
 
-def _drain():
-    q = log_sink._LOG_Q
-    while not q.empty():
-        q.get()
-
-
 @pytest.fixture(autouse=True)
 def _quiet(monkeypatch):
     monkeypatch.delenv("NOSTALGIA_DEBUG", raising=False)
-    _drain()
+    log_sink._dispatcher = None
     yield
-    _drain()
+    log_sink._dispatcher = None
 
 
 @pytest.fixture
@@ -78,7 +72,7 @@ def test_debug_emit_never_raises_on_bad_stdout(monkeypatch):
     debug_emit("boom")  # must not raise
 
 
-# ── file sink ─────────────────────────────────────────────────────────────
+# ── file sink ─────────────────────────────────────────────────────
 
 
 def test_unconfigured_sink_writes_nothing():

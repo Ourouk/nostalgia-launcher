@@ -72,22 +72,32 @@ def _check_url(url: str, allowed_hosts):
 
 
 class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Require every redirect target to stay HTTPS (blocks an https→http
-    downgrade). The host allowlist is deliberately *not* re-applied on
-    redirects: an allowlisted host controls its own redirects — legitimately
-    to its CDN (e.g. the server→its dl host, github.com→codeload) — and TLS
-    protects wherever it lands. The allowlist's job is to vet the *initial*
-    URL (against a tampered API response), which secure_urlopen still does."""
+    """Require every redirect target to stay HTTPS and, when an allowlist
+    was given for the initial URL, to stay inside the same trust boundary.
+    This blocks an https→http downgrade and prevents an allowlisted host
+    from redirecting the download to an attacker-controlled host via
+    Location: https://evil.example.
+    """
+
+    def __init__(self, allowed_hosts=None):
+        super().__init__()
+        if allowed_hosts is not None:
+            self.allowed_hosts = {h.lower() for h in allowed_hosts}
+        else:
+            self.allowed_hosts = None
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        _check_url(newurl, None)  # HTTPS-only, no host check
+        _check_url(newurl, self.allowed_hosts)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 # Shared opener with the hardened TLS context and the HTTPS-only redirect
-# guard, built once.
+# guard, built once. Used only when no host allowlist is required;
+# secure_urlopen builds a per-request opener when an allowlist is given
+# so redirects are checked against the same allowlist as the initial URL.
 _SECURE_OPENER = urllib.request.build_opener(
-    urllib.request.HTTPSHandler(context=SSL_CTX), _HttpsOnlyRedirectHandler()
+    urllib.request.HTTPSHandler(context=SSL_CTX),
+    _HttpsOnlyRedirectHandler(),
 )
 
 
@@ -111,8 +121,14 @@ def read_capped(r, max_bytes: int) -> bytes:
 
 def secure_urlopen(req, timeout, allowed_hosts=None):
     """urlopen wrapper that enforces HTTPS + an optional host allowlist on the
-    initial URL, keeps redirects on HTTPS, and uses the hardened TLS context.
-    `req` may be a URL string or a urllib Request."""
+    initial URL, keeps redirects on HTTPS + allowlisted hosts, and uses the
+    hardened TLS context. `req` may be a URL string or a urllib Request."""
     url = req.full_url if isinstance(req, urllib.request.Request) else req
     _check_url(url, allowed_hosts)
-    return _SECURE_OPENER.open(req, timeout=timeout)
+    if allowed_hosts is None:
+        return _SECURE_OPENER.open(req, timeout=timeout)
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=SSL_CTX),
+        _HttpsOnlyRedirectHandler(allowed_hosts),
+    )
+    return opener.open(req, timeout=timeout)

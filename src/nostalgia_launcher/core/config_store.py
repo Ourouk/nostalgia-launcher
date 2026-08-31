@@ -26,11 +26,20 @@ def configure(
 ):
     """Point the store at the on-disk config and hash-cache files."""
     global config_file, cache_file
-    config_file = cfg_file
-    cache_file = cache
+    with _CONFIG_LOCK:
+        if config_file or cache_file:
+            sys.stderr.write(
+                f"[config] configure() called twice "
+                f"({config_file!r} -> {cfg_file!r})\n"
+            )
+        config_file = cfg_file
+        cache_file = cache
 
 
 def load_config() -> dict:
+    if not config_file:
+        sys.stderr.write("[config] load_config() called before configure()\n")
+        return {}
     try:
         with open(config_file, encoding="utf-8") as f:
             return json.load(f)

@@ -336,7 +336,7 @@ the QLocalServer guard remains authoritative there.
   downloads the *whole* torrent (`TorrentDownloader.download(url, None)`),
   whose piece hashes (the `.torrent` arrived over TLS, or the metadata hashed
   to the magnet's btih) stand in for the manifest's
-  per-file SHA-1. It posts `markers.TORRENT_RECOVERY_DONE` (controller keeps
+  per-file SHA-1. It posts `TorrentRecoveryDone` (controller keeps
   `manifest_available=False`); a failed verify offers this via an enabled
   UPDATE button when `torrent_recovery_available()` (`LauncherConfig.has_torrent()`
   + libtorrent present, network-free) and the client isn't known-ready.
@@ -355,21 +355,20 @@ the QLocalServer guard remains authoritative there.
 
 ## Update lifecycle & game launch
 
-- **Update workers are queue-based**: `UpdateController.start_verify()/start_update()`
-  write to internal queues drained by `UpdateController.poll()`. The Qt
-  `MainWindow._pollTimer` calls `hub.updater.poll()` every 50 ms — if you add a
-  new path that bypasses the window, remember the controller is not polled
-  automatically. Completion markers only clear the busy state via poll.
-- **Marker protocol is constants-only** (`services/update_backend/markers.py`):
-  every worker→controller control string (`__DONE__`, `__TORRENT_*__`,
-  `__VERSION__…`) must be referenced via its `markers.*` constant — emit sites
-  put `(markers.X, tag)` on the log queue, and
-  `UpdateController._handle_log` dispatches through the `_MARKER_HANDLERS`
-  dict (one `_on_*` method per marker). Adding a lifecycle outcome = new
-  constant + `_on_*` method + table entry; `tests/test_markers.py` fails the
-  suite on raw `"__…__"` literals anywhere else in `src/`, on unhandled
-  markers, and on table entries without a constant. Never change marker
-  strings — they are a wire format shared with tests.
+- **Update workers are event-driven**: `VerifyWorker`/`UpdateWorker`
+  post typed lifecycle events (`ManifestAvailable`, `VerificationUpToDate`,
+  `DiffTreeReady`, `TorrentReachable`/`TorrentDiffReady`/`TorrentUpToDate`,
+  `UpdateCompleted`/`UpdateFailed`, `ClientVersionReady`, etc.) directly to
+  the shared `EventDispatcher`.   `UpdateController` subscribes via
+  `_on_event` and mutates `UpdateState`; the Qt `ControllerBridge` drains the
+  dispatcher every 50 ms and re-emits Qt signals. The single path is
+  `worker → typed event → EventDispatcher → ControllerBridge → Qt`.
+- **Typed lifecycle events only** (`state/events.py`): every worker→controller
+  outcome is a dataclass (payload typed, e.g. `DiffTreeReady(tree)` carries the
+  tree, `TorrentDiffReady(stale)` the stale list). Adding a lifecycle outcome
+  = new dataclass + `UpdateController._on_event` branch + handler. The old
+  `services/update_backend/markers.py` string protocol (`__DONE__`,
+  `__TORRENT_*__`, `__VERSION__…`) has been deleted.
 - **Linux game launch goes through umu-launcher** (`services/umu.py`): the PLAY
   button is gated on `core.platform_support.can_launch_client()`, which is now
   True on Windows (native) and on Linux only when `umu.umu_available()` finds
@@ -414,5 +413,5 @@ the QLocalServer guard remains authoritative there.
   TERMINATE button (`_terminate_game()` → `umu.kill_game()`: SIGTERM to the
   process group, SIGKILL after 2 s). A second `launch_game()` while one is
   running is refused.
-- Keep the poll/log-drain timers stopped and workers cancelled in
+- Keep the bridge drain timer stopped and workers cancelled in
   `MainWindow` teardown (idempotent `_teardown()`).

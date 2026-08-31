@@ -143,8 +143,11 @@ class GitArchiveBackend(SourceBackend):
     ) -> str | None:
         """The remote commit sha for an entry carrying {git, branch, ref}."""
         src = entry.get("source") or entry
+        git = src.get("git")
+        if not isinstance(git, str):
+            return None
         return self.remote_sha(
-            src.get("git"),
+            git,
             branch=src.get("branch"),
             ref=src.get("ref"),
             force=force,
@@ -159,8 +162,10 @@ class GitArchiveBackend(SourceBackend):
     ):
         src = entry.get("source") or entry
         git_url = src.get("git")
+        if not isinstance(git_url, str) or not git_url:
+            raise RuntimeError("git_archive requires a git URL")
         sha = src.get("sha1") or src.get("sha")
-        if not sha:
+        if not isinstance(sha, str) or not sha:
             raise RuntimeError(
                 "git_archive requires a pinned commit sha to fetch"
             )

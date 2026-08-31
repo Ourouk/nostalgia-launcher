@@ -291,7 +291,7 @@ def _valid_host(host: str) -> bool:
     return True
 
 
-def _parse_root_marker(value) -> str:
+def _parse_root_marker(value: object) -> str:
     """Validate `server.torrent_root_marker` — the filename used to detect
     the torrent root. Must be a single unsafe-free name. Defaults to
     `WoW.exe` for Vanilla WoW client compatibility."""
@@ -302,8 +302,10 @@ def _parse_root_marker(value) -> str:
     return "WoW.exe"
 
 
-def _https_url(value: str) -> str | None:
-    url = (value or "").strip().rstrip("/")
+def _https_url(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    url = value.strip().rstrip("/")
     if not url:
         return None
     parts = urlsplit(url)
@@ -312,13 +314,15 @@ def _https_url(value: str) -> str | None:
     return url
 
 
-def _magnet_uri(value: str) -> str | None:
+def _magnet_uri(value: object) -> str | None:
     """Validate a ``magnet:`` URI: the scheme must be magnet and the query
     must carry at least one ``xt`` topic of ``urn:btih:`` (v1) or
     ``urn:btmh:`` (v2) — the info-hash that authenticates swarm-served
     metadata. Anything else is dropped (same silent-drop convention as
     non-HTTPS URLs)."""
-    uri = (value or "").strip()
+    if not isinstance(value, str):
+        return None
+    uri = value.strip()
     if not uri:
         return None
     parts = urlsplit(uri)
@@ -332,14 +336,14 @@ def _magnet_uri(value: str) -> str | None:
     return uri
 
 
-def _host_of(url: str) -> str:
+def _host_of(url: object) -> str:
     """The hostname of a URL, or '' when it isn't a parseable http(s) URL."""
-    if not url:
+    if not isinstance(url, str) or not url:
         return ""
     return urlsplit(url).hostname or ""
 
 
-def _derive(data: dict) -> LauncherConfig:
+def _derive(data: dict[str, object]) -> LauncherConfig:
     if not isinstance(data, dict):
         raise ValueError("launcher config must be a JSON object")
     server = data.get("server")
@@ -724,6 +728,11 @@ def configure(path: str | None = None) -> tuple["LauncherConfig | None", str]:
     auto-discovered file). Returns (config, error); exactly one is set."""
     global _config, _path, _error
     with _LOCK:
+        if _config is not None or _path:
+            log(
+                f"launcher.configure() called twice ({_path!r} -> {path!r})",
+                "dim",
+            )
         path = path or _auto_path()
         if not path:
             _config, _path, _error = (
@@ -756,6 +765,11 @@ def configure_from_dict(data: dict) -> "LauncherConfig | None":
     invalid; the error is recorded for config_error()."""
     global _config, _path, _error
     with _LOCK:
+        if _config is not None or _path:
+            log(
+                f"launcher.configure_from_dict() called twice ({_path!r})",
+                "dim",
+            )
         try:
             config = _derive(data)
         except Exception as e:

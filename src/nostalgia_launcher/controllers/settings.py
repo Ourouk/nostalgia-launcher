@@ -229,7 +229,7 @@ class SettingsController:
             "Add-MpPreference -ExclusionPath $p"
         )
         encoded = base64.b64encode(cmd.encode("utf-16-le")).decode("ascii")
-        r = ctypes.windll.shell32.ShellExecuteW(
+        r = ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
             None,
             "runas",
             "powershell.exe",

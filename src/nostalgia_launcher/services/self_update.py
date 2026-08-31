@@ -66,7 +66,7 @@ def fetch_updater_latest_tag(force: bool = False) -> str | None:
     return tag
 
 
-def updater_update_available(latest_tag: str) -> bool:
+def updater_update_available(latest_tag: str | None) -> bool:
     if not latest_tag:
         return False
     a, b = parse_version(latest_tag), parse_version(UPDATER_VERSION)
