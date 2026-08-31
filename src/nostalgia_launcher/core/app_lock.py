@@ -50,11 +50,11 @@ def lock_file_for(state_path: str) -> str:
 
 def _try_lock(fd):
     if _is_windows():
-        import msvcrt
+        import msvcrt  # type: ignore[import-not-found]
 
         # Lock exactly one byte at the current position (0): the file is
         # never written, the region is purely a mutex token.
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
     else:
         import fcntl
 
@@ -64,10 +64,10 @@ def _try_lock(fd):
 def _unlock_and_close(fd):
     try:
         if _is_windows():
-            import msvcrt
+            import msvcrt  # type: ignore[import-not-found]
 
             os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
         else:
             import fcntl
 

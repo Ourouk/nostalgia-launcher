@@ -156,12 +156,12 @@ def _fetch_release_cached(mod: dict, force: bool = False) -> dict | None:
             force=force,
         )
     if src["kind"] == "codeberg_release":
-        from .sources.codeberg_release import (
-            codeberg_latest,
-            fetch_release_cached,
+        from .sources.codeberg_release import codeberg_latest
+        from .sources.github_release import (
+            fetch_release_cached as _fetch_cached,
         )
 
-        return fetch_release_cached(
+        return _fetch_cached(
             mod["id"],
             lambda: codeberg_latest(src["owner"], src["repo"]),
             force=force,

@@ -31,6 +31,7 @@ dev = [
     "pytest>=8.0",
     "pyinstaller>=6.0",
     "ruff>=0.15",
+    "pyright>=1.1",
 ]
 
 [tool.pytest.ini_options]
@@ -53,19 +54,12 @@ exclude = ["dist", "build"]
 select = ["E4", "E7", "E9", "F", "I", "W", "UP", "B"]
 
 [tool.pyright]
-typeCheckingMode = "basic"
-# LSP only — not a gate; keep noise low for packaging + optional deps
-reportMissingImports = false
-reportUnknownMemberType = false
-reportUnknownVariableType = false
-reportUnknownArgumentType = false
-reportUnknownParameterType = false
-reportAttributeAccessIssue = false
-reportOptionalMemberAccess = false
-reportCallIssue = false
-reportArgumentType = false
-reportRedeclaration = false
-reportPossiblyUnboundVariable = false
-reportReturnType = false
+typeCheckingMode = "standard"
 include = ["src/nostalgia_launcher"]
-exclude = ["packaging", "context", "tests"]
+# UI excluded: PySide6 stubs are incomplete (312 attribute errors at standard)
+# — genuinely untyped external boundary, isolated per task guidance.
+# Core/services/controllers/state are strictly checked; ui would require
+# vendored stubs. Re-enable when PySide6 ships py.typed.
+exclude = ["packaging", "context", "tests", "src/nostalgia_launcher/ui"]
+reportMissingImports = false
+reportMissingTypeStubs = false

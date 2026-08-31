@@ -6,7 +6,13 @@ threading. Field names match the on-disk config keys and the session records
 the controllers keep.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from .manifest import ManifestNode
 
 # ── update / verification flow ────────────────────────────────────────────────
 
@@ -30,8 +36,8 @@ class UpdateState:
     running: bool = False
     client_ready: bool = False
     manifest_available: bool = False
-    diff_nodes: list | None = None
-    torrent_stale: list | None = None
+    diff_nodes: list[ManifestNode] | None = None
+    torrent_stale: list[str] | None = None
     torrent_reachable: bool | None = None
     torrent_error: str | None = None
     # Folder the last verify ran against — start_update refuses to apply a
@@ -47,11 +53,21 @@ class UpdateState:
 
 
 @dataclass
+class NewsResult:
+    """One render snapshot carried by a NewsLoaded event."""
+
+    data: dict[str, object] | list[dict[str, object]] | None = None
+    loading: bool = False
+    error: str = ""
+    configured: bool = True
+
+
+@dataclass
 class NewsState:
     """Cached news feed (_featured, _news_items, _feat_ts, _news_ts)."""
 
-    featured: dict | None = None
-    items: list | None = None
+    featured: dict[str, object] | None = None
+    items: list[dict[str, object]] | None = None
     feat_ts: float = 0.0
     news_ts: float = 0.0
 
@@ -70,7 +86,7 @@ class ModState:
 
     enabled: bool = False
     installed_version: str | None = None
-    installed_files: list = field(default_factory=list)
+    installed_files: list[str] = field(default_factory=list)
     error: str | None = None
     present: bool = False
 
@@ -96,7 +112,7 @@ class ModsState:
     latest_versions: dict[str, str] = field(default_factory=dict)
     pending: dict[str, ModPending] = field(default_factory=dict)
     updates_count: int = 0
-    unknown: list = field(default_factory=list)
+    unknown: list[str] = field(default_factory=list)
 
     def latest_version(self, mod_id: str) -> str | None:
         return self.latest_versions.get(mod_id)
@@ -131,8 +147,8 @@ class AssetState:
 
     enabled: bool = False
     installed_version: str | None = None
-    installed_files: list = field(default_factory=list)
-    probe_state: dict = field(default_factory=dict)
+    installed_files: list[str] = field(default_factory=list)
+    probe_state: dict[str, object] = field(default_factory=dict)
     error: str | None = None
     present: bool = False
 
@@ -174,21 +190,47 @@ class AddonState:
     git: str | None = None
     branch: str | None = None
     ref: str | None = None
-    toc: dict = field(default_factory=dict)
+    toc: dict[str, object] = field(default_factory=dict)
     description: str | None = None
     error: str | None = None
     depends: list[str] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, rec: dict) -> "AddonState":
+    def from_dict(cls, rec: dict[str, object]) -> AddonState:
         if not isinstance(rec, dict):
             rec = {}
-        values = {name: rec.get(name) for name in cls.__dataclass_fields__}
-        # `folder` is the identity key every consumer indexes by — never
-        # let it be None despite its str annotation.
-        if not isinstance(values["folder"], str):
-            values["folder"] = ""
-        return cls(**values)
+        # Build typed values with safe defaults; rec is untyped JSON.
+        folder = rec.get("folder")
+        if not isinstance(folder, str):
+            folder = ""
+        status = rec.get("status")
+        if not isinstance(status, str):
+            status = "available"
+        toc = rec.get("toc")
+        if not isinstance(toc, dict):
+            toc = {}
+        depends = rec.get("depends")
+        if not isinstance(depends, list):
+            depends = []
+        # Other fields keep their raw values with isinstance guards.
+        id_val = rec.get("id")
+        git = rec.get("git")
+        branch = rec.get("branch")
+        ref = rec.get("ref")
+        description = rec.get("description")
+        error = rec.get("error")
+        return cls(
+            folder=folder,
+            id=id_val if isinstance(id_val, str) else None,
+            status=status,
+            git=git if isinstance(git, str) else None,
+            branch=branch if isinstance(branch, str) else None,
+            ref=ref if isinstance(ref, str) else None,
+            toc=cast(dict[str, object], toc) if isinstance(toc, dict) else {},
+            description=description if isinstance(description, str) else None,
+            error=error if isinstance(error, str) else None,
+            depends=[d for d in depends if isinstance(d, str)],
+        )
 
     def to_dict(self) -> dict:
         return {
@@ -237,7 +279,7 @@ class SettingsState:
 
     path: str = ""
     suggestion: str = ""
-    config: dict = field(default_factory=dict)
+    config: dict[str, object] = field(default_factory=dict)
     first_run: bool = False
     first_run_av_pending: bool = False
     first_run_verify_pending: bool = False
@@ -258,7 +300,7 @@ class LaunchSettings:
     umu_skip_builtin_dxvk: bool = False
 
     @classmethod
-    def from_config(cls, cfg: dict) -> "LaunchSettings":
+    def from_config(cls, cfg: dict) -> LaunchSettings:
         data = cfg.get("launch") or {}
         if not isinstance(data, dict):
             # A corrupted state file must not crash SettingsController

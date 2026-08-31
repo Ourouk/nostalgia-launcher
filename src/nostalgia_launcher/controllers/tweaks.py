@@ -9,7 +9,10 @@ line and OperationFinished(kind="tweaks") at the end (plus OperationFailed on
 an exception). No GUI toolkit.
 """
 
+from __future__ import annotations
+
 import threading
+from collections.abc import Callable
 
 from ..core import config_store
 from ..services import tweaks
@@ -35,13 +38,20 @@ class TweaksController:
     UI's default.
     """
 
-    def __init__(self, dispatcher: EventDispatcher, get_out_dir=None):
+    def __init__(
+        self,
+        dispatcher: EventDispatcher,
+        get_out_dir: Callable[[], str] | None = None,
+    ) -> None:
         self._dispatcher = dispatcher
         self._running = False
         if get_out_dir is None:
 
-            def get_out_dir():
-                return config_store.load_config().get("out_dir", "")
+            def _default_get_out_dir() -> str:
+                val = config_store.load_config().get("out_dir", "")
+                return val if isinstance(val, str) else ""
+
+            get_out_dir = _default_get_out_dir
 
         self._get_out_dir = get_out_dir
 

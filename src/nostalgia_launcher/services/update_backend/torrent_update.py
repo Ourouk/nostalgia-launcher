@@ -366,7 +366,7 @@ def _resolve_magnet(
     tmp_dir = tempfile.mkdtemp(prefix="nostalgia-magnet-")
     try:
         ses = _wrap_session_error(
-            lambda: lt.session(_network_session_settings()),
+            lambda: lt.session(_network_session_settings()),  # type: ignore[call-overload]
             "Failed to create libtorrent session",
         )
         h = None
@@ -692,9 +692,9 @@ class TorrentVerifier(WorkerBase):
         self.snapshot: TorrentSnapshot | None = None
 
     def _session(self):
-        import libtorrent as lt
+        import libtorrent as lt  # type: ignore[import-not-found]
 
-        return lt.session(
+        return lt.session(  # type: ignore[call-overload]
             {
                 "listen_interfaces": "",
                 "user_agent": UA,
@@ -751,12 +751,12 @@ class TorrentVerifier(WorkerBase):
                 torrent_url, self.log, cancel=lambda: self._cancel
             )
         self.snapshot = snapshot
-        ti = snapshot.torrent_info
+        ti = snapshot.torrent_info  # type: ignore[attr-defined]
         marker = root_marker or _configured_root_marker()
-        _remap_torrent_to_out_dir(ti, self.out_dir, marker)
-        files = ti.files()
-        piece_length = ti.piece_length()
-        total_pieces = ti.num_pieces()
+        _remap_torrent_to_out_dir(ti, self.out_dir, marker)  # type: ignore[arg-type]
+        files = ti.files()  # type: ignore[attr-defined]
+        piece_length = ti.piece_length()  # type: ignore[attr-defined]
+        total_pieces = ti.num_pieces()  # type: ignore[attr-defined]
 
         ses = _wrap_session_error(
             self._session, "Failed to create libtorrent session"
@@ -764,8 +764,8 @@ class TorrentVerifier(WorkerBase):
 
         h = None
         try:
-            atp = lt.add_torrent_params()
-            atp.ti = ti
+            atp = lt.add_torrent_params()  # type: ignore[attr-defined]
+            atp.ti = ti  # type: ignore[attr-defined]
             atp.save_path = self.out_dir
             # Pieces must be "wanted" (priority > 0) for force_recheck() to
             # hash the on-disk files against the torrent's piece hashes. A
@@ -927,9 +927,9 @@ class TorrentDownloader(WorkerBase):
         ]
 
     def _session(self):
-        import libtorrent as lt
+        import libtorrent as lt  # type: ignore[import-not-found]
 
-        return lt.session(_network_session_settings())
+        return lt.session(_network_session_settings())  # type: ignore[call-overload]
 
     def download(
         self,
@@ -956,9 +956,9 @@ class TorrentDownloader(WorkerBase):
             torrent_url, self.log, cancel=lambda: self._cancel
         )
         self.snapshot = snapshot
-        ti = snapshot.torrent_info
+        ti = snapshot.torrent_info  # type: ignore[attr-defined]
         marker = root_marker or _configured_root_marker()
-        _remap_torrent_to_out_dir(ti, self.out_dir, marker)
+        _remap_torrent_to_out_dir(ti, self.out_dir, marker)  # type: ignore[arg-type]
 
         ses = _wrap_session_error(
             self._session, "Failed to create libtorrent session"
@@ -966,12 +966,12 @@ class TorrentDownloader(WorkerBase):
 
         h = None
         try:
-            atp = lt.add_torrent_params()
-            priorities = self._priorities(ti, wanted, marker)
-            atp.ti = ti
-            atp.save_path = self.out_dir
-            atp.file_priorities = priorities
-            files = ti.files()
+            atp = lt.add_torrent_params()  # type: ignore[attr-defined]
+            priorities = self._priorities(ti, wanted, marker)  # type: ignore[arg-type]
+            atp.ti = ti  # type: ignore[attr-defined]
+            atp.save_path = self.out_dir  # type: ignore[attr-defined]
+            atp.file_priorities = priorities  # type: ignore[attr-defined]
+            files = ti.files()  # type: ignore[attr-defined]
             total_wanted = sum(
                 files.file_size(i)
                 for i in range(files.num_files())
@@ -1085,4 +1085,5 @@ class TorrentDownloader(WorkerBase):
             if elapsed > timeout:
                 raise TorrentStalledError(peers=s.num_peers)
             ses.wait_for_alert(ALERT_POLL_MS)
-        self._raise_cancelled(h)
+        self._raise_cancelled(h)  # type: ignore[arg-type]
+        return []

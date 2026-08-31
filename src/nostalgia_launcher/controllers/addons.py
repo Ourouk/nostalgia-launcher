@@ -9,10 +9,13 @@ and worker outcomes as OperationFinished on the shared EventDispatcher; the Qt
 Addons panel renders them. No GUI toolkit.
 """
 
+from __future__ import annotations
+
 import os
 import shutil
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import replace
 
 from ..core import config_store
@@ -48,14 +51,21 @@ class AddonsController:
     UI's default.
     """
 
-    def __init__(self, dispatcher: EventDispatcher, get_out_dir=None):
+    def __init__(
+        self,
+        dispatcher: EventDispatcher,
+        get_out_dir: Callable[[], str] | None = None,
+    ) -> None:
         self._dispatcher = dispatcher
         self.state = AddonsState()
         self._recommended = set(addons.RECOMMENDED_ADDONS)
         if get_out_dir is None:
 
-            def get_out_dir():
-                return config_store.load_config().get("out_dir", "")
+            def _default_get_out_dir() -> str:
+                val = config_store.load_config().get("out_dir", "")
+                return val if isinstance(val, str) else ""
+
+            get_out_dir = _default_get_out_dir
 
         self._get_out_dir = get_out_dir
 
@@ -483,7 +493,7 @@ class AddonsController:
                 (r for r in self.state.available if r.folder == name), None
             )
             if rec is not None:
-                recs.append(dict(rec))
+                recs.append(rec.to_dict())
             elif name in addons.RECOMMENDED_ADDONS:
                 recs.append(
                     {

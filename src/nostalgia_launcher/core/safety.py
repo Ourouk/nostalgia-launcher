@@ -7,24 +7,65 @@ operation. Existing callers use the legacy names; the canonical
 names are the target for all new code.
 """
 
+import os
 from urllib.parse import urlsplit
+
+# Windows reserved device names — even with an extension they are unsafe.
+_WIN_RESERVED = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+}
+
+
+def _is_windows_reserved(part: str) -> bool:
+    # ``CON.txt`` etc. are reserved as well — check the stem before the dot.
+    stem = part.split(".")[0].upper()
+    return stem in _WIN_RESERVED
+
 
 # ── Path validation ─────────────────────────────────────────────
 
 
 def safe_relative_path(p) -> bool:
-    """A relative destination path: not absolute, no traversal, no NUL.
+    """A relative destination path: not absolute, no traversal, no NUL,
+    no empty segments, no Windows reserved names.
     Canonical name for the path-checking primitive.
     """
     if not isinstance(p, str) or not p:
         return False
+    if "\x00" in p:
+        return False
     if p.startswith(("/", "\\")) or p[1:2] == ":":
         return False
     parts = p.replace("\\", "/").split("/")
-    return (
-        all(part and part not in (".", "..") for part in parts)
-        and "\x00" not in p
-    )
+    for part in parts:
+        if not part or part in (".", ".."):
+            return False
+        if _is_windows_reserved(part):
+            return False
+        if ":" in part:
+            return False
+    return True
 
 
 safe_relpath = safe_relative_path  # legacy alias
@@ -107,14 +148,50 @@ valid_sha1 = validate_sha1  # legacy alias
 
 
 def safe_destination(path: str, base: str) -> bool:
-    """Return True when ``path`` resolves inside ``base`` (no traversal,
-    no absolute escape). Both paths use forward slashes."""
-    base = base.replace("\\", "/")
-    path = path.replace("\\", "/")
-    if not path.startswith(base + "/"):
+    """Return True when ``path`` resolves strictly inside ``base``.
+
+    Uses resolved filesystem containment (realpath/commonpath) so a
+    pre-existing symlink cannot be used to escape, and syntactic checks
+    (NUL, drive letter, empty segments, ``..``, Windows reserved names)
+    via :func:`safe_relative_path` on the relative portion.
+    """
+    if not isinstance(path, str) or not isinstance(base, str):
         return False
-    parts = path[len(base) + 1 :].split("/")
-    return all(part not in ("..",) for part in parts)
+    if not path or not base:
+        return False
+    if "\x00" in path or "\x00" in base:
+        return False
+    try:
+        base_abs = os.path.abspath(base)
+        path_abs = os.path.abspath(path)
+        base_real = os.path.realpath(base_abs)
+        path_real = os.path.realpath(path_abs)
+        if os.name == "nt":
+            common = os.path.commonpath([base_real.lower(), path_real.lower()])
+            if common != base_real.lower():
+                return False
+        else:
+            common = os.path.commonpath([base_real, path_real])
+            if common != base_real:
+                return False
+    except (ValueError, OSError):
+        return False
+    try:
+        rel = os.path.relpath(path_abs, base_abs)
+    except ValueError:
+        return False
+    if rel == ".":
+        return False
+    rel_slash = rel.replace("\\", "/")
+    if rel_slash.startswith("../") or rel_slash == "..":
+        return False
+    # ``rel`` of ``base``+``/``+``member`` with ``member`` absolute (e.g.
+    # ``/etc/passwd``) yields ``../../etc/passwd`` — already rejected above.
+    # Otherwise it must be a safe relative path (no ``..``, no empty, no
+    # reserved, no drive).
+    if not safe_relative_path(rel_slash):
+        return False
+    return True
 
 
 def safe_slug(s) -> str | None:

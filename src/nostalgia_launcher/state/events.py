@@ -6,10 +6,18 @@ events once per event-loop tick and forwards them to the registered
 handlers; `ui.qt.bridge.ControllerBridge` converts them into Qt signals.
 """
 
+from __future__ import annotations
+
 import queue
 import threading
 import traceback
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .manifest import ManifestNode
+    from .models import AddonsState, AssetsState, ModsState, NewsResult
 
 
 class Event:
@@ -53,28 +61,28 @@ class NewsLoaded(Event):
     """News-feed snapshot. kind is "featured" or "items"."""
 
     kind: str
-    data: object | None = None
+    data: NewsResult | None = None
 
 
 @dataclass
 class ModsLoaded(Event):
     """MODS panel snapshot (ui_state.ModsState)."""
 
-    state: object | None = None
+    state: ModsState | None = None
 
 
 @dataclass
 class AssetsLoaded(Event):
     """ASSETS panel snapshot (state.models.AssetsState)."""
 
-    state: object | None = None
+    state: AssetsState | None = None
 
 
 @dataclass
 class AddonsLoaded(Event):
     """ADDONS panel snapshot (ui_state.AddonsState)."""
 
-    state: object | None = None
+    state: AddonsState | None = None
 
 
 @dataclass
@@ -157,7 +165,7 @@ class UpdateRequired(Event):
 class DiffTreeReady(Event):
     """Diff tree of stale nodes (typed, not encoded)."""
 
-    tree: object = None
+    tree: list[ManifestNode] | None = None
 
 
 @dataclass
@@ -255,40 +263,41 @@ class EventDispatcher:
     never lose an event or corrupt the handler set.
     """
 
-    def __init__(self):
-        self._queue: queue.Queue = queue.Queue()
-        self._handlers: list = []
+    def __init__(self) -> None:
+        self._queue: queue.Queue[Event] = queue.Queue()
+        self._handlers: list[Callable[[Event], None]] = []
         self._lock = threading.Lock()
 
     def post(self, event: Event) -> None:
         """Enqueue an event. Never blocks; safe from any thread."""
         self._queue.put_nowait(event)
 
-    def drain(self) -> list:
+    def drain(self) -> list[Event]:
         """Return every pending event, in post order, without blocking."""
-        with self._lock:
-            events = []
-            while True:
-                try:
-                    events.append(self._queue.get_nowait())
-                except queue.Empty:
-                    break
+        events: list[Event] = []
+        while True:
+            try:
+                events.append(self._queue.get_nowait())
+            except queue.Empty:
+                break
         return events
 
-    def subscribe(self, handler) -> None:
+    def subscribe(self, handler: Callable[[Event], None]) -> None:
         """Register a handler to receive events via dispatch_all().
         Duplicate registrations of the same handler are ignored."""
         with self._lock:
             if handler not in self._handlers:
                 self._handlers.append(handler)
 
-    def unsubscribe(self, handler) -> None:
+    def unsubscribe(self, handler: Callable[[Event], None]) -> None:
         """Remove a handler; an unknown handler is a no-op."""
         with self._lock:
             if handler in self._handlers:
                 self._handlers.remove(handler)
 
-    def dispatch_all(self, handler=None) -> list:
+    def dispatch_all(
+        self, handler: Callable[[Event], None] | None = None
+    ) -> list[Event]:
         """Drain the pending events and deliver each to `handler`, or to
         every subscribed handler when omitted. Events posted during delivery
         stay queued for the next call. Returns the dispatched events. A
@@ -302,16 +311,18 @@ class EventDispatcher:
         if not events:
             return events
 
+        handlers: list[Callable[[Event], None]] = []
         if handler is None:
             with self._lock:
                 handlers = list(self._handlers)
 
-        def _safe_call(fn, event):
+        def _safe_call(fn: Callable[[Event], None], event: Event) -> None:
             try:
                 fn(event)
             except Exception as e:
                 print(
-                    f"Event handler failed for {event!r}: {e}", file=sys.stderr
+                    f"Event handler failed for {event!r}: {e}",
+                    file=sys.stderr,
                 )
                 traceback.print_exc()
 

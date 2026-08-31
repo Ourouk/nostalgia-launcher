@@ -8,30 +8,12 @@ panel renders them. No GUI toolkit.
 
 import threading
 import time
-from dataclasses import dataclass
 
 from ..core import launcher
 from ..core.constants import NEWS_CACHE_TTL
 from ..services.news import fetch_featured_post, fetch_news_items
 from ..state.events import EventDispatcher, NewsLoaded
-from ..state.models import NewsState
-
-
-@dataclass
-class NewsResult:
-    """One render snapshot carried by a NewsLoaded event.
-
-    `data` is the post dict (featured) or items list (announcements) — None
-    while still loading or when the fetch failed. `loading` and `error` let
-    the renderer show the same placeholder/error states as before.
-    `configured` indicates whether the feed was explicitly configured in the
-    launcher config (vs. only the derived default).
-    """
-
-    data: object = None
-    loading: bool = False
-    error: str = ""
-    configured: bool = True
+from ..state.models import NewsResult, NewsState
 
 
 class NewsController:

@@ -8,11 +8,18 @@ mutates UpdateState. No GUI toolkit: the controller never touches widgets,
 it only posts events and mutates its own UpdateState.
 """
 
+from __future__ import annotations
+
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from ..core.config_store import load_config, update_config
+
+if TYPE_CHECKING:
+    from ..state.manifest import ManifestNode
 from ..core.filesystem import (
     get_client_version,
     pick_game_executable,
@@ -33,6 +40,7 @@ from ..services.update_backend.http_update import (
 from ..state.events import (
     ClientVersionReady,
     DiffTreeReady,
+    Event,
     EventDispatcher,
     GameExited,
     GameLaunched,
@@ -81,24 +89,28 @@ class Readiness:
 _CHILD_OUTPUT_MAX_LINES = 800
 
 
-def _flatten_diff_tree(nodes, prefix=()) -> list[str]:
+def _flatten_diff_tree(
+    nodes: list[ManifestNode] | None,
+    prefix: tuple[str, ...] = (),
+) -> list[str]:
     """Flatten a diff tree (as returned by __DIFF_TREE__) into a list of
     relative file paths (e.g. "Data/foo.mpq", "WoW.exe").
 
     Node ``name`` values are basenames, so the recursion carries the parent
     directory chain to rebuild the full path (matching the relative paths the
     HTTP downloader streams via ``current_file``)."""
+    if not nodes:
+        return []
     paths: list[str] = []
     for node in nodes:
-        t = node.get("type", "")
-        name = node.get("name", "")
-        cur = prefix + (name,)
-        if t == "file" or t == "del":
-            paths.append("/".join(cur))
-        elif t == "mpq":
-            paths.append("/".join(cur) + ".mpq")
-        elif t == "dir":
-            paths.extend(_flatten_diff_tree(node.get("files", []), cur))
+        if node["type"] == "dir":
+            paths.extend(
+                _flatten_diff_tree(node["files"], prefix + (node["name"],))
+            )
+        elif node["type"] == "file" or node["type"] == "del":
+            paths.append("/".join(prefix + (node["name"],)))
+        elif node["type"] == "mpq":
+            paths.append("/".join(prefix + (node["name"],)) + ".mpq")
     return paths
 
 
@@ -111,21 +123,31 @@ class UpdateController:
     UI's default.
     """
 
-    def __init__(self, dispatcher: EventDispatcher, get_out_dir=None):
+    def __init__(
+        self,
+        dispatcher: EventDispatcher,
+        get_out_dir: Callable[[], str] | None = None,
+    ) -> None:
+        import threading
+
         self._dispatcher = dispatcher
         self.state = UpdateState()
+        self._lock = threading.Lock()
         self._worker: UpdateWorker | None = None
         self._verify_worker: VerifyWorker | None = None
         self._op: str | None = None
         # Set by check_updater_update(): a newer updater release exists and
         # the header "Update available!" label should be shown.
-        self.updater_update_available = False
+        self.updater_update_available: bool = False
         if get_out_dir is None:
 
-            def get_out_dir():
-                return load_config().get("out_dir", "")
+            def _default_get_out_dir() -> str:
+                val = load_config().get("out_dir", "")
+                return val if isinstance(val, str) else ""
 
-        self._get_out_dir = get_out_dir
+            get_out_dir = _default_get_out_dir
+
+        self._get_out_dir: Callable[[], str] = get_out_dir
         self._dispatcher.subscribe(self._on_event)
 
     # ── public API ──────────────────────────────────────────────────────────
@@ -164,10 +186,13 @@ class UpdateController:
         self._op = "verify"
         self.state.status = "Verifying…"
         self.state.manifest_available = False  # a fresh verify re-fetches it
+        from ..services.update_backend.sources import _download_source
+
         worker = VerifyWorker(
             out,
             self._dispatcher,
             overwrite_config=overwrite_config,
+            source=_download_source(),
         )
         self._verify_worker = worker
         threading.Thread(target=worker.run, daemon=True).start()
@@ -226,9 +251,12 @@ class UpdateController:
         self.state.running = True
         self._op = "update"
         self.state.status = "Updating…"
+        from ..services.update_backend.sources import _download_source
+
         worker = UpdateWorker(
             out,
             self._dispatcher,
+            source=_download_source(),
         )
         self._worker = worker
         diff = self.state.diff_nodes
@@ -272,7 +300,9 @@ class UpdateController:
         self.state.running = True
         self._op = "download"
         self.state.status = "Downloading client…"
-        worker = UpdateWorker(out, self._dispatcher)
+        from ..services.update_backend.sources import _download_source
+
+        worker = UpdateWorker(out, self._dispatcher, source=_download_source())
         self._worker = worker
         threading.Thread(
             target=worker.run, kwargs={"recovery_full": True}, daemon=True
@@ -612,6 +642,7 @@ class UpdateController:
             from ..services import umu
 
             try:
+                assert pid is not None and pgid is not None
                 umu.kill_game(pid, pgid)
             except Exception as e:
                 self._dispatcher.post(
@@ -621,76 +652,76 @@ class UpdateController:
         threading.Thread(target=_killer, daemon=True).start()
         return True
 
-    def _on_event(self, event):
-        """Subscribed handler for typed worker lifecycle events."""
-        # Progress updates from workers flow through the dispatcher
-        # directly; mirror them into state so compute_readiness and
-        # non-UI consumers see the latest values.
-        if isinstance(event, ProgressChanged):
-            self.state.progress = max(0.0, min(1.0, event.value))
-            self.state.progress_label = event.label
-            self.state.progress_file = event.current_file
-            self.state.progress_downloaded = event.downloaded
-            self.state.progress_total = event.total
-            self.state.progress_speed = event.speed
-            self.state.progress_peers = event.peers
-            self.state.progress_verified_pieces = event.verified_pieces
-            self.state.progress_total_pieces = event.total_pieces
-            return
-        if isinstance(event, ClientVersionReady):
-            self.state.client_version = event.version
-            return
-        if isinstance(event, ManifestAvailable):
-            self._on_manifest_available(event)
-            return
-        if isinstance(event, ManifestUnavailable):
-            self._on_manifest_unavailable(event)
-            return
-        if isinstance(event, VerificationUpToDate):
-            self._on_up_to_date(event)
-            return
-        if isinstance(event, UpdateRequired):
-            self._on_update_needed(event)
-            return
-        if isinstance(event, DiffTreeReady):
-            self._on_diff_tree(event)
-            return
-        if isinstance(event, TorrentReachable):
-            self._on_torrent_reachable(event)
-            return
-        if isinstance(event, TorrentUnavailable):
-            self._on_torrent_unreachable(event)
-            return
-        if isinstance(event, TorrentCorrupt):
-            self._on_torrent_corrupt(event)
-            return
-        if isinstance(event, TorrentStalled):
-            self._on_torrent_stalled(event)
-            return
-        if isinstance(event, TorrentSessionError):
-            self._on_torrent_session_error(event)
-            return
-        if isinstance(event, TorrentDiskError):
-            self._on_torrent_disk_error(event)
-            return
-        if isinstance(event, TorrentVerifyFailed):
-            self._on_torrent_verify_failed(event)
-            return
-        if isinstance(event, TorrentDiffReady):
-            self._on_torrent_diff(event)
-            return
-        if isinstance(event, TorrentUpToDate):
-            self._on_torrent_up_to_date(event)
-            return
-        if isinstance(event, TorrentRecoveryDone):
-            self._on_torrent_recovery_done(event)
-            return
-        if isinstance(event, UpdateCompleted):
-            self._on_done(event)
-            return
-        if isinstance(event, UpdateFailed):
-            self._on_error(event)
-            return
+    def _on_event(self, event: Event) -> None:
+        """Subscribed handler for typed worker lifecycle events (UI thread)."""
+        # State is mutated only on the dispatcher thread (bridge 50ms or test
+        # direct dispatch_all). Guard with lock for test parallelism.
+        with self._lock:
+            if isinstance(event, ProgressChanged):
+                self.state.progress = max(0.0, min(1.0, event.value))
+                self.state.progress_label = event.label
+                self.state.progress_file = event.current_file
+                self.state.progress_downloaded = event.downloaded
+                self.state.progress_total = event.total
+                self.state.progress_speed = event.speed
+                self.state.progress_peers = event.peers
+                self.state.progress_verified_pieces = event.verified_pieces
+                self.state.progress_total_pieces = event.total_pieces
+                return
+            if isinstance(event, ClientVersionReady):
+                self.state.client_version = event.version
+                return
+            if isinstance(event, ManifestAvailable):
+                self._on_manifest_available(event)
+                return
+            if isinstance(event, ManifestUnavailable):
+                self._on_manifest_unavailable(event)
+                return
+            if isinstance(event, VerificationUpToDate):
+                self._on_up_to_date(event)
+                return
+            if isinstance(event, UpdateRequired):
+                self._on_update_needed(event)
+                return
+            if isinstance(event, DiffTreeReady):
+                self._on_diff_tree(event)
+                return
+            if isinstance(event, TorrentReachable):
+                self._on_torrent_reachable(event)
+                return
+            if isinstance(event, TorrentUnavailable):
+                self._on_torrent_unreachable(event)
+                return
+            if isinstance(event, TorrentCorrupt):
+                self._on_torrent_corrupt(event)
+                return
+            if isinstance(event, TorrentStalled):
+                self._on_torrent_stalled(event)
+                return
+            if isinstance(event, TorrentSessionError):
+                self._on_torrent_session_error(event)
+                return
+            if isinstance(event, TorrentDiskError):
+                self._on_torrent_disk_error(event)
+                return
+            if isinstance(event, TorrentVerifyFailed):
+                self._on_torrent_verify_failed(event)
+                return
+            if isinstance(event, TorrentDiffReady):
+                self._on_torrent_diff(event)
+                return
+            if isinstance(event, TorrentUpToDate):
+                self._on_torrent_up_to_date(event)
+                return
+            if isinstance(event, TorrentRecoveryDone):
+                self._on_torrent_recovery_done(event)
+                return
+            if isinstance(event, UpdateCompleted):
+                self._on_done(event)
+                return
+            if isinstance(event, UpdateFailed):
+                self._on_error(event)
+                return
 
     def compute_readiness(self, addons_installing: bool = False) -> Readiness:
         """Footer button/status decision for the current state.
@@ -711,7 +742,7 @@ class UpdateController:
             label = {
                 "update": "Updating…",
                 "download": "Downloading…",
-            }.get(self._op, "Checking…")
+            }.get(self._op or "", "Checking…")
             return Readiness("busy", label, self.state.status)
         if not self._client_updates_enabled():
             if not self._playable_client_present():
@@ -766,7 +797,7 @@ class UpdateController:
                 if _torrent_only:
                     # Respect torrent.update flag; magnet-only first-time-only
                     # still shows Download via BitTorrent, not Verifying.
-                    if _vcfg.torrent_update_allowed():
+                    if _vcfg is not None and _vcfg.torrent_update_allowed():
                         if not self._playable_client_present():
                             return Readiness(
                                 "disabled", "UPDATE", "Verifying…"
