@@ -1,0 +1,304 @@
+{
+  "server": {
+    "name": "Example Community — Full",
+    "url": "https://launcher.example.com",
+    "realm": "realm.example.com",
+    "news_url": "https://launcher.example.com/news.json",
+    "featured_news_url": "https://launcher.example.com/news/featured.json",
+    "mods_registry_url": "https://launcher.example.com/community.mods.full.example.json",
+    "addons_registry_url": "https://launcher.example.com/community.addons.example.json",
+    "addons_registry_urls": [
+      "https://launcher.example.com/community.addons.example.json",
+      "https://launcher.example.com/community.addons.overrides.example.json"
+    ],
+    "assets_registry_url": "https://launcher.example.com/community.assets.example.json",
+    "torrent_root_marker": "WoW.exe",
+    "trusted_hosts": [
+      "launcher.example.com",
+      "https://cdn.example.com/files",
+      "assets.example.net"
+    ],
+    "download": {
+      "update": true,
+      "torrent": {
+        "torrent_url": "https://launcher.example.com/client/latest/client.torrent",
+        "magnet": "magnet:?xt=urn:btih:EXAMPLEINFOHASH0123456789abcdef0123456789ab&dn=client&tr=https%3A%2F%2Ftracker.example.com%2Fannounce",
+        "update": true
+      },
+      "http": {
+        "fallback": "https://launcher.example.com/client/latest/client.zip"
+      },
+      "content": { "type": "zip" }
+    }
+  },
+  "discord_url": "https://discord.gg/example",
+  "theme": {
+    "C_BG": "#120e1a",
+    "C_PANEL": "#161120",
+    "C_HDR": "#0d0a14",
+    "C_GOLD": "#d4a02f",
+    "C_GOLD_LT": "#e8b84b",
+    "C_PURPLE": "#8a4fa5",
+    "C_TEXT": "#d8d4cc",
+    "C_TEXT_DIM": "#7a7670",
+    "C_OK": "#6abf69",
+    "C_ERR": "#bf6969",
+    "logo": "https://launcher.example.com/logo.png"
+  },
+  "addon_git_hosts": ["gitea.example.com", "git.example.org"],
+  "addons": [
+    {
+      "name": "ExampleAddon",
+      "git": "https://github.com/example/example-addon",
+      "branch": "master",
+      "description": "Minimal addon — only required fields (name + git).",
+      "toc": { "Title": "Example Addon", "Interface": "11200" },
+      "recommended": true,
+      "blocked": false
+    },
+    {
+      "name": "ExampleAddonPinned",
+      "git": "https://gitlab.com/example/example-addon-pinned.git",
+      "branch": "main",
+      "ref": "v1.2.3",
+      "description": "Pinned to a tag via `ref`; branch is the fallback when ref is absent.",
+      "toc": { "Title": "Example Addon Pinned", "Notes": "Pinned example", "Interface": "11200" },
+      "recommended": false,
+      "blocked": false
+    },
+    {
+      "name": "ExampleBlockedAddon",
+      "git": "https://codeberg.org/example/blocked-addon",
+      "branch": "master",
+      "description": "Blocked addon — launcher will not install it when blocked=true.",
+      "toc": { "Title": "Blocked Addon" },
+      "recommended": false,
+      "blocked": true
+    }
+  ],
+  "assets": [
+    {
+      "id": "ExamplePatch",
+      "name": "Example Content Patch",
+      "description": "Minimal asset — only required fields (id, url, dest).",
+      "url": "https://launcher.example.com/patches/patch.mpq",
+      "dest": "Data/patch.mpq",
+      "version": "v1",
+      "sha1": "0123456789abcdef0123456789abcdef01234567"
+    },
+    {
+      "id": "ExamplePatchFull",
+      "name": "Example Full Asset",
+      "description": "Full asset with every optional field.",
+      "repo_url": "https://github.com/example/example-patch",
+      "url": "https://launcher.example.com/patches/patch-full.mpq",
+      "dest": "Data/patch-full.mpq",
+      "version": "v2.1.0",
+      "sha1": "abcdef0123456789abcdef0123456789abcdef01",
+      "size": 1048576,
+      "essential": true,
+      "probe": true
+    },
+    {
+      "id": "ExampleProbeAsset",
+      "name": "Example Probe Asset",
+      "description": "Asset with probe=true — launcher captures Last-Modified/ETag for drift detection.",
+      "url": "https://launcher.example.com/patches/probe.mpq",
+      "dest": "Data/probe.mpq",
+      "version": "v3",
+      "probe": false,
+      "essential": false
+    }
+  ],
+  "mods": [
+    {
+      "id": "ExampleDirectDll",
+      "type": "mod",
+      "installation": "user_opt_in",
+      "name": "Example Direct DLL",
+      "description": "Single-file mod streamed to `dest` beside its final location (supports large MPQ).",
+      "repo_url": "https://github.com/example/example-mod",
+      "source": {
+        "kind": "direct_file",
+        "url": "https://launcher.example.com/mods/example_mod.dll",
+        "dest": "example_mod.dll",
+        "pinned_version": "v1.0.0"
+      },
+      "register_dll": ["example_mod.dll"],
+      "installed_files": ["example_mod.dll"],
+      "client_versions": ["1.12.1"]
+    },
+    {
+      "id": "ExampleDirectFileWithIntegrity",
+      "type": "mod",
+      "installation": "user_opt_in",
+      "name": "Example Direct File With Integrity",
+      "description": "Direct file with sha1+size pins — download is rejected on mismatch.",
+      "repo_url": "https://github.com/example/example-mod",
+      "source": {
+        "kind": "direct_file",
+        "url": "https://launcher.example.com/mods/secure.dll",
+        "dest": "secure.dll",
+        "pinned_version": "v2.0.0",
+        "sha1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size": 123456
+      },
+      "register_dll": ["secure.dll"],
+      "installed_files": ["secure.dll"]
+    },
+    {
+      "id": "ExampleDirectArchive",
+      "type": "mod",
+      "installation": "user_opt_in",
+      "name": "Example Direct Archive",
+      "description": "Archive fetched into memory and extracted via `extract_map` (zip or tar.gz by URL).",
+      "repo_url": "https://github.com/example/example-archive-mod",
+      "source": {
+        "kind": "direct_file",
+        "url": "https://launcher.example.com/mods/example_archive.zip",
+        "extract_map": {
+          "ExampleArchive.dll": "ExampleArchive.dll",
+          "ExampleArchive.conf": "ExampleArchive.conf"
+        },
+        "pinned_version": "v1.1.0"
+      },
+      "register_dll": ["ExampleArchive.dll"],
+      "installed_files": ["ExampleArchive.dll", "ExampleArchive.conf"]
+    },
+    {
+      "id": "ExampleReleaseMod",
+      "type": "mod",
+      "installation": "user_opt_in",
+      "name": "Example Release Mod",
+      "description": "GitHub release — asset picked by `asset_pattern`, `prefer_no` deprioritises matches containing the substring.",
+      "repo_url": "https://github.com/example/example-release-mod",
+      "source": {
+        "kind": "github_release",
+        "owner": "example",
+        "repo": "example-release-mod",
+        "asset_pattern": "example-mod-*.zip",
+        "prefer_no": "-dxvk",
+        "extract_map": {
+          "ExampleMod.dll": "ExampleMod.dll"
+        }
+      },
+      "register_dll": ["ExampleMod.dll"],
+      "installed_files": ["ExampleMod.dll"],
+      "client_versions": ["1.12.1", "1.12.2"]
+    },
+    {
+      "id": "ExampleReleaseModAssetVersion",
+      "type": "mod",
+      "installation": "required",
+      "name": "Example Release Mod (Asset Version)",
+      "description": "Release with `version_from: asset` — version derived from the matched asset filename (e.g. SuperWoW-style static tag).",
+      "repo_url": "https://github.com/example/example-static-tag-mod",
+      "source": {
+        "kind": "github_release",
+        "owner": "example",
+        "repo": "example-static-tag-mod",
+        "asset_pattern": "superwow-*.zip",
+        "extract_map": {
+          "SuperWoW.dll": "SuperWoW.dll"
+        },
+        "version_from": "asset"
+      },
+      "register_dll": ["SuperWoW.dll"],
+      "installed_files": ["SuperWoW.dll"]
+    },
+    {
+      "id": "ExampleCodebergMod",
+      "type": "mod",
+      "installation": "user_opt_in",
+      "name": "Example Codeberg Mod",
+      "description": "Codeberg release — same fields as GitHub but served from codeberg.org Gitea API.",
+      "repo_url": "https://codeberg.org/example/example-codeberg-mod",
+      "source": {
+        "kind": "codeberg_release",
+        "owner": "example",
+        "repo": "example-codeberg-mod",
+        "asset_pattern": "example-codeberg-*.zip",
+        "extract_map": {
+          "CodebergMod.dll": "CodebergMod.dll"
+        }
+      },
+      "register_dll": ["CodebergMod.dll"],
+      "installed_files": ["CodebergMod.dll"]
+    },
+    {
+      "id": "ExampleTarMod",
+      "type": "mod",
+      "installation": "user_opt_in",
+      "name": "Example Tar Mod",
+      "description": "Tarball release — requires `extract_map`; URL extension decides zip vs tar.gz handling, supports fnmatch globs.",
+      "repo_url": "https://github.com/example/example-tar-mod",
+      "source": {
+        "kind": "direct_tar",
+        "url": "https://launcher.example.com/mods/example_tar.tar.gz",
+        "extract_map": {
+          "build/*.dll": "ExampleTar.dll",
+          "build/config.ini": "ExampleTar.ini"
+        },
+        "pinned_version": "v3.0.0"
+      },
+      "register_dll": ["ExampleTar.dll"],
+      "installed_files": ["ExampleTar.dll", "ExampleTar.ini"]
+    },
+    {
+      "id": "ExampleGitArchiveMod",
+      "type": "mod",
+      "installation": "user_opt_in",
+      "name": "Example Git Archive Mod",
+      "description": "Git snapshot — fetches archive zip at `ref`/`branch` commit (GitHub/GitLab/Gitea/Codeberg).",
+      "repo_url": "https://github.com/example/example-git-mod",
+      "source": {
+        "kind": "git_archive",
+        "git": "https://github.com/example/example-git-mod",
+        "branch": "main",
+        "ref": "v1.0.0"
+      },
+      "register_dll": ["ExampleGitMod.dll"],
+      "installed_files": ["ExampleGitMod.dll"]
+    },
+    {
+      "id": "ExampleExternalLauncher",
+      "type": "external-launcher",
+      "installation": "required",
+      "name": "Example External Launcher",
+      "description": "External launcher — provides the game executable the launcher starts (no register_dll required).",
+      "repo_url": "https://github.com/example/example-loader",
+      "source": {
+        "kind": "github_release",
+        "owner": "example",
+        "repo": "example-loader",
+        "asset_pattern": "example-loader-*.zip",
+        "extract_map": {
+          "ExampleLoaderHook.dll": "ExampleLoaderHook.dll",
+          "ExampleLoader.exe": "ExampleLoader.exe"
+        }
+      },
+      "register_dll": ["ExampleLoaderHook.dll"],
+      "installed_files": ["ExampleLoaderHook.dll", "ExampleLoader.exe"],
+      "executable": "ExampleLoader.exe",
+      "client_versions": ["1.12.1"]
+    },
+    {
+      "id": "ExampleDxvkMod",
+      "type": "mod",
+      "installation": "user_opt_in",
+      "name": "Example DXVK Mod",
+      "description": "Mod with post_install hook — only allowlisted hooks (currently `write_dxvk_conf`) are accepted and only for type `mods`.",
+      "repo_url": "https://github.com/example/example-dxvk",
+      "source": {
+        "kind": "direct_tar",
+        "url": "https://launcher.example.com/mods/dxvk.tar.gz",
+        "extract_map": {
+          "d3d9.dll": "d3d9.dll"
+        },
+        "post_install": ["write_dxvk_conf"]
+      },
+      "register_dll": ["d3d9.dll"],
+      "installed_files": ["d3d9.dll"]
+    }
+  ]
+}
