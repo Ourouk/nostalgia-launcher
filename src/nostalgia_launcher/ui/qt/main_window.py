@@ -876,6 +876,55 @@ class MainWindow(QMainWindow):
         """Launch the game detached; the launch logic (ExampleLoader/WoW.exe
         choice, DXVK notice, clear-wdb, subprocess) lives in the
         UpdateController — this only drives the footer chrome and dialogs."""
+        # Realm mismatch check before launch: if the on-disk Config.wtf /
+        # realmlist.wtf points elsewhere, ask before injecting the third-party
+        # URL from server.json. Two choices, both then launch.
+        try:
+            client_dir = (self._hub.settings.state.path or "").strip()
+            if client_dir:
+                status = self._hub.updater.realm_status(client_dir)
+                if status.mismatch:
+                    actual = (
+                        status.actual_config
+                        or status.actual_realmlist
+                        or "<unknown>"
+                    )
+                    expected = status.expected
+                    server_name = (
+                        launcher.server_name()
+                        or launcher.server_url()
+                        or "this server"
+                    )
+                    is_third_party = expected.strip().lower() != "localhost"
+                    addr_label = (
+                        f"third-party address ({expected})"
+                        if is_third_party
+                        else f"address ({expected})"
+                    )
+                    answer = QMessageBox.question(
+                        self,
+                        "Realm mismatch",
+                        (
+                            f"The game folder realm is '{actual}' but the "
+                            f"server '{server_name}' wants '{expected}'.\n\n"
+                            "Injecting will overwrite WTF/Config.wtf "
+                            "(realmList/patchList) and realmlist.wtf with a "
+                            f"{addr_label}. Only proceed "
+                            "if you trust this server.\n\n"
+                            "Do you want to update the realm before launching?"
+                        ),
+                        QMessageBox.Yes | QMessageBox.No,
+                    )
+                    if answer == QMessageBox.Yes:
+                        self._hub.updater.inject_realm(client_dir)
+                elif not status.config_exists or not status.realmlist_exists:
+                    # Fresh install or deleted WTF — seed without a prompt.
+                    # Only when Play is actually offered (playable client present)
+                    # to avoid I/O in an empty folder.
+                    if os.path.isdir(client_dir):
+                        self._hub.updater.inject_realm(client_dir)
+        except Exception:
+            pass
         ok, dxvk_notice = self._hub.updater.launch_game()
         if not ok:
             return

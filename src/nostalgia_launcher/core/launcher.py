@@ -245,6 +245,11 @@ class LauncherConfig:
         for a in self.embedded_assets:
             if isinstance(a, dict) and isinstance(a.get("url"), str):
                 urls.append(a["url"])
+        for m in self.embedded_mods:
+            if isinstance(m, dict):
+                src = m.get("source")
+                if isinstance(src, dict) and isinstance(src.get("url"), str):
+                    urls.append(src["url"])
         return urls
 
 
@@ -285,6 +290,8 @@ def _valid_host(host: str) -> bool:
     if any(ch in host for ch in "/\\:"):
         return False
     if ".." in host:
+        return False
+    if not all(c.isalnum() or c in ".-" for c in host):
         return False
     return True
 
@@ -408,15 +415,46 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
     raw_theme = data.get("theme")
     theme = raw_theme if isinstance(raw_theme, dict) else None
 
-    # Server-specific trusted hosts for downloads (beyond auto-derived ones)
+    # Server-specific trusted hosts for downloads (beyond auto-derived ones).
+    # Accepts both plain hostnames (launcher.example.com) and full HTTPS
+    # URLs (https://launcher.example.com/path) — the hostname is extracted
+    # so a common mistake of pasting a URL does not silently break the
+    # allowlist (see Project Legacy report).
     raw_trusted_hosts = server.get("trusted_hosts")
     trusted_hosts: set[str] = set()
     if isinstance(raw_trusted_hosts, list):
         for h in raw_trusted_hosts:
-            if isinstance(h, str):
-                h = h.strip().lower()
-                if h and _valid_host(h):
-                    trusted_hosts.add(h)
+            if not isinstance(h, str):
+                continue
+            raw = h.strip()
+            if not raw:
+                continue
+            host = ""
+            if "://" in raw:
+                try:
+                    host = urlsplit(raw).hostname or ""
+                except ValueError:
+                    host = ""
+            else:
+                # Plain hostname; be tolerant of accidental path/port
+                # (e.g. "host.example.com/path" or "host:443").
+                if "/" in raw or ":" in raw:
+                    try:
+                        host = urlsplit("https://" + raw).hostname or ""
+                    except ValueError:
+                        host = ""
+                    if not host:
+                        host = raw.split("/")[0].split(":")[0]
+                else:
+                    host = raw
+            host = host.strip().lower()
+            if host and _valid_host(host):
+                trusted_hosts.add(host)
+            elif raw:
+                log(
+                    f"  Launcher config: ignoring invalid trusted_hosts entry {raw!r}",
+                    "err",
+                )
 
     # Asset registry URL — explicit only: a config without one simply has no
     # remote asset catalog. Assets may also be embedded directly via the

@@ -45,7 +45,8 @@
   "mods": [
     {
       "id": "ExampleDirectDll",
-      "essential": false,
+      "type": "mod",
+      "installation": "user_opt_in",
       "name": "Example Direct DLL",
       "description": "A single-file mod downloaded straight from a pinned URL.",
       "repo_url": "https://github.com/example/example-mod",
@@ -55,12 +56,13 @@
         "dest": "example_mod.dll",
         "pinned_version": "v1.0.0"
       },
-      "register_dll": "example_mod.dll",
+      "register_dll": ["example_mod.dll"],
       "installed_files": ["example_mod.dll"]
     },
     {
       "id": "ExampleReleaseMod",
-      "essential": false,
+      "type": "mod",
+      "installation": "user_opt_in",
       "name": "Example Release Mod",
       "description": "A mod installed from its latest GitHub release archive.",
       "repo_url": "https://github.com/example/example-release-mod",
@@ -74,7 +76,7 @@
           "ExampleMod.dll": "ExampleMod.dll"
         }
       },
-      "register_dll": "ExampleMod.dll",
+      "register_dll": ["ExampleMod.dll"],
       "installed_files": ["ExampleMod.dll"]
     }
   ]

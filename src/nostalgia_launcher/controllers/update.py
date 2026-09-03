@@ -320,6 +320,66 @@ class UpdateController:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def realm_status(self, client_dir: str | None = None):
+        """Realm mismatch status for ``client_dir`` (or current game folder)."""
+        from ..services import tweaks as _tweaks
+
+        out = (
+            client_dir
+            if client_dir is not None
+            else (self._get_out_dir() or "").strip()
+        )
+        if not out:
+            # No folder — nothing to compare; report no mismatch with expected.
+            from ..services.tweaks import RealmStatus, expected_realm
+
+            exp = expected_realm()
+            return RealmStatus(
+                expected=exp,
+                actual_config=None,
+                actual_realmlist=None,
+                mismatch=False,
+                config_exists=False,
+                realmlist_exists=False,
+            )
+        return _tweaks.check_realm_mismatch(out)
+
+    def inject_realm(self, client_dir: str | None = None) -> bool:
+        """Inject the expected realm into WTF/Config.wtf + realmlist.wtf."""
+        from ..services import tweaks as _tweaks
+
+        out = (
+            client_dir
+            if client_dir is not None
+            else (self._get_out_dir() or "").strip()
+        )
+        if not out:
+            self._dispatcher.post(
+                LogMessage("✗  Game folder not set.\n", "err")
+            )
+            return False
+        try:
+            ok = _tweaks.inject_realm(out)
+            if ok:
+                self._dispatcher.post(
+                    LogMessage(
+                        f"Realm injected: {_tweaks.expected_realm()}\n", "ok"
+                    )
+                )
+                return True
+            self._dispatcher.post(
+                LogMessage(
+                    "Could not inject realm: write verification failed.\n",
+                    "err",
+                )
+            )
+            return False
+        except Exception as e:  # pragma: no cover
+            self._dispatcher.post(
+                LogMessage(f"Could not inject realm: {e}\n", "err")
+            )
+            return False
+
     def launch_game(self) -> tuple:
         """Launch the client detached.
 

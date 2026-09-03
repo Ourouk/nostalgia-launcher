@@ -700,17 +700,15 @@ class UpdateWorker:
             return False
         self.log("  BitTorrent recovery download complete.", "ok")
         remove_wdb(self.out_dir)
+        # Realm injection moved to Play-time with consent; keep only
+        # fresh-install seeding, never silently overwrite an existing realm.
         try:
             cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
             if not os.path.exists(cfg_wtf):
                 _get_write_config_wtf()(self.out_dir)
-            else:
-                from ..tweaks import load_tweaks_config, update_config_wtf
-
-                update_config_wtf(self.out_dir, load_tweaks_config())
-            _get_write_realmlist_wtf()(self.out_dir)
+                _get_write_realmlist_wtf()(self.out_dir)
         except Exception as e:
-            self.log(f"Could not inject realm: {e}", "err")
+            self.log(f"Could not seed config: {e}", "err")
         self.progress(1.0, "")
         snapshot = getattr(dl, "snapshot", None)
         identity = (
@@ -865,17 +863,14 @@ class UpdateWorker:
             )
             return False
         remove_wdb(self.out_dir)
+        # Realm injection moved to Play-time with consent.
         try:
             cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
             if not os.path.exists(cfg_wtf):
                 _get_write_config_wtf()(self.out_dir)
-            else:
-                from ..tweaks import load_tweaks_config, update_config_wtf
-
-                update_config_wtf(self.out_dir, load_tweaks_config())
-            _get_write_realmlist_wtf()(self.out_dir)
+                _get_write_realmlist_wtf()(self.out_dir)
         except Exception as e:
-            self.log(f"Could not inject realm: {e}", "err")
+            self.log(f"Could not seed config: {e}", "err")
         self.progress(1.0, "")
         _get_save_cache()(self._cache)
         self._extract_payload()

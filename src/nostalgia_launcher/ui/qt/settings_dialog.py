@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -141,7 +142,19 @@ class SettingsDialog(QDialog):
         root.setSpacing(0)
         root.addWidget(self._build_header())
         root.addWidget(self._build_divider())
-        root.addWidget(self._build_body(), 1)
+        body = self._build_body()
+        scroll = QScrollArea(self)
+        scroll.setObjectName("settingsScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(body)
+        scroll.setStyleSheet(
+            f"QScrollArea {{ background-color: {p.bg.name()}; border: none; }}"
+            f"QScrollBar:vertical {{ width: 8px; background: {p.panel.name()}; }}"
+            f"QScrollBar::handle:vertical {{ background: {p.divider.name()}; border-radius: 4px; }}"
+        )
+        root.addWidget(scroll, 1)
 
         bridge.mirrorStatusChanged.connect(self._on_mirror_status)
 
