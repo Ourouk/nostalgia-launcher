@@ -135,6 +135,16 @@ def extract_tar_map(
         return written
 
 
+def _stripped_parts(filename: str) -> list[str]:
+    """A zip member path with the archive's top-level "<repo>-<sha>/"
+    component removed and separators normalised ("" / "." dropped)."""
+    return [
+        p
+        for p in filename.replace("\\", "/").split("/")[1:]
+        if p not in ("", ".")
+    ]
+
+
 def unpack_folder(data: bytes, dest_root: str) -> None:
     """Atomically unpack a repo-style zip (entries under one top-level
     directory) into ``dest_root``, replacing any existing copy.
@@ -144,6 +154,24 @@ def unpack_folder(data: bytes, dest_root: str) -> None:
     in-depth absolute-path check runs before every write. A failure never
     leaves a half-written ".tmp_install" behind.
     """
+    unpack_prefix(data, "", dest_root)
+
+
+def unpack_prefix(data: bytes, prefix: str, dest_root: str) -> None:
+    """Like unpack_folder but installs only the members under one
+    stripped-root-relative subdirectory (``prefix`` with "/" separators;
+    "" installs everything, i.e. unpack_folder).
+
+    Lets one repo archive install a single addon folder (a Git repo often
+    ships several addons — e.g. AtlasLoot's seven modules) into its own
+    Interface/AddOns/<folder> without dragging the whole tree along. Same
+    traversal guards + atomic replace as unpack_folder.
+    """
+    wanted = [
+        p for p in prefix.replace("\\", "/").split("/") if p not in ("", ".")
+    ]
+    if ".." in wanted:
+        raise RuntimeError(f"Refusing unsafe unpack prefix: {prefix!r}")
     tmp_root = dest_root + ".tmp_install"
     tmp_abs = os.path.abspath(tmp_root)
     if os.path.isdir(tmp_root):
@@ -165,14 +193,14 @@ def unpack_folder(data: bytes, dest_root: str) -> None:
                     raise RuntimeError(
                         "archive exceeds the total extraction budget"
                     )
-                parts = [
-                    p
-                    for p in info.filename.replace("\\", "/").split("/")[1:]
-                    if p not in ("", ".")
-                ]
+                parts = _stripped_parts(info.filename)
                 if not parts or ".." in parts:
                     continue
-                target = os.path.join(tmp_root, *parts)
+                if wanted and (
+                    len(parts) <= len(wanted) or parts[: len(wanted)] != wanted
+                ):
+                    continue
+                target = os.path.join(tmp_root, *parts[len(wanted) :])
                 if not os.path.abspath(target).startswith(tmp_abs + os.sep):
                     continue
                 os.makedirs(os.path.dirname(target), exist_ok=True)

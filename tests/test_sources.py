@@ -281,6 +281,36 @@ def test_deploy_unpack_folder_strips_top_dir_and_replaces(tmp_path):
     assert not list(tmp_path.rglob("*.tmp_install"))
 
 
+def test_deploy_unpack_prefix_installs_single_subdir(tmp_path):
+    import io
+    import zipfile
+
+    dest_root = tmp_path / "Interface" / "AddOns" / "PackExtra"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("pack-sha/Pack/Pack.toc", "## Title: Pack\n")
+        zf.writestr("pack-sha/Pack/core.lua", "-- core")
+        zf.writestr("pack-sha/PackExtra/PackExtra.toc", "## Title: X\n")
+        zf.writestr("pack-sha/PackExtra/x.lua", "-- x")
+    deploy.unpack_prefix(buf.getvalue(), "PackExtra", str(dest_root))
+    assert (dest_root / "PackExtra.toc").exists()
+    assert (dest_root / "x.lua").exists()
+    assert not (dest_root / "core.lua").exists()
+    assert not list(tmp_path.rglob("*.tmp_install"))
+
+
+def test_deploy_unpack_prefix_rejects_traversal(tmp_path):
+    import io
+    import zipfile
+
+    dest_root = tmp_path / "Interface" / "AddOns" / "Pack"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("pack-sha/Pack/Pack.toc", "x")
+    with pytest.raises(RuntimeError, match="unsafe unpack prefix"):
+        deploy.unpack_prefix(buf.getvalue(), "../evil", str(dest_root))
+
+
 # ── hooks ────────────────────────────────────────────────────────────────────
 
 
