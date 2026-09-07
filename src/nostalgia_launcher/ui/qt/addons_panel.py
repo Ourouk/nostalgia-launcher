@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from ...core.helpers import (
     parse_wow_colored,
     relative_age,
+    same_git_repo,
     strip_wow_colors,
 )
 from ...services import addons as addons_service
@@ -56,6 +57,24 @@ def _expected_interface() -> str:
         return INTERFACE_BY_VERSION.get(cv or "", _INTERFACE_VERSION)
     except Exception:
         return _INTERFACE_VERSION
+
+
+def _row_visible(row, installed_gits: dict) -> bool:
+    """Whether an AVAILABLE row renders: hidden when it denotes an
+    installed addon under a variant spelling, unless it points at a
+    different repo (different addon sharing a folder spelling)."""
+    try:
+        folder = row.folder if isinstance(row.folder, str) else ""
+        key = folder.strip().casefold()
+        if not key or key not in installed_gits:
+            return True
+        row_git = row.git
+        inst_git = installed_gits[key]
+        if row_git and inst_git:
+            return not same_git_repo(inst_git, row_git)
+        return False
+    except Exception:
+        return True
 
 
 class AddonRow(QWidget):
@@ -380,10 +399,22 @@ class AddonsPanel(ScrollListPanel):
             r for r in state.addons.values() if self._matches(r.to_dict())
         ]
         installed.sort(key=lambda r: r.folder.lower())
+        # Render-time assertion (controller already suppresses shadowed
+        # rows): an AVAILABLE row denoting an installed addon under a
+        # variant spelling (case/whitespace/unicode) must not render
+        # twice. The git URL differentiates — a same-spelling row from a
+        # different repo is a different addon and stays visible.
+        installed_gits = {}
+        for f, s in state.addons.items():
+            if not isinstance(f, str):
+                continue
+            key = f.strip().casefold()
+            if key:
+                installed_gits[key] = s.git
         available = [
             a
             for a in state.available
-            if a.folder not in state.addons and self._matches(a.to_dict())
+            if _row_visible(a, installed_gits) and self._matches(a.to_dict())
         ]
         # Recommended addons sort first, then by folder name.
         available.sort(

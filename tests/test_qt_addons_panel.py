@@ -594,3 +594,56 @@ def test_update_label_refused_start_keeps_panel_enabled(
     apply.assert_called_once()
     assert panel._running is False
     assert panel.findChild(QPushButton, "addonsApply").isEnabled()
+
+
+def test_shadowed_available_variant_not_rendered(qapp, window, hub):
+    """An AVAILABLE row variant-spelling an installed folder
+    (catalog `PackExtra` vs disk `packextra`) renders once, INSTALLED."""
+    window.switch_tab("ADDONS")
+    _post(
+        hub,
+        _make_state(
+            addons={
+                "packextra": dict(
+                    status="upToDate",
+                    git="https://github.com/x/pack",
+                )
+            },
+            available=[
+                dict(
+                    folder="PackExtra",
+                    status="available",
+                    git="https://github.com/x/pack",
+                )
+            ],
+        ),
+    )
+    panel = _panel(window)
+    assert set(panel._rows) == {"packextra"}
+    assert panel.findChild(QCheckBox, "addonsCheck_PackExtra") is None
+
+
+def test_different_repo_variant_renders_both(qapp, window, hub):
+    """Same spelling from a different repo is a different addon — both
+    the INSTALLED row and the AVAILABLE row render."""
+    window.switch_tab("ADDONS")
+    _post(
+        hub,
+        _make_state(
+            addons={
+                "packextra": dict(
+                    status="upToDate",
+                    git="https://github.com/x/pack",
+                )
+            },
+            available=[
+                dict(
+                    folder="PackExtra",
+                    status="available",
+                    git="https://github.com/y/fork",
+                )
+            ],
+        ),
+    )
+    panel = _panel(window)
+    assert set(panel._rows) == {"packextra", "PackExtra"}

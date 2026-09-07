@@ -61,8 +61,11 @@ def backends(monkeypatch, tmp_path):
         lambda git, branch=None, ref=None: "REMOTE",
     )
     monkeypatch.setattr(
-        ac.addons, "install_addon_files", lambda client, folder, git, sha: None
+        ac.addons,
+        "install_addon_files",
+        lambda client, folder, git, sha, wanted=None: [folder],
     )
+    monkeypatch.setattr(ac.addons, "addon_repo_names", lambda *a, **k: [])
     monkeypatch.setattr(
         ac.addons, "patch_pfui_default_profile", lambda client: None
     )
@@ -623,7 +626,7 @@ def test_apply_failure_still_runs_post_install_verify(
     monkeypatch.setattr(
         ac.addons,
         "install_addon_files",
-        lambda client, folder, git, sha: (_ for _ in ()).throw(
+        lambda client, folder, git, sha, wanted=None: (_ for _ in ()).throw(
             RuntimeError("boom")
         ),
     )
@@ -668,7 +671,10 @@ def test_apply_marks_existing_addon_downloading(
     monkeypatch.setattr(
         ac.addons,
         "install_addon_files",
-        lambda client, folder, git, sha: release.wait(),
+        lambda client, folder, git, sha, wanted=None: (
+            release.wait(),
+            [folder],
+        )[1],
     )
 
     assert controller.apply([rec.to_dict()]) is True
@@ -709,7 +715,10 @@ def test_update_all_flips_records_to_downloading(
     monkeypatch.setattr(
         ac.addons,
         "install_addon_files",
-        lambda client, folder, git, sha: release.wait(),
+        lambda client, folder, git, sha, wanted=None: (
+            release.wait(),
+            [folder],
+        )[1],
     )
 
     assert controller.apply(controller.update_all()) is True
@@ -728,7 +737,7 @@ def test_update_all_flips_records_to_downloading(
 def test_apply_failure_records_error_and_posts_finished(
     controller, cfg, monkeypatch
 ):
-    def boom(client, folder, git, sha):
+    def boom(client, folder, git, sha, wanted=None):
         raise RuntimeError("download blocked")
 
     monkeypatch.setattr(ac.addons, "install_addon_files", boom)
@@ -949,6 +958,208 @@ def test_verify_posts_cached_preview_before_scan(controller, monkeypatch):
 # ── worker-crash containment (regression) ────────────────────────────────
 
 
+def test_verify_adopts_multi_addon_repo_siblings(
+    controller, cfg, tmp_path, monkeypatch
+):
+    """A catalog entry whose repo ships several addons adopts every
+    on-disk sibling — not just the primary folder — so multi-addon repos
+    (AtlasLoot's modules) stop showing 'Not tracked'."""
+    client = str(tmp_path)
+    _install_folder(client, "Pack")
+    _install_folder(client, "PackExtra")
+    cfg["addons"] = {}
+    monkeypatch.setattr(
+        ac.addons,
+        "addons_catalog",
+        lambda force=False: [
+            {
+                "name": "Pack",
+                "git": "https://github.com/catalog/Pack",
+                "branch": "main",
+                "ref": None,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        ac.addons,
+        "addon_repo_names",
+        lambda git, branch=None, ref=None, force=False: [
+            "Pack",
+            "PackExtra",
+        ],
+    )
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
+
+    for name in ("Pack", "PackExtra"):
+        rec = controller.state.addons[name]
+        assert rec.status == "upToDate"
+        assert rec.git == "https://github.com/catalog/Pack"
+        assert cfg["addons"][name] == {
+            "git": "https://github.com/catalog/Pack",
+            "branch": "main",
+            "ref": None,
+            "sha": "REMOTE",
+        }
+    assert controller.updates_count == 0
+
+
+def test_verify_sibling_unresolvable_is_unknown(
+    controller, cfg, tmp_path, monkeypatch
+):
+    """An unresolvable sibling stays retryable ('unknown'), never stale."""
+    client = str(tmp_path)
+    _install_folder(client, "Pack")
+    _install_folder(client, "PackExtra")
+    cfg["addons"] = {}
+    monkeypatch.setattr(
+        ac.addons,
+        "addons_catalog",
+        lambda force=False: [
+            {
+                "name": "Pack",
+                "git": "https://github.com/catalog/Pack",
+                "branch": "main",
+                "ref": None,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        ac.addons,
+        "addon_repo_names",
+        lambda git, branch=None, ref=None, force=False: [
+            "Pack",
+            "PackExtra",
+        ],
+    )
+    monkeypatch.setattr(ac.addons, "addon_remote_sha", lambda *a, **k: None)
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
+
+    rec = controller.state.addons["PackExtra"]
+    assert rec.status == "unknown"
+    assert rec.error == "Couldn't check for updates"
+    assert "PackExtra" not in cfg.get("addons", {})
+    assert controller.updates_count == 0
+
+
+def test_apply_groups_same_repo_into_one_install(
+    controller, cfg, tmp_path, monkeypatch
+):
+    """Two out-of-date folders from one repo share a single archive fetch
+    and both end up recorded/up-to-date."""
+    client = str(tmp_path)
+    _install_folder(client, "Pack")
+    _install_folder(client, "PackExtra")
+    cfg["out_dir"] = client
+    cfg["addons"] = {
+        "Pack": {
+            "git": "https://github.com/a/pack",
+            "branch": None,
+            "ref": None,
+            "sha": "OLD",
+        },
+        "PackExtra": {
+            "git": "https://github.com/a/pack",
+            "branch": None,
+            "ref": None,
+            "sha": "OLD",
+        },
+    }
+    calls = []
+
+    def fake_install(client_dir, folder, git, sha, wanted=None):
+        calls.append((folder, wanted))
+        return ["Pack", "PackExtra"]
+
+    monkeypatch.setattr(ac.addons, "install_addon_files", fake_install)
+    for name in ("Pack", "PackExtra"):
+        controller.state.addons[name] = AddonState(
+            folder=name,
+            status="outOfDate",
+            git="https://github.com/a/pack",
+            toc={},
+        )
+
+    assert controller.apply(controller.update_all()) is True
+    _drain_for(
+        controller._dispatcher, lambda e: isinstance(e, OperationFinished)
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1] == ["Pack", "PackExtra"]
+    for name in ("Pack", "PackExtra"):
+        assert cfg["addons"][name]["sha"] == "REMOTE"
+        assert controller.state.addons[name].status == "upToDate"
+
+
+def test_verify_skips_dot_directories(controller, cfg, tmp_path):
+    """Tool state dirs (.snapjaw_cache, .git) are not addons — they must
+    not show up as 'Addon error' rows."""
+    client = str(tmp_path)
+    os.makedirs(os.path.join(client, "Interface", "AddOns", ".snapjaw_cache"))
+    cfg["addons"] = {}
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
+
+    assert ".snapjaw_cache" not in controller.state.addons
+
+
+def test_verify_discovers_snapjaw_managed_repo(
+    controller, cfg, tmp_path, monkeypatch
+):
+    """A repo the catalog names differently (or as a pack) but snapjaw
+    cloned is still relevant: its folders adopt instead of staying
+    'Not tracked'."""
+    client = str(tmp_path)
+    _install_folder(client, "Pack")
+    _install_folder(client, "PackExtra")
+    cache = os.path.join(
+        client, "Interface", "AddOns", ".snapjaw_cache", "ab12", ".git"
+    )
+    os.makedirs(cache)
+    with open(os.path.join(cache, "config"), "w", encoding="utf-8") as f:
+        f.write('[remote "origin"]\n\turl = https://github.com/c/pack\n')
+    cfg["addons"] = {}
+    monkeypatch.setattr(
+        ac.addons,
+        "addons_catalog",
+        lambda force=False: [
+            {
+                # Pack-level row: the folder itself is not on disk.
+                "name": "Pack Row",
+                "git": "https://github.com/c/pack.git",
+                "branch": "main",
+                "ref": None,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        ac.addons,
+        "addon_repo_names",
+        lambda git, branch=None, ref=None, force=False: [
+            "Pack",
+            "PackExtra",
+        ],
+    )
+
+    assert controller.verify() is True
+    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
+    _wait_verify_done(controller)
+
+    for name in ("Pack", "PackExtra"):
+        rec = controller.state.addons[name]
+        assert rec.status == "upToDate"
+        assert rec.git == "https://github.com/c/pack.git"
+    assert controller.updates_count == 0
+
+
 def test_verify_worker_crash_resets_busy_and_reports(
     controller, cfg, tmp_path, monkeypatch
 ):
@@ -974,3 +1185,175 @@ def test_verify_worker_crash_resets_busy_and_reports(
         for e in events
     )
     assert not controller.state.busy
+
+
+# ── variant-spelling (case/whitespace/unicode) ──────────────────────────
+
+
+def test_verify_case_mismatch_disk_vs_catalog_no_double(
+    controller, cfg, tmp_path
+):
+    """Disk `foo` vs catalog `Foo`: the install resolves through the
+    norm-fallback match and no AVAILABLE row shadows the installed one."""
+    client = str(tmp_path)
+    _install_folder(client, "foo")
+    cfg["addons"]["foo"] = {
+        "git": "https://github.com/x/y",
+        "sha": "REMOTE",
+    }
+    catalog = [{"name": "Foo", "git": "https://github.com/x/y"}]
+    controller._verify_worker_body(catalog, client, False, True)
+    assert set(controller.state.addons) == {"foo"}
+    assert controller.state.addons["foo"].status == "upToDate"
+    assert all(
+        r.folder.casefold() != "foo" for r in controller.state.available
+    )
+
+
+def test_verify_case_variant_sibling_adopted_not_listed(
+    controller, cfg, tmp_path, monkeypatch
+):
+    """Discovered sibling `PackExtra` with disk `packextra` is adopted in
+    place, never appended as an AVAILABLE row."""
+    client = str(tmp_path)
+    _install_folder(client, "packextra")
+    # Saved record makes the repo relevant for sibling discovery.
+    cfg["addons"]["packextra"] = {
+        "git": "https://github.com/x/pack",
+        "sha": "OLD",
+    }
+    monkeypatch.setattr(
+        ac.addons,
+        "addon_repo_names",
+        lambda *a, **k: ["Pack", "PackExtra"],
+    )
+    catalog = [{"name": "Pack", "git": "https://github.com/x/pack"}]
+    controller._verify_worker_body(catalog, client, False, True)
+    rec = controller.state.addons["packextra"]
+    assert rec.git == "https://github.com/x/pack"
+    assert rec.status == "outOfDate"
+    assert all(
+        r.folder.casefold() != "packextra" for r in controller.state.available
+    )
+
+
+def test_available_from_catalog_dedupes_case_variants(controller):
+    """Catalog carrying `Foo` + `foo` from the same repo yields one row
+    (last wins, mirroring merge_addons override order), never two."""
+    rows = controller._available_from_catalog(
+        [
+            {"name": "Foo", "git": "https://github.com/x/a"},
+            {"name": "foo", "git": "https://github.com/x/a"},
+        ]
+    )
+    assert [r["folder"] for r in rows] == ["foo"]
+    assert rows[0]["git"] == "https://github.com/x/a"
+
+
+def test_available_from_catalog_keeps_different_repos(controller):
+    """Same spelling from two repos = two different addons — keep both."""
+    rows = controller._available_from_catalog(
+        [
+            {"name": "Foo", "git": "https://github.com/x/a"},
+            {"name": "foo", "git": "https://github.com/y/b"},
+        ]
+    )
+    assert sorted(r["folder"] for r in rows) == ["Foo", "foo"]
+
+
+def test_available_from_catalog_hides_blocked_variant(controller, monkeypatch):
+    """A blocked folder stays hidden even under a variant spelling."""
+    monkeypatch.setattr(ac.addons, "BLOCKED_ADDONS", {"Foo"})
+    rows = controller._available_from_catalog(
+        [{"name": "foo", "git": "https://github.com/x/a"}]
+    )
+    assert rows == []
+
+
+def test_distinct_case_dirs_stay_distinct(controller, cfg, tmp_path):
+    """`Foo` and `foo` on disk are two real installs — never merged."""
+    client = str(tmp_path)
+    os.makedirs(os.path.join(client, "CaseFsProbe"), exist_ok=True)
+    if os.path.exists(os.path.join(client, "casefsprobe")):
+        pytest.skip("case-insensitive filesystem")
+    _install_folder(client, "Foo")
+    _install_folder(client, "foo")
+    controller._verify_worker_body([], client, False, False)
+    assert set(controller.state.addons) == {"Foo", "foo"}
+
+
+def test_discover_siblings_relevance_case_insensitive(
+    controller, tmp_path, monkeypatch
+):
+    """Catalog `Pack` is relevant when the disk holds `pack`."""
+    client = str(tmp_path)
+    _install_folder(client, "pack")
+    seen = {}
+
+    def fake_names(git, branch=None, ref=None, force=False):
+        seen["called"] = True
+        return ["Pack", "PackExtra"]
+
+    monkeypatch.setattr(ac.addons, "addon_repo_names", fake_names)
+    out = controller._discover_siblings(
+        [{"name": "Pack", "git": "https://github.com/x/pack"}],
+        {"pack"},
+        {},
+        False,
+        ac.addons.addons_path(client),
+    )
+    assert seen.get("called") is True
+    assert set(out) == {"Pack", "PackExtra"}
+
+
+def test_verify_different_repo_variant_coexists(
+    controller, cfg, tmp_path, monkeypatch
+):
+    """Disk `foo` tracked from repo A with catalog `Foo` from repo B: a
+    different addon sharing a spelling — no association, no suppression,
+    both stay visible with their own git."""
+    client = str(tmp_path)
+    _install_folder(client, "foo")
+    cfg["addons"]["foo"] = {
+        "git": "https://github.com/x/a",
+        "sha": "REMOTE",
+    }
+    monkeypatch.setattr(
+        ac.addons,
+        "addon_remote_sha",
+        lambda *a, **k: "REMOTE",
+    )
+    catalog = [{"name": "Foo", "git": "https://github.com/y/b"}]
+    controller._verify_worker_body(catalog, client, False, False)
+    rec = controller.state.addons["foo"]
+    assert rec.git == "https://github.com/x/a"
+    assert rec.status == "upToDate"
+    assert [r.folder for r in controller.state.available] == ["Foo"]
+
+
+def test_suppress_shadowed_git_aware():
+    """Same repo (or unknown source) shadows are dropped; a different
+    repo sharing the spelling is a different addon and stays."""
+    rows = [
+        {
+            "folder": "PackExtra",
+            "status": "available",
+            "git": "https://github.com/x/pack",
+        },
+        {
+            "folder": "Other",
+            "status": "available",
+            "git": "https://github.com/x/other",
+        },
+        {"folder": "", "status": "available"},
+    ]
+    kept = ac._suppress_shadowed(
+        rows, {"packextra": "https://github.com/x/pack"}
+    )
+    assert [r["folder"] for r in kept] == ["Other", ""]
+    kept = ac._suppress_shadowed(
+        rows, {"packextra": "https://github.com/y/fork"}
+    )
+    assert [r["folder"] for r in kept] == ["PackExtra", "Other", ""]
+    kept = ac._suppress_shadowed(rows, {"packextra": None})
+    assert [r["folder"] for r in kept] == ["Other", ""]

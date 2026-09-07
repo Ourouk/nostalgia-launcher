@@ -298,6 +298,194 @@ def reset_registry_url():
     catalog.reset_registry_url("addons")
 
 
+def snapjaw_cache_repo_urls(addons_dir: str) -> set[str]:
+    """Git origin URLs of snapjaw's persistent clones under
+    ``{addons_dir}/.snapjaw_cache``.
+
+    Read-only: parses each clone's `.git/config` for its
+    `[remote "origin"]` URL — no git binary needed. Lets discovery treat
+    a catalog repo as relevant when the user previously managed it with
+    snapjaw (its folders are on disk under names the catalog doesn't
+    list). Never raises.
+    """
+    urls: set[str] = set()
+    try:
+        cache_root = os.path.join(addons_dir or "", ".snapjaw_cache")
+        if not os.path.isdir(cache_root):
+            return urls
+        entries = os.listdir(cache_root)
+    except OSError:
+        return urls
+    for entry in entries:
+        config_path = os.path.join(cache_root, entry, ".git", "config")
+        try:
+            with open(config_path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        in_origin = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("["):
+                in_origin = stripped.lower() == '[remote "origin"]'
+                continue
+            if in_origin and stripped.lower().startswith("url ="):
+                url = stripped[5:].strip()
+                if url:
+                    urls.add(url)
+                break
+    return urls
+
+
+# Accepted `## Interface:` ranges per declared client version (mirrors
+# snapjaw's expansion filter: vanilla 1.x <= 11200, wotlk 3.x 30000-30300).
+INTERFACE_RANGE_BY_VERSION = {
+    "1.12.1": (0, 11200),
+    "2.4.3": (20000, 20400),
+    "3.3.5a": (30000, 30300),
+}
+
+
+def interface_allowed(interface: int | None, client_version: str) -> bool:
+    """Whether a `.toc` Interface value belongs to ``client_version``.
+
+    A missing/unparseable Interface is accepted — the catalog is already
+    per-version, so discovery must not drop addons whose `.toc` simply
+    omits the line (several legacy modules do)."""
+    if interface is None:
+        return True
+    bounds = INTERFACE_RANGE_BY_VERSION.get((client_version or "").strip())
+    if bounds is None:
+        return True
+    low, high = bounds
+    return low <= interface <= high
+
+
+def _parse_interface_text(text: str) -> int | None:
+    """The `## Interface:` value in `.toc` text, or None when absent.
+
+    Only a leading digit run counts (``30300`` ok, ``abc``/empty absent).
+    Requires whitespace after `##` so `##Interface:` never matches."""
+    for raw_line in text.splitlines():
+        line = raw_line.lstrip("\ufeff")
+        if not line.startswith("##"):
+            continue
+        rest = line[2:]
+        if rest[:1] not in (" ", "\t"):
+            continue
+        key, sep, value = rest.strip().partition(":")
+        if not sep or key.strip() != "Interface":
+            continue
+        stripped = value.strip()
+        digits = ""
+        for char in stripped:
+            if not char.isdigit():
+                break
+            digits += char
+        if not digits:
+            return None
+        try:
+            return int(digits)
+        except ValueError:
+            return None
+    return None
+
+
+def discover_repo_addons(
+    data: bytes, client_version: str | None = None
+) -> list[tuple[str, str]]:
+    """Every addon folder shipped inside a repo archive zip.
+
+    Returns ``[(folder_name, stripped_prefix), ...]`` where
+    ``stripped_prefix`` is the archive-root-relative directory ("/"
+    separated, top-level "<repo>-<sha>/" already removed) holding
+    ``<folder_name>.toc`` — ready for ``deploy.unpack_prefix``. A folder
+    counts when it holds a ``<dirname>.toc`` (extension case-insensitive)
+    whose Interface fits ``client_version`` (missing Interface accepted).
+    A `.toc` sitting at the stripped root is a single-addon repo: its stem
+    is the real folder name (often different from the catalog row, e.g.
+    `ModernMapMarkers.toc` inside `ModernMapMarkers-WotLK`) and installs
+    with an empty prefix (whole-tree unpack).
+
+    Nested addons collapse to the shallowest claimant; once the root is
+    claimed, deeper `.toc` files (bundled libs like LibStub) are skipped.
+    Raises ``zipfile.BadZipFile`` on corrupt input — callers decide
+    whether to fall back.
+    """
+    import zipfile
+    from io import BytesIO
+
+    version = client_version or ""
+
+    def _toc_interface(zf, filename: str) -> int | None | bool:
+        """Interface value of a zip member, False when not a .toc file."""
+        stem, dot, ext = filename.rpartition(".")
+        if not dot or ext.lower() != "toc":
+            return False
+        try:
+            raw = zf.read(filename)
+        except KeyError:
+            return None
+        try:
+            text = raw.decode("utf-8-sig", errors="replace")
+        except Exception:
+            return None
+        return _parse_interface_text(text)
+
+    candidates: list[tuple[str, str, int | None]] = []
+    root_stems: list[str] = []
+    with zipfile.ZipFile(BytesIO(data)) as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            rel = "/".join(
+                p
+                for p in info.filename.replace("\\", "/").split("/")[1:]
+                if p not in ("", ".")
+            )
+            if not rel or ".." in rel.split("/"):
+                continue
+            parts = rel.split("/")
+            if len(parts) == 1:
+                interface = _toc_interface(zf, info.filename)
+                if interface is False:
+                    continue
+                stem = parts[0].rpartition(".")[0]
+                if interface_allowed(interface, version):
+                    root_stems.append(stem)
+                continue
+            dirname = parts[-2]
+            stem, dot, ext = parts[-1].rpartition(".")
+            if not dot or ext.lower() != "toc":
+                continue
+            if stem != dirname and stem.lower() != dirname.lower():
+                continue
+            interface = _toc_interface(zf, info.filename)
+            if interface is False:  # unreachable (checked above)
+                continue
+            if not interface_allowed(interface, version):
+                continue
+            candidates.append((dirname, "/".join(parts[:-1]), interface))
+    if root_stems:
+        # Single-addon repo (e.g. pfUI, ModernMapMarkers): the whole tree
+        # installs under each root stem; bundled nested libs are skipped.
+        return [(stem, "") for stem in sorted(set(root_stems))]
+    # Shallowest claimant wins; deeper nested duplicates are skipped.
+    candidates.sort(key=lambda c: c[1].count("/"))
+    claimed: list[str] = []
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for name, prefix, _interface in candidates:
+        if name.lower() in seen:
+            continue
+        if any(prefix == c or prefix.startswith(c + "/") for c in claimed):
+            continue
+        claimed.append(prefix)
+        seen.add(name.lower())
+        found.append((name, prefix))
+    return found
+
+
 def read_toc_file(path: str) -> dict:
     """Parse '## Key: Value' metadata lines from a WoW addon .toc file."""
     toc = {}
@@ -315,6 +503,58 @@ def read_toc_file(path: str) -> dict:
         if sep:
             toc[key.strip()] = value.strip()
     return toc
+
+
+# In-memory TOC cache keyed by absolute .toc path: {path: (mtime_ns,
+# size, toc)}. Parsing is cheap but rescans (tab switches, retries,
+# settings reloads) re-read every file; unchanged files are served from
+# the cache. Process-local only — no persistence, no staleness across
+# restarts. Bounded with best-effort eviction; never raises.
+_TOC_CACHE: dict = {}
+_TOC_CACHE_MAX = 2000
+
+
+def read_toc_file_cached(path: str) -> dict:
+    """Cached variant of read_toc_file: reuse the parsed dict when the
+    file's mtime/size are unchanged, re-parse otherwise."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        _TOC_CACHE.pop(path, None)
+        return {}
+    key = (st.st_mtime_ns, st.st_size)
+    try:
+        hit = _TOC_CACHE.get(path)
+    except Exception:
+        hit = None
+    if hit is not None and hit[0] == key:
+        try:
+            return dict(hit[1])
+        except Exception:
+            pass
+    toc = read_toc_file(path)
+    try:
+        if len(_TOC_CACHE) >= _TOC_CACHE_MAX and path not in _TOC_CACHE:
+            _TOC_CACHE.pop(next(iter(_TOC_CACHE)), None)
+        _TOC_CACHE[path] = (key, dict(toc))
+    except Exception:
+        pass
+    return toc
+
+
+def prune_toc_cache(addons_dir: str = "") -> None:
+    """Drop cached TOC entries that no longer belong to ``addons_dir``."""
+    try:
+        entries = list(_TOC_CACHE)
+    except Exception:
+        return
+    if not addons_dir:
+        _TOC_CACHE.clear()
+        return
+    prefix = os.path.join(addons_dir, "") if addons_dir else ""
+    for path in entries:
+        if not path.startswith(prefix) or not os.path.exists(path):
+            _TOC_CACHE.pop(path, None)
 
 
 def addon_remote_sha(
@@ -338,16 +578,109 @@ def addon_cached_sha(git_url: str, branch=None, ref=None):
     return _GIT_BACKEND.cached_sha(git_url, branch=branch, ref=ref)
 
 
-def install_addon_files(client_dir: str, folder: str, git_url: str, sha: str):
-    """Download the repo archive at `sha` via the git_archive backend and
-    unpack it into Interface/AddOns/<folder>, atomically replacing any
-    existing copy."""
+def addon_repo_names(
+    git_url: str, branch=None, ref=None, force=False
+) -> list[str]:
+    """Addon folder names shipped by a repo (multi-addon repos included).
+
+    Resolves the current remote sha (cheap: API/`git ls-remote` with the
+    hourly ``addon_sha_cache``) and returns the cached discovery while the
+    sha is unchanged — the archive itself is fetched only when the repo
+    actually moved. Offline (or a failed fetch) serves the last cached
+    names. Never raises: [] means "unknown, keep single-folder behavior".
+    """
+    if not git_url or not is_allowed_git_url(git_url):
+        return []
+    key = f"{git_url}#{ref or branch or ''}"
+    try:
+        remote = addon_remote_sha(git_url, branch, ref, force=force)
+    except Exception:
+        remote = None
+    try:
+        cache = load_config().get("addon_repo_cache", {}) or {}
+    except Exception:
+        cache = {}
+    entry = cache.get(key) if isinstance(cache, dict) else None
+    cached_names = (
+        [n for n in entry.get("names", []) if isinstance(n, str)]
+        if isinstance(entry, dict)
+        else []
+    )
+    if remote and entry and entry.get("sha") == remote and cached_names:
+        return cached_names
+    if not remote:
+        return cached_names
+    try:
+        data = _GIT_BACKEND.fetch_archive(git_url, remote)
+        names = [
+            name
+            for name, _prefix in discover_repo_addons(
+                data, launcher.client_version()
+            )
+        ]
+    except Exception as e:
+        log(f"  Could not list addons in {git_url} ({e})", "dim")
+        return cached_names
+    try:
+        update_config(
+            lambda c, k=key, s=remote, n=names: c.setdefault(
+                "addon_repo_cache", {}
+            ).__setitem__(k, {"sha": s, "names": n, "timestamp": time.time()})
+        )
+    except Exception:
+        pass
+    return names
+
+
+def install_addon_files(
+    client_dir: str,
+    folder: str,
+    git_url: str,
+    sha: str,
+    wanted: list[str] | None = None,
+) -> list[str]:
+    """Download the repo archive at `sha` and unpack it into
+    Interface/AddOns, atomically replacing existing copies. Returns the
+    installed folder names.
+
+    One Git repo often ships several addons (e.g. AtlasLoot's seven
+    modules): every discovered `<folder>/<folder>.toc` is installed into
+    its own directory. When ``wanted`` names are all discovered, only
+    those are installed; otherwise (a catalog row naming the pack rather
+    than a folder) every discovered addon is installed. A repo with its
+    `.toc` at the top level is a single addon — legacy whole-tree unpack
+    into ``folder`` applies.
+    """
     log(f"  Downloading {folder} @ {sha[:10]}…")
     data = _GIT_BACKEND.fetch_archive(git_url, sha)
-    _sources_deploy.unpack_folder(
-        data, os.path.join(addons_path(client_dir), folder)
-    )
-    log(f"  Installed addon {folder}")
+    try:
+        discovered = discover_repo_addons(data, launcher.client_version())
+    except Exception:
+        discovered = []
+    if not discovered:
+        _sources_deploy.unpack_folder(
+            data, os.path.join(addons_path(client_dir), folder)
+        )
+        log(f"  Installed addon {folder}")
+        return [folder]
+    by_name = {name: prefix for name, prefix in discovered}
+    if wanted:
+        selected = [n for n in wanted if n in by_name]
+        names = selected or [name for name, _prefix in discovered]
+    else:
+        names = (
+            [folder]
+            if folder in by_name
+            else [name for name, _prefix in discovered]
+        )
+    installed = []
+    for name in names:
+        _sources_deploy.unpack_prefix(
+            data, by_name[name], os.path.join(addons_path(client_dir), name)
+        )
+        log(f"  Installed addon {name}")
+        installed.append(name)
+    return installed
 
 
 # ── pfUI "Default" profile patch ─────────────────────────────────────────────
