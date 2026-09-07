@@ -18,12 +18,15 @@ from urllib.error import HTTPError
 from ..core import config_store, filesystem, launcher, platform_support
 from ..core.constants import UA
 from ..core.errors import describe_net_error
+from ..core.log_sink import log
 from ..core.security_http import secure_urlopen
 from ..services import addons, catalog, mods
 from ..state.events import (
     EventDispatcher,
     LogMessage,
     MirrorStatusChanged,
+    OperationFinished,
+    ProgressChanged,
 )
 from ..state.models import LaunchSettings, SettingsState
 
@@ -160,7 +163,7 @@ class SettingsController:
 
         # Only touch WDB when the path is a real client folder — this fires on
         # every keystroke while a path is being typed.
-        if os.path.exists(os.path.join(new_val, "WoW.exe")):
+        if filesystem.game_executable_exists(new_val):
             filesystem.remove_wdb(new_val)
 
         # Wipe folder-scoped config (mods/addons/assets install records),
@@ -303,6 +306,64 @@ class SettingsController:
             )
         )
         self._updater.start_verify(overwrite_config=False)
+
+    def skip_verification(self) -> bool:
+        """Skip verification / pending update and mark the client as ready.
+
+        Works both while ``Verifying…`` (``disabled``) and when an update or
+        download is pending (``UPDATE``/``DOWNLOAD``), but only when a playable
+        client is on disk — otherwise skipping would strand the user with
+        nothing to play. Returns True when the skip was applied.
+        """
+        st = self._updater.state
+        try:
+            playable = bool(self._updater._playable_client_present())  # type: ignore[attr-defined]
+        except Exception:
+            playable = False
+        try:
+            addons_installing = bool(self._addons.installing)  # type: ignore[attr-defined]
+        except Exception:
+            addons_installing = False
+        from .update import can_skip_verification
+
+        if not can_skip_verification(
+            st,
+            running=self._updater.running,
+            game_running=st.game_running,
+            addons_installing=addons_installing,
+            client_update_enabled=self.client_update_enabled,
+            playable=playable,
+        ):
+            return False
+        # Unified clear — all torrent verdict fields reset so
+        # compute_readiness no longer sees Verifying…/UPDATE/DOWNLOAD.
+        st.torrent_stale = None
+        st.torrent_reachable = None
+        st.torrent_error = None
+        st.client_ready = True
+        # Keep verify_out_dir in sync with the folder we just marked ready,
+        # so start_update's verify_out_dir != out guard doesn't spuriously
+        # trigger a re-verify.
+        try:
+            cur = (self._updater._get_out_dir() or "").strip()  # type: ignore[attr-defined]
+        except Exception:
+            cur = ""
+        if cur:
+            st.verify_out_dir = cur
+        self._dispatcher.post(ProgressChanged(1.0, ""))
+        self._dispatcher.post(
+            OperationFinished(
+                "verify", True, "Skipped — playing unverified client"
+            )
+        )
+        self._dispatcher.post(
+            LogMessage(
+                "Verification skipped — client marked ready unverified.\n",
+                "warn",
+            )
+        )
+        log("Verification skipped — client marked ready unverified.", "warn")
+        return True
 
     def set_clear_wdb(self, enabled: bool) -> dict:
         self.state.config = config_store.update_config(

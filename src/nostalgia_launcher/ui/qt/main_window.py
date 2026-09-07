@@ -431,6 +431,23 @@ class MainWindow(QMainWindow):
         self._statusLabel.setFont(font)
         leftLayout.addWidget(self._statusLabel)
 
+        # Little skip label above the Update buttons — visible only while
+        # verification is pending (disabled/Verifying…).
+        from .list_panel import ClickableLabel
+
+        self._skipVerificationLabel = ClickableLabel("Skip verification", left)
+        self._skipVerificationLabel.setObjectName("skipVerificationLabel")
+        self._skipVerificationLabel.setCursor(Qt.PointingHandCursor)
+        self._skipVerificationLabel.setStyleSheet(
+            f"color: {p.text_dim.name()}; font-size: 9pt;"
+        )
+        self._skipVerificationLabel.setToolTip(
+            "Skip the current verification and play unverified"
+        )
+        self._skipVerificationLabel.clicked.connect(self._on_skip_verification)
+        self._skipVerificationLabel.hide()
+        leftLayout.addWidget(self._skipVerificationLabel)
+
         self._buttonStyles = {
             "update": (
                 f"QPushButton {{ background-color: {p.gold.name()};"
@@ -991,6 +1008,7 @@ class MainWindow(QMainWindow):
         UpdateController.compute_readiness."""
         self._apply_readiness(self._readiness())
         self._sync_recheck_button()
+        self._sync_skip_label()
 
     def _sync_recheck_button(self):
         """Force recheck is only offered while nothing else is in flight and
@@ -1005,6 +1023,39 @@ class MainWindow(QMainWindow):
             and hub.settings.client_update_enabled
         )
         self._updatePanel.set_recheck_enabled(enabled)
+
+    def _sync_skip_label(self):
+        hub = self._hub
+        st = hub.updater.state
+        try:
+            playable = bool(hub.updater._playable_client_present())  # type: ignore[attr-defined]
+        except Exception:
+            playable = False
+        from ...controllers.update import can_skip_verification
+
+        visible = can_skip_verification(
+            st,
+            running=hub.updater.running,
+            game_running=st.game_running,
+            addons_installing=bool(hub.addons.installing),  # type: ignore[attr-defined]
+            client_update_enabled=hub.settings.client_update_enabled,
+            playable=playable,
+        )
+        if hasattr(self, "_skipVerificationLabel"):
+            self._skipVerificationLabel.setVisible(visible)
+            # Slightly different tooltip when we're skipping an update.
+            if visible and st.torrent_stale is not None:
+                self._skipVerificationLabel.setToolTip(
+                    "Skip the pending update and play unverified"
+                )
+            elif visible:
+                self._skipVerificationLabel.setToolTip(
+                    "Skip the current verification and play unverified"
+                )
+
+    def _on_skip_verification(self):
+        if self._hub.settings.skip_verification():
+            self._refresh_ready_state()
 
     def _readiness(self):
         return self._hub.updater.compute_readiness(

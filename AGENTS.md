@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Nostalgia Launcher — PySide6 desktop app (updater + mod manager for Vanilla WoW). Runtime deps: PySide6 + libtorrent (lazily imported; Linux client launch requires `umu-run`). Incremental updates are **torrent-only** (piece hashes); first install falls back to single-zip HTTP (`server.download.http.fallback` + `content.type` zip/rar/folder). No per-file HTTP `traverse()`.
+Nostalgia Launcher — PySide6 desktop app (updater + mod manager for Vanilla/TBC/WotLK WoW). Runtime deps: PySide6 + libtorrent (lazily imported; Linux client launch requires `umu-run`). Incremental updates are **torrent-only** (piece hashes); first install falls back to single-zip HTTP (`server.download.http.fallback` + `content.type` zip/rar/folder). No per-file HTTP `traverse()`. One client per profile; `server.client_version` is one of `1.12.1`/`2.4.3`/`3.3.5a`.
 
 Read the relevant guide before touching that area:
 
@@ -13,24 +13,24 @@ Read the relevant guide before touching that area:
 | `docs/bittorrent-notes.md` | libtorrent pitfalls P1–P10 |
 | `docs/codebase-review.md` | verified map (file:line) |
 
-`opencode.json` loads these as instructions; keep AGENTS.md compact and put details in the guides.
+Keep AGENTS.md compact and put details in the guides.
 
 ## Commands
 
 ```bash
-uv sync                                    # editable install + PySide6
+uv sync --dev                                 # CI uses --dev (dependency-groups)
 uv run nostalgia-launcher                    # or: uv run python -m nostalgia_launcher
 uv run nostalgia-launcher --launcher-config examples/community.example.json
 uv run pytest tests/test_foo.py::test_bar   # single test while iterating
 uv run pytest -m "not e2e"                  # CI gate (also: ruff + pyright)
 uv run pytest                               # full local (e2e skipped unless RUN_E2E=1 + context/client)
-uv run ruff format . && uv run ruff check . # 79-col, py312, selects E4/E7/E9/F/I/W/UP/B — run after every edit batch
+uv run ruff check . && uv run ruff format . # 79-col, py312, selects E4/E7/E9/F/I/W/UP/B — run after every edit batch
 uv run pyright                              # typeCheckingMode standard, ui excluded (317 stub errors), 0 errors expected
 ```
 
-Verification order for CI parity: `ruff format --check` → `ruff check` → `pyright` → `pytest -m "not e2e"` (see `.github/workflows/tests.yml`; `ci.yml`/`release.yml` call it). Pyright `include` is only `src/nostalgia_launcher`.
+Verification order for CI parity: `ruff check` → `ruff format --check` → `pyright` → `pytest -m "not e2e"` (see `.github/workflows/tests.yml`; `ci.yml`/`release.yml` call it). Pyright `include` is only `src/nostalgia_launcher`. CI pins CPython 3.12 (libtorrent ships wheels for 3.10–3.13 only; 3.14+ silently loses the torrent path).
 
-Git wrapper blocks `git commit --no-verify` / `git push --no-verify`; use `python3 -c "import subprocess; subprocess.run(['git','commit',...])"` to bypass `commit-msg`/`pre-push` if needed (permission in `opencode.json`).
+Git wrapper blocks `git commit --no-verify` / `git push --no-verify`; use `python3 -c "import subprocess; subprocess.run(['git','commit',...])"` to bypass `commit-msg`/`pre-push` if needed.
 
 ## Architecture & conventions
 
@@ -38,15 +38,18 @@ Git wrapper blocks `git commit --no-verify` / `git push --no-verify`; use `pytho
 - **Layering:** `core/`, `services/`, `controllers/`, `state/` stay PySide6-free (tests import without Qt). Qt only in `ui/qt/`; if `ui/qt/` must be importable without Qt, keep Qt imports inside functions (e.g. `ui/qt/app_lock_qt.py`).
 - **Profiles:** one active profile per process, pinned at `cli.main()` via `profiles.activate()`. All per-user artifacts through `profiles.active()` — never `config_dir()/...` directly. Unknown `--profile` exit 2; busy store lock exit 6; second same-profile launch forwards `{"op":"raise"}` exit 0. Switch = confirm → persist pointer → detached relaunch via `ui/qt/profiles_ui.py::switch_profile` only.
 - **Config:** no hardcoded endpoints. `core/launcher.py` validates `nostalgia_launcher.json`; missing/invalid with no `--launcher-config` opens first-launch wizard (`launcher_config_dialog.py` → `launcher.validate_path()`), explicit bad `--launcher-config` is hard error. `server.download.http.manifest/client` hard-removed — only `http.fallback` (single zip) + `torrent.{torrent_url,magnet}`.
+- **Client version:** `server.client_version` is a pinned enum (`ALLOWED_CLIENT_VERSIONS` = `1.12.1`/`2.4.3`/`3.3.5a`, default `1.12.1`); declarative source is `launcher.client_version()` — `filesystem.get_client_version(out_dir)` is a shim kept for call-site compatibility. `platform_support.server_games_dir(name, client_version)` is flavor-aware (`VanillaWoW`/`TbcWoW`/`WrathWoW`); thread `client_version` into `default_game_folder()` suggestions.
 - **Game folder:** strictly user-confirmed (`out_dir_user_set`). Two writers only: Settings apply + wizard folder stage (`config_store.apply_confirmed_out_dir`). Never reintroduce silent defaults.
+- **Game exe:** case-insensitive — TBC/WotLK ship `Wow.exe`, Vanilla `WoW.exe` (identical on Windows, missed on Linux). Always use `filesystem.game_executable_exists()` / `pick_game_executable()`; never `os.path.join(dir, "WoW.exe")` directly.
 - **Update lifecycle:** workers (`services/update/workflow.py` `VerifyWorker`/`UpdateWorker`) post typed dataclass events from `state/events.py` to `EventDispatcher`; `controllers/update.py::_on_event` mutates `UpdateState`; `ui/qt/bridge.py` drains every 50 ms to Qt signals. Never use string markers (deleted `markers.py`).
-- **Security/transfer:** all downloads via `core/security_http.py:secure_urlopen` (HTTPS-only, TLS ≥1.2 + `certifi`, host allowlist per-hop, capped reads). `httpx` + `tenacity` for retries. `core/safety.py` guards archive extraction (`safe_relpath`/`safe_destination`).
-- **Hands-off:** `context/` (third-party refs + real client for e2e — never lint/execute) and `todo/` (work-order consigns; annotate, never commit). Don't run `ruff`/`pyright` on them.
+- **Security/transfer:** all downloads via `core/security_http.py:secure_urlopen` (HTTPS-only, TLS ≥1.2 + `certifi`, host allowlist per-hop, capped reads). `httpx` + `tenacity` for retries. `core/safety.py` guards archive extraction (`safe_relpath`/`safe_folder`).
+- **Hands-off:** `context/` (third-party refs + real client for e2e — never lint/execute). Don't run `ruff`/`pyright` on it.
 
 ## Testing quirks
 
 - Run only covering test(s) while iterating; full `-m "not e2e"` once before commit.
-- `tests/conftest.py` autouse fixtures: `_launcher_env` resets global `launcher` config; `_local_repos_env` redirects content-repo seams; `_log_sink_env` redirects `LOG_FILE`. Tests needing real profile routing must restore via `real_repo_seams` (see `tests/test_profiles.py`).
+- `tests/conftest.py` autouse fixtures: `_launcher_env` resets global `launcher` config; `_local_repos_env` redirects content-repo seams; `_log_sink_env` redirects `LOG_FILE`; `_profiles_env` activates the live default profile; `_single_instance_env` stops stray `QLocalServer` guards. Tests needing real profile routing must restore via `real_repo_seams` (see `tests/test_profiles.py`).
 - `fake_home` sets `HOME`/`USERPROFILE`/`APPDATA`/`LOCALAPPDATA`/`XDG_*` — partial redirects leak state on Windows CI which resolves via `%APPDATA%` first.
 - Offscreen: Qt tests set `QT_QPA_PLATFORM=offscreen` themselves. Real-display tests need `QT_QPA_PLATFORM=xcb RUN_QT_DISPLAY_TESTS=1`.
 - E2E: `RUN_E2E=1 uv run pytest -m e2e` requires `context/client` + `context/wow-client.torrent`; CI runs `-m "not e2e"` only.
+- Known flaky: `test_addons_controller.py::test_apply_failure_records_error_and_posts_finished` times out under full-suite load, passes in isolation — do not "fix" by disabling.

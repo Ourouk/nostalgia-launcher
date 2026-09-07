@@ -76,6 +76,32 @@ class Readiness:
     status: str
 
 
+def can_skip_verification(
+    state,
+    *,
+    running: bool,
+    game_running: bool,
+    addons_installing: bool,
+    client_update_enabled: bool,
+    playable: bool,
+) -> bool:
+    """Unified gate for 'Skip verification' — single source of truth.
+
+    No WoW.exe is the only unavailable scenario, so every pending state
+    (Verifying…, UPDATE, DOWNLOAD, error) requires a playable client to be
+    skippable. Used by both SettingsController and MainWindow.
+    """
+    if running or game_running or addons_installing:
+        return False
+    if state.client_ready:
+        return False
+    if not client_update_enabled:
+        return False
+    # Any pending torrent state — require playable; Verifying… now also gated
+    # on WoW.exe presence (no WoW.exe == unavailable == not skippable).
+    return bool(playable)
+
+
 # Cap on captured child-process (umu/Wine, WoW.exe) lines per run — a chatty
 # Wine session must not flood the session buffer, the log file and the UI.
 _CHILD_OUTPUT_MAX_LINES = 800
@@ -948,6 +974,7 @@ class UpdateController:
 
     def _on_torrent_reachable(self, event: TorrentReachable):
         self.state.torrent_reachable = True
+        self.state.torrent_error = None
 
     def _on_torrent_unreachable(self, event: TorrentUnavailable):
         self._torrent_failure(event.message, reachable=False)
@@ -983,6 +1010,8 @@ class UpdateController:
     def _on_torrent_diff(self, event: TorrentDiffReady):
         self.state.running = False
         self.state.client_ready = False
+        self.state.torrent_reachable = True
+        self.state.torrent_error = None
         self.state.torrent_stale = list(event.stale) if event.stale else []
         self._op = None
         self._dispatcher.post(ProgressChanged(0.0, ""))
@@ -994,6 +1023,8 @@ class UpdateController:
     def _on_torrent_up_to_date(self, event: TorrentUpToDate):
         self.state.running = False
         self.state.client_ready = True
+        self.state.torrent_reachable = True
+        self.state.torrent_error = None
         self.state.torrent_stale = None
         self._op = None
         self._dispatcher.post(ProgressChanged(1.0, ""))
@@ -1002,6 +1033,8 @@ class UpdateController:
     def _on_torrent_recovery_done(self, event: TorrentRecoveryDone):
         self.state.running = False
         self.state.client_ready = True
+        self.state.torrent_reachable = True
+        self.state.torrent_error = None
         self.state.torrent_stale = None
         self._op = None
         self._dispatcher.post(ProgressChanged(1.0, ""))

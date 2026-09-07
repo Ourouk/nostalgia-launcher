@@ -324,6 +324,7 @@ ALLOWED_CLIENT_VERSIONS = ("1.12.1", "2.4.3", "3.3.5a")
 # versions mean "no community catalog" (checkbox will be grayed).
 DEFAULT_MODS_URL_BY_VERSION: dict[str, str] = {
     "1.12.1": "https://raw.githubusercontent.com/Ourouk/Nostalgia-addons/main/vanilla_mods.json",
+    "3.3.5a": "https://raw.githubusercontent.com/Ourouk/Nostalgia-addons/main/wotlk_mods.json",
 }
 DEFAULT_ADDONS_URL_BY_VERSION: dict[str, str] = {
     "1.12.1": "https://raw.githubusercontent.com/Ourouk/Nostalgia-addons/main/vanilla_addons.json",

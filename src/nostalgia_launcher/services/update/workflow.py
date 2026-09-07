@@ -201,7 +201,9 @@ class VerifyWorker:
         if self._cancel:
             self._cancel_torrent_verify()
             return
-        has_exe = os.path.isfile(os.path.join(self.out_dir, "WoW.exe"))
+        from ...core.filesystem import game_executable_exists as _gee0
+
+        has_exe = _gee0(self.out_dir)
         self.log(f"{message} — torrent unavailable.", "err")
         self._dispatcher.post(TorrentUnavailable(message=message))
         if has_exe:
@@ -697,8 +699,9 @@ class UpdateWorker:
                 if self._cancel:
                     self._cancelled_abort()
                     return False
-        exe = os.path.join(self.out_dir, "WoW.exe")
-        if not os.path.isfile(exe):
+        from ...core.filesystem import game_executable_exists as _gee
+
+        if not _gee(self.out_dir):
             self.log("Recovered client has no WoW.exe — update failed.", "err")
             self._dispatcher.post(
                 UpdateFailed(message="no WoW.exe", op="update")
@@ -844,9 +847,10 @@ class UpdateWorker:
                 os.remove(dest)
         except OSError:
             pass
-        exe = os.path.join(self.out_dir, "WoW.exe")
+        from ...core.filesystem import game_executable_exists as _gee2
+
         # Also accept external-launcher executables as playable.
-        has_playable = os.path.isfile(exe)
+        has_playable = _gee2(self.out_dir)
         if not has_playable:
             try:
                 from ...core.filesystem import pick_game_executable
@@ -926,7 +930,9 @@ class UpdateWorker:
                 and _get_torrent_available()()
                 and torrent_allowed
             )
-            has_exe = os.path.isfile(os.path.join(self.out_dir, "WoW.exe"))
+            from ...core.filesystem import game_executable_exists
+
+            has_exe = game_executable_exists(self.out_dir)
             # Also consider external launchers for playability.
             if not has_exe:
                 try:

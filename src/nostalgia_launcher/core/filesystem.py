@@ -93,6 +93,37 @@ def get_client_version(out_dir: str) -> str:  # noqa: ARG001
         return ""
 
 
+def _find_case_insensitive(client_dir: str, filename: str) -> str | None:
+    """Case-insensitive lookup for ``filename`` directly under ``client_dir``.
+
+    Vanilla ships ``WoW.exe``, TBC/WotLK ship ``Wow.exe`` — on Windows the
+    difference is invisible, on Linux ``os.path.isfile("WoW.exe")`` misses
+    ``Wow.exe``. Returns the absolute path with the on-disk spelling, or
+    None when absent/unreadable.
+    """
+    exact = os.path.join(client_dir, filename)
+    if os.path.isfile(exact) or os.path.exists(exact):
+        return exact
+    try:
+        wanted = filename.lower()
+        for entry in os.listdir(client_dir or "."):
+            if entry.lower() == wanted:
+                full = os.path.join(client_dir, entry)
+                if os.path.isfile(full) or os.path.exists(full):
+                    return full
+    except OSError:
+        return None
+    return None
+
+
+def game_executable_exists(client_dir: str) -> bool:
+    """Whether the game folder holds a launchable client exe (any WoW.exe
+    spelling: ``WoW.exe`` / ``Wow.exe`` / ``wow.exe``)."""
+    if not client_dir:
+        return False
+    return _find_case_insensitive(client_dir, "WoW.exe") is not None
+
+
 def pick_game_executable(
     client_dir: str, external_executables: list[str] | None = None
 ) -> tuple[str, str]:
@@ -100,12 +131,16 @@ def pick_game_executable(
 
     Prefers the first external-launcher executable (declared by an
     installed catalog mod and passed in by the caller) that exists on disk,
-    falling back to WoW.exe. Returns ``(absolute_path, label)``.
+    falling back to WoW.exe (any casing: ``WoW.exe``/``Wow.exe``). Returns
+    ``(absolute_path, label)`` with the on-disk spelling as label.
     """
     for name in external_executables or []:
         candidate = os.path.join(client_dir, name)
         if os.path.exists(candidate):
             return candidate, name
+    found = _find_case_insensitive(client_dir, "WoW.exe")
+    if found:
+        return found, os.path.basename(found)
     return os.path.join(client_dir, "WoW.exe"), "WoW.exe"
 
 
