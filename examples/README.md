@@ -36,8 +36,8 @@ object may carry:
 | `name` | `string` | trimmed, falls back to host | Display name |
 | `url` | `https URL` | `launcher.py:310-324` | Identity/display only; `base_url` is a deprecated alias still honoured (`launcher.py:524`) |
 | `realm` | `string` | trimmed | Shown to the user; may also be the `realm` for `tweaks` `Config.wtf` |
-| `news_url` | `https URL` |  | News feed JSON |
-| `featured_news_url` | `https URL` |  | Featured post JSON |
+| `news_url` | `https URL` |  | News feed: JSON (`{"items":[…]}`) or RSS/Atom (auto-detected) |
+| `featured_news_url` | `https URL` |  | Featured post JSON, or RSS/Atom (newest item wins) |
 | `mods_registry_url` | `https URL` |  | Mod catalog URL |
 | `addons_registry_url` | `https URL` |  | Singular addon catalog URL |
 | `addons_registry_urls` | `[https URL]` | each `_https_url` | Ordered list — later entries override earlier by addon `name` (`services/addons.py:225`). When present and non-empty it wins over the singular. |
