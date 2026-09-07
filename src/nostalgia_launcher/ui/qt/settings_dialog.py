@@ -411,7 +411,52 @@ class SettingsDialog(QDialog):
             f"color: {p.err.name()}; font-size: 9pt;"
         )
         layout.addWidget(self._registry_status)
-        layout.addSpacing(2)
+        layout.addSpacing(4)
+
+        # Community defaults — version-aware. When a server leaves the catalog
+        # URL blank we fall back to the curated Ourouk defaults for the
+        # profile's client_version; the checkbox lets the user opt out.
+        cv = launcher.client_version() or ""
+        addons_avail = self._settings.addons_default_available()
+        mods_avail = self._settings.mods_default_available()
+        self._addonsDefaultCheck = self._add_check(
+            layout,
+            "Use community default addons catalog",
+            "settingsAddonsDefault",
+            self._settings.addons_default_enabled and addons_avail,
+            self._settings.set_addons_default_enabled,
+        )
+        self._addonsDefaultCheck.setEnabled(addons_avail)
+        self._addonsDefaultCheck.setToolTip(
+            ("Community catalog for " + cv)
+            if addons_avail
+            else (
+                f"No community catalog for {cv}"
+                if cv
+                else "No community catalog available"
+            )
+        )
+        self._modsDefaultCheck = self._add_check(
+            layout,
+            "Use community default mods catalog",
+            "settingsModsDefault",
+            self._settings.mods_default_enabled and mods_avail,
+            self._settings.set_mods_default_enabled,
+        )
+        self._modsDefaultCheck.setEnabled(mods_avail)
+        self._modsDefaultCheck.setToolTip(
+            ("Community catalog for " + cv)
+            if mods_avail
+            else (
+                f"No community catalog for {cv}"
+                if cv
+                else "No community catalog available"
+            )
+        )
+        # If a checkbox is disabled (no catalog for this version) its
+        # persisted "enabled" flag is left as-is so switching back to a
+        # version that has one restores the prior choice.
+        layout.addSpacing(4)
 
         self._build_registry_row(
             layout,

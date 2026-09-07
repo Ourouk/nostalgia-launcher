@@ -6,20 +6,11 @@ don't belong to any single engine module.
 
 import hashlib
 import os
-import re
 import shutil
 import stat
 from pathlib import Path
 
 from .log_sink import log
-
-# Version/build fields inside WoW.exe, at offsets specific to the 1.12.1
-# client build. Any other build decodes to garbage here, which
-# get_client_version reports as "" rather than a bogus string.
-_BUILD_OFFSET = 0x00437BFC
-_VERSION_OFFSET = 0x00437C04
-
-_VERSIONISH_RE = re.compile(r"\d+(?:\.\d+)*")
 
 
 def ensure_dir(path):
@@ -81,29 +72,23 @@ def remove_wdb(client_dir: str):
         log(f"Could not clear WDB: {e}", "err")
 
 
-def get_client_version(out_dir: str) -> str:
-    """Read version + build from fixed offsets in the client's WoW.exe.
+def get_client_version(out_dir: str) -> str:  # noqa: ARG001
+    """Client version — declarative (server-pinned).
 
-    The offsets are 1.12.1-build-specific; a missing exe or any other
-    client build yields "" instead of a misread label.
+    The legacy binary-offset reader (1.12.1 WoW.exe at 0x00437BFC/0x00437C04)
+    is removed. The declared ``server.client_version`` from
+    ``nostalgia_launcher.json`` (``1.12.1`` / ``2.4.3`` / ``3.3.5a``) is now
+    the single source of truth (one client per profile). ``out_dir`` is kept
+    for call-site compatibility.
+
+    Kept as a thin shim so ``controllers/update`` and
+    ``services/update/workflow`` stay importable without cycles; the real
+    value is read via ``launcher.client_version()``.
     """
-    exe_path = os.path.join(out_dir, "WoW.exe")
-    if not os.path.exists(exe_path):
-        return ""
     try:
-        # Read only the two small fields, not the whole ~5 MB binary.
-        with open(exe_path, "rb") as f:
-            f.seek(_BUILD_OFFSET)
-            build = f.read(4).decode("utf-8", errors="replace").rstrip("\x00")
-            f.seek(_VERSION_OFFSET)
-            version = (
-                f.read(6).decode("utf-8", errors="replace").rstrip("\x00")
-            )
-        if not _VERSIONISH_RE.fullmatch(
-            version
-        ) or not _VERSIONISH_RE.fullmatch(build):
-            return ""
-        return f"{version} ({build})"
+        from . import launcher
+
+        return launcher.client_version() or ""
     except Exception:
         return ""
 

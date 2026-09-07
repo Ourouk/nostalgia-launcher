@@ -31,15 +31,32 @@ def catalog_timestamp() -> float | None:
     return catalog.catalog_timestamp("mods")
 
 
+def _default_enabled() -> bool:
+    """Per-profile toggle for the community default — True when absent."""
+    try:
+        val = load_config().get("mods_default_enabled")
+    except Exception:
+        return True
+    if val is None:
+        return True
+    return bool(val)
+
+
 def has_remote_catalog() -> bool:
-    """Whether a mod catalog is actually fetchable: a user URL override, or
-    an explicitly launcher-configured URL. The base_url-derived default does
-    not count — a config that embeds its mod list has nothing to refetch."""
+    """Whether a mod catalog is actually fetchable: a user URL override, an
+    explicitly launcher-configured URL, or a community default (when enabled
+    and available for this ``client_version``)."""
     if catalog.get_registry_url("mods"):
         return True
     from ..core import launcher
 
-    return launcher.mods_registry_url_explicit()
+    if launcher.mods_registry_url_explicit():
+        return True
+    if not _default_enabled():
+        return False
+    return bool(
+        launcher.default_mods_url_for_version(launcher.client_version())
+    )
 
 
 def embedded_mods() -> list:
@@ -102,16 +119,37 @@ def mods_registry(force=False) -> list:
 
 
 def registry_url() -> str:
-    """The active mod catalog URL: a user override (Settings), else the
-    launcher-configured URL, else ''."""
-    return catalog.get_registry_url("mods") or mods_registry_default_url()
+    """The active mod catalog URL: a user override, else the launcher/server
+    explicit URL, else the version-aware community default (when enabled)."""
+    override = catalog.get_registry_url("mods")
+    if override:
+        return override
+    from ..core import launcher
+
+    explicit = launcher.mods_registry_url()
+    if explicit:
+        return explicit
+    if not _default_enabled():
+        return ""
+    return launcher.default_mods_url_for_version(launcher.client_version())
 
 
 def mods_registry_default_url() -> str:
-    """The launcher-configured mod catalog URL ('' when not configured)."""
+    """The launcher-configured mod catalog URL ('' when not configured).
+
+    Kept for tests — returns only the explicit server URL, not the community
+    default. Use ``registry_url()`` for the effective URL.
+    """
     from ..core import launcher
 
     return launcher.mods_registry_url()
+
+
+def mods_default_available() -> bool:
+    """Whether a community default exists for this ``client_version``."""
+    from ..core import launcher
+
+    return launcher.has_default_mods_for_version(launcher.client_version())
 
 
 def set_registry_url(url: str) -> str | None:

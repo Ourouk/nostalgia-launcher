@@ -12,6 +12,7 @@
       "https://launcher.example.com/community.addons.overrides.example.json"
     ],
     "assets_registry_url": "https://launcher.example.com/community.assets.example.json",
+    "client_version": "1.12.1",
     "torrent_root_marker": "WoW.exe",
     "trusted_hosts": [
       "launcher.example.com",

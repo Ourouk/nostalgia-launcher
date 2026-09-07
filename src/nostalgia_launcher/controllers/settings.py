@@ -64,11 +64,23 @@ class SettingsController:
                 lambda c: c.__setitem__("out_dir_user_set", True)
             )
         stored = cfg.get("out_dir") or ""
+        try:
+            suggestion = platform_support.default_game_folder(
+                launcher.server_name(), launcher.client_version()
+            )
+        except TypeError as exc:
+            if (
+                "unexpected" not in str(exc).lower()
+                and "takes" not in str(exc).lower()
+            ):
+                raise
+            # Back-compat with tests monkeypatching with 1-arg lambda.
+            suggestion = platform_support.default_game_folder(
+                launcher.server_name()
+            )
         self.state = SettingsState(
             path=os.path.normpath(stored) if stored else "",
-            suggestion=platform_support.default_game_folder(
-                launcher.server_name()
-            ),
+            suggestion=suggestion,
             config=cfg,
         )
         self.launch = LaunchSettings.from_config(cfg)
@@ -312,6 +324,48 @@ class SettingsController:
         )
         if self.state.first_run:
             self.state.first_run_verify_pending = enabled
+        return self.state.config
+
+    # ── community default catalogs ───────────────────────────────────────
+
+    @property
+    def mods_default_enabled(self) -> bool:
+        return bool(self.state.config.get("mods_default_enabled", True))
+
+    @property
+    def addons_default_enabled(self) -> bool:
+        return bool(self.state.config.get("addons_default_enabled", True))
+
+    def mods_default_available(self) -> bool:
+        return launcher.has_default_mods_for_version(launcher.client_version())
+
+    def addons_default_available(self) -> bool:
+        return launcher.has_default_addons_for_version(
+            launcher.client_version()
+        )
+
+    def set_mods_default_enabled(self, enabled: bool) -> dict:
+        self.state.config = config_store.update_config(
+            lambda c: c.__setitem__("mods_default_enabled", bool(enabled))
+        )
+        self._dispatcher.post(
+            LogMessage(
+                f"Default mods catalog {'enabled' if enabled else 'disabled'}.\n",
+                "dim",
+            )
+        )
+        return self.state.config
+
+    def set_addons_default_enabled(self, enabled: bool) -> dict:
+        self.state.config = config_store.update_config(
+            lambda c: c.__setitem__("addons_default_enabled", bool(enabled))
+        )
+        self._dispatcher.post(
+            LogMessage(
+                f"Default addons catalog {'enabled' if enabled else 'disabled'}.\n",
+                "dim",
+            )
+        )
         return self.state.config
 
     # ── umu-launcher (Linux play) ──────────────────────────────────────────

@@ -279,7 +279,8 @@ def test_update_finished_updates_version_and_readiness(
     hub.dispatcher.post(OperationFinished("update", True, ""))
     QTest.qWait(200)
 
-    assert window._versionLabel.text() == "1.14.3"
+    assert window._versionLabel.text() == f"v{UPDATER_VERSION}"
+    assert window._clientVersionPill.text() == "1.14.3"
     assert window._updateButton.text() == "PLAY"
     assert window._statusLabel.text() == _PLAY.status
 
@@ -298,6 +299,8 @@ def test_mods_finished_rerenders_mods_panel(qapp, window, monkeypatch):
     QTest.qWait(200)
 
     assert panel._running is False
+    # Footer stays as updater version; declared client_version is shown in
+    # the header pill (review feedback: don't clobber footer).
     assert window._versionLabel.text() == f"v{UPDATER_VERSION}"
     assert window._updateButton.text() == "UPDATE"
 

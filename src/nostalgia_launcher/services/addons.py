@@ -230,31 +230,61 @@ def catalog_last_updated() -> float | None:
     return max(stamps) if stamps else None
 
 
+def _default_enabled() -> bool:
+    try:
+        val = load_config().get("addons_default_enabled")
+    except Exception:
+        return True
+    if val is None:
+        return True
+    return bool(val)
+
+
+def _effective_addons_urls() -> list[str]:
+    """Server explicit URLs, else community default for ``client_version``."""
+    explicit = launcher.addons_registry_urls()
+    non_empty = [u for u in explicit if u and u.strip()]
+    if non_empty:
+        return non_empty
+    if not _default_enabled():
+        return []
+    default = launcher.default_addons_url_for_version(
+        launcher.client_version()
+    )
+    return [default] if default else []
+
+
 def registry_url() -> str:
     """The addon catalog URL shown in Settings: a per-user override, else the
-    first launcher-configured URL, else ''."""
+    first effective URL (server explicit or community default), else ''."""
     override = catalog.get_registry_url("addons")
     if override:
         return override
-    urls = addons_registry_default_urls()
+    urls = _effective_addons_urls()
     return urls[0] if urls else ""
 
 
 def registry_urls() -> list[str]:
     """The ordered list of addon catalog URLs in effect: a per-user override
     (Settings) replaces the whole list with itself; otherwise the
-    launcher-configured list is used."""
+    effective list (server explicit or community default) is used."""
     override = catalog.get_registry_url("addons")
     if override:
         return [override]
-    return addons_registry_default_urls()
+    return _effective_addons_urls()
 
 
 def addons_registry_default_urls() -> list[str]:
     """The launcher-configured addon catalog URLs, in override order ('' list
-    when not configured)."""
+    when not configured). Kept for tests — explicit only."""
 
     return launcher.addons_registry_urls()
+
+
+def addons_default_available() -> bool:
+    from ..core import launcher as _launcher
+
+    return _launcher.has_default_addons_for_version(_launcher.client_version())
 
 
 def set_registry_url(url: str) -> str | None:

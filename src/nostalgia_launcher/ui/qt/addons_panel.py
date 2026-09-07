@@ -38,7 +38,24 @@ from .list_panel import (
 )
 from .theme import Palette
 
-_INTERFACE_VERSION = "11200"
+INTERFACE_BY_VERSION = {
+    "1.12.1": "11200",
+    "2.4.3": "20400",
+    "3.3.5a": "30300",
+}
+# Fallback for legacy single-version checks.
+_INTERFACE_VERSION = INTERFACE_BY_VERSION["1.12.1"]
+
+
+def _expected_interface() -> str:
+    """Declared interface version for this profile."""
+    try:
+        from ...core import launcher as _launcher
+
+        cv = _launcher.client_version()
+        return INTERFACE_BY_VERSION.get(cv or "", _INTERFACE_VERSION)
+    except Exception:
+        return _INTERFACE_VERSION
 
 
 class AddonRow(QWidget):
@@ -64,8 +81,11 @@ class AddonRow(QWidget):
         toc = rec.toc or {}
 
         warnings = []
-        if toc.get("Interface") and toc["Interface"] != _INTERFACE_VERSION:
-            warnings.append(f"Made for client {toc['Interface']}")
+        _exp = _expected_interface()
+        if toc.get("Interface") and toc["Interface"] != _exp:
+            warnings.append(
+                f"Made for client {toc['Interface']} (profile: {_exp})"
+            )
         # pfUI bundles its own modules, so its .toc dependencies aren't real
         # missing addons — never warn about them.
         if installed and rec.folder != "pfUI":

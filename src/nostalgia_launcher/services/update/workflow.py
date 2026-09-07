@@ -589,7 +589,13 @@ class UpdateWorker:
         self._dispatcher.post(event)
 
     def _report_client_version(self):
-        client_ver = get_client_version(self.out_dir)
+        try:
+            from ...core import launcher as _launcher
+
+            declared = _launcher.client_version()
+        except Exception:
+            declared = ""
+        client_ver = declared or get_client_version(self.out_dir)
         if client_ver:
             self.log(f"Client version: {client_ver}", "dim")
             self._dispatcher.post(ClientVersionReady(version=client_ver))

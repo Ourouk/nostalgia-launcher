@@ -166,7 +166,7 @@ def test_embedded_mods_served_without_network(tmp_path, monkeypatch):
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
-    config_store.save_config({})
+    config_store.save_config({"mods_default_enabled": False})
     _configure_embedded([_EMB_VALID, {"id": "Bad", "source": {}}])
 
     def fail(*a, **k):
@@ -259,7 +259,7 @@ def test_has_remote_catalog_user_override(tmp_path, monkeypatch):
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
-    config_store.save_config({})
+    config_store.save_config({"mods_default_enabled": False})
     # A launcher config that does not explicitly set a mods registry URL has
     # no remote catalog — only a user override counts.
     monkeypatch.setattr(launcher, "mods_registry_url_explicit", lambda: False)
@@ -272,7 +272,7 @@ def test_reload_catalog_republishes_when_embedded_only(tmp_path, monkeypatch):
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
-    config_store.save_config({})
+    config_store.save_config({"mods_default_enabled": False})
     _configure_embedded([_EMB_VALID])
 
     def fail(*a, **k):
@@ -877,7 +877,7 @@ def test_catalog_is_stale_false_with_repo_content_only(
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
-    config_store.save_config({})
+    config_store.save_config({"mods_default_enabled": False})
     monkeypatch.setattr(launcher, "mods_registry_url_explicit", lambda: False)
     catalog_svc = __import__(
         "nostalgia_launcher.services.catalog", fromlist=["catalog"]

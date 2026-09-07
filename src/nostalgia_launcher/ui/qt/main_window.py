@@ -140,10 +140,13 @@ class MainWindow(QMainWindow):
         self._wire_signals()
         self._navButtons["NEWS"].setChecked(True)
 
-        # Seed the client-version footer label from disk and sync the
-        # button/status with the controller's current readiness.
-        if self._hub.updater.read_client_version():
-            self._versionLabel.setText(self._hub.updater.state.client_version)
+        # Seed the declared client-version pill and keep the footer
+        # showing the updater self-version. Declarative client_version
+        # (1.12.1/2.4.3/3.3.5a) lives in the header pill; the footer stays
+        # as ``v{UPDATER_VERSION}`` so it's always visible (pre-refactor it
+        # was clobbered by binary sniffing which now never happens).
+        self._hub.updater.read_client_version()
+        self._sync_client_version_pill()
         self._sync_folder_label()
         self._refresh_ready_state()
 
@@ -217,6 +220,23 @@ class MainWindow(QMainWindow):
             f"QComboBox::drop-down {{ border: none; }}"
         )
         layout.addWidget(self._profileCombo)
+
+        # Server-pinned client version pill — reminder of which WoW build
+        # this profile manages (1.12.1 / 2.4.3 / 3.3.5a).
+        self._clientVersionPill = QLabel(launcher.client_version(), header)
+        self._clientVersionPill.setObjectName("clientVersionPill")
+        self._clientVersionPill.setToolTip(
+            "Declared client version for this profile"
+        )
+        self._clientVersionPill.setStyleSheet(
+            f"color: {p.text_dim.name()}; font-size: {metrics.PT_BADGE}pt;"
+            f" border: 1px solid {p.gold.name()}; border-radius: 6px;"
+            " padding: 2px 6px;"
+        )
+        # Keep pill hidden when no version yet (no launcher config).
+        if not launcher.client_version():
+            self._clientVersionPill.hide()
+        layout.addWidget(self._clientVersionPill)
 
         # A themed logo replaces the wordmark text once it has been fetched
         # (the server-name text shows until then, and stays on failure).
@@ -773,15 +793,21 @@ class MainWindow(QMainWindow):
         panel = self._stack.widget(self._pages["UPDATE"])
         panel.set_updated_files(event.files)
 
+    def _sync_client_version_pill(self):
+        cv = (
+            self._hub.updater.state.client_version or launcher.client_version()
+        )
+        if hasattr(self, "_clientVersionPill"):
+            if cv:
+                self._clientVersionPill.setText(cv)
+                self._clientVersionPill.show()
+            else:
+                self._clientVersionPill.hide()
+
     def _onOperationFinished(self, kind: str, ok: bool, message: str):
         panel = self._stack.widget(self._pages["UPDATE"])
         panel.operation_finished(kind, ok, message)
-        updater = self._hub.updater
-        if kind in ("update", "verify") and ok:
-            # The update worker reports the (post-patch) client version just
-            # before finishing; surface it when a fresh one arrived.
-            if updater.state.client_version:
-                self._versionLabel.setText(updater.state.client_version)
+        self._sync_client_version_pill()
         # Readiness owns the status line — it renders the accurate verdict
         # for both success and failure right below.
         self._refresh_ready_state()

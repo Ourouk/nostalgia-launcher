@@ -117,19 +117,31 @@ def games_dir() -> str:
     return os.path.join(os.path.expanduser("~"), "Games")
 
 
-def server_games_dir(name: str) -> str:
+_CLIENT_VERSION_FALLBACK_DIR = {
+    "1.12.1": "VanillaWoW",
+    "2.4.3": "TbcWoW",
+    "3.3.5a": "WrathWoW",
+}
+
+
+def server_games_dir(name: str, client_version: str | None = None) -> str:
     safe = "".join(
         c for c in (name or "") if c not in _ILLEGAL_DIR_CHARS
     ).strip()
-    return (
-        os.path.join(games_dir(), safe)
-        if safe
-        else os.path.join(games_dir(), "VanillaWoW")
+    if safe:
+        return os.path.join(games_dir(), safe)
+    fallback = _CLIENT_VERSION_FALLBACK_DIR.get(
+        (client_version or "").strip(), "VanillaWoW"
     )
+    return os.path.join(games_dir(), fallback)
 
 
-def default_game_folder(server_name: str | None) -> str:
-    return server_games_dir(server_name) if server_name else ""
+def default_game_folder(
+    server_name: str | None, client_version: str | None = None
+) -> str:
+    if not server_name:
+        return ""
+    return server_games_dir(server_name, client_version)
 
 
 def open_folder(path: str):

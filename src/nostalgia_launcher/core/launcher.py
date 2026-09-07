@@ -137,6 +137,8 @@ class LauncherConfig:
     theme: dict | None = None
     addon_git_hosts: list[str] = field(default_factory=list)
     torrent_root_marker: str = "WoW.exe"
+    # Pinned client version for this server profile (subset of mpq.SUPPORTED_VERSIONS).
+    client_version: str = "1.12.1"
     # Server-specific trusted hosts for downloads (beyond auto-derived ones)
     trusted_hosts: set[str] = field(default_factory=set)
     embedded_mods: list[dict] = field(default_factory=list)
@@ -242,6 +244,14 @@ class LauncherConfig:
             if u:
                 urls.append(u)
         urls += self.addons_registry_urls
+        # Version-aware community defaults — even when a server leaves the
+        # catalog blank, the fallback is still a legitimate contact point.
+        for v in DEFAULT_MODS_URL_BY_VERSION.values():
+            if v:
+                urls.append(v)
+        for v in DEFAULT_ADDONS_URL_BY_VERSION.values():
+            if v:
+                urls.append(v)
         for a in self.embedded_assets:
             if isinstance(a, dict) and isinstance(a.get("url"), str):
                 urls.append(a["url"])
@@ -305,6 +315,44 @@ def _parse_root_marker(value: object) -> str:
         if v and "/" not in v and "\\" not in v and ".." not in v:
             return v
     return "WoW.exe"
+
+
+ALLOWED_CLIENT_VERSIONS = ("1.12.1", "2.4.3", "3.3.5a")
+
+# Community defaults for when a server leaves a catalog URL blank.
+# One entry per client_version that actually has a community catalog; absent
+# versions mean "no community catalog" (checkbox will be grayed).
+DEFAULT_MODS_URL_BY_VERSION: dict[str, str] = {
+    "1.12.1": "https://raw.githubusercontent.com/Ourouk/Nostalgia-addons/main/vanilla_mods.json",
+}
+DEFAULT_ADDONS_URL_BY_VERSION: dict[str, str] = {
+    "1.12.1": "https://raw.githubusercontent.com/Ourouk/Nostalgia-addons/main/vanilla_addons.json",
+    "3.3.5a": "https://raw.githubusercontent.com/Ourouk/Nostalgia-addons/main/wotlk_addons.json",
+}
+
+
+def _parse_client_version(value: object) -> str:
+    """Validate ``server.client_version`` — must be one of ALLOWED_CLIENT_VERSIONS.
+
+    Defaults to ``1.12.1`` for backward compatibility with existing Vanilla
+    installs. Unknown values are a hard error (no silent fallback).
+    """
+    if value is None:
+        return "1.12.1"
+    if isinstance(value, str):
+        v = value.strip()
+        if not v:
+            return "1.12.1"
+        if v in ALLOWED_CLIENT_VERSIONS:
+            return v
+        raise ValueError(
+            "launcher config 'server.client_version' must be one of "
+            f"{', '.join(ALLOWED_CLIENT_VERSIONS)} (got {v!r})"
+        )
+    raise ValueError(
+        "launcher config 'server.client_version' must be one of "
+        f"{', '.join(ALLOWED_CLIENT_VERSIONS)}"
+    )
 
 
 def _https_url(value: object) -> str | None:
@@ -484,6 +532,7 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
 
     addon_git_hosts = _parse_git_hosts(data.get("addon_git_hosts"))
     torrent_root_marker = _parse_root_marker(server.get("torrent_root_marker"))
+    client_version = _parse_client_version(server.get("client_version"))
 
     # ── server.download block ──
     dl = server.get("download")
@@ -551,6 +600,7 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
         download_torrent_update=download_torrent_update,
         download_fallback_url=download_fallback_url,
         download_content_type=content_type,
+        client_version=client_version,
     )
 
 
@@ -973,6 +1023,40 @@ def download_torrent_magnet() -> str:
     return c.download_torrent_magnet or "" if c else ""
 
 
+def default_mods_url_for_version(version: str) -> str:
+    """Community fallback mods catalog for a ``client_version``, else ""."""
+    return DEFAULT_MODS_URL_BY_VERSION.get((version or "").strip(), "") or ""
+
+
+def default_addons_url_for_version(version: str) -> str:
+    """Community fallback addons catalog for a ``client_version``, else ""."""
+    return DEFAULT_ADDONS_URL_BY_VERSION.get((version or "").strip(), "") or ""
+
+
+def default_addons_urls_for_version(version: str) -> list[str]:
+    url = default_addons_url_for_version(version)
+    return [url] if url else []
+
+
+def has_default_mods_for_version(version: str) -> bool:
+    return bool(default_mods_url_for_version(version))
+
+
+def has_default_addons_for_version(version: str) -> bool:
+    return bool(default_addons_url_for_version(version))
+
+
+def client_version() -> str:
+    """The server-declared client version (declarative, no binary sniffing).
+
+    Returns ``""`` when no launcher config is loaded (wizard case); the
+    configured default ``1.12.1`` is already materialized in
+    ``LauncherConfig.client_version`` when a config exists.
+    """
+    c = config()
+    return c.client_version if c else ""
+
+
 def torrent_update_allowed() -> bool:
     """Whether the torrent may be used for incremental updates (Plan A)."""
     c = config()
@@ -992,6 +1076,28 @@ def effective_client_updates_enabled() -> bool:
     if user is None:
         return default
     return bool(user)
+
+
+def mods_registry_effective_url() -> str:
+    """Server explicit mods URL, else community default for ``client_version``."""
+    c = config()
+    if not c:
+        return ""
+    if c.mods_registry_url:
+        return c.mods_registry_url
+    return default_mods_url_for_version(c.client_version)
+
+
+def addons_registry_effective_urls() -> list[str]:
+    """Server explicit addon URLs, else community default for ``client_version``."""
+    c = config()
+    if not c:
+        return []
+    non_empty = [u for u in c.addons_registry_urls if u and u.strip()]
+    if non_empty:
+        return non_empty
+    default = default_addons_url_for_version(c.client_version)
+    return [default] if default else []
 
 
 def addons_registry_urls() -> list[str]:

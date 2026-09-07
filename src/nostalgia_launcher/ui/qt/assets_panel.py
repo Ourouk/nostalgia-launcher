@@ -81,6 +81,17 @@ class AssetsPanel(ContentListPanel):
             "The client's game version — decides which Data/ archives "
             "count as stock"
         )
+        # Default to the server-declared version for this profile.
+        try:
+            from ...core import launcher as _launcher
+
+            _cv = _launcher.client_version()
+            if _cv:
+                idx = self._version.findText(_cv)
+                if idx >= 0:
+                    self._version.setCurrentIndex(idx)
+        except Exception:
+            pass
         self._version.currentTextChanged.connect(self._on_version_changed)
         banner_layout.addWidget(self._version)
 

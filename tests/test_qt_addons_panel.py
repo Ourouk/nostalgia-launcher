@@ -224,7 +224,7 @@ def test_warning_status_for_interface_mismatch(qapp, window, hub):
     _post(hub, _make_state(addons=addons))
     panel = _panel(window)
     status = panel.findChild(QLabel, "addonsStatus_OldAddon")
-    assert status.text() == "⚠ Made for client 11000"
+    assert status.text() == "⚠ Made for client 11000 (profile: 11200)"
 
 
 # ── collapsible sections ────────────────────────────────────────────────

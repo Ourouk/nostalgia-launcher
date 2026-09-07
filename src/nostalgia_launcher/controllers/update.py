@@ -17,7 +17,6 @@ from dataclasses import dataclass
 
 from ..core.config_store import load_config, update_config
 from ..core.filesystem import (
-    get_client_version,
     pick_game_executable,
     remove_wdb,
 )
@@ -299,11 +298,15 @@ class UpdateController:
             pass
 
     def read_client_version(self) -> str:
-        """The client version straight from disk, cached on state (footer
-        label at startup, before any worker has run)."""
-        self.state.client_version = get_client_version(
-            (self._get_out_dir() or "").strip()
-        )
+        """Declarative client version, cached on state.
+
+        Post-offset removal this no longer sniffs ``WoW.exe`` on disk;
+        the value comes from the server-pinned ``launcher.client_version()``
+        (``1.12.1`` / ``2.4.3`` / ``3.3.5a``).
+        """
+        from ..core import launcher as _launcher
+
+        self.state.client_version = _launcher.client_version()
         return self.state.client_version
 
     def check_updater_update(self):

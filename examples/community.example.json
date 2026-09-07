@@ -8,6 +8,7 @@
     "mods_registry_url": "https://launcher.example.com/community.mods.example.json",
     "addons_registry_url": "https://launcher.example.com/community.addons.example.json",
     "assets_registry_url": "https://launcher.example.com/community.assets.example.json",
+    "client_version": "1.12.1",
     "download": {
       "update": true,
       "torrent": {
