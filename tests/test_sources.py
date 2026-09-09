@@ -1,6 +1,8 @@
 """Unit tests for the shared source backends (`services/sources`)."""
 
 import pytest
+from _torrent_fakes import BodyResp as _Resp
+from _torrent_fakes import make_direct_file_entry as _entry
 
 import nostalgia_launcher.services.sources.direct_file as df_module
 import nostalgia_launcher.services.sources.github_release as gh_module
@@ -33,22 +35,6 @@ def test_hook_policy_per_type():
 
 
 # ── github_release backend ───────────────────────────────────────────────────
-
-
-class _Resp:
-    def __init__(self, payload, headers=None):
-        self._payload = payload
-        self.headers = headers or {}
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self, n=-1):
-        out, self._payload = self._payload[:n], self._payload[n:]
-        return out
 
 
 def test_github_validate_normalizes_source():
@@ -134,16 +120,6 @@ def test_github_fetch_without_matching_asset_raises():
 
 
 # ── direct_file backend ──────────────────────────────────────────────────────
-
-
-def _entry(**src):
-    base = {
-        "kind": "direct_file",
-        "url": "https://server.test/uploads/patch-3.MPQ",
-        "dest": "Data/patch-3.MPQ",
-    }
-    base.update(src)
-    return {"id": "p3", "source": base}
 
 
 def test_direct_file_validate_rejects_http_and_bad_pins():

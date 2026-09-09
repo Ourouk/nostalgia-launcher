@@ -3,25 +3,20 @@
 import json
 
 import pytest
+from _torrent_fakes import BodyResp, failing_urlopen, fake_urlopen
+from _torrent_fakes import make_asset_entry as _entry
 
 import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.services.assets as assets
 import nostalgia_launcher.services.catalog as catalog
 from nostalgia_launcher.core import launcher
-from nostalgia_launcher.services.catalog import merge_assets, validate_asset
+from nostalgia_launcher.services.catalog import (
+    ASSET_MERGE_FIELDS,
+    merge_by_key,
+    validate_asset,
+)
 
 # ── entry validation ─────────────────────────────────────────────────────────
-
-
-def _entry(**over):
-    e = {
-        "id": "patch3",
-        "name": "Patch 3",
-        "url": "https://server.test/uploads/patch-3.MPQ",
-        "dest": "Data/patch-3.MPQ",
-    }
-    e.update(over)
-    return e
 
 
 def test_validate_asset_minimal():
@@ -74,7 +69,7 @@ def test_validate_asset_rejects_empty():
 def test_merge_assets_custom_overrides_remote_by_id():
     remote = [validate_asset(_entry(version="1"))]
     custom = [validate_asset(_entry(version="2", size=7))]
-    merged = merge_assets(remote, custom)
+    merged = merge_by_key(remote, custom, ASSET_MERGE_FIELDS)
     assert len(merged) == 1
     assert merged[0]["version"] == "2"
     assert merged[0]["size"] == 7
@@ -166,33 +161,16 @@ def test_registry_force_fetch_validates_and_caches(tmp_path, monkeypatch):
         [_entry(), {"id": "bad", "url": "ftp://x", "dest": "x"}]
     ).encode()
 
-    class _R:
-        def __init__(self, data):
-            self._data = data
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-        def read(self, n=-1):
-            out, self._data = self._data[:n], self._data[n:]
-            return out
-
-        headers = {}
-
-    def fake_urlopen(req, **k):
-        return _R(payload)
-
-    monkeypatch.setattr(catalog, "secure_urlopen", fake_urlopen)
+    monkeypatch.setattr(
+        catalog, "secure_urlopen", fake_urlopen(payload, headers={})
+    )
     got = assets.fetch_assets_catalog(force=True)
     assert [a["id"] for a in got] == ["patch3"]
     # Cached copy now serves non-forced loads without network.
     monkeypatch.setattr(
         assets,
         "secure_urlopen",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("network")),
+        failing_urlopen(AssertionError("network")),
     )
     assert assets.fetch_assets_catalog() == got
     assert [a["id"] for a in assets.assets_registry()] == ["patch3"]
@@ -201,28 +179,12 @@ def test_registry_force_fetch_validates_and_caches(tmp_path, monkeypatch):
 # ── install / integrity ──────────────────────────────────────────────────────
 
 
-class _FakeResponse:
-    def __init__(self, data, headers=None):
-        self._data = data
-        self.headers = headers or {}
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self, n=-1):
-        out, self._data = self._data, b""
-        return out
-
-
 def _patch_download(monkeypatch, data, headers=None):
     seen = {}
 
     def fake(req, timeout=0, allowed_hosts=None):
         seen["url"] = req.full_url if hasattr(req, "full_url") else req
-        return _FakeResponse(data, headers)
+        return BodyResp(data, headers=headers)
 
     import nostalgia_launcher.services.sources.direct_file as df
 

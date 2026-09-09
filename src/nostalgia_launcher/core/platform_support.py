@@ -75,11 +75,6 @@ def config_dir() -> str:
     return new
 
 
-# Backward-compat aliases for previous private helpers
-_windows_roaming_dir = _win_roaming
-_windows_local_dir = _win_local
-
-
 def cache_dir() -> str:
     if is_windows():
         return os.path.join(_win_local(), "NostalgiaLauncher")

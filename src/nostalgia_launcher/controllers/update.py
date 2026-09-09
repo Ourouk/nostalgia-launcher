@@ -27,7 +27,7 @@ from ..services.self_update import (
     fetch_updater_latest_tag,
     updater_update_available,
 )
-from ..services.update_backend.http_update import (
+from ..services.update.workflow import (
     UpdateWorker,
     VerifyWorker,
     torrent_recovery_available,
@@ -249,7 +249,7 @@ class UpdateController:
         self.state.torrent_stale = None
         threading.Thread(
             target=worker.run,
-            args=(None, torrent_wanted),
+            args=(torrent_wanted,),
             daemon=True,
         ).start()
         self._dispatcher.post(StatusChanged("Updating…"))

@@ -7,7 +7,7 @@ macOS config in ~/Library/Application Support; the hash cache is kept
 separate (Linux XDG cache dir, %LOCALAPPDATA%, ~/Library/Caches).
 
 There is deliberately no hardcoded server here: every endpoint (client
-updates, news, mod/addon catalogs, realm, mirrors) comes from the launcher
+updates, news, mod/addon catalogs, realm, sources) comes from the launcher
 configuration (`core/launcher.py`).
 """
 

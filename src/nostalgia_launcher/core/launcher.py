@@ -14,8 +14,9 @@ auto-discovery on later runs.
 **No endpoint derivation.** Every URL is a direct, fully-qualified link — the
 config declares exactly what the launcher talks to; there are no
 server-specific path conventions spliced onto a base URL. The optional
-``server.url`` is identity/display only (and falls back to the host of the
-manifest when omitted); it is never used to build other endpoints.
+``server.url`` is identity/display only (and falls back to the host of
+the fallback/torrent URLs when omitted); it is never used to build
+other endpoints.
 
     {
       "server": {
@@ -209,20 +210,6 @@ class LauncherConfig:
         if self.download_torrent_update is not None:
             return bool(self.download_torrent_update)
         return bool(self.download_torrent_url)
-
-    def download_capable(self) -> bool:
-        """Whether any update source exists (torrent snapshot or HTTP
-        fallback)."""
-
-        return bool(
-            self.download_torrent_url
-            or self.download_torrent_magnet
-            or self.download_fallback_url
-        )
-
-    def all_bases(self) -> list[str]:
-        """The server identity URL (no longer a list of mirror bases)."""
-        return [self.server_url] if self.server_url else []
 
     def _all_urls(self) -> list[str]:
         """Every endpoint URL the app may contact, so the security allowlist
@@ -999,16 +986,6 @@ def download_content_type() -> str:
     return c.download_content_type if c else "folder"
 
 
-def download_manifest_url() -> str:
-    """Removed: manifest model hard-deleted."""
-    return ""
-
-
-def download_client_url() -> str:
-    """Removed: per-file client base hard-deleted."""
-    return ""
-
-
 def download_fallback_url() -> str:
     c = config()
     return c.download_fallback_url or "" if c else ""
@@ -1111,9 +1088,3 @@ def addons_registry_urls() -> list[str]:
 def realm() -> str:
     c = config()
     return c.realm if c else ""
-
-
-def mirrors() -> list:
-    """Mirrors were removed; the single download source lives in
-    ``server.download``. Kept as an empty list for any legacy caller."""
-    return []

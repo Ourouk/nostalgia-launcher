@@ -32,15 +32,6 @@ def _check_rel(v: str) -> str:
     return v
 
 
-def _check_sha1(v: str | None) -> str | None:
-    if v is None:
-        return None
-    normalized = valid_sha1(v)
-    if normalized is None and v is not None:
-        raise ValueError("invalid sha1")
-    return normalized
-
-
 SafeFolderStr = Annotated[str, AfterValidator(_check_folder)]
 SafeRelStr = Annotated[str, AfterValidator(_check_rel)]
 
@@ -67,14 +58,12 @@ class AddonModel(BaseModel):
     @field_validator("branch", "ref", mode="before")
     @classmethod
     def _coerce_ref(cls, v: Any) -> Any:
-        if v is None or v == "":
-            return None
-        if not isinstance(v, str):
-            return None
-        v = v.strip()
-        if not v or any(ch.isspace() for ch in v) or ".." in v:
-            return None
-        return v
+        # Same rules as catalog.safe_ref — delegate so the logic lives
+        # in one place (lazy import: catalog never imports this
+        # module at top level, so no cycle).
+        from .catalog import safe_ref
+
+        return safe_ref(v)
 
     @field_validator("toc", mode="before")
     @classmethod

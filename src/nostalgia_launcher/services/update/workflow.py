@@ -15,12 +15,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ...state.events import EventDispatcher
 
-from ...core.config_store import load_cache as _load_cache_impl
-from ...core.config_store import save_cache as _save_cache_impl
+from ...core.config_store import load_cache, save_cache
 from ...core.filesystem import get_client_version, remove_wdb
-from ...core.security_http import allowed_download_hosts as _allowed_hosts_impl
-from ...core.security_http import read_capped as _read_capped_impl
-from ...core.security_http import secure_urlopen as _secure_urlopen_impl
+from ...core.security_http import secure_urlopen
 from ...state.events import (
     ClientVersionReady,
     Event,
@@ -38,71 +35,18 @@ from ...state.events import (
     UpdateFailed,
     VerificationUpToDate,
 )
-from ..tweaks import write_config_wtf as _write_config_wtf_impl
-from ..tweaks import write_realmlist_wtf as _write_realmlist_wtf_impl
+from ..tweaks import write_config_wtf, write_realmlist_wtf
+from ..update_backend.sources import (
+    DownloadSource,  # noqa: F401 (re-export)
+    _download_source,
+)
 from .http import download_file
-from .torrent import is_available as _torrent_available_impl
-from .torrent import recovery_available as torrent_recovery_available
+from .torrent import TORRENT_VALIDATION_CACHE_KEY
+from .torrent import is_available as _torrent_available
+from .torrent import (
+    recovery_available as torrent_recovery_available,  # noqa: F401 (re-export)
+)
 from .torrent import safe_identity as _safe_identity
-
-TORRENT_VALIDATION_CACHE_KEY = "__torrent_validation__"
-
-
-def _hu_attr(name: str, fallback):
-    """Patch-aware lookup: tests monkeypatch http_update.<name>."""
-    try:
-        import sys
-
-        m = sys.modules.get(
-            "nostalgia_launcher.services.update_backend.http_update"
-        )
-        if m is not None and hasattr(m, name):
-            return getattr(m, name)
-    except Exception:
-        pass
-    return fallback
-
-
-def _get_download_source():
-    from ..update_backend.sources import _download_source as _impl
-
-    return _hu_attr("_download_source", _impl)
-
-
-def _get_secure_urlopen():
-    return _hu_attr("secure_urlopen", _secure_urlopen_impl)
-
-
-def _get_load_cache():
-    return _hu_attr("load_cache", _load_cache_impl)
-
-
-def _get_save_cache():
-    return _hu_attr("save_cache", _save_cache_impl)
-
-
-def _get_allowed_hosts():
-    return _hu_attr("allowed_download_hosts", _allowed_hosts_impl)
-
-
-def _get_read_capped():
-    return _hu_attr("read_capped", _read_capped_impl)
-
-
-def _get_write_config_wtf():
-    return _hu_attr("write_config_wtf", _write_config_wtf_impl)
-
-
-def _get_write_realmlist_wtf():
-    return _hu_attr("write_realmlist_wtf", _write_realmlist_wtf_impl)
-
-
-def _get_torrent_available():
-    return _hu_attr("_torrent_available", _torrent_available_impl)
-
-
-def torrent_recovery_available_compat() -> bool:
-    return torrent_recovery_available()
 
 
 class VerifyWorker:
@@ -120,14 +64,13 @@ class VerifyWorker:
         self.out_dir: str = out_dir
         self._dispatcher: EventDispatcher = dispatcher
         self._cancel_event = threading.Event()
-        self._cache: dict[str, object] = _get_load_cache()()
+        self._cache: dict[str, object] = load_cache()
         self.overwrite_config: bool = overwrite_config
         self._source = source
         _wb = _WB(out_dir, dispatcher)
         _wb._cache = self._cache
         self.log = _wb.log  # type: ignore
         self.progress = _wb.progress  # type: ignore
-        self.file_matches = _wb.file_matches  # type: ignore
         self._raise_cancelled = _wb._raise_cancelled  # type: ignore
         self._wb = _wb
 
@@ -148,25 +91,20 @@ class VerifyWorker:
         self._cancel = True
 
     def run(self) -> None:
-        src = (
-            self._source
-            if self._source is not None
-            else _get_download_source()()
-        )
         try:
             self.progress(0.0, "Verifying…", phase="Verifying")
             self.log("Verifying files...", "acct")
             src = (
                 self._source
                 if self._source is not None
-                else _get_download_source()()
+                else _download_source()
             )
             if src is None:
                 raise RuntimeError("No download source configured.")
             cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
             if self.overwrite_config or not os.path.exists(cfg_wtf):
-                _get_write_config_wtf()(self.out_dir)
-                _get_write_realmlist_wtf()(self.out_dir)
+                write_config_wtf(self.out_dir)
+                write_realmlist_wtf(self.out_dir)
             if self._cancel:
                 self._cancel_torrent_verify()
                 return
@@ -174,7 +112,7 @@ class VerifyWorker:
             if not src.torrent_locator:
                 self._handle_no_torrent("No BitTorrent source configured.")
                 return
-            if not _get_torrent_available()():
+            if not _torrent_available():
                 self._handle_no_torrent("libtorrent not available.")
                 return
             # Torrent path (offline verification, cache-aware).
@@ -214,14 +152,14 @@ class VerifyWorker:
             )
             self.progress(0.0, "", phase="Verified")
             try:
-                _get_save_cache()(self._cache)
+                save_cache(self._cache)
             except Exception:
                 pass
             self._dispatcher.post(VerificationUpToDate())
         else:
             # First-install folder: fallback zip will handle it.
             fallback = ""
-            src = self._source or _get_download_source()()
+            src = self._source or _download_source()
             if src is not None:
                 fallback = getattr(src, "fallback_url", "") or ""
             if fallback:
@@ -239,7 +177,7 @@ class VerifyWorker:
     def _torrent_verify(self, src) -> bool:
         if src is None or not src.torrent_locator:
             return False
-        if not _get_torrent_available()():
+        if not _torrent_available():
             return False
         from ..update_backend.torrent_update import (
             TorrentCorruptError,
@@ -454,7 +392,7 @@ class VerifyWorker:
 
     def _persist_torrent_validation(self):
         try:
-            _get_save_cache()(self._cache)
+            save_cache(self._cache)
         except Exception as e:
             self.log(
                 f"[torrent] Could not persist validation cache: {e}",
@@ -520,7 +458,7 @@ class UpdateWorker:
         self.out_dir: str = out_dir
         self._dispatcher: EventDispatcher = dispatcher
         self._cancel_event = threading.Event()
-        self._cache: dict[str, object] = _get_load_cache()()
+        self._cache: dict[str, object] = load_cache()
         self._source = source
         self._total: int = 0
         self._downloaded: int = 0
@@ -530,7 +468,6 @@ class UpdateWorker:
         _wb._cache = self._cache
         self.log = _wb.log  # type: ignore
         self.progress = _wb.progress  # type: ignore
-        self.file_matches = _wb.file_matches  # type: ignore
         self._raise_cancelled = _wb._raise_cancelled  # type: ignore
         self._wb = _wb
 
@@ -570,6 +507,7 @@ class UpdateWorker:
             progress=self.progress,
             total_ref=total_ref,
             counted=self._counted,
+            urlopen=secure_urlopen,
         )
         self._total = total_ref["total"]
         self._downloaded = total_ref["downloaded"]
@@ -714,8 +652,8 @@ class UpdateWorker:
         try:
             cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
             if not os.path.exists(cfg_wtf):
-                _get_write_config_wtf()(self.out_dir)
-                _get_write_realmlist_wtf()(self.out_dir)
+                write_config_wtf(self.out_dir)
+                write_realmlist_wtf(self.out_dir)
         except Exception as e:
             self.log(f"Could not seed config: {e}", "err")
         self.progress(1.0, "")
@@ -729,7 +667,7 @@ class UpdateWorker:
             "out_dir": os.path.abspath(self.out_dir),
             "stale": [],
         }
-        _get_save_cache()(self._cache)
+        save_cache(self._cache)
         self.log("[torrent] Recovery validation cached.", "dim")
         self.log(
             "\n✓  Client installed via BitTorrent (no manifest — "
@@ -877,12 +815,12 @@ class UpdateWorker:
         try:
             cfg_wtf = os.path.join(self.out_dir, "WTF", "Config.wtf")
             if not os.path.exists(cfg_wtf):
-                _get_write_config_wtf()(self.out_dir)
-                _get_write_realmlist_wtf()(self.out_dir)
+                write_config_wtf(self.out_dir)
+                write_realmlist_wtf(self.out_dir)
         except Exception as e:
             self.log(f"Could not seed config: {e}", "err")
         self.progress(1.0, "")
-        _get_save_cache()(self._cache)
+        save_cache(self._cache)
         self._extract_payload()
         self.log("\n✓  Client installed via HTTP fallback.", "ok")
         self._report_client_version()
@@ -893,14 +831,11 @@ class UpdateWorker:
 
     def run(
         self,
-        diff_nodes: list | None = None,
         torrent_wanted: set[str] | None = None,
         recovery_full: bool = False,
     ) -> None:
-        # diff_nodes is legacy manifest diff — ignored (torrent-only).
-        _ = diff_nodes
         try:
-            self._source = _get_download_source()()
+            self._source = _download_source()
             if self._source is None:
                 raise RuntimeError("No download source configured.")
             # torrent_wanted is the stale set from VerifyWorker.
@@ -927,7 +862,7 @@ class UpdateWorker:
                 torrent_allowed = cfg.torrent_update_allowed()
             can_torrent = bool(
                 self._source.torrent_locator
-                and _get_torrent_available()()
+                and _torrent_available()
                 and torrent_allowed
             )
             from ...core.filesystem import game_executable_exists

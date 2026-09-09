@@ -182,3 +182,188 @@ def real_repo_seams(monkeypatch):
     """Restore the real (profile-aware) repo-path resolution for tests
     that exercise it. Shared by test_profiles and the Qt smoke tests."""
     monkeypatch.setattr(launcher, "local_repo_path", _REAL_LOCAL_REPO_PATH)
+
+
+@pytest.fixture
+def dispatcher():
+    """Fresh EventDispatcher for controller tests.
+
+    Replaces the per-module ``dispatcher`` fixtures and inline
+    ``EventDispatcher()`` builds in the owned controller tests.
+    """
+    from nostalgia_launcher.state.events import EventDispatcher
+
+    return EventDispatcher()
+
+
+@pytest.fixture
+def controller_cfg(tmp_path, monkeypatch):
+    """Tmp game folder + update-controller config bootstrap.
+
+    Mirrors the ``test_update_events.py`` controller pattern:
+    ``load_config`` serves a dict rooted at a real tmp dir,
+    ``update_config`` mutates it in place, and client updates stay
+    enabled unless a test flips ``client_update_enabled`` off (the
+    merge mirrors the controller's effective-switch lookup).
+    """
+    import nostalgia_launcher.controllers.update as uc
+
+    game = tmp_path / "game"
+    game.mkdir(exist_ok=True)
+    cfg: dict = {"out_dir": str(game)}
+    monkeypatch.setattr(uc, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        uc, "update_config", lambda mutator: (mutator(cfg), cfg)[1]
+    )
+    monkeypatch.setattr(uc, "can_launch_client", lambda: True)
+    monkeypatch.setattr(launcher, "download_update_enabled", lambda: True)
+
+    def _effective():
+        v = cfg.get("client_update_enabled")
+        if v is None:
+            return launcher.download_update_enabled()
+        return bool(v)
+
+    monkeypatch.setattr(
+        launcher, "effective_client_updates_enabled", _effective
+    )
+    return cfg
+
+
+@pytest.fixture
+def wait_for_event():
+    """Polling helper for controller tests.
+
+    Replaces the per-module drain/spin copies (``_drain_for``,
+    ``_wait_until_true``, ``_wait_verify_done``, ``_wait_and_poll``,
+    ``_drain_n``): call it to drain-until-match, or use its
+    ``until_true`` / ``drain_worker`` / ``drain_n`` / ``collect_all``
+    methods for condition spins and worker/count/settle waits.
+    """
+    import time as _time
+
+    class _Waiter:
+        def __call__(self, dispatcher, predicate, timeout=2.0):
+            """Drain until an event matching `predicate` arrives.
+
+            Returns everything drained along the way (assertion
+            failure on timeout).
+            """
+            deadline = _time.monotonic() + timeout
+            collected = []
+            while True:
+                collected.extend(dispatcher.drain())
+                if any(predicate(e) for e in collected):
+                    return collected
+                if _time.monotonic() > deadline:
+                    raise AssertionError("expected event never arrived")
+                _time.sleep(0.005)
+
+        def until_true(self, predicate, timeout=2.0):
+            """Spin until `predicate` is true (fails on timeout)."""
+            deadline = _time.monotonic() + timeout
+            while not predicate():
+                if _time.monotonic() > deadline:
+                    raise AssertionError("condition never became true")
+                _time.sleep(0.005)
+
+        def drain_worker(self, controller, done_event, timeout=2.0):
+            """Wait for a scripted worker thread, then dispatch events.
+
+            Mirrors the old ``_wait_and_poll``: blocks on `done_event`,
+            dispatches the worker's posts to the controller, and retries
+            the dispatch a few times to cover thread-scheduling jitter.
+            Follow-up events posted by the controller stay queued for
+            the test's next drain.
+            """
+            deadline = _time.monotonic() + timeout
+            while not done_event.is_set():
+                if _time.monotonic() > deadline:
+                    raise AssertionError("scripted worker never finished")
+                _time.sleep(0.005)
+            _time.sleep(0.01)
+            controller._dispatcher.dispatch_all()
+            for _ in range(5):
+                if (
+                    controller.state.running is False
+                    or len(controller._dispatcher) > 0
+                ):
+                    break
+                _time.sleep(0.005)
+                controller._dispatcher.dispatch_all()
+
+        def drain_n(self, dispatcher, kind, n, timeout=2.0):
+            """Drain until `n` events of `kind` arrived; returns all."""
+            deadline = _time.monotonic() + timeout
+            events = []
+            while _time.monotonic() < deadline:
+                events.extend(dispatcher.drain())
+                if sum(isinstance(e, kind) for e in events) >= n:
+                    return events
+                _time.sleep(0.01)
+            events.extend(dispatcher.drain())
+            found = sum(isinstance(e, kind) for e in events)
+            assert found >= n, f"only {found} {kind.__name__}"
+            return events
+
+        def collect_all(self, dispatcher, is_done, timeout=2.0):
+            """Drain until `is_done(collected)` holds; returns all."""
+            deadline = _time.monotonic() + timeout
+            collected = []
+            while True:
+                collected.extend(dispatcher.drain())
+                if is_done(collected):
+                    return collected
+                if _time.monotonic() > deadline:
+                    raise AssertionError("expected events never arrived")
+                _time.sleep(0.005)
+
+    return _Waiter()
+
+
+@pytest.fixture
+def fake_http_response():
+    """In-memory HTTP response (context manager) for faking
+    ``secure_urlopen`` without touching the network."""
+
+    class _FakeHttpResponse:
+        def __init__(self, payload: bytes = b""):
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, size: int = -1):
+            return self._payload
+
+    return _FakeHttpResponse
+
+
+@pytest.fixture
+def fake_secure_urlopen(fake_http_response):
+    """Factory for ``secure_urlopen`` replacements by URL.
+
+    ``mapping`` keys on URL (``req.full_url``); values are bytes, an
+    exception instance to raise, or a ``(req, timeout)`` callable.
+    Unmapped URLs fall back to ``default`` (bytes succeed, exceptions
+    raise) — handy for reachability probes where only up/down matters.
+    """
+
+    def _factory(mapping=None, default=b""):
+        table = dict(mapping or {})
+
+        def _open(req, timeout=6):
+            url = getattr(req, "full_url", req)
+            value = table.get(url, default)
+            if isinstance(value, Exception):
+                raise value
+            if callable(value):
+                return value(req, timeout)
+            return fake_http_response(value)
+
+        return _open
+
+    return _factory

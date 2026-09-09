@@ -22,27 +22,12 @@ from nostalgia_launcher.state.events import (
 
 
 @pytest.fixture
-def dispatcher():
-    return EventDispatcher()
-
-
-@pytest.fixture
-def controller(dispatcher, monkeypatch):
-    from nostalgia_launcher.controllers import update as uc
-    from nostalgia_launcher.core import launcher
-
-    cfg = {"out_dir": "/tmp/game"}
-    monkeypatch.setattr(uc, "load_config", lambda: cfg)
-    monkeypatch.setattr(
-        launcher, "effective_client_updates_enabled", lambda: True
-    )
-    # Avoid real launcher config
-    monkeypatch.setattr(launcher, "download_update_enabled", lambda: True)
+def controller(dispatcher, controller_cfg):
     return UpdateController(dispatcher)
 
 
-def test_worker_log_emitted_exactly_once():
-    disp = EventDispatcher()
+def test_worker_log_emitted_exactly_once(dispatcher):
+    disp = dispatcher
     w = WorkerBase("/tmp", disp)
     w.log("hello", "ok")
     events = disp.drain()
@@ -54,8 +39,8 @@ def test_worker_log_emitted_exactly_once():
     assert disp.drain() == []
 
 
-def test_worker_progress_emitted_exactly_once():
-    disp = EventDispatcher()
+def test_worker_progress_emitted_exactly_once(dispatcher):
+    disp = dispatcher
     w = WorkerBase("/tmp", disp)
     w.progress(0.42, "Downloading", phase="Downloading", transport="HTTP")
     events = disp.drain()
@@ -152,8 +137,8 @@ def test_cancellation_via_update_failed(controller, dispatcher):
     assert controller.state.client_ready is False
 
 
-def test_dispatcher_handler_failure_no_recursive_log(capsys):
-    disp = EventDispatcher()
+def test_dispatcher_handler_failure_no_recursive_log(capsys, dispatcher):
+    disp = dispatcher
 
     def bad_handler(event):
         raise RuntimeError("boom")

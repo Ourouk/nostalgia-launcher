@@ -15,10 +15,8 @@ import pytest
 
 import nostalgia_launcher.controllers.update as uc
 from nostalgia_launcher.controllers.update import UpdateController
-from nostalgia_launcher.core import launcher
 from nostalgia_launcher.state.events import (
     ClientVersionReady,
-    EventDispatcher,
     GameExited,
     GameLaunched,
     LogMessage,
@@ -53,15 +51,6 @@ class _FakeProc:
     def wait(self):
         self.exit_event.wait()
         return 0
-
-
-def _wait_until_true(predicate, timeout=2.0):
-    """Spin until `predicate` is true (assertion failure on timeout)."""
-    deadline = time.monotonic() + timeout
-    while not predicate():
-        if time.monotonic() > deadline:
-            raise AssertionError("condition never became true")
-        time.sleep(0.005)
 
 
 class ScriptedWorker:
@@ -145,73 +134,23 @@ def worker_cls(monkeypatch):
 
 
 @pytest.fixture
-def config(monkeypatch):
-    cfg = {"out_dir": "/tmp/octo-game"}
-    monkeypatch.setattr(uc, "load_config", lambda: cfg)
-    monkeypatch.setattr(
-        uc, "update_config", lambda mutator: (mutator(cfg), cfg)[1]
-    )
-    monkeypatch.setattr(uc, "can_launch_client", lambda: True)
-
-    # The controller derives the effective switch from
-    # launcher.effective_client_updates_enabled(), which merges the
-    # per-profile override (config_store) over the server default. Mirror the
-    # fixture's config dict so client_update_enabled toggles behave.
-    def _effective():
-        v = cfg.get("client_update_enabled")
-        if v is None:
-            return launcher.download_update_enabled()
-        return bool(v)
-
-    monkeypatch.setattr(
-        launcher, "effective_client_updates_enabled", _effective
-    )
-    return cfg
-
-
-@pytest.fixture
-def controller(config):
-    return UpdateController(EventDispatcher())
-
-
-def _wait_and_poll(controller, worker_cls, timeout=2.0):
-    """Wait for the scripted worker's thread, then dispatch its events."""
-    deadline = time.monotonic() + timeout
-    while not worker_cls.done.is_set():
-        if time.monotonic() > deadline:
-            raise AssertionError("scripted worker never finished")
-        time.sleep(0.005)
-    # Small extra yield to ensure the worker's post has landed in the
-    # queue before we drain (thread scheduling jitter).
-    time.sleep(0.01)
-    # Deliver worker-posted typed events to the controller's _on_event.
-    # Follow-up events posted by the controller stay queued for the next
-    # drain() that the test performs.
-    controller._dispatcher.dispatch_all()
-    # In case the worker's post raced with the initial drain, the queue
-    # may still be empty but the controller hasn't yet processed - retry
-    # a few times.
-    for _ in range(5):
-        if (
-            controller.state.running is False
-            or len(controller._dispatcher) > 0
-        ):
-            break
-        time.sleep(0.005)
-        controller._dispatcher.dispatch_all()
+def controller(controller_cfg, dispatcher):
+    return UpdateController(dispatcher)
 
 
 # ── verify flow ─────────────────────────────────────────────────────────
 
 
-def test_verify_up_to_date_marks_client_ready(controller, worker_cls, config):
+def test_verify_up_to_date_marks_client_ready(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     worker_cls.script = [VerificationUpToDate()]
     controller.start_verify()
     initial = controller._dispatcher.drain()
     assert StatusChanged("Verifying…") in initial
     assert ProgressChanged(0.0, "") in initial
 
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     events = controller._dispatcher.drain()
     assert ProgressChanged(1.0, "") in events
     assert OperationFinished("verify", True) in events
@@ -220,33 +159,39 @@ def test_verify_up_to_date_marks_client_ready(controller, worker_cls, config):
 
 
 def test_torrent_recovery_done_marks_client_ready(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     """A successful torrent recovery: client ready."""
 
     worker_cls.script = [TorrentRecoveryDone()]
     controller.start_update()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     events = controller._dispatcher.drain()
     assert OperationFinished("update", True) in events
     assert controller.state.client_ready is True
     assert controller.state.running is False
 
 
-def test_verify_passes_overwrite(controller, worker_cls, config):
+def test_verify_passes_overwrite(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     controller.start_verify(overwrite_config=True)
     w = worker_cls.instances[0]
     assert w.overwrite_config is True
     assert w.args == ()
-    assert w.out_dir == config["out_dir"]
+    assert w.out_dir == controller_cfg["out_dir"]
 
 
-def test_verify_passes_no_overwrite_by_default(controller, worker_cls, config):
+def test_verify_passes_no_overwrite_by_default(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     controller.start_verify()
     assert worker_cls.instances[0].overwrite_config is False
 
 
-def test_start_verify_cancels_previous_worker(controller, worker_cls, config):
+def test_start_verify_cancels_previous_worker(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     controller.start_verify()
     first = worker_cls.instances[0]
     controller.start_verify()
@@ -254,17 +199,19 @@ def test_start_verify_cancels_previous_worker(controller, worker_cls, config):
     assert len(worker_cls.instances) == 2
 
 
-def test_start_verify_without_folder_is_noop(worker_cls, config):
-    ctrl = UpdateController(EventDispatcher(), get_out_dir=lambda: "")
+def test_start_verify_without_folder_is_noop(
+    worker_cls, controller_cfg, dispatcher
+):
+    ctrl = UpdateController(dispatcher, get_out_dir=lambda: "")
     ctrl.start_verify()
     assert ctrl._dispatcher.drain() == []
     assert not worker_cls.instances
 
 
 def test_disabled_client_updates_prevent_verify_and_update(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
-    config["client_update_enabled"] = False
+    controller_cfg["client_update_enabled"] = False
     controller.start_verify()
     controller.start_update()
     assert not worker_cls.instances
@@ -274,7 +221,9 @@ def test_disabled_client_updates_prevent_verify_and_update(
 # ── update flow ─────────────────────────────────────────────────────────
 
 
-def test_update_done_reports_version(controller, worker_cls, config):
+def test_update_done_reports_version(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     worker_cls.script = [
         ClientVersionReady(version="1.12.2"),
         UpdateCompleted(version="1.12.2"),
@@ -283,9 +232,10 @@ def test_update_done_reports_version(controller, worker_cls, config):
     initial = controller._dispatcher.drain()
     assert StatusChanged("Updating…") in initial
     assert ProgressChanged(0.0, "") in initial
-    assert LogMessage("\nGame folder: /tmp/octo-game\n", "dim") in initial
+    out = controller_cfg["out_dir"]
+    assert LogMessage(f"\nGame folder: {out}\n", "dim") in initial
 
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     events = controller._dispatcher.drain()
     assert OperationFinished("update", True) in events
     assert controller.state.client_version == "1.12.2"
@@ -293,41 +243,47 @@ def test_update_done_reports_version(controller, worker_cls, config):
     assert controller.state.running is False
 
 
-def test_update_error_posts_failure(controller, worker_cls, config):
+def test_update_error_posts_failure(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     worker_cls.script = [UpdateFailed(message="", op="update")]
     controller.start_update()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     events = controller._dispatcher.drain()
     assert OperationFailed("update", "") in events
     assert controller.state.client_ready is False
     assert controller.state.running is False
 
 
-def test_verify_error_posts_verify_failure(controller, worker_cls, config):
+def test_verify_error_posts_verify_failure(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     worker_cls.script = [UpdateFailed(message="", op="verify")]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
 
     events = controller._dispatcher.drain()
     assert OperationFailed("verify", "") in events
 
 
 def test_update_receives_stale_paths_from_torrent_verify(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     worker_cls.script = [UpdateCompleted()]
     controller.state.torrent_stale = ["Data/a.bin"]
-    controller.state.verify_out_dir = "/tmp/octo-game"
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
 
     controller.start_update()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
 
     worker = worker_cls.instances[0]
-    assert worker.run_args == (None, {"Data/a.bin"})
+    assert worker.run_args == ({"Data/a.bin"},)
 
 
-def test_start_update_without_folder_logs_error(worker_cls, config):
-    ctrl = UpdateController(EventDispatcher(), get_out_dir=lambda: "  ")
+def test_start_update_without_folder_logs_error(
+    worker_cls, controller_cfg, dispatcher
+):
+    ctrl = UpdateController(dispatcher, get_out_dir=lambda: "  ")
     ctrl.start_update()
     events = ctrl._dispatcher.drain()
     assert (
@@ -338,7 +294,7 @@ def test_start_update_without_folder_logs_error(worker_cls, config):
 
 
 def test_start_update_when_busy_reports_and_returns_false(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     controller.state.running = True
 
@@ -355,14 +311,16 @@ def test_start_update_when_busy_reports_and_returns_false(
 # ── queue draining / progress / hashes ──────────────────────────────────
 
 
-def test_log_lines_become_log_events(controller, worker_cls, config):
+def test_log_lines_become_log_events(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     worker_cls.script = [LogMessage("hello world", "acct")]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     # LogMessage flows directly via dispatcher; dispatch_all delivers to
     # controller (no-op) but log events remain observable via the
     # dispatched batch.
-    # Since _wait_and_poll already dispatched, the LogMessage was consumed.
+    # Since drain_worker already dispatched, the LogMessage was consumed.
     # Instead verify by posting directly and checking dispatch.
     dispatcher = controller._dispatcher
     # The worker already posted LogMessage and it was dispatched; to verify
@@ -375,12 +333,14 @@ def test_log_lines_become_log_events(controller, worker_cls, config):
     assert LogMessage("hello world", "acct") in dispatcher.drain()
 
 
-def test_progress_posts_latest(controller, worker_cls, config):
+def test_progress_posts_latest(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     worker_cls.prog_script = [(0.3, "a.bin"), (0.9, "b.mpq")]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
-    # ProgressChanged events were dispatched to controller during _wait_and_poll
-    # and updated state; follow-up drain will be empty but state reflects latest.
+    wait_for_event.drain_worker(controller, worker_cls.done)
+    # ProgressChanged events reached the controller during drain_worker
+    # and updated state; follow-up drain is empty but state holds latest.
     assert controller.state.progress == 0.9
     assert controller.state.progress_label == "b.mpq"
     # Verify that progress was delivered via a subscriber capture as well
@@ -393,14 +353,18 @@ def test_progress_posts_latest(controller, worker_cls, config):
     controller._dispatcher.unsubscribe(got.append)
 
 
-def test_cancel_stops_live_workers(controller, worker_cls, config):
+def test_cancel_stops_live_workers(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     controller.start_verify()
     w = worker_cls.instances[0]
     controller.cancel()
     assert w.cancelled is True
 
 
-def test_invalidate_resets_readiness(controller, worker_cls, config):
+def test_invalidate_resets_readiness(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     controller.state.client_ready = True
     controller.state.torrent_stale = ["a.bin"]
     controller.invalidate()
@@ -409,10 +373,10 @@ def test_invalidate_resets_readiness(controller, worker_cls, config):
 
 
 def test_empty_torrent_stale_set_skips_update_worker(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     controller.state.torrent_stale = []
-    controller.state.verify_out_dir = "/tmp/octo-game"
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
 
     assert controller.start_update() is True
 
@@ -423,11 +387,11 @@ def test_empty_torrent_stale_set_skips_update_worker(
 
 
 def test_invalidate_cancels_worker_and_drops_its_queues(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     controller.start_verify()
     worker = worker_cls.instances[0]
-    controller.state.verify_out_dir = "/tmp/octo-game"
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
 
     controller.invalidate()
 
@@ -438,17 +402,17 @@ def test_invalidate_cancels_worker_and_drops_its_queues(
 
 
 def test_start_update_never_persists_out_dir(
-    controller, worker_cls, config, monkeypatch
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
 ):
     """Strict folder confirmation: only Settings persists out_dir — the
     update flow must never write the key back into the config."""
     added = []
 
     def spy(mutator):
-        before = set(config)
-        mutator(config)
-        added.extend(set(config) - before)
-        return config
+        before = set(controller_cfg)
+        mutator(controller_cfg)
+        added.extend(set(controller_cfg) - before)
+        return controller_cfg
 
     monkeypatch.setattr(uc, "update_config", spy)
     worker_cls.script = [
@@ -456,12 +420,12 @@ def test_start_update_never_persists_out_dir(
         UpdateCompleted(version="1.12.2"),
     ]
     assert controller.start_update() is True
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     assert "out_dir" not in added
 
 
 def test_folder_change_after_verify_forces_reverify(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     """A cached stale set belongs to the folder it was verified
     against — start_update refuses to apply it to a different path
@@ -472,7 +436,7 @@ def test_folder_change_after_verify_forces_reverify(
     assert controller.start_update() is False
 
     assert len(worker_cls.instances) == 1  # a VerifyWorker, no UpdateWorker
-    assert worker_cls.instances[0].out_dir == "/tmp/octo-game"
+    assert worker_cls.instances[0].out_dir == controller_cfg["out_dir"]
     assert controller._op == "verify"
     events = controller._dispatcher.drain()
     assert any(
@@ -481,12 +445,14 @@ def test_folder_change_after_verify_forces_reverify(
     )
 
 
-def test_events_delivered_to_subscribers(controller, worker_cls, config):
+def test_events_delivered_to_subscribers(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     got = []
     controller._dispatcher.subscribe(got.append)
     worker_cls.script = [VerificationUpToDate()]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     controller._dispatcher.dispatch_all()
     kinds = {type(e) for e in got}
     assert StatusChanged in kinds
@@ -498,7 +464,7 @@ def test_events_delivered_to_subscribers(controller, worker_cls, config):
 
 
 def test_readiness_recovery_update_when_manifest_down(
-    controller, worker_cls, config, monkeypatch
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
 ):
     """No manifest + client not ready + torrent recovery possible → enabled
     UPDATE offering a full BitTorrent re-download."""
@@ -512,7 +478,7 @@ def test_readiness_recovery_update_when_manifest_down(
 
 
 def test_readiness_no_recovery_without_torrent(
-    controller, worker_cls, config, monkeypatch
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
 ):
     """No manifest + no torrent source → stays grayed UPDATE."""
     monkeypatch.setattr(uc, "torrent_recovery_available", lambda: False)
@@ -522,9 +488,9 @@ def test_readiness_no_recovery_without_torrent(
 
 
 def test_readiness_allows_play_without_manifest_when_updates_disabled(
-    controller, worker_cls, config, monkeypatch
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
 ):
-    config["client_update_enabled"] = False
+    controller_cfg["client_update_enabled"] = False
     # A playable client is already on disk → updates-disabled lets PLAY win
     # (the first-time BitTorrent acquisition is only offered when nothing is
     # installed yet).
@@ -535,13 +501,13 @@ def test_readiness_allows_play_without_manifest_when_updates_disabled(
 
 
 def test_torrent_diff_stores_stale_and_not_ready(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     """A manifest-less torrent verify found stale files → the controller
     records them, keeps the client not-ready and the manifest unavailable."""
     worker_cls.script = [TorrentDiffReady(stale=["Data/a.bin", "Patch.mpq"])]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     controller._dispatcher.drain()
 
     assert controller.state.torrent_stale == ["Data/a.bin", "Patch.mpq"]
@@ -549,12 +515,14 @@ def test_torrent_diff_stores_stale_and_not_ready(
     assert True  # manifest removed
 
 
-def test_torrent_up_to_date_marks_client_ready(controller, worker_cls, config):
+def test_torrent_up_to_date_marks_client_ready(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     """A manifest-less torrent verify found nothing stale → the client is
     ready even though no manifest was ever fetched."""
     worker_cls.script = [TorrentUpToDate()]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     controller._dispatcher.drain()
 
     assert controller.state.client_ready is True
@@ -562,7 +530,9 @@ def test_torrent_up_to_date_marks_client_ready(controller, worker_cls, config):
     assert controller.state.torrent_stale is None
 
 
-def test_readiness_torrent_diff_offers_update(controller, worker_cls, config):
+def test_readiness_torrent_diff_offers_update(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     """Torrent-only verify with stale files → enabled UPDATE showing the
     count."""
     controller.state.torrent_stale = None  # manifest removed
@@ -574,7 +544,7 @@ def test_readiness_torrent_diff_offers_update(controller, worker_cls, config):
 
 
 def test_readiness_torrent_up_to_date_offers_play(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     """Torrent-only verify with no stale files → PLAY up-to-date even with no
     manifest."""
@@ -587,26 +557,28 @@ def test_readiness_torrent_up_to_date_offers_play(
 
 
 def test_update_passes_torrent_wanted_to_worker(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     """start_update hands the stale torrent files to the update worker so it
     only fetches those, and clears them from state."""
     controller.state.torrent_stale = ["Data/a.bin", "Patch.mpq"]
-    controller.state.verify_out_dir = "/tmp/octo-game"
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
     worker_cls.script = [UpdateCompleted()]
     controller.start_update()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     w = worker_cls.instances[0]
-    assert w.run_args == (None, {"Data/a.bin", "Patch.mpq"})
+    assert w.run_args == ({"Data/a.bin", "Patch.mpq"},)
     assert controller.state.torrent_stale is None
 
 
-def test_torrent_unreachable_sets_flag(controller, worker_cls, config):
+def test_torrent_unreachable_sets_flag(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     """No manifest + unreachable torrent → the controller records it so the
     UI stops offering a dead recovery download."""
     worker_cls.script = [TorrentUnavailable(message="")]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     controller._dispatcher.drain()
 
     assert controller.state.torrent_reachable is False
@@ -636,12 +608,14 @@ def test_torrent_failure_preserves_update_operation_kind(controller, event):
     assert OperationFinished("update", False) in events
 
 
-def test_torrent_verify_failed_sets_flag(controller, worker_cls, config):
+def test_torrent_verify_failed_sets_flag(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     """No manifest + torrent fetched but recheck failed → the torrent IS
     reachable, so recovery download is offered."""
     worker_cls.script = [TorrentVerifyFailed(message="")]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     controller._dispatcher.drain()
 
     assert controller.state.torrent_reachable is True
@@ -651,7 +625,7 @@ def test_torrent_verify_failed_sets_flag(controller, worker_cls, config):
 
 
 def test_readiness_unreachable_torrent_falls_back_to_play(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     """No manifest + unreachable torrent + launchable → PLAY only, never a
     dead recovery UPDATE."""
@@ -664,7 +638,7 @@ def test_readiness_unreachable_torrent_falls_back_to_play(
 
 
 def test_readiness_unreachable_torrent_disabled_when_not_launchable(
-    controller, worker_cls, config, monkeypatch
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
 ):
     """No manifest + unreachable torrent + not launchable → grayed UPDATE."""
     monkeypatch.setattr(uc, "can_launch_client", lambda: False)
@@ -677,7 +651,7 @@ def test_readiness_unreachable_torrent_disabled_when_not_launchable(
 
 
 def test_readiness_play_when_ready_and_launchable(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     controller.state.client_ready = True
     controller.state.torrent_stale = None  # manifest removed
@@ -687,7 +661,7 @@ def test_readiness_play_when_ready_and_launchable(
 
 
 def test_readiness_ready_when_not_launchable(
-    controller, worker_cls, config, monkeypatch
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
 ):
     monkeypatch.setattr(uc, "can_launch_client", lambda: False)
     controller.state.client_ready = True
@@ -698,8 +672,10 @@ def test_readiness_ready_when_not_launchable(
     assert r.status == "Everything up to date!"
 
 
-def test_readiness_play_blocked_by_mod_errors(controller, worker_cls, config):
-    config["mods"] = {"SomeMod": {"error": "download blocked"}}
+def test_readiness_play_blocked_by_mod_errors(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
+    controller_cfg["mods"] = {"SomeMod": {"error": "download blocked"}}
     controller.state.client_ready = True
     controller.state.torrent_stale = None  # manifest removed
     r = controller.compute_readiness()
@@ -709,7 +685,7 @@ def test_readiness_play_blocked_by_mod_errors(controller, worker_cls, config):
 
 
 def test_readiness_blocked_while_addons_install(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     controller.state.client_ready = True
     r = controller.compute_readiness(addons_installing=True)
@@ -718,7 +694,9 @@ def test_readiness_blocked_while_addons_install(
     assert r.status == "Downloading addons…"
 
 
-def test_readiness_busy_while_verifying(controller, worker_cls, config):
+def test_readiness_busy_while_verifying(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     controller.start_verify()
     r = controller.compute_readiness()
     assert r.mode == "busy"
@@ -726,7 +704,9 @@ def test_readiness_busy_while_verifying(controller, worker_cls, config):
     assert r.status == "Verifying…"
 
 
-def test_readiness_busy_while_updating(controller, worker_cls, config):
+def test_readiness_busy_while_updating(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     controller.start_update()
     r = controller.compute_readiness()
     assert r.mode == "busy"
@@ -738,7 +718,7 @@ def test_readiness_busy_while_updating(controller, worker_cls, config):
 
 
 def test_launch_game_unavailable_logs_error(
-    controller, worker_cls, config, monkeypatch
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
 ):
     monkeypatch.setattr(uc, "can_launch_client", lambda: False)
     ok, dxvk = controller.launch_game()
@@ -751,13 +731,18 @@ def test_launch_game_unavailable_logs_error(
 
 
 def test_launch_game_linux_via_umu(
-    controller, worker_cls, config, monkeypatch, tmp_path
+    controller,
+    worker_cls,
+    controller_cfg,
+    wait_for_event,
+    monkeypatch,
+    tmp_path,
 ):
     game = tmp_path / "game"
-    game.mkdir()
+    game.mkdir(exist_ok=True)
     (game / "WoW.exe").write_text("")
-    config["out_dir"] = str(game)
-    config["launch"] = {
+    controller_cfg["out_dir"] = str(game)
+    controller_cfg["launch"] = {
         "umu_proton": "GE-Proton9-4",
         "umu_game_id": "umu-test",
     }
@@ -794,16 +779,21 @@ def test_launch_game_linux_via_umu(
 
 
 def test_launch_game_linux_close_on_launch_redirects_output(
-    controller, worker_cls, config, monkeypatch, tmp_path
+    controller,
+    worker_cls,
+    controller_cfg,
+    wait_for_event,
+    monkeypatch,
+    tmp_path,
 ):
     """close_on_launch: umu output goes to the sidecar file and no watcher
     thread drains it — the launcher exits right after spawning, so nothing
     may depend on its pipes staying open."""
     game = tmp_path / "game"
-    game.mkdir()
+    game.mkdir(exist_ok=True)
     (game / "WoW.exe").write_text("")
-    config["out_dir"] = str(game)
-    config["close_on_launch"] = True
+    controller_cfg["out_dir"] = str(game)
+    controller_cfg["close_on_launch"] = True
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
     monkeypatch.setattr(uc, "is_linux", lambda: True)
     monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
@@ -843,13 +833,18 @@ def test_launch_game_linux_close_on_launch_redirects_output(
 
 
 def test_launch_game_linux_passes_skip_builtin_dxvk(
-    controller, worker_cls, config, monkeypatch, tmp_path
+    controller,
+    worker_cls,
+    controller_cfg,
+    wait_for_event,
+    monkeypatch,
+    tmp_path,
 ):
     game = tmp_path / "game"
-    game.mkdir()
+    game.mkdir(exist_ok=True)
     (game / "WoW.exe").write_text("")
-    config["out_dir"] = str(game)
-    config["launch"] = {
+    controller_cfg["out_dir"] = str(game)
+    controller_cfg["launch"] = {
         "umu_renderer": "dxvk-d3d8",
         "umu_skip_builtin_dxvk": True,
     }
@@ -876,13 +871,18 @@ def test_launch_game_linux_passes_skip_builtin_dxvk(
 
 
 def test_launch_game_linux_prefers_external_launcher(
-    controller, worker_cls, config, monkeypatch, tmp_path
+    controller,
+    worker_cls,
+    controller_cfg,
+    wait_for_event,
+    monkeypatch,
+    tmp_path,
 ):
     game = tmp_path / "game"
-    game.mkdir()
+    game.mkdir(exist_ok=True)
     (game / "WoW.exe").write_text("")
     (game / "ExampleLoader.exe").write_text("")
-    config["out_dir"] = str(game)
+    controller_cfg["out_dir"] = str(game)
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
     monkeypatch.setattr(uc, "is_linux", lambda: True)
     monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
@@ -916,12 +916,17 @@ def test_launch_game_linux_prefers_external_launcher(
 
 
 def test_game_watcher_posts_exited_and_clears_state(
-    controller, worker_cls, config, monkeypatch, tmp_path
+    controller,
+    worker_cls,
+    controller_cfg,
+    wait_for_event,
+    monkeypatch,
+    tmp_path,
 ):
     game = tmp_path / "game"
-    game.mkdir()
+    game.mkdir(exist_ok=True)
     (game / "WoW.exe").write_text("")
-    config["out_dir"] = str(game)
+    controller_cfg["out_dir"] = str(game)
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
     monkeypatch.setattr(uc, "is_linux", lambda: True)
     monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
@@ -940,7 +945,7 @@ def test_game_watcher_posts_exited_and_clears_state(
     assert controller.state.game_running is True
 
     proc.exit_event.set()
-    _wait_until_true(lambda: not controller.state.game_running)
+    wait_for_event.until_true(lambda: not controller.state.game_running)
 
     events = controller._dispatcher.drain()
     assert GameExited(1234, 0) in events
@@ -953,12 +958,17 @@ def test_game_watcher_posts_exited_and_clears_state(
 
 
 def test_single_instance_refuses_second_launch(
-    controller, worker_cls, config, monkeypatch, tmp_path
+    controller,
+    worker_cls,
+    controller_cfg,
+    wait_for_event,
+    monkeypatch,
+    tmp_path,
 ):
     game = tmp_path / "game"
-    game.mkdir()
+    game.mkdir(exist_ok=True)
     (game / "WoW.exe").write_text("")
-    config["out_dir"] = str(game)
+    controller_cfg["out_dir"] = str(game)
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
     monkeypatch.setattr(uc, "is_linux", lambda: True)
     monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
@@ -986,7 +996,7 @@ def test_single_instance_refuses_second_launch(
 
 
 def test_terminate_game_kills_running_process(
-    controller, worker_cls, config, monkeypatch
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
 ):
     controller.state.game_running = True
     controller.state.game_pid = 1234
@@ -1008,7 +1018,7 @@ def test_terminate_game_kills_running_process(
 
 
 def test_terminate_game_noop_when_nothing_running(
-    controller, worker_cls, config, monkeypatch
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
 ):
     killed = []
     monkeypatch.setattr(
@@ -1019,7 +1029,9 @@ def test_terminate_game_noop_when_nothing_running(
     assert killed == []
 
 
-def test_readiness_terminate_when_game_running(controller, worker_cls, config):
+def test_readiness_terminate_when_game_running(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     controller.state.game_running = True
     r = controller.compute_readiness()
     assert r.mode == "terminate"
@@ -1028,9 +1040,14 @@ def test_readiness_terminate_when_game_running(controller, worker_cls, config):
 
 
 def test_launch_game_linux_missing_exe(
-    controller, worker_cls, config, monkeypatch, tmp_path
+    controller,
+    worker_cls,
+    controller_cfg,
+    wait_for_event,
+    monkeypatch,
+    tmp_path,
 ):
-    config["out_dir"] = str(tmp_path / "nope")
+    controller_cfg["out_dir"] = str(tmp_path / "nope")
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
     monkeypatch.setattr(uc, "is_linux", lambda: True)
     ok, dxvk = controller.launch_game()
@@ -1044,12 +1061,17 @@ def test_launch_game_linux_missing_exe(
 
 
 def test_launch_game_linux_umu_failure(
-    controller, worker_cls, config, monkeypatch, tmp_path
+    controller,
+    worker_cls,
+    controller_cfg,
+    wait_for_event,
+    monkeypatch,
+    tmp_path,
 ):
     game = tmp_path / "game"
-    game.mkdir()
+    game.mkdir(exist_ok=True)
     (game / "WoW.exe").write_text("")
-    config["out_dir"] = str(game)
+    controller_cfg["out_dir"] = str(game)
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
     monkeypatch.setattr(uc, "is_linux", lambda: True)
     monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
@@ -1069,13 +1091,18 @@ def test_launch_game_linux_umu_failure(
 
 
 def test_launch_game_windows_prefers_external_launcher(
-    controller, worker_cls, config, monkeypatch, tmp_path
+    controller,
+    worker_cls,
+    controller_cfg,
+    wait_for_event,
+    monkeypatch,
+    tmp_path,
 ):
     game = tmp_path / "game"
-    game.mkdir()
+    game.mkdir(exist_ok=True)
     (game / "WoW.exe").write_text("")
     (game / "ExampleLoader.exe").write_text("")
-    config["out_dir"] = str(game)
+    controller_cfg["out_dir"] = str(game)
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
     monkeypatch.setattr(uc, "is_linux", lambda: False)
     monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
@@ -1098,14 +1125,19 @@ def test_launch_game_windows_prefers_external_launcher(
 
 
 def test_launch_game_windows_captures_child_output(
-    controller, worker_cls, config, monkeypatch, tmp_path
+    controller,
+    worker_cls,
+    controller_cfg,
+    wait_for_event,
+    monkeypatch,
+    tmp_path,
 ):
     """WoW.exe output must reach the session log: spawned with merged
     stdout+stderr pipes and drained on a background thread."""
     game = tmp_path / "game"
-    game.mkdir()
+    game.mkdir(exist_ok=True)
     (game / "WoW.exe").write_text("")
-    config["out_dir"] = str(game)
+    controller_cfg["out_dir"] = str(game)
     monkeypatch.setattr(uc, "can_launch_client", lambda: True)
     monkeypatch.setattr(uc, "is_linux", lambda: False)
     monkeypatch.setattr(uc, "remove_wdb", lambda *a: None)
@@ -1165,13 +1197,15 @@ def test_child_output_cap_suppresses_flood(controller, monkeypatch):
 # ── Typed torrent exception handler tests ────────────────────────────────────
 
 
-def test_torrent_corrupt_sets_unreachable(controller, worker_cls, config):
+def test_torrent_corrupt_sets_unreachable(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     """Corrupt torrent → unreachable + error detail."""
     worker_cls.script = [
         TorrentCorrupt(message="Failed to parse torrent: bad data")
     ]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     controller._dispatcher.drain()
 
     assert controller.state.torrent_reachable is False
@@ -1181,35 +1215,41 @@ def test_torrent_corrupt_sets_unreachable(controller, worker_cls, config):
     assert True  # manifest removed
 
 
-def test_torrent_stalled_sets_error(controller, worker_cls, config):
+def test_torrent_stalled_sets_error(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     """Verification stalled → reachable + error with peer count."""
     worker_cls.script = [TorrentStalled(message="Stalled (0 peers)")]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     controller._dispatcher.drain()
 
     assert controller.state.torrent_reachable is True
     assert controller.state.torrent_error == "Stalled (0 peers)"
 
 
-def test_torrent_session_error_sets_error(controller, worker_cls, config):
+def test_torrent_session_error_sets_error(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     """Session error → reachable + error."""
     worker_cls.script = [
         TorrentSessionError(message="Failed to create session: address in use")
     ]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     controller._dispatcher.drain()
 
     assert controller.state.torrent_reachable is True
     assert "address in use" in controller.state.torrent_error
 
 
-def test_torrent_disk_error_sets_error(controller, worker_cls, config):
+def test_torrent_disk_error_sets_error(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     """Disk error → reachable + error."""
     worker_cls.script = [TorrentDiskError(message="No space left on device")]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     controller._dispatcher.drain()
 
     assert controller.state.torrent_reachable is True
@@ -1217,7 +1257,7 @@ def test_torrent_disk_error_sets_error(controller, worker_cls, config):
 
 
 def test_readiness_torrent_unreachable_with_error(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     """Unreachable torrent with error → status includes error detail."""
     controller.state.torrent_stale = None  # manifest removed
@@ -1228,7 +1268,9 @@ def test_readiness_torrent_unreachable_with_error(
     assert r.status == "Torrent unavailable: not a valid torrent"
 
 
-def test_readiness_torrent_error_with_stale(controller, worker_cls, config):
+def test_readiness_torrent_error_with_stale(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     """Stale files + error → download with peer count."""
     controller.state.torrent_stale = None  # manifest removed
     controller.state.torrent_reachable = True
@@ -1240,7 +1282,9 @@ def test_readiness_torrent_error_with_stale(controller, worker_cls, config):
     assert "(Stalled (3 peers))" in r.status
 
 
-def test_readiness_torrent_error_no_stale(controller, worker_cls, config):
+def test_readiness_torrent_error_no_stale(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     """Error only, no stale → download with error detail."""
     controller.state.torrent_stale = None  # manifest removed
     controller.state.torrent_reachable = True
@@ -1252,7 +1296,7 @@ def test_readiness_torrent_error_no_stale(controller, worker_cls, config):
 
 
 def test_readiness_torrent_error_no_stale_plays_installed_client(
-    controller, worker_cls, config, monkeypatch
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
 ):
     """Regression: a failed torrent verify must not strand an installed
     client behind a forced recovery download — with a game executable on
@@ -1270,7 +1314,7 @@ def test_readiness_torrent_error_no_stale_plays_installed_client(
 
 
 def test_playable_client_present_probes_game_folder(
-    controller, tmp_path, monkeypatch
+    controller, tmp_path, monkeypatch, dispatcher
 ):
     """The helper mirrors launch_game's pick: unset folder and an empty
     game dir yield False; a present WoW.exe yields True."""
@@ -1279,11 +1323,11 @@ def test_playable_client_present_probes_game_folder(
         lambda client_dir: [],
     )
 
-    assert controller._playable_client_present() is False  # /tmp/octo-game
+    assert controller._playable_client_present() is False  # tmp game dir
 
     game = tmp_path / "game"
-    game.mkdir()
-    probe = UpdateController(EventDispatcher(), get_out_dir=lambda: str(game))
+    game.mkdir(exist_ok=True)
+    probe = UpdateController(dispatcher, get_out_dir=lambda: str(game))
     assert probe._playable_client_present() is False
 
     (game / "WoW.exe").write_bytes(b"MZ")
@@ -1293,7 +1337,9 @@ def test_playable_client_present_probes_game_folder(
 # ── torrent snapshot lifecycle ──────────────────────────────────────────
 
 
-def test_torrent_progress_posts_piece_counts(controller, worker_cls, config):
+def test_torrent_progress_posts_piece_counts(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     """A 3-tuple progress item carrying verified_pieces/total_pieces reaches
     the state and the ProgressChanged event unchanged."""
     worker_cls.prog_script = [
@@ -1309,7 +1355,7 @@ def test_torrent_progress_posts_piece_counts(controller, worker_cls, config):
         ),
     ]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     # After dispatch, state reflects latest progress
     assert controller.state.progress_verified_pieces == 3
     assert controller.state.progress_total_pieces == 4
@@ -1327,7 +1373,7 @@ def test_torrent_progress_posts_piece_counts(controller, worker_cls, config):
 
 
 def test_torrent_verify_diff_then_update_lifecycle(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     """verify → TorrentDiffReady → update → UpdateCompleted is a coherent
     lifecycle: stale paths captured into the worker args, then cleared on
@@ -1335,7 +1381,7 @@ def test_torrent_verify_diff_then_update_lifecycle(
     stale = ["Data/a.bin"]
     worker_cls.script = [TorrentDiffReady(stale=stale)]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     assert controller.state.torrent_stale == stale
     assert controller.state.client_ready is False
     assert True  # manifest removed
@@ -1345,32 +1391,34 @@ def test_torrent_verify_diff_then_update_lifecycle(
     worker_cls.prog_script = []
     worker_cls.done.clear()
     controller.start_update()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     w = worker_cls.instances[1]
-    assert w.run_args == (None, {"Data/a.bin"})
+    assert w.run_args == ({"Data/a.bin"},)
     assert controller.state.torrent_stale is None
     assert controller.state.client_ready is True
     assert OperationFinished("update", True) in controller._dispatcher.drain()
 
 
-def test_torrent_up_to_date_after_verify(controller, worker_cls, config):
+def test_torrent_up_to_date_after_verify(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
     """TorrentUpToDate → play readiness with no stale paths."""
     worker_cls.script = [TorrentUpToDate()]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     assert controller.state.client_ready is True
     assert controller.state.torrent_stale is None
     assert controller.compute_readiness().mode == "play"
 
 
 def test_torrent_diff_empty_skips_update_and_marks_ready(
-    controller, worker_cls, config
+    controller, worker_cls, controller_cfg, wait_for_event
 ):
     """A verify that reports an empty stale set completes the update inline
     without ever spawning a worker."""
     worker_cls.script = [TorrentDiffReady(stale=[]), UpdateCompleted()]
     controller.start_verify()
-    _wait_and_poll(controller, worker_cls)
+    wait_for_event.drain_worker(controller, worker_cls.done)
     assert controller.state.torrent_stale == []
 
     controller._dispatcher.drain()

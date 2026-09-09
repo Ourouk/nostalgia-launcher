@@ -6,11 +6,6 @@ executes the transfer and reports results or typed errors.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
-
 TORRENT_VALIDATION_CACHE_KEY = "__torrent_validation__"
 
 

@@ -23,6 +23,7 @@ from ..core.config_store import update_config
 from ..core.constants import UA
 from ..core.filesystem import cached_sha1
 from ..core.log_sink import log
+from ..core.safety import safe_relpath
 from ..core.security_http import (
     allowed_download_hosts,
     secure_urlopen,
@@ -162,7 +163,7 @@ def remove_asset_files(installed_files: list, client_dir: str):
     Recorded paths are re-validated before joining onto the client dir —
     they are bookkeeping data, not trusted input."""
     for rel in installed_files or []:
-        if not isinstance(rel, str) or not catalog.safe_relpath(rel):
+        if not isinstance(rel, str) or not safe_relpath(rel):
             continue
         full = os.path.join(client_dir, rel)
         try:

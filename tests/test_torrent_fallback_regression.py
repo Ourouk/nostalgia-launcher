@@ -1,8 +1,11 @@
 """Torrent → HTTP fallback and final verification failure."""
 
-import nostalgia_launcher.services.update_backend.http_update as client_update
+from _torrent_fakes import FakeVerifier, failing_urlopen
+from _torrent_fakes import make_client_dir as _mk_client
+
+import nostalgia_launcher.services.update.workflow as client_update
 import nostalgia_launcher.services.update_backend.torrent_update as td
-from nostalgia_launcher.services.update_backend.http_update import (
+from nostalgia_launcher.services.update.workflow import (
     DownloadSource,
     UpdateWorker,
     VerifyWorker,
@@ -11,23 +14,6 @@ from nostalgia_launcher.state.events import (
     EventDispatcher,
     TorrentRecoveryDone,
 )
-
-
-def _mk_client(tmp_path):
-    d = tmp_path / "client"
-    d.mkdir()
-    return d
-
-
-class _Resp:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def read(self, n=-1):
-        return b""
 
 
 def test_update_recovery_download_torrent_failure_posts_failure(
@@ -49,7 +35,7 @@ def test_update_recovery_download_torrent_failure_posts_failure(
         raise td.TorrentCorruptError("corrupt")
 
     monkeypatch.setattr(td.TorrentDownloader, "download", boom)
-    worker.run(None, {"Data/a.bin"})
+    worker.run({"Data/a.bin"})
     events = dispatcher.drain()
     # Should post a torrent error, not recovery done
     from nostalgia_launcher.state.events import TorrentCorrupt
@@ -71,16 +57,8 @@ def test_verify_fallback_to_torrent_when_manifest_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(
         client_update,
         "secure_urlopen",
-        lambda *a, **k: (_ for _ in ()).throw(ConnectionError("down")),
+        failing_urlopen(ConnectionError("down")),
     )
-
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *a, **kw):
-            pass
-
-        def verify(self, url, snapshot=None):
-            return []
-
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     worker.run()
     events = dispatcher.drain()

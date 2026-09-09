@@ -1,11 +1,11 @@
 """Nostalgia Launcher Qt (PySide6) settings dialog.
 
 A dark QDialog rendering the GAME FOLDER row (open-folder link, readonly path
-entry, Change), the DOWNLOAD MIRRORS rows (one per configured server/mirror:
+entry, Change), the DOWNLOAD SOURCE rows (one per configured server/source:
 status dot + name + status label + a check button), the TROUBLESHOOTING
 clickable rows and the GENERAL checkboxes. It renders the SettingsController's
 state and forwards user actions straight into the toolkit-agnostic
-controller; mirror results arrive as MirrorStatusChanged events through the
+controller; source results arrive as SourceStatusChanged events through the
 ControllerBridge and are rendered here.
 """
 
@@ -106,7 +106,7 @@ class SettingsDialog(QDialog):
     """The SETTINGS dialog.
 
     Constructible and closable headlessly: it reads the controller's state,
-    renders the mirror status it already holds, and only starts work when the
+    renders the source status it already holds, and only starts work when the
     user clicks a row/button. `logsToggleRequested` fires for the Show logs
     row; MainWindow pushes the log window's visibility back via
     `set_logs_open` so the row label always mirrors it.
@@ -156,7 +156,7 @@ class SettingsDialog(QDialog):
         )
         root.addWidget(scroll, 1)
 
-        bridge.mirrorStatusChanged.connect(self._on_mirror_status)
+        bridge.sourceStatusChanged.connect(self._on_source_status)
 
     # ── build ───────────────────────────────────────────────────────────────
 
@@ -220,16 +220,16 @@ class SettingsDialog(QDialog):
         path_row.addWidget(change_btn)
         body_layout.addLayout(path_row)
 
-        mirror_title = QLabel("DOWNLOAD SOURCE", body)
-        mirror_title.setStyleSheet(
+        source_title = QLabel("DOWNLOAD SOURCE", body)
+        source_title.setStyleSheet(
             f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
         )
-        body_layout.addWidget(mirror_title)
+        body_layout.addWidget(source_title)
         body_layout.addSpacing(2)
 
-        self._mirror_rows: dict[str, QLabel] = {}
-        self._mirror_dots: dict[str, QLabel] = {}
-        names = self._settings._http_mirror_names()
+        self._source_rows: dict[str, QLabel] = {}
+        self._source_dots: dict[str, QLabel] = {}
+        names = self._settings._source_names()
         if not names:
             cfg = launcher.config()
             text = (
@@ -238,7 +238,7 @@ class SettingsDialog(QDialog):
                 else "No download source configured — set server.download.http."
             )
             hint = QLabel(text, body)
-            hint.setObjectName("settingsMirrorEmpty")
+            hint.setObjectName("settingsSourceEmpty")
             hint.setStyleSheet(f"color: {p.text_dim.name()}; font-size: 9pt;")
             body_layout.addWidget(hint)
         else:
@@ -253,17 +253,17 @@ class SettingsDialog(QDialog):
                 )
                 row.addWidget(label)
                 status = QLabel("", body)
-                status.setObjectName(f"settingsMirrorStatus_{name}")
+                status.setObjectName(f"settingsSourceStatus_{name}")
                 status.setStyleSheet(
                     f"color: {p.text_dim.name()}; font-size: 9pt;"
                 )
                 row.addWidget(status)
                 row.addStretch(1)
                 body_layout.addLayout(row)
-                self._mirror_rows[name] = status
-                self._mirror_dots[name] = dot
+                self._source_rows[name] = status
+                self._source_dots[name] = dot
         refresh = QToolButton(body)
-        refresh.setObjectName("settingsMirrorRefresh")
+        refresh.setObjectName("settingsSourceRefresh")
         refresh.setText("⟳  Check source")
         refresh.setToolTip("Check download source reachability")
         refresh.setCursor(Qt.PointingHandCursor)
@@ -272,10 +272,10 @@ class SettingsDialog(QDialog):
             f"QToolButton {{ color: {p.text_dim.name()}; font-size: 9pt; }}"
             f"QToolButton:hover {{ color: {p.gold.name()}; }}"
         )
-        refresh.clicked.connect(self._on_refresh_mirror)
+        refresh.clicked.connect(self._on_refresh_source)
         body_layout.addWidget(refresh)
 
-        self._render_mirror_statuses()
+        self._render_source_statuses()
 
         body_layout.addSpacing(6)
 
@@ -860,24 +860,24 @@ class SettingsDialog(QDialog):
             if self._settings.set_path(chosen):
                 self._path_edit.setText(chosen)
 
-    def _on_refresh_mirror(self):
+    def _on_refresh_source(self):
         p = self._palette
-        for name in self._mirror_rows:
-            self._mirror_rows[name].setText("checking…")
-            self._mirror_rows[name].setStyleSheet(
+        for name in self._source_rows:
+            self._source_rows[name].setText("checking…")
+            self._source_rows[name].setStyleSheet(
                 f"color: {p.text_dim.name()}; font-size: 9pt;"
             )
-            self._mirror_dots[name].setStyleSheet(
+            self._source_dots[name].setStyleSheet(
                 f"color: {p.text_dim.name()};"
             )
-        self._settings.check_mirror()
+        self._settings.check_source()
 
-    # ── mirror status rendering ─────────────────────────────────────────────
+    # ── source status rendering ─────────────────────────────────────────────
 
-    def _render_mirror_statuses(self):
+    def _render_source_statuses(self):
         p = self._palette
-        statuses = self._settings.mirror_statuses
-        for name, status in self._mirror_rows.items():
+        statuses = self._settings.source_statuses
+        for name, status in self._source_rows.items():
             text = statuses.get(name, "")
             color = (
                 p.ok
@@ -886,7 +886,7 @@ class SettingsDialog(QDialog):
             )
             status.setText(text)
             status.setStyleSheet(f"color: {color.name()}; font-size: 9pt;")
-            self._mirror_dots[name].setStyleSheet(f"color: {color.name()};")
+            self._source_dots[name].setStyleSheet(f"color: {color.name()};")
 
-    def _on_mirror_status(self, ok: bool, text: str):
-        self._render_mirror_statuses()
+    def _on_source_status(self, ok: bool, text: str):
+        self._render_source_statuses()

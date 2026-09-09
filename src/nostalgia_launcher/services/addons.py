@@ -19,14 +19,12 @@ ships.
 import json
 import os
 import time
-import urllib.request
 
 from ..core import config_store as _config_store
 from ..core import launcher
 from ..core.config_store import load_config, update_config
-from ..core.constants import UA
 from ..core.log_sink import log
-from ..core.security_http import read_capped, secure_urlopen
+from ..core.security_http import secure_urlopen
 from . import catalog
 from .sources import deploy as _sources_deploy
 from .sources.git_archive import (
@@ -37,7 +35,6 @@ _GIT_BACKEND = GitArchiveBackend()
 
 # Catalogs refresh at most weekly (shared catalog.CATALOG_TTL); the
 # per-URL timestamp lives in the config file.
-ADDONS_CATALOG_TTL = catalog.CATALOG_TTL
 ADDONS_VERIFY_TTL = 300  # skip re-verify on tab switches within this
 
 # The per-user custom addon file (a JSON list, one entry per addon). Written
@@ -105,7 +102,28 @@ def fetch_addons_catalog(force=False) -> list:
         )
     merged = []
     for url in urls:
-        part = _fetch_url_catalog(url, force, now)
+        entry = _cache_entry(url)
+        fresh = (
+            entry.get("catalog") is not None
+            and (now - entry.get("timestamp", 0)) < catalog.CATALOG_TTL
+        )
+        try:
+            part = catalog.fetch_url_catalog(
+                "addons",
+                _custom_validator,
+                url,
+                force=force or not fresh,
+                # Route through this module's seam (patched by tests
+                # as `addons.secure_urlopen`) instead of the toolkit's
+                # own import.
+                urlopen=secure_urlopen,
+            )
+            if part is None:
+                part = entry.get("catalog") or []
+        except Exception:
+            # offline — serve the last good cached copy
+            # for this URL
+            part = entry.get("catalog") or []
         merged = catalog.merge_addons(merged, part)
     return merged
 
@@ -119,38 +137,6 @@ def _cache_entry(url: str) -> dict:
     if isinstance(cache, dict) and url in cache:
         return cache[url]
     return {}
-
-
-def _fetch_url_catalog(url: str, force: bool, now: float) -> list:
-    """Fetch and cache one catalog URL; on failure serve its cached copy."""
-    entry = _cache_entry(url)
-    if (
-        not force
-        and entry.get("catalog") is not None
-        and (now - entry.get("timestamp", 0)) < ADDONS_CATALOG_TTL
-    ):
-        return entry["catalog"]
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with secure_urlopen(req, timeout=10) as r:
-            raw = json.loads(read_capped(r, 2 * 1024 * 1024))
-    except Exception:
-        # offline — serve the last good cached copy for this URL
-        return entry.get("catalog") or []
-    catalog_list = []
-    for e in raw if isinstance(raw, list) else []:
-        if not isinstance(e, dict):
-            continue
-        cleaned = _custom_validator(e)
-        if cleaned is None:
-            continue
-        catalog_list.append(cleaned)
-    update_config(
-        lambda c, u=url, o=catalog_list, t=now: c.setdefault(
-            "addons_catalog_cache", {}
-        ).__setitem__(u, {"timestamp": t, "catalog": o})
-    )
-    return catalog_list
 
 
 def embedded_addons() -> list:

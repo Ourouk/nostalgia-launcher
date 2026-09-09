@@ -11,30 +11,12 @@ import sys
 import zipfile
 
 import pytest
+from _torrent_fakes import (
+    write_zip_file as _write_zip_file,
+)
 
 from nostalgia_launcher.services.sources import deploy
 from nostalgia_launcher.services.update_backend import extract as extract_mod
-
-
-def _make_zip(members):
-    """Build a zip bytes with given {name: data_or_ZipInfo}."""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        for name, data in members.items():
-            if isinstance(data, zipfile.ZipInfo):
-                zf.writestr(data, b"evil")
-            else:
-                zf.writestr(name, data)
-    return buf.getvalue()
-
-
-def _write_zip_file(path, members):
-    with zipfile.ZipFile(path, "w") as zf:
-        for name, data in members.items():
-            if isinstance(data, zipfile.ZipInfo):
-                zf.writestr(data, b"evil")
-            else:
-                zf.writestr(name, data)
 
 
 def test_extract_zip_absolute_path_blocked(tmp_path):

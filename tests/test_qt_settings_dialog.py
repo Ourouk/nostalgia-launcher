@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 
 import nostalgia_launcher.core.platform_support as platform_support
 from nostalgia_launcher.core import launcher
-from nostalgia_launcher.state.events import MirrorStatusChanged
+from nostalgia_launcher.state.events import SourceStatusChanged
 from nostalgia_launcher.ui.qt.app import create_qt_app
 from nostalgia_launcher.ui.qt.bridge import ControllerHub
 from nostalgia_launcher.ui.qt.main_window import MainWindow
@@ -91,7 +91,7 @@ def test_gear_opens_settings_dialog(qapp, window):
         "settingsPath",
         "settingsChange",
         "settingsOpenFolder",
-        "settingsMirrorRefresh",
+        "settingsSourceRefresh",
         "settingsVerify",
         "settingsLogs",
         "settingsClientUpdate",
@@ -158,21 +158,21 @@ def test_change_cancelled_leaves_path(qapp, window, monkeypatch):
     assert dialog.findChild(QLineEdit, "settingsPath").text() == before
 
 
-# ── download mirrors ─────────────────────────────────────────────────────
+# ── download sources ─────────────────────────────────────────────────────
 
 
-def test_mirror_rows_render_configured_sources(qapp, window):
+def test_source_rows_render_configured_sources(qapp, window):
     hub = window._hub
     dialog = _open(window)
     assert (
-        dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
+        dialog.findChild(QLabel, "settingsSourceStatus_Test Server")
         is not None
     )
     assert (
-        dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
+        dialog.findChild(QLabel, "settingsSourceStatus_Test Server")
         is not None
     )
-    assert hub.settings._http_mirror_names() == ["Test Server"]
+    assert hub.settings._source_names() == ["Test Server"]
 
 
 def test_torrent_only_shows_as_configured_source(qapp, window):
@@ -190,57 +190,57 @@ def test_torrent_only_shows_as_configured_source(qapp, window):
             }
         }
     )
-    assert hub.settings._http_mirror_names() == ["ExampleServer"]
+    assert hub.settings._source_names() == ["ExampleServer"]
     dialog = _open(window)
     assert (
-        dialog.findChild(QLabel, "settingsMirrorStatus_ExampleServer")
+        dialog.findChild(QLabel, "settingsSourceStatus_ExampleServer")
         is not None
     )
-    assert dialog.findChild(QLabel, "settingsMirrorEmpty") is None
+    assert dialog.findChild(QLabel, "settingsSourceEmpty") is None
 
 
-def test_mirror_status_renders_initial_state(qapp, window):
+def test_source_status_renders_initial_state(qapp, window):
     hub = window._hub
-    hub.settings.mirror_statuses = {"Test Server": "online"}
+    hub.settings.source_statuses = {"Test Server": "online"}
     dialog = _open(window)
-    status = dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
+    status = dialog.findChild(QLabel, "settingsSourceStatus_Test Server")
     assert status.text() == "online"
     p = Palette()
     assert p.ok.name() in status.styleSheet()
 
 
-def test_mirror_status_updates_on_event(qapp, window):
+def test_source_status_updates_on_event(qapp, window):
     hub = window._hub
     dialog = _open(window)
-    status = dialog.findChild(QLabel, "settingsMirrorStatus_Test Server")
+    status = dialog.findChild(QLabel, "settingsSourceStatus_Test Server")
     p = Palette()
 
-    hub.settings.mirror_statuses = {
+    hub.settings.source_statuses = {
         "Test Server": "online",
     }
-    hub.dispatcher.post(MirrorStatusChanged(True, "online"))
+    hub.dispatcher.post(SourceStatusChanged(True, "online"))
     QTest.qWait(200)
     assert status.text() == "online"
     assert p.ok.name() in status.styleSheet()
 
-    hub.settings.mirror_statuses = {
+    hub.settings.source_statuses = {
         "Test Server": "offline",
     }
-    hub.dispatcher.post(MirrorStatusChanged(False, "offline"))
+    hub.dispatcher.post(SourceStatusChanged(False, "offline"))
     QTest.qWait(200)
     assert status.text() == "offline"
     assert p.err.name() in status.styleSheet()
 
 
-def test_mirror_refresh_calls_check_mirror(qapp, window, monkeypatch):
+def test_source_refresh_calls_check_source(qapp, window, monkeypatch):
     hub = window._hub
     check = Mock()
-    monkeypatch.setattr(hub.settings, "check_mirror", check)
+    monkeypatch.setattr(hub.settings, "check_source", check)
     dialog = _open(window)
-    dialog.findChild(QToolButton, "settingsMirrorRefresh").click()
+    dialog.findChild(QToolButton, "settingsSourceRefresh").click()
     check.assert_called_once()
     assert (
-        dialog.findChild(QLabel, "settingsMirrorStatus_Test Server").text()
+        dialog.findChild(QLabel, "settingsSourceStatus_Test Server").text()
         == "checking…"
     )
 

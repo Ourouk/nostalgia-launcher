@@ -4,6 +4,7 @@ import json
 import os
 
 import pytest
+from _torrent_fakes import fake_urlopen
 
 import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.services.catalog as catalog
@@ -76,22 +77,7 @@ def test_fetch_mods_catalog_force_fetches_and_validates(tmp_path, monkeypatch):
     ]
     payload = json.dumps(raw).encode()
 
-    class _R:
-        def __init__(self, data):
-            self._data = data
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-        def read(self, n=-1):
-            data = self._data
-            self._data = b""
-            return data
-
-    monkeypatch.setattr(catalog, "secure_urlopen", lambda *a, **k: _R(payload))
+    monkeypatch.setattr(catalog, "secure_urlopen", fake_urlopen(payload))
 
     out = mods.fetch_mods_catalog(force=True)
     assert [m["id"] for m in out] == ["X"]
@@ -509,24 +495,9 @@ def _patch_stream_download(monkeypatch, payload, target):
     response carrying ``payload`` (patched on the backend module). The fake
     yields the whole body on the first read() then EOF, matching a real
     streamed response."""
-
-    class _R:
-        headers = {}
-
-        def __init__(self):
-            self._data = payload
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *x):
-            return False
-
-        def read(self, n=-1):
-            out, self._data = self._data[:n], self._data[n:]
-            return out
-
-    monkeypatch.setattr(target, "secure_urlopen", lambda *a, **k: _R())
+    monkeypatch.setattr(
+        target, "secure_urlopen", fake_urlopen(payload, headers={})
+    )
 
 
 def test_install_mod_direct_file(tmp_path, monkeypatch):
@@ -629,26 +600,8 @@ def test_fetch_updater_latest_tag_stores_result(tmp_path, monkeypatch):
     config_store.save_config({})
 
     payload = json.dumps({"tag_name": "v3.0.0"}).encode()
-    buf = bytearray(payload)
 
-    class _R:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *x):
-            return False
-
-        @staticmethod
-        def read(n=-1):
-            # Chunked reads (the capped transfer layer reads 64 KiB).
-            if n is None or n < 0:
-                chunk, buf[:] = bytes(buf), b""
-            else:
-                chunk = bytes(buf[:n])
-                del buf[:n]
-            return chunk
-
-    monkeypatch.setattr(self_update, "secure_urlopen", lambda *a, **k: _R())
+    monkeypatch.setattr(self_update, "secure_urlopen", fake_urlopen(payload))
 
     assert self_update.fetch_updater_latest_tag() == "v3.0.0"
     cache = config_store.load_config()["updater_release_cache"]

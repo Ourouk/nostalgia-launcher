@@ -17,6 +17,7 @@ import time
 from ..core.config_store import load_config
 from ..core.filesystem import atomic_write_text as _atomic_write
 from ..core.log_sink import log
+from ..core.safety import safe_relpath
 from . import catalog
 from .sources import deploy
 from .sources import get as _source_get
@@ -266,7 +267,7 @@ def uninstall_mod(mod: dict, client_dir: str):
     for rel in files:
         # Recorded paths are bookkeeping data — re-validate before they are
         # ever joined onto the client dir (same gate as install).
-        if not isinstance(rel, str) or not catalog.safe_relpath(rel):
+        if not isinstance(rel, str) or not safe_relpath(rel):
             continue
         full = os.path.join(client_dir, rel)
         if os.path.exists(full):
@@ -334,7 +335,7 @@ def remove_unknown_mod(client_dir: str, name: str):
             return
     # dlls.txt is mod-written, so its entries are untrusted: never resolve
     # one to a path outside client_dir.
-    if catalog.safe_relpath(name):
+    if safe_relpath(name):
         full = os.path.join(client_dir, name)
         if os.path.exists(full):
             os.remove(full)
@@ -353,7 +354,7 @@ def add_dll(client_dir: str, name: str):
             return
     if any(line.strip().lower() == name.lower() for line in lines):
         return
-    if not catalog.safe_relpath(name.strip()):
+    if not safe_relpath(name.strip()):
         log(f"  Refusing unsafe dlls.txt entry: {name!r}")
         return
     lines = [line for line in lines if line.strip()] + [name]

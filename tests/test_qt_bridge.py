@@ -22,12 +22,12 @@ from nostalgia_launcher.state.events import (
     GameExited,
     GameLaunched,
     LogMessage,
-    MirrorStatusChanged,
     ModsLoaded,
     NewsLoaded,
     OperationFailed,
     OperationFinished,
     ProgressChanged,
+    SourceStatusChanged,
     StatusChanged,
 )
 from nostalgia_launcher.state.models import AddonsState, ModsState
@@ -82,7 +82,7 @@ def test_every_event_type_reaches_its_signal(qapp):
             "newsLoaded",
             "modsLoaded",
             "addonsLoaded",
-            "mirrorStatusChanged",
+            "sourceStatusChanged",
             "operationFinished",
             "operationFailed",
             "gameLaunched",
@@ -99,7 +99,7 @@ def test_every_event_type_reaches_its_signal(qapp):
     dispatcher.post(mods)
     addons = AddonsLoaded(AddonsState())
     dispatcher.post(addons)
-    dispatcher.post(MirrorStatusChanged(True, "online"))
+    dispatcher.post(SourceStatusChanged(True, "online"))
     dispatcher.post(OperationFinished("mods", True, "done"))
     dispatcher.post(OperationFailed("update", "boom"))
     dispatcher.post(GameLaunched(1234, 9999))
@@ -113,7 +113,7 @@ def test_every_event_type_reaches_its_signal(qapp):
     assert spies["newsLoaded"].calls == [(news,)]
     assert spies["modsLoaded"].calls == [(mods,)]
     assert spies["addonsLoaded"].calls == [(addons,)]
-    assert spies["mirrorStatusChanged"].calls == [(True, "online")]
+    assert spies["sourceStatusChanged"].calls == [(True, "online")]
     assert spies["operationFinished"].calls == [("mods", True, "done")]
     assert spies["operationFailed"].calls == [("update", "boom")]
     assert spies["gameLaunched"].calls == [(1234, 9999)]

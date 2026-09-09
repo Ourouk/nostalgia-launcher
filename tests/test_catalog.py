@@ -7,28 +7,29 @@ services/addons.py and are covered there.
 
 import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.services.catalog as catalog
+from nostalgia_launcher.core.safety import safe_folder, safe_relpath
 
 # ── shared validators ────────────────────────────────────────────────────────
 
 
 def test_safe_folder_rejects_traversal_and_separators():
-    assert catalog.safe_folder("pfUI")
-    assert catalog.safe_folder("My_Addon-2")
-    assert not catalog.safe_folder("../pfUI")
-    assert not catalog.safe_folder("a/b")
-    assert not catalog.safe_folder(".")
-    assert not catalog.safe_folder("..")
-    assert not catalog.safe_folder("")
-    assert not catalog.safe_folder("a\\b")
+    assert safe_folder("pfUI")
+    assert safe_folder("My_Addon-2")
+    assert not safe_folder("../pfUI")
+    assert not safe_folder("a/b")
+    assert not safe_folder(".")
+    assert not safe_folder("..")
+    assert not safe_folder("")
+    assert not safe_folder("a\\b")
 
 
 def test_safe_relpath_rejects_absolute_and_traversal():
-    assert catalog.safe_relpath("d3d9.dll")
-    assert catalog.safe_relpath("sub/file.dll")
-    assert not catalog.safe_relpath("/abs/file")
-    assert not catalog.safe_relpath("../file")
-    assert not catalog.safe_relpath("a/../../b")
-    assert not catalog.safe_relpath("")
+    assert safe_relpath("d3d9.dll")
+    assert safe_relpath("sub/file.dll")
+    assert not safe_relpath("/abs/file")
+    assert not safe_relpath("../file")
+    assert not safe_relpath("a/../../b")
+    assert not safe_relpath("")
 
 
 # ── addon validation ─────────────────────────────────────────────────────────

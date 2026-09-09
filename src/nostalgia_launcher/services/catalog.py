@@ -187,8 +187,9 @@ def _validate_entry_safe(entry, validator, label: str):
 
 
 # ── shared validation helpers ────────────────────────────────────────────────
-# safe_folder / safe_relpath are re-exported from sources.safety (imported
-# above) so every consumer keeps its historical dotted path.
+# safe_folder / safe_relpath come from the canonical core.safety (imported
+# above) for this module's own validators; consumers import core.safety
+# directly rather than via this module.
 
 
 def _text(v) -> str:
@@ -211,7 +212,7 @@ def safe_ref(v) -> str | None:
 
 
 def _https_url(u) -> str | None:
-    from .sources.safety import https_url
+    from ..core.safety import https_url
 
     return https_url(u)
 
@@ -459,13 +460,6 @@ def validate_asset(entry: dict) -> dict | None:
             "size": entry.get("size"),
             "probe": bool(entry.get("probe", False)),
         }
-        # Preserve malformed-sha1 rejection: raw present but normalized None
-        raw_sha1 = entry.get("sha1")
-        if raw_sha1 is not None:
-            from ..core.safety import valid_sha1 as _vs
-
-            if _vs(raw_sha1) is None:
-                return None
         m = AssetModel.model_validate(payload)
         return {
             "id": m.id,
@@ -484,28 +478,38 @@ def validate_asset(entry: dict) -> dict | None:
         return None
 
 
-def merge_assets(remote: list, custom: list) -> list:
-    """Custom asset entries override remote ones by id; new ids append."""
-    return merge_by_key(remote, custom, ASSET_MERGE_FIELDS)
-
-
 # ── generic catalog fetch + layered registry ─────────────────────────────────
 
 
 def fetch_url_catalog(
-    kind: str, validator, url: str, *, force: bool = False
+    kind: str, validator, url: str, *, force: bool = False, urlopen=None
 ) -> list | None:
     """JSON-list catalog at ``url``, validated per-entry and cached in the
     config file ({"<kind>_catalog_cache": {"timestamp": epoch,
     "catalog": [...]}}).
 
+    The multi-registry "addons" kind instead persists a per-URL map
+    ({"<kind>_catalog_cache": {url: {"timestamp", "catalog"}}}) so each
+    registry keeps its own entry and one URL's refresh or failure never
+    clobbers another's.
+
     Non-forced calls never hit the network when a cached copy exists, and
     return None (→ an empty registry) when there is none yet, so a first run
-    is fully offline-safe. Forced calls always fetch and raise when the URL
+    is fully offline-safe.     Forced calls always fetch and raise when the URL
     is unset or the network fails with nothing cached.
+
+    The ``urlopen`` hook (default `secure_urlopen`) exists so callers
+    with their own network seam — e.g. the addons fetcher, whose tests
+    patch ``addons.secure_urlopen`` — can route the fetch through it
+    without mutating shared module state.
     """
+    opener = urlopen or secure_urlopen
     now = time.time()
     key = f"{kind}_catalog_cache"
+    if kind == "addons":
+        return _fetch_per_url_catalog(
+            key, kind, validator, url, force=force, now=now, urlopen=opener
+        )
     entry = config_store.load_config().get(key)
     if not isinstance(entry, dict):
         entry = {}
@@ -518,7 +522,7 @@ def fetch_url_catalog(
         )
     try:
         req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with secure_urlopen(req, timeout=10) as r:
+        with opener(req, timeout=10) as r:
             raw = json.loads(read_capped(r, 2 * 1024 * 1024))
     except Exception:
         if cached is not None:
@@ -531,6 +535,55 @@ def fetch_url_catalog(
             validated.append(cleaned)
     config_store.update_config(
         lambda c: c.__setitem__(key, {"timestamp": now, "catalog": validated})
+    )
+    return validated
+
+
+def _fetch_per_url_catalog(
+    key: str,
+    kind: str,
+    validator,
+    url: str,
+    *,
+    force: bool,
+    now: float,
+    urlopen=None,
+) -> list | None:
+    """Per-URL variant of `fetch_url_catalog` for multi-registry kinds:
+    each URL keeps its own ``{"timestamp", "catalog"}`` record under the
+    shared cache map, so one registry's refresh or failure never touches
+    another's. Same force/cached/raise contract, scoped to ``url``."""
+    opener = urlopen or secure_urlopen
+    stored = config_store.load_config().get(key)
+    if not isinstance(stored, dict):
+        stored = {}
+    sub = stored.get(url)
+    if not isinstance(sub, dict):
+        sub = {}
+    cached = sub.get("catalog")
+    if not force:
+        return cached if cached is not None else None
+    if not url:
+        raise RuntimeError(
+            f"{kind.capitalize()} catalog URL is not configured."
+        )
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with opener(req, timeout=10) as r:
+            raw = json.loads(read_capped(r, 2 * 1024 * 1024))
+    except Exception:
+        if cached is not None:
+            return cached
+        raise
+    validated = []
+    for e in raw if isinstance(raw, list) else []:
+        cleaned = _validate_entry_safe(e, validator, kind)
+        if cleaned is not None:
+            validated.append(cleaned)
+    config_store.update_config(
+        lambda c, k=key, u=url, v=validated, t=now: c.setdefault(
+            k, {}
+        ).__setitem__(u, {"timestamp": t, "catalog": v})
     )
     return validated
 

@@ -100,20 +100,6 @@ def _validate(resp: httpx.Response, allowed_hosts) -> None:
         _check_url(str(resp.url), None)
 
 
-# Deprecated alias for backward compat (old urllib handler)
-class _HttpsOnlyRedirectHandler:  # type: ignore[no-redef]
-    def __init__(self, allowed_hosts=None):
-        self.allowed_hosts = (
-            {h.lower() for h in allowed_hosts} if allowed_hosts else None
-        )
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        import urllib.request
-
-        _check_url(newurl, self.allowed_hosts)
-        return urllib.request.Request(newurl, headers=dict(req.headers))
-
-
 def _enforce_https_request(request: httpx.Request) -> None:
     """httpx request hook — every request (including redirects) must stay HTTPS."""
     if request.url.scheme != "https":

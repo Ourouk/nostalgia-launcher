@@ -6,7 +6,6 @@ import hashlib
 import os
 import shutil
 import time
-from typing import TYPE_CHECKING
 
 import httpx
 from tenacity import (
@@ -19,7 +18,7 @@ from tenacity import (
 from ...core.constants import DOWNLOAD_RETRY, DOWNLOAD_TIMEOUT, UA
 from ...core.helpers import fmt_size, fmt_speed, redact_url
 from ...core.security_http import SSL_CTX, _check_url, allowed_download_hosts
-from ...core.security_http import secure_urlopen as _secure_impl
+from ...core.security_http import secure_urlopen as _secure_urlopen_default
 
 _MAX_NODE_SIZE = 64 * 1024 * 1024 * 1024
 
@@ -36,38 +35,6 @@ def checked_node_size(size: object) -> int:
     return min(size_int, _MAX_NODE_SIZE)
 
 
-def _hu_attr(name, fallback):
-    try:
-        import sys
-
-        m = sys.modules.get(
-            "nostalgia_launcher.services.update_backend.http_update"
-        )
-        if m is not None and hasattr(m, name):
-            return getattr(m, name)
-    except Exception:
-        pass
-    return fallback
-
-
-def _get_allowed_hosts():
-    return _hu_attr("allowed_download_hosts", allowed_download_hosts)
-
-
-def _get_secure_urlopen():
-    return _hu_attr("secure_urlopen", _secure_impl)
-
-
-if TYPE_CHECKING:
-    pass
-
-
-def fetch_manifest(url: str, dispatcher=None):
-    """Removed: manifest model hard-deleted."""
-
-    raise RuntimeError("fetch_manifest removed — torrent-only")
-
-
 def download_file(
     url,
     dest,
@@ -81,6 +48,7 @@ def download_file(
     progress=None,
     total_ref=None,
     counted=None,
+    urlopen=None,
 ):
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     tmp = dest + ".tmp"
@@ -167,20 +135,22 @@ def download_file(
                     _log(f"  Downloading ({total_str})…")
                 downloaded, hasher = got, hashlib.sha1() if not got else None
                 t0, bytes_at_t0, speed_str = time.monotonic(), got, ""
-                sec = _get_secure_urlopen()
+                sec = (
+                    urlopen if urlopen is not None else _secure_urlopen_default
+                )
                 client = None
-                if sec is not _secure_impl:
+                if sec is not _secure_urlopen_default:
                     import urllib.request
 
                     req = urllib.request.Request(url, headers=headers)
                     ctx = sec(
                         req,
                         timeout=DOWNLOAD_TIMEOUT,
-                        allowed_hosts=_get_allowed_hosts()(),
+                        allowed_hosts=allowed_download_hosts(),
                     )
                     resp_obj, is_httpx = ctx, False
                 else:
-                    _check_url(url, _get_allowed_hosts()())
+                    _check_url(url, allowed_download_hosts())
                     client = httpx.Client(
                         verify=SSL_CTX,
                         timeout=httpx.Timeout(DOWNLOAD_TIMEOUT),
@@ -193,12 +163,18 @@ def download_file(
                 resp = resp_obj.__enter__()
                 close_ctx = resp_obj
                 if is_httpx:
-                    for hist in resp.history:
-                        _check_url(str(hist.url), _get_allowed_hosts()())
-                    _check_url(str(resp.url), _get_allowed_hosts()())
+                    for hist in resp.history:  # type: ignore[attr-defined]
+                        _check_url(
+                            str(hist.url),  # type: ignore[attr-defined]
+                            allowed_download_hosts(),
+                        )
+                    _check_url(
+                        str(resp.url),  # type: ignore[attr-defined]
+                        allowed_download_hosts(),
+                    )
                 try:
                     status = (
-                        resp.status_code
+                        resp.status_code  # type: ignore[attr-defined]
                         if is_httpx
                         else (getattr(resp, "status", None) or resp.getcode())  # type: ignore[attr-defined, call-arg]
                     )  # type: ignore[attr-defined]

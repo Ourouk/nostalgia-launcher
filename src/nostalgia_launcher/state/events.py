@@ -85,8 +85,8 @@ class AddonsLoaded(Event):
 
 
 @dataclass
-class MirrorStatusChanged(Event):
-    """Download-mirror reachability result (Settings modal label)."""
+class SourceStatusChanged(Event):
+    """Download-source reachability result (Settings modal label)."""
 
     ok: bool
     text: str

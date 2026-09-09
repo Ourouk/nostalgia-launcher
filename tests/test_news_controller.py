@@ -6,7 +6,6 @@ EventDispatcher and its NewsState.
 """
 
 import threading
-import time
 
 import pytest
 
@@ -14,7 +13,6 @@ import nostalgia_launcher.controllers.news as nc
 import nostalgia_launcher.core.launcher as launcher
 from nostalgia_launcher.controllers.news import NewsController
 from nostalgia_launcher.state.events import (
-    EventDispatcher,
     LogMessage,
     NewsLoaded,
 )
@@ -68,40 +66,48 @@ def feed(monkeypatch):
 
 
 @pytest.fixture
-def controller(feed):
-    return NewsController(EventDispatcher())
+def controller(feed, dispatcher):
+    return NewsController(dispatcher)
 
 
 def _collect(
-    controller, kinds=("featured", "items"), timeout=2.0, release=True
+    wait_for_event,
+    controller,
+    kinds=("featured", "items"),
+    timeout=2.0,
+    release=True,
 ):
-    """Release the fetch gate (unless release=False), then drain until a
-    non-loading NewsLoaded has arrived for every `kind`. Returns every event
-    collected along the way (loading + results)."""
+    """Release the fetch gate (unless release=False), then settle until a
+    non-loading NewsLoaded has arrived for every `kind`. Returns every
+    event collected along the way (loading + results)."""
     if release:
         FakeFeed.gate.set()
-    collected = []
-    deadline = time.monotonic() + timeout
-    while True:
-        collected.extend(controller._dispatcher.drain())
+
+    def _settled(collected):
         got = {
             e.kind
             for e in collected
             if isinstance(e, NewsLoaded) and not e.data.loading
         }
-        if all(k in got for k in kinds):
-            return collected
-        if time.monotonic() > deadline:
-            raise AssertionError(f"news fetches never completed; got {got!r}")
-        time.sleep(0.005)
+        return all(k in got for k in kinds)
+
+    try:
+        return wait_for_event.collect_all(
+            controller._dispatcher, _settled, timeout=timeout
+        )
+    except AssertionError as exc:
+        got = {
+            e.kind
+            for e in controller._dispatcher.drain()
+            if isinstance(e, NewsLoaded) and not e.data.loading
+        }
+        raise AssertionError(
+            f"news fetches never completed; got {got!r}"
+        ) from exc
 
 
-def _wait_len(dispatcher, n, timeout=2.0):
-    deadline = time.monotonic() + timeout
-    while len(dispatcher) < n:
-        if time.monotonic() > deadline:
-            raise AssertionError("expected events never arrived")
-        time.sleep(0.005)
+def _wait_len(wait_for_event, dispatcher, n, timeout=2.0):
+    wait_for_event.until_true(lambda: len(dispatcher) >= n, timeout=timeout)
 
 
 def _results(collected):
@@ -115,18 +121,18 @@ def _results(collected):
 # ── load flow ───────────────────────────────────────────────────────────
 
 
-def test_load_posts_loading_events_first(controller, feed):
+def test_load_posts_loading_events_first(controller, feed, wait_for_event):
     controller.load()
     events = controller._dispatcher.drain()
     assert sorted(e.kind for e in events) == ["featured", "items"]
     assert all(e.data.loading for e in events)
     feed.gate.set()
-    _collect(controller, release=False)
+    _collect(wait_for_event, controller, release=False)
 
 
-def test_load_posts_result_events_and_state(controller, feed):
+def test_load_posts_result_events_and_state(controller, feed, wait_for_event):
     controller.load()
-    collected = _collect(controller)
+    collected = _collect(wait_for_event, controller)
     results = _results(collected)
     assert results["featured"].data == feed.featured
     assert results["featured"].loading is False
@@ -141,9 +147,9 @@ def test_load_posts_result_events_and_state(controller, feed):
 # ── TTL caching ─────────────────────────────────────────────────────────
 
 
-def test_refresh_within_ttl_uses_cache(controller, feed):
+def test_refresh_within_ttl_uses_cache(controller, feed, wait_for_event):
     controller.load()
-    _collect(controller)
+    _collect(wait_for_event, controller)
     assert feed.calls["featured"] == 1
     assert feed.calls["items"] == 1
 
@@ -154,9 +160,9 @@ def test_refresh_within_ttl_uses_cache(controller, feed):
     assert controller._dispatcher.drain() == []
 
 
-def test_force_bypasses_cache(controller, feed):
+def test_force_bypasses_cache(controller, feed, wait_for_event):
     controller.load()
-    _collect(controller)
+    _collect(wait_for_event, controller)
     assert feed.calls["featured"] == 1
 
     feed.gate.clear()
@@ -164,20 +170,20 @@ def test_force_bypasses_cache(controller, feed):
     events = controller._dispatcher.drain()
     assert [e.data.loading for e in events if e.kind == "featured"] == [True]
 
-    collected = _collect(controller, kinds=("featured",))
+    collected = _collect(wait_for_event, controller, kinds=("featured",))
     assert _results(collected)["featured"].data == feed.featured
     assert feed.calls["featured"] == 2
 
 
-def test_invalidate_resets_ttl(controller, feed):
+def test_invalidate_resets_ttl(controller, feed, wait_for_event):
     controller.load()
-    _collect(controller)
+    _collect(wait_for_event, controller)
     assert feed.calls["featured"] == 1
 
     controller.invalidate()
     controller.refresh_featured()
     controller.refresh_announcements()
-    _collect(controller)
+    _collect(wait_for_event, controller)
     assert feed.calls["featured"] == 2
     assert feed.calls["items"] == 2
 
@@ -185,10 +191,10 @@ def test_invalidate_resets_ttl(controller, feed):
 # ── error path / offline behavior ───────────────────────────────────────
 
 
-def test_error_sets_failure_state(controller, feed):
+def test_error_sets_failure_state(controller, feed, wait_for_event):
     feed.fail = True
     controller.load()
-    collected = _collect(controller)
+    collected = _collect(wait_for_event, controller)
     results = _results(collected)
     assert results["featured"].data is None
     assert results["featured"].error == "Couldn't reach the news feed."
@@ -199,19 +205,19 @@ def test_error_sets_failure_state(controller, feed):
     assert controller.state.items is None
 
 
-def test_error_path_only_posts_news_events(controller, feed):
+def test_error_path_only_posts_news_events(controller, feed, wait_for_event):
     """app.py never logged news failures, so the controller must not either."""
     feed.fail = True
     controller.load()
-    collected = _collect(controller)
+    collected = _collect(wait_for_event, controller)
     assert all(isinstance(e, NewsLoaded) for e in collected)
     assert not any(isinstance(e, LogMessage) for e in collected)
 
 
-def test_none_result_is_not_loading(controller, feed):
+def test_none_result_is_not_loading(controller, feed, wait_for_event):
     feed.featured = None
     controller.refresh_featured()
-    collected = _collect(controller, kinds=("featured",))
+    collected = _collect(wait_for_event, controller, kinds=("featured",))
     res = _results(collected)["featured"]
     assert res.data is None
     assert res.loading is False
@@ -221,12 +227,12 @@ def test_none_result_is_not_loading(controller, feed):
 # ── event delivery ──────────────────────────────────────────────────────
 
 
-def test_events_delivered_to_subscribers(controller, feed):
+def test_events_delivered_to_subscribers(controller, feed, wait_for_event):
     got = []
     controller._dispatcher.subscribe(got.append)
     controller.refresh_featured()
     feed.gate.set()
-    _wait_len(controller._dispatcher, 2)
+    _wait_len(wait_for_event, controller._dispatcher, 2)
     controller._dispatcher.dispatch_all()
     featured = [
         e for e in got if isinstance(e, NewsLoaded) and e.kind == "featured"

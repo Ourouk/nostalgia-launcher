@@ -2,9 +2,9 @@
 
 Owns the settings business logic: the game-folder-change reset (hash cache
 drop, folder-scoped config wipe, resets of the other controllers), the
-first-run flags, the Windows Defender exclusion flow, the download-mirror
+first-run flags, the Windows Defender exclusion flow, the download-source
 check, the verify-game-files shortcut and the settings toggles. Publishes
-LogMessage and MirrorStatusChanged on the shared EventDispatcher; the Qt
+LogMessage and SourceStatusChanged on the shared EventDispatcher; the Qt
 Settings dialog renders them. No GUI toolkit.
 """
 
@@ -24,9 +24,9 @@ from ..services import addons, catalog, mods
 from ..state.events import (
     EventDispatcher,
     LogMessage,
-    MirrorStatusChanged,
     OperationFinished,
     ProgressChanged,
+    SourceStatusChanged,
 )
 from ..state.models import LaunchSettings, SettingsState
 
@@ -97,19 +97,19 @@ class SettingsController:
         self.state.first_run_av_pending = (
             self.state.first_run and platform_support.can_manage_antivirus()
         )
-        # On first run we don't verify (fetch the manifest / touch
-        # Config.wtf) until the user closes Settings AND has a confirmed
-        # folder — nothing touches disk before that. A folder change
-        # supersedes this (it verifies the new folder right away).
+        # On first run we don't verify (fetch the torrent snapshot /
+        # touch Config.wtf) until the user closes Settings AND has a
+        # confirmed folder — nothing touches disk before that. A folder
+        # change supersedes this (it verifies the new folder right away).
         self.state.first_run_verify_pending = (
             self.state.first_run and self.client_update_enabled
         )
 
-        # Download-mirror reachability, as reported by the last check_mirror()
-        # ({name: "" | "checking…" | "online" | "offline"}). Not part of
-        # SettingsState — it's transient session state the Settings modal
-        # renders.
-        self.mirror_statuses: dict[str, str] = {}
+        # Download-source reachability, as reported by the last
+        # check_source() ({name: "" | "checking…" | "online" |
+        # "offline"}). Not part of SettingsState — it's transient
+        # session state the Settings modal renders.
+        self.source_statuses: dict[str, str] = {}
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -263,21 +263,22 @@ class SettingsController:
                 LogMessage("Antivirus exclusion cancelled.\n", "err")
             )
 
-    def check_mirror(self):
-        """Background reachability check of every configured server and
-        mirror. The UI shows "checking…" itself and re-renders on the
-        MirrorStatusChanged event."""
-        names = self._http_mirror_names()
+    def check_source(self):
+        """Background reachability check of every configured server
+        source. The UI shows "checking…" itself and re-renders on the
+        SourceStatusChanged event."""
+        names = self._source_names()
         if not names:
-            self._dispatcher.post(MirrorStatusChanged(False, "Not configured"))
+            self._dispatcher.post(SourceStatusChanged(False, "Not configured"))
             return
         threading.Thread(
-            target=self._mirror_worker, args=(names,), daemon=True
+            target=self._source_worker, args=(names,), daemon=True
         ).start()
 
-    def _http_mirror_names(self) -> list:
-        """Name of the configured download source (the server). Mirrors
-        are gone; the single source's reachability is what we report."""
+    def _source_names(self) -> list:
+        """Name of the configured download source (the server). Extra
+        sources are gone; the single source's reachability is what we
+        report."""
 
         cfg = launcher.config()
         if cfg is None:
@@ -288,8 +289,8 @@ class SettingsController:
 
     def verify_files(self):
         """Full re-verification: drop the hash cache so every file is
-        re-hashed against the manifest. Unlike a game-folder change, installed
-        mods are left alone."""
+        re-checked against the torrent snapshot's piece hashes. Unlike
+        a game-folder change, installed mods are left alone."""
         if self._updater.running or not self.client_update_enabled:
             return
         try:
@@ -719,23 +720,23 @@ class SettingsController:
 
     # ── internals ───────────────────────────────────────────────────────────
 
-    def _mirror_worker(self, names: list):
+    def _source_worker(self, names: list):
         ok_any = False
         for name in names:
-            online = self._probe_mirror(name)
-            self.mirror_statuses[name] = "online" if online else "offline"
+            online = self._probe_source(name)
+            self.source_statuses[name] = "online" if online else "offline"
             ok_any = ok_any or online
         self._dispatcher.post(
-            MirrorStatusChanged(
+            SourceStatusChanged(
                 ok=ok_any, text="online" if ok_any else "offline"
             )
         )
 
-    def _probe_mirror(self, name: str) -> bool:
+    def _probe_source(self, name: str) -> bool:
         """Whether a named download source can serve client files. Any HTTP
         response (even an error status) proves it is reachable; only transport
         failures count as down."""
-        url = self._mirror_probe_url(name)
+        url = self._source_probe_url(name)
         if not url:
             return False
         try:
@@ -747,10 +748,10 @@ class SettingsController:
         except Exception:
             return False
 
-    def _mirror_probe_url(self, name: str) -> str:
+    def _source_probe_url(self, name: str) -> str:
         """The client-files endpoint of the configured download source
-        (the server). Mirrors are gone, so this is always the server's
-        fallback or torrent URL."""
+        (the server). Extra sources are gone, so this is always the
+        server's fallback or torrent URL."""
 
         cfg = launcher.config()
         if cfg is None:

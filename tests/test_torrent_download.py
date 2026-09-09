@@ -15,12 +15,21 @@ import urllib.error
 from types import SimpleNamespace
 
 import pytest
+from _torrent_fakes import BodyResp as _resp
+from _torrent_fakes import FakeVerifier, failing_urlopen, make_verifier_class
+from _torrent_fakes import install_fake_lt as _install_fake_lt
+from _torrent_fakes import install_snapshot_fake as _install_snapshot_fake
+from _torrent_fakes import install_verifier_fake as _install_verifier_fake
+from _torrent_fakes import make_client_dir as _mk_client
+from _torrent_fakes import make_magnet_lt as _make_magnet_lt
+from _torrent_fakes import quiet_log as _quiet_log
+from _torrent_fakes import redirect_torrent_cache as _redirect_torrent_cache
 
-import nostalgia_launcher.services.update_backend.http_update as client_update
+import nostalgia_launcher.services.update.workflow as client_update
 import nostalgia_launcher.services.update_backend.sources as update_sources
 import nostalgia_launcher.services.update_backend.torrent_update as td
 from nostalgia_launcher.core import launcher
-from nostalgia_launcher.services.update_backend.http_update import (
+from nostalgia_launcher.services.update.workflow import (
     DownloadSource,
     UpdateWorker,
 )
@@ -42,38 +51,6 @@ from nostalgia_launcher.state.events import (
 )
 
 SHA1_X = "11F6AD8EC52A2984ABAAFD7C3B516503785C2072"
-
-
-def _mk_client(tmp_path):
-    d = tmp_path / "client"
-    d.mkdir()
-    return d
-
-
-def _resp(content: bytes):
-    class Response:
-        def __init__(self, content):
-            self.content = content
-            self.pos = 0
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def read(self, n=-1):
-            if self.pos >= len(self.content):
-                return b""
-            if n < 0:
-                result = self.content[self.pos :]
-                self.pos = len(self.content)
-            else:
-                result = self.content[self.pos : self.pos + n]
-                self.pos += len(result)
-            return result
-
-    return Response(content)
 
 
 # ── availability probe ───────────────────────────────────────────────────────
@@ -330,128 +307,6 @@ def test_download_source_resolves_torrent_only():
 
 
 # ── TorrentDownloader unit tests (fake libtorrent) ──────────────────────────
-
-
-def _make_fake_lt(finished_after=3):
-    class FakeStatus:
-        def __init__(self, finished=False, pieces_done=0):
-            self.name = "client"
-            self.total_wanted = 10
-            self.total_wanted_done = 10 if finished else 0
-            self.download_rate = 0
-            self.num_peers = 0
-            self.is_finished = finished
-            # libtorrent 2.1 fields for verification
-            self.verified_pieces = pieces_done
-            self.checking_files = not finished
-
-    class FakeHandle:
-        def __init__(self):
-            self.cancelled = False
-            self.paused = False
-            self.status_calls = 0
-
-        def status(self):
-            self.status_calls += 1
-            return FakeStatus(
-                self.status_calls >= finished_after,
-                pieces_done=self.status_calls,
-            )
-
-        def cancel(self):
-            self.cancelled = True
-
-        def pause(self):
-            self.paused = True
-
-        def resume(self):
-            self.paused = False
-
-    class FakeFiles:
-        def __init__(self):
-            self.paths = [
-                "client/Data/a.bin",
-                "client/Data/b.mpq",
-                "client/WoW.exe",
-            ]
-            self.sizes = [1024, 2048, 4096]
-
-        def num_files(self):
-            return len(self.paths)
-
-        def file_path(self, i):
-            return self.paths[i]
-
-        def file_offset(self, i):
-            return sum(self.sizes[:i])
-
-        def file_size(self, i):
-            return self.sizes[i]
-
-    class FakeTorrentInfo:
-        def files(self):
-            return FakeFiles()
-
-    class FakeSession:
-        def __init__(self, settings):
-            self.settings = settings
-            self.atp = None
-            self.removed = []
-
-        def add_torrent(self, atp):
-            self.atp = atp
-            return FakeHandle()
-
-        def pop_alerts(self):
-            return []
-
-        def wait_for_alert(self, ms):
-            return None
-
-        def remove_torrent(self, h):
-            self.removed.append(h)
-
-    class FakeLT:
-        class alert:
-            class category_t:
-                error_notification = 1
-                storage_notification = 8
-                status_notification = 16
-
-        class torrent_status:
-            class states:
-                checking_files = "checking_files"
-                checking_resume_data = "checking_resume_data"
-                queued_for_checking = "queued_for_checking"
-                downloading = "downloading"
-                finished = "finished"
-
-        def __init__(self):
-            self.last_session = None
-
-        def torrent_info(self, path):
-            return FakeTorrentInfo()
-
-        def session(self, settings):
-            self.last_session = FakeSession(settings)
-            return self.last_session
-
-        def add_torrent_params(self):
-            return SimpleNamespace()
-
-    return FakeLT()
-
-
-def _install_fake_lt(monkeypatch, **kwargs):
-    fake = _make_fake_lt(**kwargs)
-    monkeypatch.setitem(sys.modules, "libtorrent", fake)
-    monkeypatch.setattr(td, "allowed_download_hosts", lambda: set())
-    monkeypatch.setattr(
-        td,
-        "secure_urlopen",
-        lambda req, timeout=10, allowed_hosts=None: _resp(b"fake"),
-    )
-    return fake
 
 
 def test_download_completes_and_sets_file_priorities(tmp_path, monkeypatch):
@@ -1054,10 +909,11 @@ def test_run_recovers_full_torrent_when_manifest_down(tmp_path, monkeypatch):
 
     monkeypatch.setattr(td.TorrentDownloader, "download", fake_download)
 
-    def down(*a, **k):
-        raise ConnectionError("manifest down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
     worker.run()
 
@@ -1101,7 +957,7 @@ def test_recovery_fails_when_snapshot_lacks_wanted_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(td.TorrentDownloader, "download", fake_download)
 
-    worker.run(None, {"Data/old.bin"})
+    worker.run({"Data/old.bin"})
 
     events = dispatcher.drain()
     assert any(isinstance(e, TorrentVerifyFailed) for e in events)
@@ -1125,10 +981,11 @@ def test_run_errors_when_manifest_down_without_torrent(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "save_cache", lambda c: None)
     calls = _recording_downloader(monkeypatch)
 
-    def down(*a, **k):
-        raise ConnectionError("manifest down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
     worker.run()
 
@@ -1158,10 +1015,11 @@ def test_run_errors_when_manifest_down_without_libtorrent(
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
     calls = _recording_downloader(monkeypatch)
 
-    def down(*a, **k):
-        raise ConnectionError("manifest down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
     worker.run()
 
@@ -1172,130 +1030,6 @@ def test_run_errors_when_manifest_down_without_libtorrent(
 
 
 # ── TorrentVerifier (manifest-less verify against the snapshot) ──────────────
-
-
-def _verifier_fake_lt(stale_file: int | None, piece_count: int = 3):
-    """A libtorrent fake tailored to TorrentVerifier. Two torrent files:
-    ``client/Data/a.bin`` (pieces 0..1) and ``client/WoW.exe`` (piece 2).
-    ``stale_file`` (if not None) is a piece index ``have_piece`` reports as
-    missing after the recheck."""
-
-    class FakeFiles:
-        def __init__(self):
-            self.paths = ["client/Data/a.bin", "client/WoW.exe"]
-            self.sizes = [512, 256]
-
-        def num_files(self):
-            return len(self.paths)
-
-        def file_path(self, i):
-            return self.paths[i]
-
-        def file_offset(self, i):
-            return sum(self.sizes[:i])
-
-        def file_size(self, i):
-            return self.sizes[i]
-
-    class FakeTorrentInfo:
-        def files(self):
-            return FakeFiles()
-
-        def piece_length(self):
-            return 256
-
-        def num_pieces(self):
-            return piece_count
-
-    class FakeStatus:
-        verified_pieces = [True] * piece_count
-        state = "finished"
-        progress = 1.0
-        num_pieces = piece_count
-
-    class FakeHandle:
-        def __init__(self):
-            self.force_rechecked = False
-            self.cancelled = False
-
-        def force_recheck(self):
-            self.force_rechecked = True
-
-        def cancel(self):
-            self.cancelled = True
-
-        def status(self):
-            return FakeStatus()
-
-        def have_piece(self, i):
-            return i != stale_file
-
-        def pause(self):
-            pass
-
-        def resume(self):
-            self.paused = False
-
-    class FakeSession:
-        def __init__(self, settings):
-            self.settings = settings
-            self.atp = None
-            self.removed = []
-
-        def add_torrent(self, atp):
-            self.atp = atp
-            return FakeHandle()
-
-        def pop_alerts(self):
-            return []
-
-        def wait_for_alert(self, ms):
-            return None
-
-        def remove_torrent(self, h):
-            self.removed.append(h)
-
-    class FakeLT:
-        class alert:
-            class category_t:
-                error_notification = 1
-                storage_notification = 8
-                status_notification = 16
-
-        class torrent_status:
-            class states:
-                checking_files = "checking_files"
-                checking_resume_data = "checking_resume_data"
-                queued_for_checking = "queued_for_checking"
-                downloading = "downloading"
-                finished = "finished"
-
-        def __init__(self):
-            self.last_session = None
-
-        def torrent_info(self, path):
-            return FakeTorrentInfo()
-
-        def session(self, settings):
-            self.last_session = FakeSession(settings)
-            return self.last_session
-
-        def add_torrent_params(self):
-            return SimpleNamespace()
-
-    return FakeLT()
-
-
-def _install_verifier_fake(monkeypatch, **kwargs):
-    fake = _verifier_fake_lt(**kwargs)
-    monkeypatch.setitem(sys.modules, "libtorrent", fake)
-    monkeypatch.setattr(td, "allowed_download_hosts", lambda: set())
-    monkeypatch.setattr(
-        td,
-        "secure_urlopen",
-        lambda req, timeout=10, allowed_hosts=None: _resp(b"fake"),
-    )
-    return fake
 
 
 def test_verifier_returns_stale_files(tmp_path, monkeypatch):
@@ -1375,22 +1109,21 @@ def test_verify_worker_uses_torrent_when_manifest_down(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
     verifier_calls = []
 
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            self.out_dir = out_dir
-
-        def verify(self, url):
-            verifier_calls.append(url)
-            return ["Data/a.bin", "Patch.mpq"]
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td,
+        "TorrentVerifier",
+        make_verifier_class(
+            stale=["Data/a.bin", "Patch.mpq"], calls=verifier_calls
+        ),
+    )
     vw.run()
 
     assert verifier_calls == ["https://srv/client.torrent"]
@@ -1439,10 +1172,11 @@ def test_verify_worker_identity_crash_degrades_to_verify_failed(
         td, "_fetch_torrent", lambda url, log, cancel=None: BoomSnapshot()
     )
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
     vw = client_update.VerifyWorker(str(client), dispatcher)
     vw.run()
@@ -1495,19 +1229,13 @@ def test_verify_worker_resume_data_failure_does_not_abort(
 
     monkeypatch.setattr(td, "remove_resume_data", boom_remove)
 
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url, snapshot=None):
-            return []
-
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
     vw = client_update.VerifyWorker(str(client), dispatcher)
     vw.run()
@@ -1533,17 +1261,11 @@ def test_verify_worker_torrent_up_to_date(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
-
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url):
-            return []
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
@@ -1584,12 +1306,7 @@ def test_verify_worker_uses_server_magnet(tmp_path, monkeypatch):
     monkeypatch.setattr(
         client_update,
         "_download_source",
-        lambda: DownloadSource(
-            "https://srv/client.torrent",
-            "",
-            None,
-            magnet,
-        ),
+        lambda: DownloadSource(torrent_magnet=magnet),
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
@@ -1603,20 +1320,15 @@ def test_verify_worker_uses_server_magnet(tmp_path, monkeypatch):
 
     monkeypatch.setattr(td, "_fetch_torrent", fake_fetch)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
-
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url, snapshot=None):
-            verify_calls.append(url)
-            return []
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td, "TorrentVerifier", make_verifier_class(calls=verify_calls)
+    )
     vw.run()
 
     assert fetch_calls == [magnet]
@@ -1647,10 +1359,11 @@ def test_verify_worker_skips_rescan_when_torrent_unchanged(
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
     cached = {
         client_update.TORRENT_VALIDATION_CACHE_KEY: {
@@ -1678,15 +1391,11 @@ def test_verify_worker_skips_rescan_when_torrent_unchanged(
 
     verifier_calls = []
 
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url, snapshot=None):
-            verifier_calls.append(url)
-            return ["Data/other.bin"]
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td,
+        "TorrentVerifier",
+        make_verifier_class(stale=["Data/other.bin"], calls=verifier_calls),
+    )
     vw.run()
 
     assert verifier_calls == []
@@ -1723,10 +1432,11 @@ def test_verify_worker_skips_when_metadata_changes_but_identity_same(
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
     vw._cache = {
         client_update.TORRENT_VALIDATION_CACHE_KEY: {
@@ -1753,15 +1463,9 @@ def test_verify_worker_skips_when_metadata_changes_but_identity_same(
 
     verifier_calls = []
 
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url, snapshot=None):
-            verifier_calls.append(url)
-            return []
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td, "TorrentVerifier", make_verifier_class(calls=verifier_calls)
+    )
     vw.run()
 
     assert verifier_calls == []
@@ -1792,10 +1496,11 @@ def test_verify_worker_skips_when_url_rotates_same_snapshot(
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
     vw._cache = {
         client_update.TORRENT_VALIDATION_CACHE_KEY: {
@@ -1822,15 +1527,9 @@ def test_verify_worker_skips_when_url_rotates_same_snapshot(
 
     verifier_calls = []
 
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url, snapshot=None):
-            verifier_calls.append(url)
-            return []
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td, "TorrentVerifier", make_verifier_class(calls=verifier_calls)
+    )
     vw.run()
 
     assert verifier_calls == []
@@ -1858,10 +1557,11 @@ def test_verify_worker_logs_full_rescan_reason_without_record(
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
     saved = {}
     monkeypatch.setattr(client_update, "save_cache", lambda c: saved.update(c))
@@ -1876,13 +1576,6 @@ def test_verify_worker_logs_full_rescan_reason_without_record(
     monkeypatch.setattr(
         td, "_fetch_torrent", lambda url, log, cancel=None: snapshot
     )
-
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url):
-            return []
 
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
     vw.run()
@@ -1912,10 +1605,11 @@ def test_verify_worker_runs_recheck_when_snapshot_changed(
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
-
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
     cached = {
         client_update.TORRENT_VALIDATION_CACHE_KEY: {
@@ -1941,15 +1635,11 @@ def test_verify_worker_runs_recheck_when_snapshot_changed(
 
     verifier_calls = []
 
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url, snapshot=None):
-            verifier_calls.append(url)
-            return ["Data/other.bin"]
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td,
+        "TorrentVerifier",
+        make_verifier_class(stale=["Data/other.bin"], calls=verifier_calls),
+    )
     vw.run()
 
     assert verifier_calls == ["https://srv/client.torrent"]
@@ -1982,19 +1672,17 @@ def test_verify_worker_torrent_failure_falls_back(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
-
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url):
-            raise RuntimeError("swarm dead")
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td,
+        "TorrentVerifier",
+        make_verifier_class(error=RuntimeError("swarm dead")),
+    )
     vw.run()
 
     events = dispatcher.drain()
@@ -2009,10 +1697,6 @@ def test_verify_worker_torrent_unreachable_posts_marker(tmp_path, monkeypatch):
     """Manifest down and the .torrent can't be fetched (HTTP error) → the
     unreachable marker is posted so the UI stops offering a dead recovery
     download."""
-    from nostalgia_launcher.services.update_backend.torrent_update import (
-        TorrentFetchError,
-    )
-
     client = _mk_client(tmp_path)
     dispatcher = EventDispatcher()
     vw = client_update.VerifyWorker(str(client), dispatcher)
@@ -2026,19 +1710,19 @@ def test_verify_worker_torrent_unreachable_posts_marker(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
-
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url):
-            raise TorrentFetchError("HTTP Error 404: Not Found")
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td,
+        "TorrentVerifier",
+        make_verifier_class(
+            error=td.TorrentFetchError("HTTP Error 404: Not Found")
+        ),
+    )
     vw.run()
 
     events = dispatcher.drain()
@@ -2065,19 +1749,17 @@ def test_verify_worker_torrent_reachable_posts_marker(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
-
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url):
-            return ["Data/a.bin"]
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td,
+        "TorrentVerifier",
+        make_verifier_class(stale=["Data/a.bin"]),
+    )
     vw.run()
 
     events = dispatcher.drain()
@@ -2092,12 +1774,12 @@ def test_fetch_torrent_wraps_http_error(tmp_path, monkeypatch):
         TorrentFetchError,
     )
 
-    def failing_urlopen(req, timeout=10, allowed_hosts=None):
+    def http_not_found(req, timeout=10, allowed_hosts=None):
         raise urllib.error.HTTPError(
             "https://srv/client.torrent", 404, "Not Found", None, None
         )
 
-    monkeypatch.setattr(td, "secure_urlopen", failing_urlopen)
+    monkeypatch.setattr(td, "secure_urlopen", http_not_found)
     with pytest.raises(TorrentFetchError, match="404"):
         td._fetch_torrent("https://srv/client.torrent", lambda m, t="": None)
 
@@ -2109,10 +1791,10 @@ def test_fetch_torrent_wraps_runtime_error(tmp_path, monkeypatch):
         TorrentFetchError,
     )
 
-    def failing_urlopen(req, timeout=10, allowed_hosts=None):
+    def refuse_evil_host(req, timeout=10, allowed_hosts=None):
         raise RuntimeError("Refusing download from unexpected host: evil.com")
 
-    monkeypatch.setattr(td, "secure_urlopen", failing_urlopen)
+    monkeypatch.setattr(td, "secure_urlopen", refuse_evil_host)
     with pytest.raises(TorrentFetchError, match="unexpected host"):
         td._fetch_torrent(
             "https://evil.com/client.torrent", lambda m, t="": None
@@ -2148,100 +1830,6 @@ def test_torrent_corrupt_error_on_malformed_torrent(tmp_path, monkeypatch):
 
 
 # ── magnet snapshots ────────────────────────────────────────────────────────
-
-
-def _make_magnet_lt(metadata_poll=1, peers=3):
-    """A fake libtorrent module exposing just what _resolve_magnet uses.
-
-    ``metadata_poll`` is the poll iteration after which status() reports
-    has_metadata; ``peers`` is the reported peer count. Returns
-    ``(fake_module, holder)`` where ``holder["h"]``/``holder["ses"]`` are
-    the created handle/session for assertions."""
-
-    class FakeTI:
-        def info_hashes(self):
-            return SimpleNamespace(v1="cd" * 20, v2="")
-
-    class FakeCreated:
-        def generate(self):
-            return {"info": "section"}
-
-    class FakeStatus:
-        def __init__(self, polls):
-            self.has_metadata = polls >= metadata_poll
-            self.num_peers = peers
-            self.name = "client"
-
-    class FakeHandle:
-        def __init__(self):
-            self.polls = 0
-            self.resumed = False
-            self.upload_mode = False
-
-        def set_flags(self, flags):
-            self.upload_mode = bool(flags)
-
-        def resume(self):
-            self.resumed = True
-
-        def pause(self):
-            pass
-
-        def status(self):
-            self.polls += 1
-            return FakeStatus(self.polls)
-
-        def torrent_file(self):
-            return FakeTI()
-
-    class FakeSession:
-        def __init__(self, settings):
-            self.settings = settings
-            self.atp = None
-
-        def add_torrent(self, atp):
-            self.atp = atp
-            return holder["h"]
-
-        def pop_alerts(self):
-            return []
-
-        def wait_for_alert(self, ms):
-            pass
-
-    class FakeFlags:
-        upload_mode = "upload-mode-flag"
-
-    class FakeLT:
-        torrent_flags = FakeFlags()
-        last_session = None
-
-        @staticmethod
-        def parse_magnet_uri(uri):
-            if not uri.startswith("magnet:?xt="):
-                raise ValueError("bad magnet")
-            return SimpleNamespace(save_path="", url=uri)
-
-        @staticmethod
-        def session(settings):
-            FakeLT.last_session = FakeSession(settings)
-            holder["ses"] = FakeLT.last_session
-            return FakeLT.last_session
-
-        @staticmethod
-        def create_torrent(ti):
-            return FakeCreated()
-
-        @staticmethod
-        def bencode(entry):
-            return b"resolved-metadata"
-
-    holder = {"h": FakeHandle()}
-    return FakeLT(), holder
-
-
-def _quiet_log():
-    return lambda m, t="": None
 
 
 def test_fetch_torrent_routes_magnet_to_resolver(monkeypatch):
@@ -2419,19 +2007,19 @@ def test_verify_worker_torrent_corrupt_posts_marker(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
-
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url):
-            raise td.TorrentCorruptError("not a valid torrent")
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td,
+        "TorrentVerifier",
+        make_verifier_class(
+            error=td.TorrentCorruptError("not a valid torrent")
+        ),
+    )
     vw.run()
 
     events = dispatcher.drain()
@@ -2455,19 +2043,17 @@ def test_verify_worker_torrent_stalled_posts_marker(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
-
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url):
-            raise td.TorrentStalledError(peers=0)
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td,
+        "TorrentVerifier",
+        make_verifier_class(error=td.TorrentStalledError(peers=0)),
+    )
     vw.run()
 
     events = dispatcher.drain()
@@ -2492,19 +2078,17 @@ def test_verify_worker_torrent_session_error_posts_marker(
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
-
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url):
-            raise td.TorrentSessionError("address in use")
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td,
+        "TorrentVerifier",
+        make_verifier_class(error=td.TorrentSessionError("address in use")),
+    )
     vw.run()
 
     events = dispatcher.drain()
@@ -2527,19 +2111,19 @@ def test_verify_worker_torrent_disk_error_posts_marker(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
-
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url):
-            raise td.TorrentDiskError("No space left on device")
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td,
+        "TorrentVerifier",
+        make_verifier_class(
+            error=td.TorrentDiskError("No space left on device")
+        ),
+    )
     vw.run()
 
     events = dispatcher.drain()
@@ -2562,19 +2146,17 @@ def test_verify_worker_error_detail_in_tag(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
-    def down(req, timeout=10, allowed_hosts=None):
-        raise ConnectionError("manifest down")
+    monkeypatch.setattr(
+        client_update,
+        "secure_urlopen",
+        failing_urlopen(ConnectionError("manifest down")),
+    )
 
-    monkeypatch.setattr(client_update, "secure_urlopen", down)
-
-    class FakeVerifier:
-        def __init__(self, out_dir, dispatcher=None, *args, **kwargs):
-            pass
-
-        def verify(self, url):
-            raise td.TorrentCorruptError("truncated data")
-
-    monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
+    monkeypatch.setattr(
+        td,
+        "TorrentVerifier",
+        make_verifier_class(error=td.TorrentCorruptError("truncated data")),
+    )
     vw.run()
 
     events = dispatcher.drain()
@@ -2583,171 +2165,6 @@ def test_verify_worker_error_detail_in_tag(tmp_path, monkeypatch):
 
 
 # ── torrent identity + resume data (snapshot-aware backend) ────────────────
-
-
-def _make_snapshot_fake_lt(
-    info_hash="aa" * 20, resume_atp=None, save_alert=False
-):
-    """A libtorrent fake exposing info_hashes plus the resume-data APIs."""
-
-    class _InfoHashes:
-        def __init__(self):
-            self.v1 = info_hash
-            self.v2 = ""
-
-    class FakeFiles:
-        def __init__(self):
-            self.paths = ["client/Data/a.bin", "client/WoW.exe"]
-            self.sizes = [1024, 4096]
-
-        def num_files(self):
-            return len(self.paths)
-
-        def file_path(self, i):
-            return self.paths[i]
-
-        def file_offset(self, i):
-            return sum(self.sizes[:i])
-
-        def file_size(self, i):
-            return self.sizes[i]
-
-    class FakeTorrentInfo:
-        def info_hashes(self):
-            return _InfoHashes()
-
-        def files(self):
-            return FakeFiles()
-
-        def piece_length(self):
-            return 256
-
-        def num_pieces(self):
-            return 3
-
-    class FakeStatus:
-        def __init__(self, finished=False):
-            self.name = "client"
-            self.total_wanted = 10
-            self.total_wanted_done = 10 if finished else 0
-            self.download_rate = 0
-            self.num_peers = 0
-            self.is_finished = finished
-
-    class FakeHandle:
-        def __init__(self):
-            self.status_calls = 0
-            self.resume_requested = False
-            self.resumed = False
-
-        def status(self):
-            self.status_calls += 1
-            return FakeStatus(self.status_calls >= 3)
-
-        def cancel(self):
-            pass
-
-        def pause(self):
-            pass
-
-        def resume(self):
-            self.paused = False
-            self.resumed = True
-
-        def save_resume_data(self):
-            self.resume_requested = True
-
-    class save_resume_data_alert:
-        def __init__(self):
-            self.params = SimpleNamespace()
-
-    class FakeSession:
-        def __init__(self, settings):
-            self.settings = settings
-            self.atp = None
-            self.removed = []
-            self._alert = save_resume_data_alert() if save_alert else None
-            self._pops = 0
-
-        def add_torrent(self, atp):
-            self.atp = atp
-            self.handle = FakeHandle()
-            return self.handle
-
-        def pop_alerts(self):
-            # The download pump drains alerts first; the save-resume alert is
-            # only produced after _save_resume() requests it.
-            self._pops += 1
-            if self._alert is not None and self._pops >= 4:
-                self._alert = None
-                return [save_resume_data_alert()]
-            return []
-
-        def wait_for_alert(self, ms):
-            return None
-
-        def remove_torrent(self, h):
-            self.removed.append(h)
-
-    class FakeLT:
-        class alert:
-            class category_t:
-                error_notification = 1
-                storage_notification = 8
-                status_notification = 16
-
-        class torrent_status:
-            class states:
-                checking_files = "checking_files"
-                checking_resume_data = "checking_resume_data"
-                queued_for_checking = "queued_for_checking"
-                downloading = "downloading"
-                finished = "finished"
-
-        def __init__(self):
-            self.last_session = None
-            self.resume_atp = resume_atp
-
-        def torrent_info(self, path):
-            return FakeTorrentInfo()
-
-        def session(self, settings):
-            self.last_session = FakeSession(settings)
-            return self.last_session
-
-        def add_torrent_params(self):
-            return SimpleNamespace()
-
-        def read_resume_data(self, buf):
-            if self.resume_atp is None:
-                raise ValueError("no resume data")
-            return self.resume_atp
-
-        def write_resume_data_buf(self, params):
-            return b"resume-bytes"
-
-    return FakeLT()
-
-
-def _install_snapshot_fake(
-    monkeypatch, info_hash="aa" * 20, resume_atp=None, save_alert=False
-):
-    fake = _make_snapshot_fake_lt(info_hash, resume_atp, save_alert)
-    monkeypatch.setitem(sys.modules, "libtorrent", fake)
-    monkeypatch.setattr(td, "allowed_download_hosts", lambda: set())
-    monkeypatch.setattr(
-        td,
-        "secure_urlopen",
-        lambda req, timeout=10, allowed_hosts=None: _resp(b"fake"),
-    )
-    return fake
-
-
-def _redirect_torrent_cache(monkeypatch, cache_root):
-    """Point torrent metadata persistence at <cache_root>/torrents."""
-    monkeypatch.setattr(
-        td, "torrent_cache_dir", lambda: str(cache_root / "torrents")
-    )
 
 
 def test_fetch_torrent_computes_identity_and_persists(monkeypatch, tmp_path):

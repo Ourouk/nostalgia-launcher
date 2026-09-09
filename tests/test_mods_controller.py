@@ -7,15 +7,13 @@ monkeypatch so nothing touches the network or the real filesystem.
 """
 
 import threading
-import time
 
 import pytest
 
 import nostalgia_launcher.controllers.mods as mc
-import nostalgia_launcher.services.update_backend.http_update as client_update
+import nostalgia_launcher.services.update.workflow as client_update
 from nostalgia_launcher.controllers.mods import ModsController
 from nostalgia_launcher.state.events import (
-    EventDispatcher,
     LogMessage,
     ModsLoaded,
     OperationFinished,
@@ -100,52 +98,40 @@ def versions(monkeypatch):
 
 
 @pytest.fixture
-def controller(registry, cfg):
-    return ModsController(EventDispatcher())
-
-
-def _drain_for(dispatcher, predicate, timeout=2.0):
-    """Drain until an event matching `predicate` arrives; return everything
-    drained along the way (assertion failure on timeout)."""
-    deadline = time.monotonic() + timeout
-    collected = []
-    while True:
-        collected.extend(dispatcher.drain())
-        if any(predicate(e) for e in collected):
-            return collected
-        if time.monotonic() > deadline:
-            raise AssertionError("expected event never arrived")
-        time.sleep(0.005)
+def controller(registry, cfg, dispatcher):
+    return ModsController(dispatcher)
 
 
 # ── load_latest_versions ───────────────────────────────────────────────
 
 
 def test_load_latest_versions_fills_state_and_posts_event(
-    controller, versions
+    controller, versions, wait_for_event
 ):
     versions["AlphaMod"] = "1.2"
     versions["BetaMod"] = "2.0"
     controller.load_latest_versions()
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
     assert controller.state.latest_versions == {
         "AlphaMod": "1.2",
         "BetaMod": "2.0",
     }
 
 
-def test_load_latest_versions_skips_failed_fetch(controller, monkeypatch):
+def test_load_latest_versions_skips_failed_fetch(
+    controller, monkeypatch, wait_for_event
+):
     def boom(mod):
         raise ConnectionError("offline")
 
     monkeypatch.setattr(mc.mods, "fetch_mod_latest_version_cached", boom)
     controller.load_latest_versions()
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
     assert controller.state.latest_versions == {}
 
 
 def test_load_latest_versions_fetches_catalog_on_first_launch(
-    controller, monkeypatch, versions
+    controller, monkeypatch, versions, wait_for_event
 ):
     calls = []
     monkeypatch.setattr(
@@ -154,14 +140,14 @@ def test_load_latest_versions_fetches_catalog_on_first_launch(
         lambda *a, **k: calls.append(k) or [MOD_A, MOD_B],
     )
     controller.load_latest_versions()
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
     # No cached catalog → a force fetch runs (the refresh re-reads from cache).
     assert calls[0] == {"force": True}
     assert calls.count({"force": True}) == 1
 
 
 def test_load_latest_versions_refetches_catalog_when_cached(
-    controller, monkeypatch, cfg, versions
+    controller, monkeypatch, cfg, versions, wait_for_event
 ):
     cfg["mods_catalog_cache"] = {"timestamp": 0, "catalog": [{}]}
     calls = []
@@ -171,28 +157,30 @@ def test_load_latest_versions_refetches_catalog_when_cached(
         lambda *a, **k: calls.append(k) or [MOD_A, MOD_B],
     )
     controller.load_latest_versions()
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
     # Startup now always force-refreshes the catalog, even when a cache exists.
     assert calls[0] == {"force": True}
     assert calls.count({"force": True}) == 1
 
 
 def test_load_latest_versions_offline_first_launch_stays_empty(
-    controller, monkeypatch, versions
+    controller, monkeypatch, versions, wait_for_event
 ):
     def boom(*a, **k):
         raise ConnectionError("offline")
 
     monkeypatch.setattr(mc.mods, "mods_registry", boom)
     controller.load_latest_versions()
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
     assert controller.state.latest_versions == {}
 
 
 # ── updates_count ──────────────────────────────────────────────────────
 
 
-def test_updates_count_matches_apply_semantics(controller, versions, cfg):
+def test_updates_count_matches_apply_semantics(
+    controller, versions, cfg, wait_for_event
+):
     cfg["mods"] = {
         "AlphaMod": {
             "enabled": True,
@@ -210,13 +198,13 @@ def test_updates_count_matches_apply_semantics(controller, versions, cfg):
     versions["AlphaMod"] = "2.0"
     versions["BetaMod"] = "2.0"
     controller.load_latest_versions()
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
     # AlphaMod has an update; BetaMod is skipped because it's in error.
     assert controller.updates_count == 1
 
 
 def test_updates_count_uses_mod_update_available(
-    controller, versions, cfg, monkeypatch
+    controller, versions, cfg, monkeypatch, wait_for_event
 ):
     cfg["mods"] = {
         "AlphaMod": {"enabled": True, "installed_version": "1.0"},
@@ -234,7 +222,7 @@ def test_updates_count_uses_mod_update_available(
         lambda mod, state, live: calls.append((mod["id"], live)) or True,
     )
     controller.load_latest_versions()
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
     assert controller.updates_count == 2
     assert {mod_id for mod_id, _ in calls} == {"AlphaMod", "BetaMod"}
     assert all(live.get("latest_version") == "2.0" for _, live in calls)
@@ -256,7 +244,9 @@ def test_toggle_updates_pending(controller):
 # ── action_for ─────────────────────────────────────────────────────────
 
 
-def test_action_for_returns_retry_update_none(controller, versions, cfg):
+def test_action_for_returns_retry_update_none(
+    controller, versions, cfg, wait_for_event
+):
     cfg["mods"] = {
         "AlphaMod": {"enabled": True, "installed_version": "1.0"},
         "BetaMod": {
@@ -270,19 +260,21 @@ def test_action_for_returns_retry_update_none(controller, versions, cfg):
     )
     versions["AlphaMod"] = "2.0"
     controller.load_latest_versions()
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
     assert controller.action_for("AlphaMod") == "update"
     assert controller.action_for("BetaMod") == "retry"
 
 
-def test_action_for_none_when_up_to_date(controller, versions, cfg):
+def test_action_for_none_when_up_to_date(
+    controller, versions, cfg, wait_for_event
+):
     cfg["mods"] = {"AlphaMod": {"enabled": True, "installed_version": "1.0"}}
     controller.state.records, controller.state.unknown = (
         controller._load_records()
     )
     versions["AlphaMod"] = "1.0"
     controller.load_latest_versions()
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
     assert controller.action_for("AlphaMod") is None
 
 
@@ -320,7 +312,9 @@ def apply_backends(monkeypatch, cfg):
     )
 
 
-def test_apply_installs_and_posts_finished(controller, cfg, apply_backends):
+def test_apply_installs_and_posts_finished(
+    controller, cfg, apply_backends, wait_for_event
+):
     cfg["mods"] = {
         "AlphaMod": {
             "enabled": True,
@@ -335,7 +329,7 @@ def test_apply_installs_and_posts_finished(controller, cfg, apply_backends):
 
     controller.apply()
 
-    collected = _drain_for(
+    collected = wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     assert OperationFinished("mods", True, "") in collected
@@ -350,7 +344,7 @@ def test_apply_installs_and_posts_finished(controller, cfg, apply_backends):
 
 
 def test_apply_records_per_mod_error_on_failure(
-    controller, cfg, monkeypatch, apply_backends
+    controller, cfg, monkeypatch, apply_backends, wait_for_event
 ):
     def failing_install(mod, cd, release=None):
         raise RuntimeError("download blocked")
@@ -370,7 +364,7 @@ def test_apply_records_per_mod_error_on_failure(
 
     controller.apply()
 
-    collected = _drain_for(
+    collected = wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     assert OperationFinished("mods", True, "") in collected
@@ -382,7 +376,9 @@ def test_apply_records_per_mod_error_on_failure(
     assert controller.state.has_errors
 
 
-def test_apply_skips_mods_without_changes(controller, cfg, apply_backends):
+def test_apply_skips_mods_without_changes(
+    controller, cfg, apply_backends, wait_for_event
+):
     cfg["mods"] = {
         "AlphaMod": {
             "enabled": True,
@@ -396,7 +392,7 @@ def test_apply_skips_mods_without_changes(controller, cfg, apply_backends):
 
     controller.apply()
 
-    _drain_for(
+    wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     # No action taken, records untouched.
@@ -415,7 +411,9 @@ def test_apply_without_folder_refuses_with_message(controller, cfg):
     )
 
 
-def test_apply_targeted_mod_keeps_pending(controller, cfg, apply_backends):
+def test_apply_targeted_mod_keeps_pending(
+    controller, cfg, apply_backends, wait_for_event
+):
     cfg["mods"] = {
         "AlphaMod": {
             "enabled": True,
@@ -435,7 +433,7 @@ def test_apply_targeted_mod_keeps_pending(controller, cfg, apply_backends):
 
     controller.apply(only_mod_id="AlphaMod")
 
-    _drain_for(
+    wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     # A targeted update only touches its own mod and leaves pending intact.
@@ -445,7 +443,7 @@ def test_apply_targeted_mod_keeps_pending(controller, cfg, apply_backends):
 
 
 def test_apply_ignores_concurrent_apply(
-    controller, cfg, apply_backends, monkeypatch
+    controller, cfg, apply_backends, monkeypatch, wait_for_event
 ):
     """A second apply() while the first worker is mid-flight is rejected."""
     started = threading.Event()
@@ -478,7 +476,7 @@ def test_apply_ignores_concurrent_apply(
     assert install_calls == ["AlphaMod"]
 
     release_event.set()
-    _drain_for(
+    wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     assert install_calls == ["AlphaMod"]
@@ -500,10 +498,12 @@ def test_reset_clears_state(controller, cfg):
     assert controller.state.updates_count == 0
 
 
-def test_invalidate_drops_latest_versions(controller, versions):
+def test_invalidate_drops_latest_versions(
+    controller, versions, wait_for_event
+):
     versions["AlphaMod"] = "2.0"
     controller.load_latest_versions()
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
     assert controller.state.latest_versions
     controller.invalidate()
     assert controller.state.latest_versions == {}
@@ -573,7 +573,7 @@ def test_remove_unknown_deletes_from_filesystem(controller, cfg, tmp_path):
 
 
 def test_apply_uninstalls_adopted_mod_when_disabled(
-    controller, cfg, tmp_path, monkeypatch
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
     out = tmp_path / "game"
     out.mkdir()
@@ -606,7 +606,7 @@ def test_apply_uninstalls_adopted_mod_when_disabled(
     controller.toggle("NewMod", False)
     controller.apply()
 
-    _drain_for(
+    wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     assert "NewMod" in uninstalled
@@ -616,7 +616,7 @@ def test_apply_uninstalls_adopted_mod_when_disabled(
 
 
 def test_load_latest_versions_serves_fresh_catalog_from_cache(
-    controller, monkeypatch, versions
+    controller, monkeypatch, versions, wait_for_event
 ):
     import time as time_mod
 
@@ -639,14 +639,16 @@ def test_load_latest_versions_serves_fresh_catalog_from_cache(
         lambda *a, **k: calls.append(k) or [MOD_A, MOD_B],
     )
     controller.load_latest_versions()
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
     # A cache younger than the weekly TTL is served without a refetch.
     # (A later bare-call lookup from _refresh_updates_count is expected.)
     assert calls[0] == {"force": False}
     assert {"force": True} not in calls
 
 
-def test_reload_catalog_forces_fetch_and_republishes(controller, monkeypatch):
+def test_reload_catalog_forces_fetch_and_republishes(
+    controller, monkeypatch, wait_for_event
+):
     from nostalgia_launcher.state.events import ModsLoaded
 
     calls = []
@@ -656,7 +658,7 @@ def test_reload_catalog_forces_fetch_and_republishes(controller, monkeypatch):
         lambda *a, **k: calls.append(k) or [MOD_A],
     )
     assert controller.reload_catalog() is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
+    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
     assert calls == [{"force": True}]
     assert not controller.busy
 

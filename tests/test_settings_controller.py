@@ -2,21 +2,19 @@
 
 No Tk involved: the controller is driven directly and its effects are read
 from the shared EventDispatcher and its SettingsState. Backends (config store,
-filesystem, platform support, browser, mirror/AV network calls) are swapped
+filesystem, platform support, browser, source/AV network calls) are swapped
 for fakes via monkeypatch so nothing touches the network or the real config.
 """
 
 import os
-import time
 
 import pytest
 
 import nostalgia_launcher.controllers.settings as sc
 from nostalgia_launcher.controllers.settings import SettingsController
 from nostalgia_launcher.state.events import (
-    EventDispatcher,
     LogMessage,
-    MirrorStatusChanged,
+    SourceStatusChanged,
 )
 
 # Small synthetic registries so tests don't depend on the real ones.
@@ -106,8 +104,8 @@ class _FakeUpdater:
 
 
 class _Fakes:
-    def __init__(self):
-        self.dispatcher = EventDispatcher()
+    def __init__(self, dispatcher):
+        self.dispatcher = dispatcher
         self.updater = _FakeUpdater()
         self.mods = _FakeMods()
         self.addons = _FakeAddons()
@@ -130,8 +128,8 @@ def cfg(monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def fakes():
-    return _Fakes()
+def fakes(dispatcher):
+    return _Fakes(dispatcher)
 
 
 @pytest.fixture
@@ -141,28 +139,6 @@ def controller(cfg, fakes):
     )
 
 
-class _OkCtx:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-def _drain_for(dispatcher, predicate, timeout=2.0):
-    """Drain until an event matching `predicate` arrives; return everything
-    drained along the way (assertion failure on timeout)."""
-    deadline = time.monotonic() + timeout
-    collected = []
-    while True:
-        collected.extend(dispatcher.drain())
-        if any(predicate(e) for e in collected):
-            return collected
-        if time.monotonic() > deadline:
-            raise AssertionError("expected event never arrived")
-        time.sleep(0.005)
-
-
 def _log_texts(events):
     return [e.text for e in events if isinstance(e, LogMessage)]
 
@@ -170,14 +146,14 @@ def _log_texts(events):
 # ── first-run flags ────────────────────────────────────────────────────────
 
 
-def test_first_run_flags_initialized(cfg, monkeypatch):
+def test_first_run_flags_initialized(cfg, monkeypatch, dispatcher):
     # Pin the predicate off: on Windows hosts can_manage_antivirus() is
     # True by default, which would raise first_run_av_pending.
     monkeypatch.setattr(
         sc.platform_support, "can_manage_antivirus", lambda: False
     )
     c = SettingsController(
-        EventDispatcher(),
+        dispatcher,
         _FakeUpdater(),
         _FakeMods(),
         _FakeAddons(),
@@ -406,12 +382,12 @@ def test_resolve_umu_binary_prefers_override(cfg, fakes, monkeypatch):
     assert c.resolve_umu_binary() == "/usr/bin/umu-run"
 
 
-def test_first_run_av_pending_on_windows(cfg, monkeypatch):
+def test_first_run_av_pending_on_windows(cfg, monkeypatch, dispatcher):
     monkeypatch.setattr(
         sc.platform_support, "can_manage_antivirus", lambda: True
     )
     c = SettingsController(
-        EventDispatcher(),
+        dispatcher,
         _FakeUpdater(),
         _FakeMods(),
         _FakeAddons(),
@@ -676,47 +652,53 @@ def test_verify_files_skips_when_running(controller, fakes):
     assert controller._dispatcher.drain() == []
 
 
-# ── check_mirror ───────────────────────────────────────────────────────────
+# ── check_source ───────────────────────────────────────────────────────────
 
 
-def test_check_mirror_posts_online(controller, monkeypatch):
-    monkeypatch.setattr(sc, "secure_urlopen", lambda req, timeout=6: _OkCtx())
-    controller.check_mirror()
-    events = _drain_for(
-        controller._dispatcher, lambda e: isinstance(e, MirrorStatusChanged)
+def test_check_source_posts_online(
+    controller, monkeypatch, wait_for_event, fake_secure_urlopen
+):
+    monkeypatch.setattr(
+        sc, "secure_urlopen", fake_secure_urlopen(default=b"ok")
+    )
+    controller.check_source()
+    events = wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, SourceStatusChanged)
     )
     assert any(
-        isinstance(e, MirrorStatusChanged)
+        isinstance(e, SourceStatusChanged)
         and e.ok is True
         and e.text == "online"
         for e in events
     )
-    assert controller.mirror_statuses == {
+    assert controller.source_statuses == {
         "Test Server": "online",
     }
 
 
-def test_check_mirror_posts_offline(controller, monkeypatch):
+def test_check_source_posts_offline(controller, monkeypatch, wait_for_event):
     def boom(req, timeout=6):
         raise ConnectionError("offline")
 
     monkeypatch.setattr(sc, "secure_urlopen", boom)
-    controller.check_mirror()
-    events = _drain_for(
-        controller._dispatcher, lambda e: isinstance(e, MirrorStatusChanged)
+    controller.check_source()
+    events = wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, SourceStatusChanged)
     )
     assert any(
-        isinstance(e, MirrorStatusChanged)
+        isinstance(e, SourceStatusChanged)
         and e.ok is False
         and e.text == "offline"
         for e in events
     )
-    assert controller.mirror_statuses == {
+    assert controller.source_statuses == {
         "Test Server": "offline",
     }
 
 
-def test_check_mirror_http_error_still_online(controller, monkeypatch):
+def test_check_source_http_error_still_online(
+    controller, monkeypatch, wait_for_event
+):
     """An HTTP error status from a source (e.g. a CDN root returning 404)
     still proves it is reachable — only transport failures are offline."""
     from urllib.error import HTTPError
@@ -725,23 +707,23 @@ def test_check_mirror_http_error_still_online(controller, monkeypatch):
         raise HTTPError(req.full_url, 404, "Not Found", None, None)
 
     monkeypatch.setattr(sc, "secure_urlopen", http_error)
-    controller.check_mirror()
-    events = _drain_for(
-        controller._dispatcher, lambda e: isinstance(e, MirrorStatusChanged)
+    controller.check_source()
+    events = wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, SourceStatusChanged)
     )
     assert any(
-        isinstance(e, MirrorStatusChanged)
+        isinstance(e, SourceStatusChanged)
         and e.ok is True
         and e.text == "online"
         for e in events
     )
-    assert controller.mirror_statuses == {
+    assert controller.source_statuses == {
         "Test Server": "online",
     }
 
 
-def test_http_mirror_names_follow_launcher(controller):
-    assert controller._http_mirror_names() == ["Test Server"]
+def test_source_names_follow_launcher(controller):
+    assert controller._source_names() == ["Test Server"]
 
 
 # ── open helpers ───────────────────────────────────────────────────────────
@@ -826,7 +808,7 @@ def test_reset_registry_url(controller, cfg):
 
 
 def test_reload_addons_registry_fetches_and_rescans(
-    controller, cfg, fakes, monkeypatch
+    controller, cfg, fakes, monkeypatch, wait_for_event
 ):
     calls = []
     monkeypatch.setattr(
@@ -838,7 +820,7 @@ def test_reload_addons_registry_fetches_and_rescans(
         ),
     )
     controller.reload_addons_registry()
-    _drain_for(
+    wait_for_event(
         controller._dispatcher,
         lambda e: (
             isinstance(e, LogMessage) and "✓ Addon catalog reloaded" in e.text
@@ -850,14 +832,14 @@ def test_reload_addons_registry_fetches_and_rescans(
 
 
 def test_reload_addons_registry_failure_logs(
-    controller, cfg, fakes, monkeypatch
+    controller, cfg, fakes, monkeypatch, wait_for_event
 ):
     def boom(force=False):
         raise ConnectionError("offline")
 
     monkeypatch.setattr(sc.addons, "fetch_addons_catalog", boom)
     controller.reload_addons_registry()
-    _drain_for(
+    wait_for_event(
         controller._dispatcher,
         lambda e: isinstance(e, LogMessage) and "reload failed" in e.text,
     )
@@ -873,7 +855,7 @@ def test_reload_addons_registry_skips_when_busy(controller, cfg, fakes):
 
 
 def test_reload_mods_registry_fetches_and_rerenders(
-    controller, cfg, fakes, monkeypatch
+    controller, cfg, fakes, monkeypatch, wait_for_event
 ):
     calls = []
     monkeypatch.setattr(
@@ -882,7 +864,7 @@ def test_reload_mods_registry_fetches_and_rerenders(
         lambda force=False: calls.append(force) or [],
     )
     controller.reload_mods_registry()
-    _drain_for(
+    wait_for_event(
         controller._dispatcher,
         lambda e: (
             isinstance(e, LogMessage) and "✓ Mod catalog reloaded" in e.text
@@ -894,14 +876,14 @@ def test_reload_mods_registry_fetches_and_rerenders(
 
 
 def test_reload_mods_registry_failure_logs(
-    controller, cfg, fakes, monkeypatch
+    controller, cfg, fakes, monkeypatch, wait_for_event
 ):
     def boom(force=False):
         raise ConnectionError("offline")
 
     monkeypatch.setattr(sc.mods, "fetch_mods_catalog", boom)
     controller.reload_mods_registry()
-    _drain_for(
+    wait_for_event(
         controller._dispatcher,
         lambda e: isinstance(e, LogMessage) and "reload failed" in e.text,
     )
@@ -909,7 +891,7 @@ def test_reload_mods_registry_failure_logs(
 
 
 def test_reload_mods_registry_republishes_when_embedded_only(
-    controller, cfg, fakes, monkeypatch
+    controller, cfg, fakes, monkeypatch, wait_for_event
 ):
     monkeypatch.setattr(sc.mods, "has_remote_catalog", lambda: False)
     monkeypatch.setattr(sc.mods, "embedded_mods", lambda: [{"id": "Emb"}])
@@ -919,7 +901,7 @@ def test_reload_mods_registry_republishes_when_embedded_only(
 
     monkeypatch.setattr(sc.mods, "fetch_mods_catalog", boom)
     controller.reload_mods_registry()
-    _drain_for(
+    wait_for_event(
         controller._dispatcher,
         lambda e: isinstance(e, LogMessage) and "embedded" in e.text,
     )

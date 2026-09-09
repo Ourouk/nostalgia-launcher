@@ -71,7 +71,6 @@ def test_explicit_endpoints_used_verbatim():
     assert cfg.download_fallback_url == "https://cdn.example/client.zip"
     assert cfg.download_content_type == "zip"
     assert cfg.has_torrent() is True
-    assert cfg.download_capable() is True
 
 
 @pytest.mark.parametrize("value", [None, "", "   "])
@@ -306,7 +305,6 @@ def test_download_defaults_when_block_absent():
     assert cfg.download_content_type == "folder"
     assert cfg.download_torrent_url is None
     assert cfg.download_fallback_url is None
-    assert cfg.download_capable() is False
 
 
 def test_download_content_type_falls_back_to_folder():
@@ -611,7 +609,6 @@ def test_accessors_empty_when_not_configured():
     assert launcher.server_url() == ""
     assert launcher.news_url() == ""
     assert launcher.mods_registry_url() == ""
-    assert launcher.mirrors() == []
 
 
 def test_theme_dict_parses():

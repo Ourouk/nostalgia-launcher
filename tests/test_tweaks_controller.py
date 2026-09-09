@@ -18,7 +18,6 @@ from nostalgia_launcher.services.tweaks import (
     fov_default_for_display,
 )
 from nostalgia_launcher.state.events import (
-    EventDispatcher,
     LogMessage,
     OperationFinished,
 )
@@ -63,24 +62,10 @@ def backends(monkeypatch):
 
 
 @pytest.fixture
-def controller(backends):
+def controller(backends, dispatcher):
     return TweaksController(
-        EventDispatcher(), get_out_dir=lambda: backends["out_dir"]
+        dispatcher, get_out_dir=lambda: backends["out_dir"]
     )
-
-
-def _drain_for(dispatcher, predicate, timeout=2.0):
-    """Drain until an event matching `predicate` arrives; return everything
-    drained along the way (assertion failure on timeout)."""
-    deadline = time.monotonic() + timeout
-    collected = []
-    while True:
-        collected.extend(dispatcher.drain())
-        if any(predicate(e) for e in collected):
-            return collected
-        if time.monotonic() > deadline:
-            raise AssertionError("expected event never arrived")
-        time.sleep(0.005)
 
 
 # ── values ─────────────────────────────────────────────────────────────
@@ -93,9 +78,9 @@ def test_values_returns_saved_config(controller, backends):
     assert controller.values() == saved
 
 
-def test_default_get_out_dir_reads_config(backends):
+def test_default_get_out_dir_reads_config(backends, dispatcher):
     backends["out_dir"] = "/from/config"
-    ctrl = TweaksController(EventDispatcher())
+    ctrl = TweaksController(dispatcher)
     assert ctrl._get_out_dir() == "/from/config"
 
 
@@ -197,7 +182,9 @@ def test_dirty_and_custom_out_of_range_is_dirty_even_if_clamped_equal(
 # ── apply ──────────────────────────────────────────────────────────────
 
 
-def test_apply_persists_clamped_and_posts_finished(controller, backends):
+def test_apply_persists_clamped_and_posts_finished(
+    controller, backends, wait_for_event
+):
     spawned = controller.apply(
         {
             "nameplateRange": 41,
@@ -211,7 +198,7 @@ def test_apply_persists_clamped_and_posts_finished(controller, backends):
     assert spawned is True
     assert backends["tweaks"]["fieldOfView"] == 180  # clamped on save
 
-    collected = _drain_for(
+    collected = wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     assert OperationFinished("tweaks", True, "") in collected
@@ -220,7 +207,9 @@ def test_apply_persists_clamped_and_posts_finished(controller, backends):
     assert controller.running is False
 
 
-def test_apply_writes_config_wtf(controller, backends, monkeypatch):
+def test_apply_writes_config_wtf(
+    controller, backends, monkeypatch, wait_for_event
+):
     written = []
 
     def record(client_dir, tweak_values):
@@ -232,7 +221,7 @@ def test_apply_writes_config_wtf(controller, backends, monkeypatch):
     values["fieldOfView"] = fov_default_for_display()
     spawned = controller.apply(values)
     assert spawned is True
-    _drain_for(
+    wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     assert written == [(backends["out_dir"], values)]
@@ -252,7 +241,7 @@ def test_apply_without_folder_posts_error_and_does_not_spawn(
 
 
 def test_apply_posts_failure_events_on_error(
-    controller, backends, monkeypatch
+    controller, backends, monkeypatch, wait_for_event
 ):
     def boom(client_dir, tweaks):
         raise RuntimeError("disk full")
@@ -260,7 +249,7 @@ def test_apply_posts_failure_events_on_error(
     monkeypatch.setattr(tc.tweaks, "update_config_wtf", boom)
 
     controller.apply(dict(TWEAKS_DEFAULTS))
-    collected = _drain_for(
+    collected = wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     assert OperationFinished("tweaks", False, "disk full") in collected
@@ -291,13 +280,13 @@ def test_apply_guards_reentry(controller, backends, monkeypatch):
 # ── reset ──────────────────────────────────────────────────────────────
 
 
-def test_reset_saves_defaults_and_spawns(controller, backends):
+def test_reset_saves_defaults_and_spawns(controller, backends, wait_for_event):
     defaults = dict(TWEAKS_DEFAULTS)
     defaults["fieldOfView"] = fov_default_for_display()
     spawned = controller.reset(defaults)
     assert spawned is True
     assert backends["tweaks"] == defaults
-    collected = _drain_for(
+    collected = wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     assert LogMessage("\nTweaks applied.\n", "ok") in collected

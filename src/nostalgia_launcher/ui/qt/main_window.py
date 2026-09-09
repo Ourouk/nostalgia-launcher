@@ -903,9 +903,8 @@ class MainWindow(QMainWindow):
 
     def _on_force_recheck(self):
         """UPDATE-tab "Force recheck" click: drop the hash/torrent-verdict
-        cache and re-verify every file. The transport is the worker's choice
-        — SHA-1 checksums against the manifest, or BitTorrent piece hashes
-        when no manifest is available."""
+        cache and re-verify every file against the torrent snapshot's
+        piece hashes."""
         if not (self._hub.settings.state.path or "").strip():
             self._hub.dispatcher.post(
                 LogMessage("✗  Please set the game folder first.\n", "err")
@@ -1076,8 +1075,8 @@ class MainWindow(QMainWindow):
         elif r.mode == "terminate":
             self._set_button_terminate()
         elif r.mode == "disabled":
-            # No manifest available: keep the UPDATE label but gray the
-            # button out so it can't start a blind update.
+            # No torrent source configured: keep the UPDATE label but gray
+            # the button out so it can't start a blind update.
             self._set_button_busy("UPDATE")
         else:
             self._set_button_busy(r.label)
