@@ -76,7 +76,7 @@ jobs:
       # python-version is pinned to the CPython the release ships (3.12):
       # an unpinned resolution (3.14+) has no libtorrent wheel, which
       # breaks the spec's collect_all("libtorrent").
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: auto
           python-version: "3.12"
@@ -116,7 +116,7 @@ jobs:
       # setup-uv stopped publishing major tags in v8 — pin the full version.
       # See build-windows for the python-version rationale (libtorrent
       # wheels only exist for CPython 3.10-3.13).
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: auto
           python-version: "3.12"
@@ -167,7 +167,7 @@ jobs:
       # setup-uv stopped publishing major tags in v8 — pin the full version.
       # enable-cache stays "auto" (not forced): this job holds id-token/
       # attestation scopes, so caches from untrusted refs must not restore.
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: auto
 
