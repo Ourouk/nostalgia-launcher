@@ -205,41 +205,58 @@ class GitArchiveBackend(SourceBackend):
 
         kind, _repo_url, owner, repo, api = git_parts(git_url)
         pin = ref or branch
-        sha = None
-        api_error = None
-        try:
-            if kind == "github":
-                if pin:
-                    sha = _api_json(
-                        f"{api}/repos/{owner}/{repo}/commits/{pin}"
-                    ).get("sha")
-                else:
-                    lst = _api_json(
-                        f"{api}/repos/{owner}/{repo}/commits?per_page=1"
-                    )
-                    sha = lst[0].get("sha") if lst else None
-            elif kind == "gitlab":
-                proj = quote(f"{owner}/{repo}", safe="")
-                if pin:
-                    sha = _api_json(
-                        f"{api}/projects/{proj}/repository/commits/"
-                        f"{quote(pin, safe='')}"
-                    ).get("id")
-                else:
-                    lst = _api_json(
-                        f"{api}/projects/{proj}/repository/commits?per_page=1"
-                    )
-                    sha = lst[0].get("id") if lst else None
-            else:  # gitea / codeberg
-                q = f"?sha={pin}&limit=1" if pin else "?limit=1"
-                lst = _api_json(f"{api}/repos/{owner}/{repo}/commits{q}")
-                sha = lst[0].get("sha") if lst else None
-        except Exception as e:
-            api_error = e
-            sha = None
 
-        if not sha:
-            sha = ls_remote_sha(git_url, pin)
+        def _resolve(pinned) -> tuple:
+            """(sha, api_error) via REST then `git ls-remote`."""
+            resolved, api_error = None, None
+            try:
+                if kind == "github":
+                    if pinned:
+                        resolved = _api_json(
+                            f"{api}/repos/{owner}/{repo}/commits/{pinned}"
+                        ).get("sha")
+                    else:
+                        lst = _api_json(
+                            f"{api}/repos/{owner}/{repo}/commits?per_page=1"
+                        )
+                        resolved = lst[0].get("sha") if lst else None
+                elif kind == "gitlab":
+                    proj = quote(f"{owner}/{repo}", safe="")
+                    if pinned:
+                        resolved = _api_json(
+                            f"{api}/projects/{proj}/repository/commits/"
+                            f"{quote(pinned, safe='')}"
+                        ).get("id")
+                    else:
+                        lst = _api_json(
+                            f"{api}/projects/{proj}/repository/commits"
+                            "?per_page=1"
+                        )
+                        resolved = lst[0].get("id") if lst else None
+                else:  # gitea / codeberg
+                    q = f"?sha={pinned}&limit=1" if pinned else "?limit=1"
+                    lst = _api_json(f"{api}/repos/{owner}/{repo}/commits{q}")
+                    resolved = lst[0].get("sha") if lst else None
+            except Exception as e:
+                api_error = e
+                resolved = None
+            if not resolved:
+                resolved = ls_remote_sha(git_url, pinned)
+            return resolved, api_error
+
+        sha, api_error = _resolve(pin)
+        if not sha and pin:
+            # Stale branch pin (repos rename master↔main all the time) —
+            # fall back to the default branch once instead of leaving the
+            # addon permanently "Couldn't check".
+            log(
+                f"  Branch {pin!r} not found in {git_url} — "
+                "using the default branch.",
+                "dim",
+            )
+            sha, fallback_error = _resolve(None)
+            if api_error is None:
+                api_error = fallback_error
 
         if sha is None and raise_errors:
             cause = api_error or RuntimeError(
@@ -291,7 +308,10 @@ class GitArchiveBackend(SourceBackend):
 
 # The zip-archive hosts extend the git-host allowlist with the Git hosts'
 # archive CDNs so an addon archive download (github.com → codeload) passes.
+# github.com/.../archive/...zip 302-redirects to codeload.github.com
+# (observed 2026-09; codeload.githubusercontent.com is no longer served).
 ADDON_ZIP_HOSTS = {
+    "codeload.github.com",
     "codeload.githubusercontent.com",
     "release-assets.githubusercontent.com",
     "objects.githubusercontent.com",

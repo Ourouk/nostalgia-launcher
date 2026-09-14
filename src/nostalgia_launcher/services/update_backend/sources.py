@@ -4,8 +4,8 @@ The active `DownloadSource` is now derived solely from the server's
 ``server.download`` block (no mirror failover): the optional HTTP
 fallback (single zip) and the optional BitTorrent ``torrent_url`` /
 ``magnet``. Kept separate from the worker engines so both
-`VerifyWorker` and `UpdateWorker` share one definition;
-`http_update` re-exports these names for compatibility.
+`VerifyWorker` and `UpdateWorker` share one definition; the workers
+re-export these names through `services.update.workflow`.
 """
 
 from dataclasses import dataclass
@@ -28,58 +28,17 @@ class DownloadSource:
 
     def __init__(
         self,
-        *args: object,
         torrent_url: str | None = None,
         fallback_url: str = "",
         torrent_magnet: str | None = None,
-        manifest_url: str | None = None,  # noqa: ARG002
-        client_url: str | None = None,  # noqa: ARG002
-        **_kw: object,
     ) -> None:
-        # Legacy positional: (manifest, client, torrent, fallback, magnet)
-        if args:
-            if len(args) == 5:
-                # (manifest, client, torrent, fallback, magnet)
-                torrent_url = args[2]  # type: ignore[assignment]
-                fallback_url = args[3]  # type: ignore[assignment]
-                torrent_magnet = args[4]  # type: ignore[assignment]
-            elif len(args) == 4:
-                # (manifest, client, torrent, fallback_or_magnet)
-                torrent_url = args[2]  # type: ignore[assignment]
-                fallback_url = args[3]  # type: ignore[assignment]
-            elif len(args) == 3:
-                torrent_url, fallback_url, torrent_magnet = args  # type: ignore[assignment]
-            elif len(args) == 2:
-                torrent_url, fallback_url = args  # type: ignore[assignment]
-            elif len(args) == 1:
-                torrent_url = args[0]  # type: ignore[assignment]
         object.__setattr__(self, "torrent_url", torrent_url)
         object.__setattr__(self, "fallback_url", fallback_url or "")
         object.__setattr__(self, "torrent_magnet", torrent_magnet)
-        # Backward compat: 4-arg where fallback is magnet
-        if (
-            isinstance(self.fallback_url, str)
-            and self.fallback_url.startswith("magnet:")
-            and self.torrent_magnet is None
-        ):
-            object.__setattr__(self, "torrent_magnet", self.fallback_url)
-            object.__setattr__(self, "fallback_url", "")
 
     @property
     def torrent_locator(self) -> "str | None":
         return self.torrent_url or self.torrent_magnet
-
-    # Allow tuple unpacking for backward compat with old NamedTuple tests
-    def __iter__(self):  # type: ignore[override]
-        yield self.torrent_url
-        yield self.fallback_url
-        yield self.torrent_magnet
-
-    def __getitem__(self, idx):  # type: ignore[override]
-        return (self.torrent_url, self.fallback_url, self.torrent_magnet)[idx]
-
-    def __len__(self):
-        return 3
 
 
 def _download_source() -> "DownloadSource | None":

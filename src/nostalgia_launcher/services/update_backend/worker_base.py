@@ -1,8 +1,6 @@
 """Shared plumbing for the update backend workers.
 
-`WorkerBase` owns the out-dir + dispatcher wiring and the cancel flag, plus
-the shared "is this local file already up to date" check used by both
-manifest verification and incremental download.
+`WorkerBase` owns the out-dir + dispatcher wiring and the cancel flag.
 
 Workers post LogMessage/ProgressChanged and typed lifecycle events directly
 to the shared EventDispatcher; the controller subscribes.
@@ -10,10 +8,7 @@ to the shared EventDispatcher; the controller subscribes.
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
-
-from ...core.filesystem import cached_sha1
 
 if TYPE_CHECKING:
     from ...state.events import EventDispatcher
@@ -45,13 +40,6 @@ class WorkerBase:
 
     def cancel(self) -> None:
         self._cancel = True
-
-    def is_cancelled(self) -> bool:
-        return bool(self._cancel)
-
-    @property
-    def cancelled(self) -> bool:
-        return bool(self._cancel)
 
     def log(self, msg: str, tag: str = "") -> None:
         from ...state.events import LogMessage
@@ -95,13 +83,6 @@ class WorkerBase:
                 total_pieces=_int("total_pieces"),
             )
         )
-
-    def file_matches(self, dest: str, expected_sha1: str) -> bool:
-        """Whether a file can be skipped because the local copy exists and
-        its cached SHA-1 matches the expected one."""
-        if not os.path.exists(dest):
-            return False
-        return cached_sha1(dest, self._cache) == expected_sha1
 
     def _raise_cancelled(self, h: object) -> None:
         """Best-effort cancel of the torrent handle, then abort the worker's

@@ -42,6 +42,77 @@ C_TEXT_DIM = "#7a7670"
 C_COULD_NOT_CHECK = "Couldn't check for updates"
 
 
+def _norm_folder(name) -> str:
+    """Comparison key for addon folder names: strip, NFC-normalize and
+    casefold. Comparison-only — installed identity, config keys and TOC
+    file names always keep their exact disk case (on Linux ``Foo`` and
+    ``foo`` can be two distinct installs). Empty for non-string input so
+    malformed rows never collide with a real folder."""
+    if not isinstance(name, str):
+        return ""
+    try:
+        import unicodedata
+
+        name = unicodedata.normalize("NFC", name)
+    except Exception:
+        pass
+    key = name.strip().casefold()
+    return key if key else ""
+
+
+def _gits_differ(a, b) -> bool:
+    """Whether two git URLs name different repos (both present and not the
+    same repo per same_git_repo). Missing URLs never differ — an unknown
+    source is compatible with anything."""
+    if not a or not b:
+        return False
+    try:
+        return not same_git_repo(a, b)
+    except Exception:
+        return a != b
+
+
+def _suppress_shadowed(available: list, installed_gits: dict) -> list:
+    """Drop AVAILABLE rows that denote an installed addon under a
+    textually different spelling (case/whitespace/unicode variant).
+
+    The git URL differentiates: a same-norm row pointing at the same repo
+    (or with an unknown source on either side) is one addon shown twice —
+    drop the available-side shadow. A same-norm row pointing at a
+    *different* repo is a different addon (fork/custom) sharing a folder
+    spelling — keep it visible. Producers spell names from the catalog
+    side while ``installed`` keys come from the disk side. Exact installed
+    identity is untouched. Logs what it drops (observability for variant
+    spellings in the wild). Never raises."""
+    try:
+        norms = {}
+        for folder, git in installed_gits.items():
+            key = _norm_folder(folder)
+            if key:
+                norms[key] = git
+    except Exception:
+        return available
+    kept = []
+    for row in available:
+        try:
+            folder = row.get("folder") if isinstance(row, dict) else None
+            key = _norm_folder(folder)
+            git = row.get("git") if isinstance(row, dict) else None
+        except Exception:
+            kept.append(row)
+            continue
+        if key and key in norms and not _gits_differ(norms[key], git):
+            try:
+                log(
+                    f"  Addon {folder!r} shadows an installed folder — hiding."
+                )
+            except Exception:
+                pass
+            continue
+        kept.append(row)
+    return kept
+
+
 class AddonsController:
     """Owns the addons lifecycle; speaks to the UI only through events.
 
@@ -119,6 +190,13 @@ class AddonsController:
         if cached:
             preview_rows = self._available_from_catalog(cached)
             self._overlay_errors(preview_rows)
+            preview_rows = _suppress_shadowed(
+                preview_rows,
+                {
+                    f: (s.git if isinstance(s, AddonState) else None)
+                    for f, s in self.state.addons.items()
+                },
+            )
             # A copy: the live state object keeps being mutated by the scan,
             # so both events must not share one reference.
             snapshot = replace(self.state)
@@ -151,23 +229,156 @@ class AddonsController:
         threading.Thread(target=worker, daemon=True).start()
         return True
 
+    def _discover_siblings(
+        self, catalog_list, disk_names, records, force, addons_dir=""
+    ) -> dict:
+        """Map sibling folder name → catalog entry for multi-addon repos.
+
+        One Git repo often ships several addons (AtlasLoot's seven
+        modules): only the catalog's primary folder would otherwise match
+        and the rest would stay "Not tracked" forever. Discovery fetches a
+        repo archive only when the repo is relevant — its catalog folder is
+        on disk, a saved record points at the same repo, or a snapjaw
+        clone of it sits in `.snapjaw_cache` — and only when its sha moved
+        (cached otherwise), so unrelated catalog entries cost nothing.
+        Entries sharing one repo (git#branch/ref) resolve once.
+        Never raises.
+        """
+        by_folder: dict = {}
+        saved_gits = set()
+        try:
+            for rec in records.values():
+                if isinstance(rec, dict) and rec.get("git"):
+                    saved_gits.add(rec["git"])
+        except Exception:
+            pass
+        try:
+            snapjaw_urls = addons.snapjaw_cache_repo_urls(addons_dir)
+        except Exception:
+            snapjaw_urls = set()
+        disk_norms = set()
+        try:
+            disk_norms = {_norm_folder(n) for n in disk_names}
+            disk_norms.discard("")
+        except Exception:
+            pass
+        # Group by repo key so multi-folder repos resolve once; force is
+        # any-true across the group.
+        groups: dict = {}
+        order: list = []
+        for entry in catalog_list:
+            git = entry.get("git")
+            if not git:
+                continue
+            relevant = (
+                _norm_folder(entry.get("name")) in disk_norms
+                or any(same_git_repo(saved, git) for saved in saved_gits)
+                or any(same_git_repo(snap, git) for snap in snapjaw_urls)
+            )
+            if not relevant:
+                continue
+            key = (git, entry.get("branch"), entry.get("ref"))
+            if key not in groups:
+                groups[key] = entry
+                order.append(key)
+        for key in order:
+            entry = groups[key]
+            try:
+                siblings = addons.addon_repo_names(
+                    entry.get("git"),
+                    entry.get("branch"),
+                    entry.get("ref"),
+                    force=force,
+                )
+            except Exception:
+                continue
+            for sibling in siblings:
+                by_folder.setdefault(sibling, entry)
+        return by_folder
+
     def _verify_worker_body(self, catalog_list, client, force, remote_checks):
         """The filesystem/catalog scan of verify()'s worker thread; runs
         inside the caller's exception guard."""
         available = self._available_from_catalog(catalog_list)
+        available_by_folder = {a["folder"]: a for a in available}
+        # Norm-keyed index (last wins, mirroring merge_addons override
+        # order): exact match always wins at lookup time, this is only the
+        # fallback for variant spellings (case/whitespace/unicode).
+        available_by_norm: dict = {}
+        for row in available:
+            key = _norm_folder(row.get("folder"))
+            if key:
+                available_by_norm[key] = row
 
         installed = {}
         records = config_store.load_config().get("addons", {})
         if not isinstance(records, dict):
             records = {}
         ap = addons.addons_path(client) if client else ""
-        if ap and os.path.isdir(ap):
-            for name in sorted(os.listdir(ap)):
-                if name.startswith(("Blizzard_", "Turtle_")):
+        disk_names: set[str] = set()
+        dir_names: list[str] = []
+        if ap:
+            try:
+                with os.scandir(ap) as it:
+                    seen = []
+                    for entry in it:
+                        try:
+                            is_dir = entry.is_dir(follow_symlinks=True)
+                        except OSError:
+                            continue
+                        if not is_dir:
+                            continue
+                        name = entry.name
+                        if name.startswith(("Blizzard_", "Turtle_", ".")):
+                            continue
+                        seen.append(name)
+                disk_names = set(seen)
+                dir_names = sorted(seen)
+            except OSError:
+                disk_names = set()
+                dir_names = []
+        # Serial per-verify memo: folders sharing one repo (git#branch/ref)
+        # resolve the remote sha once instead of once per folder.
+        sha_memo: dict = {}
+        siblings: dict = {}
+        siblings_by_norm: dict = {}
+        if remote_checks and disk_names:
+            siblings = self._discover_siblings(
+                catalog_list, disk_names, records, force, ap
+            )
+            siblings_by_norm = {
+                _norm_folder(s): s for s in siblings if _norm_folder(s)
+            }
+            # Discovered-but-not-installed siblings are installable too.
+            # Norm-based: a sibling variant-spelling an installed folder is
+            # adopted in the scan loop, never listed as available.
+            known = {_norm_folder(a["folder"]) for a in available}
+            known |= {_norm_folder(n) for n in disk_names}
+            known.discard("")
+            siblings_by_norm = {
+                _norm_folder(s): s for s in siblings if _norm_folder(s)
+            }
+            for sibling, entry in sorted(siblings.items()):
+                if _norm_folder(sibling) in known:
                     continue
-                dirp = os.path.join(ap, name)
-                if not os.path.isdir(dirp):
-                    continue
+                row = {
+                    "folder": sibling,
+                    "status": "available",
+                    "git": entry.get("git"),
+                    "branch": entry.get("branch"),
+                    "ref": entry.get("ref"),
+                    "toc": entry.get("toc") or {},
+                    "description": entry.get("description"),
+                    "error": None,
+                }
+                available.append(row)
+                available_by_folder.setdefault(sibling, row)
+                key = _norm_folder(sibling)
+                if key:
+                    available_by_norm.setdefault(key, row)
+                known.add(_norm_folder(sibling))
+        if dir_names:
+            for name in dir_names:
                 rec = {
                     "folder": name,
                     "status": "unknown",
@@ -178,18 +389,55 @@ class AddonsController:
                     "description": None,
                     "error": None,
                 }
-                toc_path = os.path.join(dirp, f"{name}.toc")
+                toc_path = os.path.join(ap, name, f"{name}.toc")
                 if not os.path.exists(toc_path):
                     rec.update(status="invalid", error="Missing .toc file")
                     installed[name] = rec
                     continue
-                rec["toc"] = addons.read_toc_file(toc_path)
-                avail = next(
-                    (a for a in available if a["folder"] == name), None
+                rec["toc"] = addons.read_toc_file_cached(toc_path)
+                saved = records.get(name)
+                saved_git = (
+                    saved.get("git") if isinstance(saved, dict) else None
                 )
+                avail = available_by_folder.get(name)
+                if avail is None:
+                    # Variant-spelling fallback: only associate when the
+                    # sources agree — a norm match across *different* repos
+                    # is a different addon sharing a folder spelling, not
+                    # this install (exact matches keep the legacy
+                    # catalog-authoritative migration below).
+                    cand = available_by_norm.get(_norm_folder(name))
+                    if cand is not None and not _gits_differ(
+                        saved_git, cand.get("git")
+                    ):
+                        avail = cand
+                if avail is None:
+                    sib_entry = siblings.get(name)
+                    if sib_entry is None:
+                        sib_hit = siblings_by_norm.get(_norm_folder(name))
+                        sib_entry = siblings[sib_hit] if sib_hit else None
+                    if sib_entry is not None and _gits_differ(
+                        saved_git, sib_entry.get("git")
+                    ):
+                        sib_entry = None
+                    if sib_entry is not None:
+                        # Multi-addon repo sibling (e.g. AtlasLoot's
+                        # modules): adopt it under the repo's catalog entry
+                        # like a primary folder instead of leaving it
+                        # "Not tracked".
+                        entry = sib_entry
+                        avail = {
+                            "folder": name,
+                            "status": "available",
+                            "git": entry.get("git"),
+                            "branch": entry.get("branch"),
+                            "ref": entry.get("ref"),
+                            "toc": {},
+                            "description": entry.get("description"),
+                            "error": None,
+                        }
                 if avail:
                     rec["description"] = avail["description"]
-                saved = records.get(name)
                 override = addons.RECOMMENDED_ADDONS.get(name)
                 if (
                     saved
@@ -232,6 +480,7 @@ class AddonsController:
                             force=force,
                             remote_checks=remote_checks,
                             fallback_sha=saved.get("sha"),
+                            memo=sha_memo,
                         )
                         self._apply_remote_status(
                             rec, remote, saved.get("sha")
@@ -251,6 +500,7 @@ class AddonsController:
                         force=force,
                         remote_checks=remote_checks,
                         fallback_sha=saved.get("sha"),
+                        memo=sha_memo,
                     )
                     self._apply_remote_status(rec, remote, saved.get("sha"))
                 elif avail:
@@ -268,6 +518,7 @@ class AddonsController:
                         avail["ref"],
                         force=force,
                         remote_checks=remote_checks,
+                        memo=sha_memo,
                     )
                     rec.update(
                         git=avail["git"],
@@ -301,6 +552,18 @@ class AddonsController:
         for folder in [f for f in self.state.errors if f in installed]:
             self.state.errors.pop(folder, None)
         self._overlay_errors(available)
+        # Never show an AVAILABLE row that denotes an installed addon under
+        # a variant spelling (same repo or unknown source); the panel
+        # partitions sections by exact match, so such rows render twice.
+        # A same-norm row from a *different* repo is a different addon and
+        # stays visible.
+        available = _suppress_shadowed(
+            available,
+            {
+                name: (rec.get("git") if isinstance(rec, dict) else None)
+                for name, rec in installed.items()
+            },
+        )
 
         self._finish_verify(installed, available)
 
@@ -310,17 +573,29 @@ class AddonsController:
         git overrides applied (and synthesized rows for renamed entries)."""
         blocked = set(addons.BLOCKED_ADDONS)
         recommended = set(addons.RECOMMENDED_ADDONS)
+        blocked_norms = {_norm_folder(n) for n in blocked}
+        blocked_norms.discard("")
         available = []
         by_name = {}
+        by_norm: dict = {}
         for a in catalog_list:
             name = a.get("name")
             if not name:
                 continue
             if a.get("blocked"):
                 blocked.add(name)
+                blocked_norms.add(_norm_folder(name))
+                blocked_norms.discard("")
             if a.get("recommended"):
                 recommended.add(name)
-            if name in blocked:
+            if _norm_folder(name) in blocked_norms:
+                # A blocked folder stays hidden even under a variant
+                # spelling; drop any earlier variant row too.
+                key = _norm_folder(name)
+                if key and key in by_norm:
+                    old = by_norm.pop(key)
+                    available = [r for r in available if r is not old]
+                    by_name.pop(old["folder"], None)
                 continue
             rec = {
                 "folder": name,
@@ -332,10 +607,33 @@ class AddonsController:
                 "description": a.get("description"),
                 "error": None,
             }
+            # Same repo (or unknown source): last wins by norm (mirrors
+            # merge_addons override order). Different repos sharing one
+            # spelling are different addons — keep both rows.
+            key = _norm_folder(name)
+            if key and key in by_norm:
+                old = by_norm[key]
+                if _gits_differ(old.get("git"), rec.get("git")):
+                    try:
+                        log(
+                            f"  Catalog has {name!r} from two repos — "
+                            "keeping both."
+                        )
+                    except Exception:
+                        pass
+                    available.append(rec)
+                    by_name[name] = rec
+                    continue
+                available = [r for r in available if r is not old]
+                by_name.pop(old["folder"], None)
             available.append(rec)
             by_name[name] = rec
+            if key:
+                by_norm[key] = rec
         for name, override in addons.RECOMMENDED_ADDONS.items():
             rec = by_name.get(name)
+            if rec is None:
+                rec = by_norm.get(_norm_folder(name))
             if rec is None:
                 available.append(
                     {
@@ -383,16 +681,24 @@ class AddonsController:
         force,
         remote_checks,
         fallback_sha=None,
+        memo=None,
     ):
         """The effective remote sha for a tracked source: the live lookup
         when remote checks are on, otherwise the config cache with an
         optional saved-sha fallback (assume current rather than hit the
-        network)."""
+        network). ``memo`` dedupes repeat lookups of one repo key within
+        a single verify (multi-folder repos resolve once)."""
+        key = (git, branch, ref, bool(force), bool(remote_checks))
+        if memo is not None and key in memo:
+            return memo[key]
         if remote_checks:
-            return addons.addon_remote_sha(git, branch, ref, force=force)
-        remote = addons.addon_cached_sha(git, branch, ref)
-        if remote is None:
-            remote = fallback_sha
+            remote = addons.addon_remote_sha(git, branch, ref, force=force)
+        else:
+            remote = addons.addon_cached_sha(git, branch, ref)
+            if remote is None:
+                remote = fallback_sha
+        if memo is not None:
+            memo[key] = remote
         return remote
 
     def _apply_remote_status(self, rec: dict, remote, saved_sha):
@@ -475,7 +781,9 @@ class AddonsController:
         if self.state.busy:
             return False
         client = (self._get_out_dir() or "").strip()
-        if not client or not os.path.exists(os.path.join(client, "WoW.exe")):
+        from ..core.filesystem import game_executable_exists
+
+        if not client or not game_executable_exists(client):
             return False
         # If the recommended set only has the constant (empty by default) and
         # the available list is empty, force a catalog fetch so the recommended
@@ -519,6 +827,10 @@ class AddonsController:
     def reset(self):
         """Drop the session verify TTL/content (called when the game folder
         changes). The section open/closed state is intentionally preserved."""
+        try:
+            addons.prune_toc_cache()
+        except Exception:
+            pass
         self.state.verified_ts = 0.0
         self.state.state = "idle"
         self.state.addons = {}
@@ -556,6 +868,13 @@ class AddonsController:
             except Exception:
                 catalog = []
         available = self._available_from_catalog(catalog)
+        available = _suppress_shadowed(
+            available,
+            {
+                f: (s.git if isinstance(s, AddonState) else None)
+                for f, s in self.state.addons.items()
+            },
+        )
         self.state.available = [AddonState.from_dict(rec) for rec in available]
 
     # ── internals ───────────────────────────────────────────────────────────
@@ -574,69 +893,105 @@ class AddonsController:
         )
         self._dispatcher.post(AddonsLoaded(self.state))
 
+    def _install_group(
+        self, client: str, git: str, branch, ref, folders: list
+    ) -> list[str]:
+        """Fetch one repo archive and install every requested folder from
+        it. Records each installed folder against the repo's sha and flips
+        its row up-to-date; returns the installed folder names. Raises on
+        failure (caller marks the group failed)."""
+        sha = addons.addon_remote_sha(
+            git, branch, ref, force=True, raise_errors=True
+        )
+        if not sha:
+            raise RuntimeError("Could not resolve remote commit")
+        installed = addons.install_addon_files(
+            client, folders[0], git, sha, wanted=list(folders)
+        )
+        if "pfUI" in installed:
+            addons.patch_pfui_default_profile(client)
+        record = {"git": git, "branch": branch, "ref": ref, "sha": sha}
+        for folder in installed:
+            config_store.update_config(
+                lambda c, f=folder, r=record: c.setdefault(
+                    "addons", {}
+                ).__setitem__(f, r)
+            )
+            self.state.errors.pop(folder, None)
+            st_rec = self.state.addons.get(folder)
+            if st_rec is None:
+                # A newly installed sibling from a multi-addon repo has no
+                # row yet — create it up-to-date now instead of waiting for
+                # the next verify to reconcile it.
+                st_rec = AddonState.from_dict(
+                    {
+                        "folder": folder,
+                        "status": "upToDate",
+                        "git": git,
+                        "branch": branch,
+                        "ref": ref,
+                        "toc": {},
+                        "description": None,
+                        "error": None,
+                    }
+                )
+                self.state.addons[folder] = st_rec
+            else:
+                # Instant feedback: the row flips to up-to-date now
+                # instead of staying on the stale status until the
+                # post-install verify reconciles it.
+                st_rec.status = "upToDate"
+                st_rec.error = None
+            self._dispatcher.post(LogMessage(f"  ✓ Addon {folder} installed."))
+        for folder in folders:
+            if folder not in installed:
+                log(
+                    f"  {folder} is not shipped by {git} — left as is.",
+                    "dim",
+                )
+                st_rec = self.state.addons.get(folder)
+                if st_rec is not None and st_rec.status == "downloading":
+                    st_rec.status = "outOfDate"
+        return installed
+
+    def _fail_group(self, folders: list, git, err: str) -> None:
+        for folder in folders:
+            self._dispatcher.post(LogMessage(f"  ✗ Addon {folder}: {err}"))
+            st_rec = self.state.addons.get(folder)
+            if st_rec is not None:
+                st_rec.status = "invalid"
+                st_rec.error = err
+            self.state.errors[folder] = AddonError(err, git)
+
+    def _group_recs(self, recs: list) -> list:
+        """Group install records by repo so one archive fetch serves every
+        folder from the same repo (multi-addon repos install once)."""
+        groups: dict = {}
+        order: list = []
+        for rec in recs:
+            key = (rec.get("git"), rec.get("branch"), rec.get("ref"))
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(rec)
+        return [(key, groups[key]) for key in order]
+
     def _apply_worker(self, client: str, recs: list):
         failed = []
-        for rec in recs:
-            self._dispatcher.post(
-                StatusChanged(f"Installing {rec['folder']}…")
-            )
+        for (git, branch, ref), group in self._group_recs(recs):
+            folders = [rec["folder"] for rec in group]
+            self._dispatcher.post(StatusChanged(f"Installing {folders[0]}…"))
             try:
-                if not rec.get("git") or not addons.is_allowed_git_url(
-                    rec["git"]
-                ):
+                if not git or not addons.is_allowed_git_url(git):
                     raise RuntimeError(
                         "Addon URL is not from an allowed git host"
                     )
-                sha = addons.addon_remote_sha(
-                    rec["git"],
-                    rec.get("branch"),
-                    rec.get("ref"),
-                    force=True,
-                    raise_errors=True,
-                )
-                if not sha:
-                    raise RuntimeError("Could not resolve remote commit")
-                addons.install_addon_files(
-                    client, rec["folder"], rec["git"], sha
-                )
-                if rec["folder"] == "pfUI":
-                    addons.patch_pfui_default_profile(client)
-                record = {
-                    "git": rec["git"],
-                    "branch": rec.get("branch"),
-                    "ref": rec.get("ref"),
-                    "sha": sha,
-                }
-                config_store.update_config(
-                    lambda c, f=rec["folder"], r=record: c.setdefault(
-                        "addons", {}
-                    ).__setitem__(f, r)
-                )
-                self.state.errors.pop(rec["folder"], None)
-                st_rec = self.state.addons.get(rec["folder"])
-                if st_rec is not None:
-                    # Instant feedback: the row flips to up-to-date now
-                    # instead of staying on the stale status until the
-                    # post-install verify reconciles it.
-                    st_rec.status = "upToDate"
-                    st_rec.error = None
+                self._install_group(client, git, branch, ref, folders)
                 self._dispatcher.post(AddonsLoaded(self.state))
-                self._dispatcher.post(
-                    LogMessage(f"  ✓ Addon {rec['folder']} installed.")
-                )
             except Exception as e:
                 err = describe_install_error(e)
-                self._dispatcher.post(
-                    LogMessage(f"  ✗ Addon {rec['folder']}: {err}")
-                )
-                st_rec = self.state.addons.get(rec["folder"])
-                if st_rec is not None:
-                    st_rec.status = "invalid"
-                    st_rec.error = err
-                self.state.errors[rec["folder"]] = AddonError(
-                    err, rec.get("git")
-                )
-                failed.append(rec["folder"])
+                self._fail_group(folders, git, err)
+                failed.extend(folders)
 
         self.state.busy = False
         self.state.installing = False
@@ -689,7 +1044,9 @@ class AddonsController:
                 )
                 failed.append(folder)
 
-        # Process installs/updates (checked addons).
+        # Process installs/updates (checked addons), grouped by repo so
+        # one archive fetch serves every folder from the same repo.
+        wanted = []
         for folder, enabled in list(pending.items()):
             if not enabled:
                 continue
@@ -699,54 +1056,30 @@ class AddonsController:
             )
             if rec is None:
                 continue
+            wanted.append(rec)
+        for (git, branch, ref), group in self._group_recs(
+            [
+                {
+                    "folder": r.folder,
+                    "git": r.git,
+                    "branch": r.branch,
+                    "ref": r.ref,
+                }
+                for r in wanted
+            ]
+        ):
+            folders = [rec["folder"] for rec in group]
             try:
-                if not rec.git or not addons.is_allowed_git_url(rec.git):
+                if not git or not addons.is_allowed_git_url(git):
                     raise RuntimeError(
                         "Addon URL is not from an allowed git host"
                     )
-                sha = addons.addon_remote_sha(
-                    rec.git,
-                    rec.branch,
-                    rec.ref,
-                    force=True,
-                    raise_errors=True,
-                )
-                if not sha:
-                    raise RuntimeError("Could not resolve remote commit")
-                addons.install_addon_files(client, rec.folder, rec.git, sha)
-                if rec.folder == "pfUI":
-                    addons.patch_pfui_default_profile(client)
-                record = {
-                    "git": rec.git,
-                    "branch": rec.branch,
-                    "ref": rec.ref,
-                    "sha": sha,
-                }
-                config_store.update_config(
-                    lambda c, f=rec.folder, r=record: c.setdefault(
-                        "addons", {}
-                    ).__setitem__(f, r)
-                )
-                self.state.errors.pop(rec.folder, None)
-                st_rec = self.state.addons.get(rec.folder)
-                if st_rec is not None:
-                    st_rec.status = "upToDate"
-                    st_rec.error = None
+                self._install_group(client, git, branch, ref, folders)
                 self._dispatcher.post(AddonsLoaded(self.state))
-                self._dispatcher.post(
-                    LogMessage(f"  ✓ Addon {rec.folder} installed.")
-                )
             except Exception as e:
                 err = describe_install_error(e)
-                self._dispatcher.post(
-                    LogMessage(f"  ✗ Addon {rec.folder}: {err}")
-                )
-                st_rec = self.state.addons.get(rec.folder)
-                if st_rec is not None:
-                    st_rec.status = "invalid"
-                    st_rec.error = err
-                self.state.errors[rec.folder] = AddonError(err, rec.git)
-                failed.append(rec.folder)
+                self._fail_group(folders, git, err)
+                failed.extend(folders)
 
         self.state.pending = {}
         self.state.busy = False

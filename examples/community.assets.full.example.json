@@ -1,0 +1,52 @@
+[
+  {
+    "id": "ExamplePatch",
+    "name": "Example Content Patch",
+    "description": "Minimal asset — required: id (safe_folder), url (https), dest (safe_relative_path).",
+    "url": "https://launcher.example.com/patches/patch.mpq",
+    "dest": "Data/patch.mpq",
+    "version": "v1",
+    "sha1": "0123456789abcdef0123456789abcdef01234567"
+  },
+  {
+    "id": "ExamplePatchFull",
+    "name": "Example Full Asset",
+    "description": "All optional fields: repo_url (https), version (str), sha1 (40-hex), size (int>0), essential (bool), probe (bool).",
+    "repo_url": "https://github.com/example/example-patch",
+    "url": "https://launcher.example.com/patches/patch-full.mpq",
+    "dest": "Data/patch-full.mpq",
+    "version": "v2.1.0",
+    "sha1": "abcdef0123456789abcdef0123456789abcdef01",
+    "size": 1048576,
+    "essential": true,
+    "probe": true
+  },
+  {
+    "id": "ExampleProbeOnly",
+    "name": "Example Probe Asset",
+    "description": "Asset with probe=false explicitly — launcher will not store response headers for this asset.",
+    "url": "https://launcher.example.com/patches/probe.mpq",
+    "dest": "Data/probe.mpq",
+    "version": "v3",
+    "sha1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "size": 512000,
+    "essential": false,
+    "probe": false
+  },
+  {
+    "id": "ExampleNoVersion",
+    "name": "Example No-Version Asset",
+    "description": "version/sha1/size are all optional — omit them for unpinned assets.",
+    "url": "https://launcher.example.com/patches/noversion.mpq",
+    "dest": "Data/noversion.mpq"
+  },
+  {
+    "id": "ExampleSubdirAsset",
+    "name": "Example Subdir Asset",
+    "description": "dest may be in a subdirectory — still must be a safe_relative_path (no traversal, no absolute).",
+    "url": "https://launcher.example.com/patches/subdir.mpq",
+    "dest": "Data/custom/subdir.mpq",
+    "version": "v1.0.1",
+    "essential": false
+  }
+]

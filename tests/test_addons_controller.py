@@ -23,7 +23,6 @@ from nostalgia_launcher.controllers.addons import (
 )
 from nostalgia_launcher.state.events import (
     AddonsLoaded,
-    EventDispatcher,
     LogMessage,
     OperationFinished,
     StatusChanged,
@@ -61,8 +60,11 @@ def backends(monkeypatch, tmp_path):
         lambda git, branch=None, ref=None: "REMOTE",
     )
     monkeypatch.setattr(
-        ac.addons, "install_addon_files", lambda client, folder, git, sha: None
+        ac.addons,
+        "install_addon_files",
+        lambda client, folder, git, sha, wanted=None: [folder],
     )
+    monkeypatch.setattr(ac.addons, "addon_repo_names", lambda *a, **k: [])
     monkeypatch.setattr(
         ac.addons, "patch_pfui_default_profile", lambda client: None
     )
@@ -79,31 +81,8 @@ def backends(monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def controller(cfg, backends):
-    return AddonsController(EventDispatcher())
-
-
-def _drain_for(dispatcher, predicate, timeout=2.0):
-    """Drain until an event matching `predicate` arrives; return everything
-    drained along the way (assertion failure on timeout)."""
-    deadline = time.monotonic() + timeout
-    collected = []
-    while True:
-        collected.extend(dispatcher.drain())
-        if any(predicate(e) for e in collected):
-            return collected
-        if time.monotonic() > deadline:
-            raise AssertionError("expected event never arrived")
-        time.sleep(0.005)
-
-
-def _wait_verify_done(controller, timeout=2.0):
-    """Block until a running verify/reload worker finished. The cached
-    preview AddonsLoaded now fires before the scan completes, so tests
-    asserting final state must settle past it."""
-    deadline = time.monotonic() + timeout
-    while controller.state.busy and time.monotonic() < deadline:
-        time.sleep(0.005)
+def controller(cfg, backends, dispatcher):
+    return AddonsController(dispatcher)
 
 
 def _install_folder(client, name):
@@ -120,7 +99,9 @@ def _install_folder(client, name):
 # ── verify ──────────────────────────────────────────────────────────────
 
 
-def test_verify_scans_and_posts_addons_loaded(controller, cfg, tmp_path):
+def test_verify_scans_and_posts_addons_loaded(
+    controller, cfg, tmp_path, wait_for_event
+):
     client = str(tmp_path)
     _install_folder(client, "Foo")
     cfg["addons"]["Foo"] = {
@@ -131,8 +112,10 @@ def test_verify_scans_and_posts_addons_loaded(controller, cfg, tmp_path):
     }
 
     assert controller.verify() is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
-    _wait_verify_done(controller)
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
 
     assert controller.state.state == "done"
 
@@ -174,7 +157,7 @@ def test_ensure_catalog_loaded_stores_addon_state_objects(
 
 
 def test_verify_marks_unreachable_addon_unknown(
-    controller, cfg, tmp_path, monkeypatch
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
     """A remote that can't be reached to compare SHAs → status 'unknown'
     (retryable), not 'invalid' — and it doesn't count as an update."""
@@ -189,8 +172,10 @@ def test_verify_marks_unreachable_addon_unknown(
     monkeypatch.setattr(ac.addons, "addon_remote_sha", lambda *a, **k: None)
 
     assert controller.verify() is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
-    _wait_verify_done(controller)
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
 
     rec = controller.state.addons["Foo"]
     assert rec.status == "unknown"
@@ -200,7 +185,7 @@ def test_verify_marks_unreachable_addon_unknown(
 
 
 def test_verify_adopts_untracked_installed_catalog_addon(
-    controller, cfg, tmp_path, monkeypatch
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
     """An installed addon the launcher has never recorded but that is in the
     catalog is adopted silently: recorded with its current remote sha and
@@ -232,8 +217,10 @@ def test_verify_adopts_untracked_installed_catalog_addon(
     )
 
     assert controller.verify() is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
-    _wait_verify_done(controller)
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
 
     rec = controller.state.addons["Foo"]
     assert rec.status == "upToDate"
@@ -250,7 +237,7 @@ def test_verify_adopts_untracked_installed_catalog_addon(
 
 
 def test_verify_adoption_unresolvable_is_unknown(
-    controller, cfg, tmp_path, monkeypatch
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
     """When the remote can't be resolved during adoption the addon is
     'unknown' (retryable), never flagged for update."""
@@ -272,8 +259,10 @@ def test_verify_adoption_unresolvable_is_unknown(
     monkeypatch.setattr(ac.addons, "addon_remote_sha", lambda *a, **k: None)
 
     assert controller.verify() is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
-    _wait_verify_done(controller)
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
 
     rec = controller.state.addons["Foo"]
     assert rec.status == "unknown"
@@ -284,7 +273,7 @@ def test_verify_adoption_unresolvable_is_unknown(
 
 
 def test_verify_disallowed_catalog_git_host_never_contacts_it(
-    cfg, tmp_path, monkeypatch
+    cfg, tmp_path, monkeypatch, wait_for_event, dispatcher
 ):
     """A catalog entry pointing outside the git-host allowlist must not
     trigger any API call or git subprocess: the adoption attempt degrades
@@ -316,11 +305,13 @@ def test_verify_disallowed_catalog_git_host_never_contacts_it(
     monkeypatch.setattr(git_archive, "secure_urlopen", boom)
     monkeypatch.setattr(git_archive.subprocess, "run", boom)
 
-    controller = AddonsController(EventDispatcher())
+    controller = AddonsController(dispatcher)
 
     assert controller.verify() is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
-    _wait_verify_done(controller)
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
 
     rec = controller.state.addons["Foo"]
     assert rec.status == "unknown"
@@ -330,7 +321,7 @@ def test_verify_disallowed_catalog_git_host_never_contacts_it(
 
 
 def test_verify_offline_falls_back_to_cached_catalog(
-    controller, cfg, monkeypatch
+    controller, cfg, monkeypatch, wait_for_event
 ):
     url = "https://example.com/addons.json"
     monkeypatch.setattr(
@@ -349,13 +340,17 @@ def test_verify_offline_falls_back_to_cached_catalog(
     )
 
     assert controller.verify() is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
-    _wait_verify_done(controller)
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
 
     assert any(a.folder == "Foo" for a in controller.state.available)
 
 
-def test_verify_ttl_skips_second_unless_force(controller, cfg, tmp_path):
+def test_verify_ttl_skips_second_unless_force(
+    controller, cfg, tmp_path, wait_for_event
+):
     client = str(tmp_path)
     _install_folder(client, "Foo")
     cfg["addons"]["Foo"] = {
@@ -366,13 +361,17 @@ def test_verify_ttl_skips_second_unless_force(controller, cfg, tmp_path):
     }
 
     assert controller.verify() is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
-    _wait_verify_done(controller)
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
     # Within the TTL a plain verify is a no-op; force() bypasses it.
     assert controller.verify() is False
     assert controller.verify(force=True) is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
-    _wait_verify_done(controller)
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
 
 
 def test_verify_skips_when_busy(controller, cfg, monkeypatch):
@@ -382,7 +381,7 @@ def test_verify_skips_when_busy(controller, cfg, monkeypatch):
 
 
 def test_verify_remote_checks_false_never_calls_remote_sha(
-    controller, cfg, tmp_path, monkeypatch
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
     client = str(tmp_path)
     _install_folder(client, "Foo")
@@ -405,8 +404,10 @@ def test_verify_remote_checks_false_never_calls_remote_sha(
     )
 
     assert controller.verify(remote_checks=False) is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
-    _wait_verify_done(controller)
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
 
     assert calls == []
     # The cached sha matches the saved one — current without any API call.
@@ -414,7 +415,7 @@ def test_verify_remote_checks_false_never_calls_remote_sha(
 
 
 def test_verify_uses_catalog_source_when_saved_differs(
-    controller, cfg, tmp_path, monkeypatch
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
     client = str(tmp_path)
     _install_folder(client, "Foo")
@@ -444,8 +445,10 @@ def test_verify_uses_catalog_source_when_saved_differs(
     )
 
     assert controller.verify() is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
-    _wait_verify_done(controller)
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
 
     # The launcher catalog wins: a source conflict surfaces as an update
     # that migrates to the catalog repo — no remote check against the old one.
@@ -458,7 +461,7 @@ def test_verify_uses_catalog_source_when_saved_differs(
 
 
 def test_verify_checks_catalog_branch_when_repos_match(
-    controller, cfg, tmp_path, monkeypatch
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
     client = str(tmp_path)
     _install_folder(client, "Foo")
@@ -490,8 +493,10 @@ def test_verify_checks_catalog_branch_when_repos_match(
     )
 
     assert controller.verify() is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
-    _wait_verify_done(controller)
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
 
     # Same repo but a different configured branch: verify uses the catalog's
     # branch, so the new branch's sha surfaces as an update.
@@ -501,7 +506,7 @@ def test_verify_checks_catalog_branch_when_repos_match(
 
 
 def test_verify_honors_catalog_recommended_and_blocked(
-    controller, cfg, monkeypatch
+    controller, cfg, monkeypatch, wait_for_event
 ):
     monkeypatch.setattr(
         ac.addons,
@@ -523,8 +528,10 @@ def test_verify_honors_catalog_recommended_and_blocked(
     )
 
     assert controller.verify() is True
-    _drain_for(controller._dispatcher, lambda e: isinstance(e, AddonsLoaded))
-    _wait_verify_done(controller)
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
 
     folders = {a.folder for a in controller.state.available}
     assert "Star" in folders
@@ -537,7 +544,9 @@ def test_verify_honors_catalog_recommended_and_blocked(
 # ── apply ───────────────────────────────────────────────────────────────
 
 
-def test_apply_success_records_and_posts_finished(controller, cfg, tmp_path):
+def test_apply_success_records_and_posts_finished(
+    controller, cfg, tmp_path, wait_for_event
+):
     client = str(tmp_path)
     _install_folder(client, "Foo")
     cfg["out_dir"] = client
@@ -555,7 +564,7 @@ def test_apply_success_records_and_posts_finished(controller, cfg, tmp_path):
 
     assert controller.apply([rec]) is True
 
-    collected = _drain_for(
+    collected = wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     assert OperationFinished("addons", True, "") in collected
@@ -585,7 +594,7 @@ def test_apply_success_records_and_posts_finished(controller, cfg, tmp_path):
 
 
 def test_apply_success_does_not_run_post_install_verify(
-    controller, cfg, tmp_path, monkeypatch
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
     """On full success the worker has already marked the just-installed
     addon upToDate; running verify() afterward can flip it back to
@@ -608,7 +617,7 @@ def test_apply_success_does_not_run_post_install_verify(
     monkeypatch.setattr(controller, "verify", verify_mock)
 
     assert controller.apply([rec]) is True
-    _drain_for(
+    wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
 
@@ -616,14 +625,14 @@ def test_apply_success_does_not_run_post_install_verify(
 
 
 def test_apply_failure_still_runs_post_install_verify(
-    controller, cfg, monkeypatch
+    controller, cfg, monkeypatch, wait_for_event
 ):
     """Failures need the verify so the error is overlaid on the
     AVAILABLE row."""
     monkeypatch.setattr(
         ac.addons,
         "install_addon_files",
-        lambda client, folder, git, sha: (_ for _ in ()).throw(
+        lambda client, folder, git, sha, wanted=None: (_ for _ in ()).throw(
             RuntimeError("boom")
         ),
     )
@@ -641,7 +650,7 @@ def test_apply_failure_still_runs_post_install_verify(
     monkeypatch.setattr(controller, "verify", verify_mock)
 
     assert controller.apply([rec]) is True
-    _drain_for(
+    wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
 
@@ -649,7 +658,7 @@ def test_apply_failure_still_runs_post_install_verify(
 
 
 def test_apply_marks_existing_addon_downloading(
-    controller, cfg, tmp_path, monkeypatch
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
     """An update (the addon is already tracked) must flip its status to
     'downloading' synchronously — the panel re-renders immediately after
@@ -668,7 +677,10 @@ def test_apply_marks_existing_addon_downloading(
     monkeypatch.setattr(
         ac.addons,
         "install_addon_files",
-        lambda client, folder, git, sha: release.wait(),
+        lambda client, folder, git, sha, wanted=None: (
+            release.wait(),
+            [folder],
+        )[1],
     )
 
     assert controller.apply([rec.to_dict()]) is True
@@ -679,7 +691,7 @@ def test_apply_marks_existing_addon_downloading(
     # Let the install finish — the worker marks it up to date and posts the
     # snapshot without waiting for the post-install verify.
     release.set()
-    _drain_for(
+    wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     assert controller.state.addons["Foo"].status == "upToDate"
@@ -688,7 +700,7 @@ def test_apply_marks_existing_addon_downloading(
 
 
 def test_update_all_flips_records_to_downloading(
-    controller, cfg, tmp_path, monkeypatch
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
     """The footer's 'Update all' path goes through apply() too — every
     out-of-date record must show 'downloading' synchronously."""
@@ -709,7 +721,10 @@ def test_update_all_flips_records_to_downloading(
     monkeypatch.setattr(
         ac.addons,
         "install_addon_files",
-        lambda client, folder, git, sha: release.wait(),
+        lambda client, folder, git, sha, wanted=None: (
+            release.wait(),
+            [folder],
+        )[1],
     )
 
     assert controller.apply(controller.update_all()) is True
@@ -718,7 +733,7 @@ def test_update_all_flips_records_to_downloading(
         assert controller.state.addons[name].status == "downloading"
 
     release.set()
-    _drain_for(
+    wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     for name in ("Foo", "Bar"):
@@ -726,9 +741,9 @@ def test_update_all_flips_records_to_downloading(
 
 
 def test_apply_failure_records_error_and_posts_finished(
-    controller, cfg, monkeypatch
+    controller, cfg, monkeypatch, wait_for_event
 ):
-    def boom(client, folder, git, sha):
+    def boom(client, folder, git, sha, wanted=None):
         raise RuntimeError("download blocked")
 
     monkeypatch.setattr(ac.addons, "install_addon_files", boom)
@@ -744,7 +759,7 @@ def test_apply_failure_records_error_and_posts_finished(
     }
 
     assert controller.apply([rec]) is True
-    collected = _drain_for(
+    collected = wait_for_event(
         controller._dispatcher,
         lambda e: isinstance(e, OperationFinished),
         timeout=5.0,
@@ -762,21 +777,25 @@ def test_apply_failure_records_error_and_posts_finished(
     assert cfg["addons"] == {}
 
     # The follow-up re-verify synthesizes an available row carrying the error.
-    # _drain_for drains ALL pending events; if the re-verify's AddonsLoaded
-    # arrived fast enough to be in the same batch as OperationFinished,
-    # the first drain already consumed it — don't wait for a second one
-    # that will never come (the classic fast/slow race that flakes under
-    # full-suite load on macOS).
+    # wait_for_event drains ALL pending events; if the re-verify's
+    # AddonsLoaded arrived fast enough to be in the same batch as
+    # OperationFinished, the first drain already consumed it — don't wait
+    # for a second one that will never come (the classic fast/slow race
+    # that flakes under full-suite load on macOS).
     if not any(isinstance(e, AddonsLoaded) for e in collected):
-        _wait_verify_done(controller, timeout=5.0)
-        more = _drain_for(
+        wait_for_event.until_true(
+            lambda: not controller.state.busy, timeout=5.0
+        )
+        more = wait_for_event(
             controller._dispatcher,
             lambda e: isinstance(e, AddonsLoaded),
             timeout=5.0,
         )
         collected = collected + more
     else:
-        _wait_verify_done(controller, timeout=5.0)
+        wait_for_event.until_true(
+            lambda: not controller.state.busy, timeout=5.0
+        )
         collected.extend(controller._dispatcher.drain())
     avail = {a.folder: a for a in controller.state.available}
     assert "Foo" in avail
@@ -813,7 +832,7 @@ def test_apply_pending_without_folder_refuses_with_message(controller, cfg):
 
 
 def test_apply_marks_pfui_for_profile_patch(
-    controller, cfg, tmp_path, monkeypatch
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
     client = str(tmp_path)
     _install_folder(client, "pfUI")
@@ -837,7 +856,7 @@ def test_apply_marks_pfui_for_profile_patch(
     }
 
     assert controller.apply([rec]) is True
-    _drain_for(
+    wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
     assert patched == [client]
@@ -904,24 +923,9 @@ def test_reset_clears_state(controller, cfg):
     assert controller.state.sections_open["INSTALLED"] is False
 
 
-def _drain_n(dispatcher, kind, n, timeout=2.0):
-    """Drain until `n` events of `kind` arrived (assertion failure otherwise);
-    returns all collected events."""
-    deadline = time.monotonic() + timeout
-    events = []
-    while time.monotonic() < deadline:
-        events.extend(dispatcher.drain())
-        if sum(isinstance(e, kind) for e in events) >= n:
-            return events
-        time.sleep(0.01)
-    events.extend(dispatcher.drain())
-    assert sum(isinstance(e, kind) for e in events) >= n, (
-        f"only {sum(isinstance(e, kind) for e in events)} {kind.__name__}"
-    )
-    return events
-
-
-def test_verify_posts_cached_preview_before_scan(controller, monkeypatch):
+def test_verify_posts_cached_preview_before_scan(
+    controller, monkeypatch, wait_for_event
+):
     """verify() paints instantly from the persisted cache: an initial
     network-free AddonsLoaded precedes the full scan result."""
     preview_catalog = [
@@ -939,7 +943,7 @@ def test_verify_posts_cached_preview_before_scan(controller, monkeypatch):
     )
 
     assert controller.verify() is True
-    events = _drain_n(controller._dispatcher, AddonsLoaded, 2)
+    events = wait_for_event.drain_n(controller._dispatcher, AddonsLoaded, 2)
     loaded = [e for e in events if isinstance(e, AddonsLoaded)]
     # First snapshot is the cache preview; the scan supersedes it.
     assert [a.folder for a in loaded[0].state.available] == ["CachedAddon"]
@@ -949,8 +953,220 @@ def test_verify_posts_cached_preview_before_scan(controller, monkeypatch):
 # ── worker-crash containment (regression) ────────────────────────────────
 
 
+def test_verify_adopts_multi_addon_repo_siblings(
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
+):
+    """A catalog entry whose repo ships several addons adopts every
+    on-disk sibling — not just the primary folder — so multi-addon repos
+    (AtlasLoot's modules) stop showing 'Not tracked'."""
+    client = str(tmp_path)
+    _install_folder(client, "Pack")
+    _install_folder(client, "PackExtra")
+    cfg["addons"] = {}
+    monkeypatch.setattr(
+        ac.addons,
+        "addons_catalog",
+        lambda force=False: [
+            {
+                "name": "Pack",
+                "git": "https://github.com/catalog/Pack",
+                "branch": "main",
+                "ref": None,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        ac.addons,
+        "addon_repo_names",
+        lambda git, branch=None, ref=None, force=False: [
+            "Pack",
+            "PackExtra",
+        ],
+    )
+
+    assert controller.verify() is True
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
+
+    for name in ("Pack", "PackExtra"):
+        rec = controller.state.addons[name]
+        assert rec.status == "upToDate"
+        assert rec.git == "https://github.com/catalog/Pack"
+        assert cfg["addons"][name] == {
+            "git": "https://github.com/catalog/Pack",
+            "branch": "main",
+            "ref": None,
+            "sha": "REMOTE",
+        }
+    assert controller.updates_count == 0
+
+
+def test_verify_sibling_unresolvable_is_unknown(
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
+):
+    """An unresolvable sibling stays retryable ('unknown'), never stale."""
+    client = str(tmp_path)
+    _install_folder(client, "Pack")
+    _install_folder(client, "PackExtra")
+    cfg["addons"] = {}
+    monkeypatch.setattr(
+        ac.addons,
+        "addons_catalog",
+        lambda force=False: [
+            {
+                "name": "Pack",
+                "git": "https://github.com/catalog/Pack",
+                "branch": "main",
+                "ref": None,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        ac.addons,
+        "addon_repo_names",
+        lambda git, branch=None, ref=None, force=False: [
+            "Pack",
+            "PackExtra",
+        ],
+    )
+    monkeypatch.setattr(ac.addons, "addon_remote_sha", lambda *a, **k: None)
+
+    assert controller.verify() is True
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
+
+    rec = controller.state.addons["PackExtra"]
+    assert rec.status == "unknown"
+    assert rec.error == "Couldn't check for updates"
+    assert "PackExtra" not in cfg.get("addons", {})
+    assert controller.updates_count == 0
+
+
+def test_apply_groups_same_repo_into_one_install(
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
+):
+    """Two out-of-date folders from one repo share a single archive fetch
+    and both end up recorded/up-to-date."""
+    client = str(tmp_path)
+    _install_folder(client, "Pack")
+    _install_folder(client, "PackExtra")
+    cfg["out_dir"] = client
+    cfg["addons"] = {
+        "Pack": {
+            "git": "https://github.com/a/pack",
+            "branch": None,
+            "ref": None,
+            "sha": "OLD",
+        },
+        "PackExtra": {
+            "git": "https://github.com/a/pack",
+            "branch": None,
+            "ref": None,
+            "sha": "OLD",
+        },
+    }
+    calls = []
+
+    def fake_install(client_dir, folder, git, sha, wanted=None):
+        calls.append((folder, wanted))
+        return ["Pack", "PackExtra"]
+
+    monkeypatch.setattr(ac.addons, "install_addon_files", fake_install)
+    for name in ("Pack", "PackExtra"):
+        controller.state.addons[name] = AddonState(
+            folder=name,
+            status="outOfDate",
+            git="https://github.com/a/pack",
+            toc={},
+        )
+
+    assert controller.apply(controller.update_all()) is True
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, OperationFinished)
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1] == ["Pack", "PackExtra"]
+    for name in ("Pack", "PackExtra"):
+        assert cfg["addons"][name]["sha"] == "REMOTE"
+        assert controller.state.addons[name].status == "upToDate"
+
+
+def test_verify_skips_dot_directories(
+    controller, cfg, tmp_path, wait_for_event
+):
+    """Tool state dirs (.snapjaw_cache, .git) are not addons — they must
+    not show up as 'Addon error' rows."""
+    client = str(tmp_path)
+    os.makedirs(os.path.join(client, "Interface", "AddOns", ".snapjaw_cache"))
+    cfg["addons"] = {}
+
+    assert controller.verify() is True
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
+
+    assert ".snapjaw_cache" not in controller.state.addons
+
+
+def test_verify_discovers_snapjaw_managed_repo(
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
+):
+    """A repo the catalog names differently (or as a pack) but snapjaw
+    cloned is still relevant: its folders adopt instead of staying
+    'Not tracked'."""
+    client = str(tmp_path)
+    _install_folder(client, "Pack")
+    _install_folder(client, "PackExtra")
+    cache = os.path.join(
+        client, "Interface", "AddOns", ".snapjaw_cache", "ab12", ".git"
+    )
+    os.makedirs(cache)
+    with open(os.path.join(cache, "config"), "w", encoding="utf-8") as f:
+        f.write('[remote "origin"]\n\turl = https://github.com/c/pack\n')
+    cfg["addons"] = {}
+    monkeypatch.setattr(
+        ac.addons,
+        "addons_catalog",
+        lambda force=False: [
+            {
+                # Pack-level row: the folder itself is not on disk.
+                "name": "Pack Row",
+                "git": "https://github.com/c/pack.git",
+                "branch": "main",
+                "ref": None,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        ac.addons,
+        "addon_repo_names",
+        lambda git, branch=None, ref=None, force=False: [
+            "Pack",
+            "PackExtra",
+        ],
+    )
+
+    assert controller.verify() is True
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
+
+    for name in ("Pack", "PackExtra"):
+        rec = controller.state.addons[name]
+        assert rec.status == "upToDate"
+        assert rec.git == "https://github.com/c/pack.git"
+    assert controller.updates_count == 0
+
+
 def test_verify_worker_crash_resets_busy_and_reports(
-    controller, cfg, tmp_path, monkeypatch
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
     """An exception mid-scan (permissions, poisoned records…) used to kill
     the worker thread silently, wedging the panel on 'Checking…' with
@@ -965,7 +1181,7 @@ def test_verify_worker_crash_resets_busy_and_reports(
     monkeypatch.setattr(ac.addons, "read_toc_file", boom)
 
     controller.verify()
-    events = _drain_for(
+    events = wait_for_event(
         controller._dispatcher,
         lambda e: isinstance(e, OperationFinished),
     )
@@ -974,3 +1190,175 @@ def test_verify_worker_crash_resets_busy_and_reports(
         for e in events
     )
     assert not controller.state.busy
+
+
+# ── variant-spelling (case/whitespace/unicode) ──────────────────────────
+
+
+def test_verify_case_mismatch_disk_vs_catalog_no_double(
+    controller, cfg, tmp_path
+):
+    """Disk `foo` vs catalog `Foo`: the install resolves through the
+    norm-fallback match and no AVAILABLE row shadows the installed one."""
+    client = str(tmp_path)
+    _install_folder(client, "foo")
+    cfg["addons"]["foo"] = {
+        "git": "https://github.com/x/y",
+        "sha": "REMOTE",
+    }
+    catalog = [{"name": "Foo", "git": "https://github.com/x/y"}]
+    controller._verify_worker_body(catalog, client, False, True)
+    assert set(controller.state.addons) == {"foo"}
+    assert controller.state.addons["foo"].status == "upToDate"
+    assert all(
+        r.folder.casefold() != "foo" for r in controller.state.available
+    )
+
+
+def test_verify_case_variant_sibling_adopted_not_listed(
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
+):
+    """Discovered sibling `PackExtra` with disk `packextra` is adopted in
+    place, never appended as an AVAILABLE row."""
+    client = str(tmp_path)
+    _install_folder(client, "packextra")
+    # Saved record makes the repo relevant for sibling discovery.
+    cfg["addons"]["packextra"] = {
+        "git": "https://github.com/x/pack",
+        "sha": "OLD",
+    }
+    monkeypatch.setattr(
+        ac.addons,
+        "addon_repo_names",
+        lambda *a, **k: ["Pack", "PackExtra"],
+    )
+    catalog = [{"name": "Pack", "git": "https://github.com/x/pack"}]
+    controller._verify_worker_body(catalog, client, False, True)
+    rec = controller.state.addons["packextra"]
+    assert rec.git == "https://github.com/x/pack"
+    assert rec.status == "outOfDate"
+    assert all(
+        r.folder.casefold() != "packextra" for r in controller.state.available
+    )
+
+
+def test_available_from_catalog_dedupes_case_variants(controller):
+    """Catalog carrying `Foo` + `foo` from the same repo yields one row
+    (last wins, mirroring merge_addons override order), never two."""
+    rows = controller._available_from_catalog(
+        [
+            {"name": "Foo", "git": "https://github.com/x/a"},
+            {"name": "foo", "git": "https://github.com/x/a"},
+        ]
+    )
+    assert [r["folder"] for r in rows] == ["foo"]
+    assert rows[0]["git"] == "https://github.com/x/a"
+
+
+def test_available_from_catalog_keeps_different_repos(controller):
+    """Same spelling from two repos = two different addons — keep both."""
+    rows = controller._available_from_catalog(
+        [
+            {"name": "Foo", "git": "https://github.com/x/a"},
+            {"name": "foo", "git": "https://github.com/y/b"},
+        ]
+    )
+    assert sorted(r["folder"] for r in rows) == ["Foo", "foo"]
+
+
+def test_available_from_catalog_hides_blocked_variant(controller, monkeypatch):
+    """A blocked folder stays hidden even under a variant spelling."""
+    monkeypatch.setattr(ac.addons, "BLOCKED_ADDONS", {"Foo"})
+    rows = controller._available_from_catalog(
+        [{"name": "foo", "git": "https://github.com/x/a"}]
+    )
+    assert rows == []
+
+
+def test_distinct_case_dirs_stay_distinct(controller, cfg, tmp_path):
+    """`Foo` and `foo` on disk are two real installs — never merged."""
+    client = str(tmp_path)
+    os.makedirs(os.path.join(client, "CaseFsProbe"), exist_ok=True)
+    if os.path.exists(os.path.join(client, "casefsprobe")):
+        pytest.skip("case-insensitive filesystem")
+    _install_folder(client, "Foo")
+    _install_folder(client, "foo")
+    controller._verify_worker_body([], client, False, False)
+    assert set(controller.state.addons) == {"Foo", "foo"}
+
+
+def test_discover_siblings_relevance_case_insensitive(
+    controller, tmp_path, monkeypatch
+):
+    """Catalog `Pack` is relevant when the disk holds `pack`."""
+    client = str(tmp_path)
+    _install_folder(client, "pack")
+    seen = {}
+
+    def fake_names(git, branch=None, ref=None, force=False):
+        seen["called"] = True
+        return ["Pack", "PackExtra"]
+
+    monkeypatch.setattr(ac.addons, "addon_repo_names", fake_names)
+    out = controller._discover_siblings(
+        [{"name": "Pack", "git": "https://github.com/x/pack"}],
+        {"pack"},
+        {},
+        False,
+        ac.addons.addons_path(client),
+    )
+    assert seen.get("called") is True
+    assert set(out) == {"Pack", "PackExtra"}
+
+
+def test_verify_different_repo_variant_coexists(
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
+):
+    """Disk `foo` tracked from repo A with catalog `Foo` from repo B: a
+    different addon sharing a spelling — no association, no suppression,
+    both stay visible with their own git."""
+    client = str(tmp_path)
+    _install_folder(client, "foo")
+    cfg["addons"]["foo"] = {
+        "git": "https://github.com/x/a",
+        "sha": "REMOTE",
+    }
+    monkeypatch.setattr(
+        ac.addons,
+        "addon_remote_sha",
+        lambda *a, **k: "REMOTE",
+    )
+    catalog = [{"name": "Foo", "git": "https://github.com/y/b"}]
+    controller._verify_worker_body(catalog, client, False, False)
+    rec = controller.state.addons["foo"]
+    assert rec.git == "https://github.com/x/a"
+    assert rec.status == "upToDate"
+    assert [r.folder for r in controller.state.available] == ["Foo"]
+
+
+def test_suppress_shadowed_git_aware():
+    """Same repo (or unknown source) shadows are dropped; a different
+    repo sharing the spelling is a different addon and stays."""
+    rows = [
+        {
+            "folder": "PackExtra",
+            "status": "available",
+            "git": "https://github.com/x/pack",
+        },
+        {
+            "folder": "Other",
+            "status": "available",
+            "git": "https://github.com/x/other",
+        },
+        {"folder": "", "status": "available"},
+    ]
+    kept = ac._suppress_shadowed(
+        rows, {"packextra": "https://github.com/x/pack"}
+    )
+    assert [r["folder"] for r in kept] == ["Other", ""]
+    kept = ac._suppress_shadowed(
+        rows, {"packextra": "https://github.com/y/fork"}
+    )
+    assert [r["folder"] for r in kept] == ["PackExtra", "Other", ""]
+    kept = ac._suppress_shadowed(rows, {"packextra": None})
+    assert [r["folder"] for r in kept] == ["Other", ""]

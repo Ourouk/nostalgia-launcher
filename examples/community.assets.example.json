@@ -1,0 +1,24 @@
+[
+  {
+    "id": "ExamplePatch",
+    "name": "Example Content Patch",
+    "description": "Minimal asset — only required fields (id, url, dest). `dest` must be a safe relative path inside the game folder.",
+    "url": "https://launcher.example.com/patches/patch.mpq",
+    "dest": "Data/patch.mpq",
+    "version": "v1",
+    "sha1": "0123456789abcdef0123456789abcdef01234567"
+  },
+  {
+    "id": "ExamplePatchFull",
+    "name": "Example Full Asset",
+    "description": "Full asset with every optional field. `sha1`/`size` are integrity pins; `probe` captures Last-Modified/ETag for drift detection; `essential` auto-enables the asset.",
+    "repo_url": "https://github.com/example/example-patch",
+    "url": "https://launcher.example.com/patches/patch-full.mpq",
+    "dest": "Data/patch-full.mpq",
+    "version": "v2.1.0",
+    "sha1": "abcdef0123456789abcdef0123456789abcdef01",
+    "size": 1048576,
+    "essential": true,
+    "probe": true
+  }
+]

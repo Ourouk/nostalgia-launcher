@@ -73,25 +73,45 @@ def test_remove_wdb(tmp_path):
 
 
 def test_get_client_version(tmp_path):
-    assert filesystem.get_client_version(str(tmp_path)) == ""
+    # Declarative path: mirrors launcher.client_version() (default 1.12.1
+    # under the conftest fixture). No WoW.exe sniffing.
+    from nostalgia_launcher.core import launcher as _launcher
+
+    assert (
+        filesystem.get_client_version(str(tmp_path))
+        == _launcher.client_version()
+    )
+    assert _launcher.client_version() == "1.12.1"
 
 
 def test_get_client_version_reads_offsets(tmp_path):
+    # Legacy offset reader removed — declarative value survives even when a
+    # synthetic WoW.exe is present.
+    from nostalgia_launcher.core import launcher as _launcher
+
     exe = tmp_path / "WoW.exe"
     data = bytearray(0x00437C10)
     data[0x00437BFC : 0x00437BFC + 4] = b"1.17"
     data[0x00437C04 : 0x00437C04 + 6] = b"60000\x00"
     exe.write_bytes(bytes(data))
-    assert filesystem.get_client_version(str(tmp_path)) == "60000 (1.17)"
+    assert (
+        filesystem.get_client_version(str(tmp_path))
+        == _launcher.client_version()
+    )
 
 
 def test_get_client_version_rejects_garbage(tmp_path):
+    from nostalgia_launcher.core import launcher as _launcher
+
     exe = tmp_path / "WoW.exe"
     data = bytearray(0x00437C10)
     data[0x00437BFC : 0x00437BFC + 4] = b"Mai\xe9"
     data[0x00437C04 : 0x00437C04 + 6] = b"nope!\x00"
     exe.write_bytes(bytes(data))
-    assert filesystem.get_client_version(str(tmp_path)) == ""
+    assert (
+        filesystem.get_client_version(str(tmp_path))
+        == _launcher.client_version()
+    )
 
 
 def test_rmtree_force_removes_readonly(tmp_path):

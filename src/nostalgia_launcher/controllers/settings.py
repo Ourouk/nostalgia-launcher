@@ -2,9 +2,9 @@
 
 Owns the settings business logic: the game-folder-change reset (hash cache
 drop, folder-scoped config wipe, resets of the other controllers), the
-first-run flags, the Windows Defender exclusion flow, the download-mirror
+first-run flags, the Windows Defender exclusion flow, the download-source
 check, the verify-game-files shortcut and the settings toggles. Publishes
-LogMessage and MirrorStatusChanged on the shared EventDispatcher; the Qt
+LogMessage and SourceStatusChanged on the shared EventDispatcher; the Qt
 Settings dialog renders them. No GUI toolkit.
 """
 
@@ -18,12 +18,15 @@ from urllib.error import HTTPError
 from ..core import config_store, filesystem, launcher, platform_support
 from ..core.constants import UA
 from ..core.errors import describe_net_error
+from ..core.log_sink import log
 from ..core.security_http import secure_urlopen
 from ..services import addons, catalog, mods
 from ..state.events import (
     EventDispatcher,
     LogMessage,
-    MirrorStatusChanged,
+    OperationFinished,
+    ProgressChanged,
+    SourceStatusChanged,
 )
 from ..state.models import LaunchSettings, SettingsState
 
@@ -64,11 +67,23 @@ class SettingsController:
                 lambda c: c.__setitem__("out_dir_user_set", True)
             )
         stored = cfg.get("out_dir") or ""
+        try:
+            suggestion = platform_support.default_game_folder(
+                launcher.server_name(), launcher.client_version()
+            )
+        except TypeError as exc:
+            if (
+                "unexpected" not in str(exc).lower()
+                and "takes" not in str(exc).lower()
+            ):
+                raise
+            # Back-compat with tests monkeypatching with 1-arg lambda.
+            suggestion = platform_support.default_game_folder(
+                launcher.server_name()
+            )
         self.state = SettingsState(
             path=os.path.normpath(stored) if stored else "",
-            suggestion=platform_support.default_game_folder(
-                launcher.server_name()
-            ),
+            suggestion=suggestion,
             config=cfg,
         )
         self.launch = LaunchSettings.from_config(cfg)
@@ -82,19 +97,19 @@ class SettingsController:
         self.state.first_run_av_pending = (
             self.state.first_run and platform_support.can_manage_antivirus()
         )
-        # On first run we don't verify (fetch the manifest / touch
-        # Config.wtf) until the user closes Settings AND has a confirmed
-        # folder — nothing touches disk before that. A folder change
-        # supersedes this (it verifies the new folder right away).
+        # On first run we don't verify (fetch the torrent snapshot /
+        # touch Config.wtf) until the user closes Settings AND has a
+        # confirmed folder — nothing touches disk before that. A folder
+        # change supersedes this (it verifies the new folder right away).
         self.state.first_run_verify_pending = (
             self.state.first_run and self.client_update_enabled
         )
 
-        # Download-mirror reachability, as reported by the last check_mirror()
-        # ({name: "" | "checking…" | "online" | "offline"}). Not part of
-        # SettingsState — it's transient session state the Settings modal
-        # renders.
-        self.mirror_statuses: dict[str, str] = {}
+        # Download-source reachability, as reported by the last
+        # check_source() ({name: "" | "checking…" | "online" |
+        # "offline"}). Not part of SettingsState — it's transient
+        # session state the Settings modal renders.
+        self.source_statuses: dict[str, str] = {}
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -148,7 +163,7 @@ class SettingsController:
 
         # Only touch WDB when the path is a real client folder — this fires on
         # every keystroke while a path is being typed.
-        if os.path.exists(os.path.join(new_val, "WoW.exe")):
+        if filesystem.game_executable_exists(new_val):
             filesystem.remove_wdb(new_val)
 
         # Wipe folder-scoped config (mods/addons/assets install records),
@@ -248,21 +263,22 @@ class SettingsController:
                 LogMessage("Antivirus exclusion cancelled.\n", "err")
             )
 
-    def check_mirror(self):
-        """Background reachability check of every configured server and
-        mirror. The UI shows "checking…" itself and re-renders on the
-        MirrorStatusChanged event."""
-        names = self._http_mirror_names()
+    def check_source(self):
+        """Background reachability check of every configured server
+        source. The UI shows "checking…" itself and re-renders on the
+        SourceStatusChanged event."""
+        names = self._source_names()
         if not names:
-            self._dispatcher.post(MirrorStatusChanged(False, "Not configured"))
+            self._dispatcher.post(SourceStatusChanged(False, "Not configured"))
             return
         threading.Thread(
-            target=self._mirror_worker, args=(names,), daemon=True
+            target=self._source_worker, args=(names,), daemon=True
         ).start()
 
-    def _http_mirror_names(self) -> list:
-        """Name of the configured download source (the server). Mirrors
-        are gone; the single source's reachability is what we report."""
+    def _source_names(self) -> list:
+        """Name of the configured download source (the server). Extra
+        sources are gone; the single source's reachability is what we
+        report."""
 
         cfg = launcher.config()
         if cfg is None:
@@ -273,8 +289,8 @@ class SettingsController:
 
     def verify_files(self):
         """Full re-verification: drop the hash cache so every file is
-        re-hashed against the manifest. Unlike a game-folder change, installed
-        mods are left alone."""
+        re-checked against the torrent snapshot's piece hashes. Unlike
+        a game-folder change, installed mods are left alone."""
         if self._updater.running or not self.client_update_enabled:
             return
         try:
@@ -291,6 +307,64 @@ class SettingsController:
             )
         )
         self._updater.start_verify(overwrite_config=False)
+
+    def skip_verification(self) -> bool:
+        """Skip verification / pending update and mark the client as ready.
+
+        Works both while ``Verifying…`` (``disabled``) and when an update or
+        download is pending (``UPDATE``/``DOWNLOAD``), but only when a playable
+        client is on disk — otherwise skipping would strand the user with
+        nothing to play. Returns True when the skip was applied.
+        """
+        st = self._updater.state
+        try:
+            playable = bool(self._updater._playable_client_present())  # type: ignore[attr-defined]
+        except Exception:
+            playable = False
+        try:
+            addons_installing = bool(self._addons.installing)  # type: ignore[attr-defined]
+        except Exception:
+            addons_installing = False
+        from .update import can_skip_verification
+
+        if not can_skip_verification(
+            st,
+            running=self._updater.running,
+            game_running=st.game_running,
+            addons_installing=addons_installing,
+            client_update_enabled=self.client_update_enabled,
+            playable=playable,
+        ):
+            return False
+        # Unified clear — all torrent verdict fields reset so
+        # compute_readiness no longer sees Verifying…/UPDATE/DOWNLOAD.
+        st.torrent_stale = None
+        st.torrent_reachable = None
+        st.torrent_error = None
+        st.client_ready = True
+        # Keep verify_out_dir in sync with the folder we just marked ready,
+        # so start_update's verify_out_dir != out guard doesn't spuriously
+        # trigger a re-verify.
+        try:
+            cur = (self._updater._get_out_dir() or "").strip()  # type: ignore[attr-defined]
+        except Exception:
+            cur = ""
+        if cur:
+            st.verify_out_dir = cur
+        self._dispatcher.post(ProgressChanged(1.0, ""))
+        self._dispatcher.post(
+            OperationFinished(
+                "verify", True, "Skipped — playing unverified client"
+            )
+        )
+        self._dispatcher.post(
+            LogMessage(
+                "Verification skipped — client marked ready unverified.\n",
+                "warn",
+            )
+        )
+        log("Verification skipped — client marked ready unverified.", "warn")
+        return True
 
     def set_clear_wdb(self, enabled: bool) -> dict:
         self.state.config = config_store.update_config(
@@ -312,6 +386,48 @@ class SettingsController:
         )
         if self.state.first_run:
             self.state.first_run_verify_pending = enabled
+        return self.state.config
+
+    # ── community default catalogs ───────────────────────────────────────
+
+    @property
+    def mods_default_enabled(self) -> bool:
+        return bool(self.state.config.get("mods_default_enabled", True))
+
+    @property
+    def addons_default_enabled(self) -> bool:
+        return bool(self.state.config.get("addons_default_enabled", True))
+
+    def mods_default_available(self) -> bool:
+        return launcher.has_default_mods_for_version(launcher.client_version())
+
+    def addons_default_available(self) -> bool:
+        return launcher.has_default_addons_for_version(
+            launcher.client_version()
+        )
+
+    def set_mods_default_enabled(self, enabled: bool) -> dict:
+        self.state.config = config_store.update_config(
+            lambda c: c.__setitem__("mods_default_enabled", bool(enabled))
+        )
+        self._dispatcher.post(
+            LogMessage(
+                f"Default mods catalog {'enabled' if enabled else 'disabled'}.\n",
+                "dim",
+            )
+        )
+        return self.state.config
+
+    def set_addons_default_enabled(self, enabled: bool) -> dict:
+        self.state.config = config_store.update_config(
+            lambda c: c.__setitem__("addons_default_enabled", bool(enabled))
+        )
+        self._dispatcher.post(
+            LogMessage(
+                f"Default addons catalog {'enabled' if enabled else 'disabled'}.\n",
+                "dim",
+            )
+        )
         return self.state.config
 
     # ── umu-launcher (Linux play) ──────────────────────────────────────────
@@ -604,23 +720,23 @@ class SettingsController:
 
     # ── internals ───────────────────────────────────────────────────────────
 
-    def _mirror_worker(self, names: list):
+    def _source_worker(self, names: list):
         ok_any = False
         for name in names:
-            online = self._probe_mirror(name)
-            self.mirror_statuses[name] = "online" if online else "offline"
+            online = self._probe_source(name)
+            self.source_statuses[name] = "online" if online else "offline"
             ok_any = ok_any or online
         self._dispatcher.post(
-            MirrorStatusChanged(
+            SourceStatusChanged(
                 ok=ok_any, text="online" if ok_any else "offline"
             )
         )
 
-    def _probe_mirror(self, name: str) -> bool:
+    def _probe_source(self, name: str) -> bool:
         """Whether a named download source can serve client files. Any HTTP
         response (even an error status) proves it is reachable; only transport
         failures count as down."""
-        url = self._mirror_probe_url(name)
+        url = self._source_probe_url(name)
         if not url:
             return False
         try:
@@ -632,10 +748,10 @@ class SettingsController:
         except Exception:
             return False
 
-    def _mirror_probe_url(self, name: str) -> str:
+    def _source_probe_url(self, name: str) -> str:
         """The client-files endpoint of the configured download source
-        (the server). Mirrors are gone, so this is always the server's
-        fallback or torrent URL."""
+        (the server). Extra sources are gone, so this is always the
+        server's fallback or torrent URL."""
 
         cfg = launcher.config()
         if cfg is None:

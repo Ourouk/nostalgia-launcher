@@ -6,20 +6,11 @@ don't belong to any single engine module.
 
 import hashlib
 import os
-import re
 import shutil
 import stat
 from pathlib import Path
 
 from .log_sink import log
-
-# Version/build fields inside WoW.exe, at offsets specific to the 1.12.1
-# client build. Any other build decodes to garbage here, which
-# get_client_version reports as "" rather than a bogus string.
-_BUILD_OFFSET = 0x00437BFC
-_VERSION_OFFSET = 0x00437C04
-
-_VERSIONISH_RE = re.compile(r"\d+(?:\.\d+)*")
 
 
 def ensure_dir(path):
@@ -81,31 +72,56 @@ def remove_wdb(client_dir: str):
         log(f"Could not clear WDB: {e}", "err")
 
 
-def get_client_version(out_dir: str) -> str:
-    """Read version + build from fixed offsets in the client's WoW.exe.
+def get_client_version(out_dir: str) -> str:  # noqa: ARG001
+    """Client version — declarative (server-pinned).
 
-    The offsets are 1.12.1-build-specific; a missing exe or any other
-    client build yields "" instead of a misread label.
+    The legacy binary-offset reader (1.12.1 WoW.exe at 0x00437BFC/0x00437C04)
+    is removed. The declared ``server.client_version`` from
+    ``nostalgia_launcher.json`` (``1.12.1`` / ``2.4.3`` / ``3.3.5a``) is now
+    the single source of truth (one client per profile). ``out_dir`` is kept
+    for call-site compatibility.
+
+    Kept as a thin shim so ``controllers/update`` and
+    ``services/update/workflow`` stay importable without cycles; the real
+    value is read via ``launcher.client_version()``.
     """
-    exe_path = os.path.join(out_dir, "WoW.exe")
-    if not os.path.exists(exe_path):
-        return ""
     try:
-        # Read only the two small fields, not the whole ~5 MB binary.
-        with open(exe_path, "rb") as f:
-            f.seek(_BUILD_OFFSET)
-            build = f.read(4).decode("utf-8", errors="replace").rstrip("\x00")
-            f.seek(_VERSION_OFFSET)
-            version = (
-                f.read(6).decode("utf-8", errors="replace").rstrip("\x00")
-            )
-        if not _VERSIONISH_RE.fullmatch(
-            version
-        ) or not _VERSIONISH_RE.fullmatch(build):
-            return ""
-        return f"{version} ({build})"
+        from . import launcher
+
+        return launcher.client_version() or ""
     except Exception:
         return ""
+
+
+def _find_case_insensitive(client_dir: str, filename: str) -> str | None:
+    """Case-insensitive lookup for ``filename`` directly under ``client_dir``.
+
+    Vanilla ships ``WoW.exe``, TBC/WotLK ship ``Wow.exe`` — on Windows the
+    difference is invisible, on Linux ``os.path.isfile("WoW.exe")`` misses
+    ``Wow.exe``. Returns the absolute path with the on-disk spelling, or
+    None when absent/unreadable.
+    """
+    exact = os.path.join(client_dir, filename)
+    if os.path.isfile(exact) or os.path.exists(exact):
+        return exact
+    try:
+        wanted = filename.lower()
+        for entry in os.listdir(client_dir or "."):
+            if entry.lower() == wanted:
+                full = os.path.join(client_dir, entry)
+                if os.path.isfile(full) or os.path.exists(full):
+                    return full
+    except OSError:
+        return None
+    return None
+
+
+def game_executable_exists(client_dir: str) -> bool:
+    """Whether the game folder holds a launchable client exe (any WoW.exe
+    spelling: ``WoW.exe`` / ``Wow.exe`` / ``wow.exe``)."""
+    if not client_dir:
+        return False
+    return _find_case_insensitive(client_dir, "WoW.exe") is not None
 
 
 def pick_game_executable(
@@ -115,12 +131,16 @@ def pick_game_executable(
 
     Prefers the first external-launcher executable (declared by an
     installed catalog mod and passed in by the caller) that exists on disk,
-    falling back to WoW.exe. Returns ``(absolute_path, label)``.
+    falling back to WoW.exe (any casing: ``WoW.exe``/``Wow.exe``). Returns
+    ``(absolute_path, label)`` with the on-disk spelling as label.
     """
     for name in external_executables or []:
         candidate = os.path.join(client_dir, name)
         if os.path.exists(candidate):
             return candidate, name
+    found = _find_case_insensitive(client_dir, "WoW.exe")
+    if found:
+        return found, os.path.basename(found)
     return os.path.join(client_dir, "WoW.exe"), "WoW.exe"
 
 

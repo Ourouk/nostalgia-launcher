@@ -1,6 +1,8 @@
 """Unit tests for the shared source backends (`services/sources`)."""
 
 import pytest
+from _torrent_fakes import BodyResp as _Resp
+from _torrent_fakes import make_direct_file_entry as _entry
 
 import nostalgia_launcher.services.sources.direct_file as df_module
 import nostalgia_launcher.services.sources.github_release as gh_module
@@ -33,22 +35,6 @@ def test_hook_policy_per_type():
 
 
 # ── github_release backend ───────────────────────────────────────────────────
-
-
-class _Resp:
-    def __init__(self, payload, headers=None):
-        self._payload = payload
-        self.headers = headers or {}
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self, n=-1):
-        out, self._payload = self._payload[:n], self._payload[n:]
-        return out
 
 
 def test_github_validate_normalizes_source():
@@ -134,16 +120,6 @@ def test_github_fetch_without_matching_asset_raises():
 
 
 # ── direct_file backend ──────────────────────────────────────────────────────
-
-
-def _entry(**src):
-    base = {
-        "kind": "direct_file",
-        "url": "https://server.test/uploads/patch-3.MPQ",
-        "dest": "Data/patch-3.MPQ",
-    }
-    base.update(src)
-    return {"id": "p3", "source": base}
 
 
 def test_direct_file_validate_rejects_http_and_bad_pins():
@@ -281,6 +257,36 @@ def test_deploy_unpack_folder_strips_top_dir_and_replaces(tmp_path):
     assert not list(tmp_path.rglob("*.tmp_install"))
 
 
+def test_deploy_unpack_prefix_installs_single_subdir(tmp_path):
+    import io
+    import zipfile
+
+    dest_root = tmp_path / "Interface" / "AddOns" / "PackExtra"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("pack-sha/Pack/Pack.toc", "## Title: Pack\n")
+        zf.writestr("pack-sha/Pack/core.lua", "-- core")
+        zf.writestr("pack-sha/PackExtra/PackExtra.toc", "## Title: X\n")
+        zf.writestr("pack-sha/PackExtra/x.lua", "-- x")
+    deploy.unpack_prefix(buf.getvalue(), "PackExtra", str(dest_root))
+    assert (dest_root / "PackExtra.toc").exists()
+    assert (dest_root / "x.lua").exists()
+    assert not (dest_root / "core.lua").exists()
+    assert not list(tmp_path.rglob("*.tmp_install"))
+
+
+def test_deploy_unpack_prefix_rejects_traversal(tmp_path):
+    import io
+    import zipfile
+
+    dest_root = tmp_path / "Interface" / "AddOns" / "Pack"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("pack-sha/Pack/Pack.toc", "x")
+    with pytest.raises(RuntimeError, match="unsafe unpack prefix"):
+        deploy.unpack_prefix(buf.getvalue(), "../evil", str(dest_root))
+
+
 # ── hooks ────────────────────────────────────────────────────────────────────
 
 
@@ -353,3 +359,137 @@ def test_extract_tar_map_skips_directory_members(tmp_path):
     )
     # The directory match was skipped; nothing was installed for it.
     assert written == []
+
+
+# ── 7z support (system binary) ───────────────────────────────────────────────
+
+
+def _fake_7z_run(files, returncode=0, stderr=""):
+    """Fake subprocess.run that materialises ``files`` into the -o outdir."""
+
+    class _Proc:
+        def __init__(self):
+            self.returncode = returncode
+            self.stdout = ""
+            self.stderr = stderr
+
+    def _run(args, **kwargs):
+        import os
+
+        outdir = next(
+            a[2:] for a in args if isinstance(a, str) and a.startswith("-o")
+        )
+        for rel, payload in files.items():
+            full = os.path.join(outdir, rel)
+            parent = os.path.dirname(full)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(full, "wb") as f:
+                f.write(payload)
+        return _Proc()
+
+    return _run
+
+
+def test_find_seven_z_probes_candidates(monkeypatch):
+    import shutil
+
+    monkeypatch.setattr(
+        shutil, "which", lambda n: "/usr/bin/7z" if n == "7z" else None
+    )
+    assert deploy.find_seven_z() == "/usr/bin/7z"
+    monkeypatch.setattr(shutil, "which", lambda n: None)
+    assert deploy.find_seven_z() == ""
+
+
+def test_extract_7z_map_missing_backend(monkeypatch, tmp_path):
+    """No 7z binary → actionable error, and 7z is never spawned."""
+    import subprocess
+
+    monkeypatch.setattr(deploy, "find_seven_z", lambda: "")
+
+    def _boom(*a, **k):
+        raise AssertionError("7z must not be spawned without a backend")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    with pytest.raises(RuntimeError, match="7z backend missing"):
+        deploy.extract_7z_map(str(tmp_path), b"fake", {"a": "a.dll"})
+
+
+def test_extract_7z_map_happy_path_and_glob(monkeypatch, tmp_path):
+    import subprocess
+
+    client = tmp_path / "client"
+    client.mkdir()
+    monkeypatch.setattr(deploy, "find_seven_z", lambda: "/usr/bin/7z")
+    files = {
+        "version.dll": b"V",
+        "wow_optimize.dll": b"D",
+        "wow_optimize_launcher.exe": b"E",
+        "pkg/nested.dll": b"N",
+    }
+    monkeypatch.setattr(subprocess, "run", _fake_7z_run(files))
+    emap = {k: k for k in list(files)[:3]}
+    emap["*/nested.dll"] = "nested.dll"
+    emap["missing.dll"] = "missing.dll"
+    written = deploy.extract_7z_map(str(client), b"fake-7z", emap)
+    assert written == [
+        "version.dll",
+        "wow_optimize.dll",
+        "wow_optimize_launcher.exe",
+        "nested.dll",
+    ]
+    assert (client / "nested.dll").read_bytes() == b"N"
+
+
+def test_extract_7z_map_failed_process(monkeypatch, tmp_path):
+    import subprocess
+
+    client = tmp_path / "client"
+    client.mkdir()
+    monkeypatch.setattr(deploy, "find_seven_z", lambda: "/usr/bin/7z")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        _fake_7z_run({}, returncode=2, stderr="ERROR: bad archive"),
+    )
+    with pytest.raises(RuntimeError, match="7z extraction failed"):
+        deploy.extract_7z_map(str(client), b"fake-7z", {"a": "a.dll"})
+
+
+def test_extract_7z_map_traversal_dest_refused(monkeypatch, tmp_path):
+    import subprocess
+
+    client = tmp_path / "client"
+    client.mkdir()
+    monkeypatch.setattr(deploy, "find_seven_z", lambda: "/usr/bin/7z")
+    monkeypatch.setattr(subprocess, "run", _fake_7z_run({"version.dll": b"V"}))
+    with pytest.raises(RuntimeError, match="unsafe install path"):
+        deploy.extract_7z_map(
+            str(client), b"fake-7z", {"version.dll": "../evil"}
+        )
+
+
+def test_github_no_match_lists_available_assets():
+    b = sources.get("github_release")
+    entry = {
+        "id": "wow-optimize",
+        "source": {
+            "kind": "github_release",
+            "owner": "a",
+            "repo": "b",
+            "asset_pattern": "Release.zip",
+        },
+    }
+    rel = {
+        "tag_name": "v3.19.2",
+        "assets": [
+            {
+                "name": "Release.7z",
+                "size": 1,
+                "browser_download_url": "https://example.com/x",
+            }
+        ],
+    }
+    with pytest.raises(RuntimeError, match=r"Release\.7z"):
+        b.fetch(entry, release=rel)

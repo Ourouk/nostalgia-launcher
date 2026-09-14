@@ -140,10 +140,13 @@ class MainWindow(QMainWindow):
         self._wire_signals()
         self._navButtons["NEWS"].setChecked(True)
 
-        # Seed the client-version footer label from disk and sync the
-        # button/status with the controller's current readiness.
-        if self._hub.updater.read_client_version():
-            self._versionLabel.setText(self._hub.updater.state.client_version)
+        # Seed the declared client-version pill and keep the footer
+        # showing the updater self-version. Declarative client_version
+        # (1.12.1/2.4.3/3.3.5a) lives in the header pill; the footer stays
+        # as ``v{UPDATER_VERSION}`` so it's always visible (pre-refactor it
+        # was clobbered by binary sniffing which now never happens).
+        self._hub.updater.read_client_version()
+        self._sync_client_version_pill()
         self._sync_folder_label()
         self._refresh_ready_state()
 
@@ -217,6 +220,23 @@ class MainWindow(QMainWindow):
             f"QComboBox::drop-down {{ border: none; }}"
         )
         layout.addWidget(self._profileCombo)
+
+        # Server-pinned client version pill — reminder of which WoW build
+        # this profile manages (1.12.1 / 2.4.3 / 3.3.5a).
+        self._clientVersionPill = QLabel(launcher.client_version(), header)
+        self._clientVersionPill.setObjectName("clientVersionPill")
+        self._clientVersionPill.setToolTip(
+            "Declared client version for this profile"
+        )
+        self._clientVersionPill.setStyleSheet(
+            f"color: {p.text_dim.name()}; font-size: {metrics.PT_BADGE}pt;"
+            f" border: 1px solid {p.gold.name()}; border-radius: 6px;"
+            " padding: 2px 6px;"
+        )
+        # Keep pill hidden when no version yet (no launcher config).
+        if not launcher.client_version():
+            self._clientVersionPill.hide()
+        layout.addWidget(self._clientVersionPill)
 
         # A themed logo replaces the wordmark text once it has been fetched
         # (the server-name text shows until then, and stays on failure).
@@ -410,6 +430,23 @@ class MainWindow(QMainWindow):
         font.setBold(True)
         self._statusLabel.setFont(font)
         leftLayout.addWidget(self._statusLabel)
+
+        # Little skip label above the Update buttons — visible only while
+        # verification is pending (disabled/Verifying…).
+        from .list_panel import ClickableLabel
+
+        self._skipVerificationLabel = ClickableLabel("Skip verification", left)
+        self._skipVerificationLabel.setObjectName("skipVerificationLabel")
+        self._skipVerificationLabel.setCursor(Qt.PointingHandCursor)
+        self._skipVerificationLabel.setStyleSheet(
+            f"color: {p.text_dim.name()}; font-size: 9pt;"
+        )
+        self._skipVerificationLabel.setToolTip(
+            "Skip the current verification and play unverified"
+        )
+        self._skipVerificationLabel.clicked.connect(self._on_skip_verification)
+        self._skipVerificationLabel.hide()
+        leftLayout.addWidget(self._skipVerificationLabel)
 
         self._buttonStyles = {
             "update": (
@@ -773,15 +810,21 @@ class MainWindow(QMainWindow):
         panel = self._stack.widget(self._pages["UPDATE"])
         panel.set_updated_files(event.files)
 
+    def _sync_client_version_pill(self):
+        cv = (
+            self._hub.updater.state.client_version or launcher.client_version()
+        )
+        if hasattr(self, "_clientVersionPill"):
+            if cv:
+                self._clientVersionPill.setText(cv)
+                self._clientVersionPill.show()
+            else:
+                self._clientVersionPill.hide()
+
     def _onOperationFinished(self, kind: str, ok: bool, message: str):
         panel = self._stack.widget(self._pages["UPDATE"])
         panel.operation_finished(kind, ok, message)
-        updater = self._hub.updater
-        if kind in ("update", "verify") and ok:
-            # The update worker reports the (post-patch) client version just
-            # before finishing; surface it when a fresh one arrived.
-            if updater.state.client_version:
-                self._versionLabel.setText(updater.state.client_version)
+        self._sync_client_version_pill()
         # Readiness owns the status line — it renders the accurate verdict
         # for both success and failure right below.
         self._refresh_ready_state()
@@ -860,9 +903,8 @@ class MainWindow(QMainWindow):
 
     def _on_force_recheck(self):
         """UPDATE-tab "Force recheck" click: drop the hash/torrent-verdict
-        cache and re-verify every file. The transport is the worker's choice
-        — SHA-1 checksums against the manifest, or BitTorrent piece hashes
-        when no manifest is available."""
+        cache and re-verify every file against the torrent snapshot's
+        piece hashes."""
         if not (self._hub.settings.state.path or "").strip():
             self._hub.dispatcher.post(
                 LogMessage("✗  Please set the game folder first.\n", "err")
@@ -876,6 +918,55 @@ class MainWindow(QMainWindow):
         """Launch the game detached; the launch logic (ExampleLoader/WoW.exe
         choice, DXVK notice, clear-wdb, subprocess) lives in the
         UpdateController — this only drives the footer chrome and dialogs."""
+        # Realm mismatch check before launch: if the on-disk Config.wtf /
+        # realmlist.wtf points elsewhere, ask before injecting the third-party
+        # URL from server.json. Two choices, both then launch.
+        try:
+            client_dir = (self._hub.settings.state.path or "").strip()
+            if client_dir:
+                status = self._hub.updater.realm_status(client_dir)
+                if status.mismatch:
+                    actual = (
+                        status.actual_config
+                        or status.actual_realmlist
+                        or "<unknown>"
+                    )
+                    expected = status.expected
+                    server_name = (
+                        launcher.server_name()
+                        or launcher.server_url()
+                        or "this server"
+                    )
+                    is_third_party = expected.strip().lower() != "localhost"
+                    addr_label = (
+                        f"third-party address ({expected})"
+                        if is_third_party
+                        else f"address ({expected})"
+                    )
+                    answer = QMessageBox.question(
+                        self,
+                        "Realm mismatch",
+                        (
+                            f"The game folder realm is '{actual}' but the "
+                            f"server '{server_name}' wants '{expected}'.\n\n"
+                            "Injecting will overwrite WTF/Config.wtf "
+                            "(realmList/patchList) and realmlist.wtf with a "
+                            f"{addr_label}. Only proceed "
+                            "if you trust this server.\n\n"
+                            "Do you want to update the realm before launching?"
+                        ),
+                        QMessageBox.Yes | QMessageBox.No,
+                    )
+                    if answer == QMessageBox.Yes:
+                        self._hub.updater.inject_realm(client_dir)
+                elif not status.config_exists or not status.realmlist_exists:
+                    # Fresh install or deleted WTF — seed without a prompt.
+                    # Only when Play is actually offered (playable client present)
+                    # to avoid I/O in an empty folder.
+                    if os.path.isdir(client_dir):
+                        self._hub.updater.inject_realm(client_dir)
+        except Exception:
+            pass
         ok, dxvk_notice = self._hub.updater.launch_game()
         if not ok:
             return
@@ -916,6 +1007,7 @@ class MainWindow(QMainWindow):
         UpdateController.compute_readiness."""
         self._apply_readiness(self._readiness())
         self._sync_recheck_button()
+        self._sync_skip_label()
 
     def _sync_recheck_button(self):
         """Force recheck is only offered while nothing else is in flight and
@@ -930,6 +1022,39 @@ class MainWindow(QMainWindow):
             and hub.settings.client_update_enabled
         )
         self._updatePanel.set_recheck_enabled(enabled)
+
+    def _sync_skip_label(self):
+        hub = self._hub
+        st = hub.updater.state
+        try:
+            playable = bool(hub.updater._playable_client_present())  # type: ignore[attr-defined]
+        except Exception:
+            playable = False
+        from ...controllers.update import can_skip_verification
+
+        visible = can_skip_verification(
+            st,
+            running=hub.updater.running,
+            game_running=st.game_running,
+            addons_installing=bool(hub.addons.installing),  # type: ignore[attr-defined]
+            client_update_enabled=hub.settings.client_update_enabled,
+            playable=playable,
+        )
+        if hasattr(self, "_skipVerificationLabel"):
+            self._skipVerificationLabel.setVisible(visible)
+            # Slightly different tooltip when we're skipping an update.
+            if visible and st.torrent_stale is not None:
+                self._skipVerificationLabel.setToolTip(
+                    "Skip the pending update and play unverified"
+                )
+            elif visible:
+                self._skipVerificationLabel.setToolTip(
+                    "Skip the current verification and play unverified"
+                )
+
+    def _on_skip_verification(self):
+        if self._hub.settings.skip_verification():
+            self._refresh_ready_state()
 
     def _readiness(self):
         return self._hub.updater.compute_readiness(
@@ -950,8 +1075,8 @@ class MainWindow(QMainWindow):
         elif r.mode == "terminate":
             self._set_button_terminate()
         elif r.mode == "disabled":
-            # No manifest available: keep the UPDATE label but gray the
-            # button out so it can't start a blind update.
+            # No torrent source configured: keep the UPDATE label but gray
+            # the button out so it can't start a blind update.
             self._set_button_busy("UPDATE")
         else:
             self._set_button_busy(r.label)

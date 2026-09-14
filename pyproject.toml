@@ -21,8 +21,8 @@ dependencies = [
     "tenacity>=9.0",
     "packaging>=24.0",
     # libtorrent only ships wheels for CPython 3.10-3.13; on newer
-    # interpreters the client update path degrades to per-file HTTP
-    # downloads (services/update_backend/torrent_update.available()).
+    # interpreters the client update path degrades to single-zip HTTP
+    # fallback (services/update_backend/torrent_update.available()).
     "libtorrent; python_version < '3.14'",
 ]
 

@@ -4,6 +4,7 @@ import json
 import os
 
 import pytest
+from _torrent_fakes import fake_urlopen
 
 import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.services.catalog as catalog
@@ -76,22 +77,7 @@ def test_fetch_mods_catalog_force_fetches_and_validates(tmp_path, monkeypatch):
     ]
     payload = json.dumps(raw).encode()
 
-    class _R:
-        def __init__(self, data):
-            self._data = data
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-        def read(self, n=-1):
-            data = self._data
-            self._data = b""
-            return data
-
-    monkeypatch.setattr(catalog, "secure_urlopen", lambda *a, **k: _R(payload))
+    monkeypatch.setattr(catalog, "secure_urlopen", fake_urlopen(payload))
 
     out = mods.fetch_mods_catalog(force=True)
     assert [m["id"] for m in out] == ["X"]
@@ -166,7 +152,7 @@ def test_embedded_mods_served_without_network(tmp_path, monkeypatch):
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
-    config_store.save_config({})
+    config_store.save_config({"mods_default_enabled": False})
     _configure_embedded([_EMB_VALID, {"id": "Bad", "source": {}}])
 
     def fail(*a, **k):
@@ -259,7 +245,7 @@ def test_has_remote_catalog_user_override(tmp_path, monkeypatch):
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
-    config_store.save_config({})
+    config_store.save_config({"mods_default_enabled": False})
     # A launcher config that does not explicitly set a mods registry URL has
     # no remote catalog — only a user override counts.
     monkeypatch.setattr(launcher, "mods_registry_url_explicit", lambda: False)
@@ -272,7 +258,7 @@ def test_reload_catalog_republishes_when_embedded_only(tmp_path, monkeypatch):
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
-    config_store.save_config({})
+    config_store.save_config({"mods_default_enabled": False})
     _configure_embedded([_EMB_VALID])
 
     def fail(*a, **k):
@@ -509,24 +495,9 @@ def _patch_stream_download(monkeypatch, payload, target):
     response carrying ``payload`` (patched on the backend module). The fake
     yields the whole body on the first read() then EOF, matching a real
     streamed response."""
-
-    class _R:
-        headers = {}
-
-        def __init__(self):
-            self._data = payload
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *x):
-            return False
-
-        def read(self, n=-1):
-            out, self._data = self._data[:n], self._data[n:]
-            return out
-
-    monkeypatch.setattr(target, "secure_urlopen", lambda *a, **k: _R())
+    monkeypatch.setattr(
+        target, "secure_urlopen", fake_urlopen(payload, headers={})
+    )
 
 
 def test_install_mod_direct_file(tmp_path, monkeypatch):
@@ -574,6 +545,50 @@ def test_install_mod_rejects_traversal_dest(tmp_path, monkeypatch):
     assert not (tmp_path / "evil.dll").exists()
     assert not (tmp_path.parent / "evil.dll").exists()
     assert list(client.iterdir()) == []
+
+
+@pytest.mark.parametrize("asset_name", ["Release.7z", "Release.7Z"])
+def test_install_mod_routes_7z_by_extension(tmp_path, monkeypatch, asset_name):
+    """A .7z release asset deploys via extract_7z_map (case-insensitive),
+    never the zip path — the wow-optimize v3.19.2 shape."""
+    from nostalgia_launcher.services.sources.base import FetchResult
+
+    client = tmp_path / "client"
+    client.mkdir()
+    mod = {
+        "id": "wow-optimize",
+        "source": {
+            "kind": "github_release",
+            "owner": "suprepupre",
+            "repo": "wow-optimize",
+            "asset_pattern": "Release.*",
+            "extract_map": {"wow_optimize.dll": "wow_optimize.dll"},
+        },
+    }
+
+    class _Backend:
+        def fetch(self, entry, client_dir=None, release=None):
+            return FetchResult(
+                data=b"fake-7z", version="v3.19.2", name=asset_name
+            )
+
+    monkeypatch.setattr(mods, "_source_get", lambda kind: _Backend())
+
+    def _no_zip(*a, **k):
+        raise AssertionError("7z payload must not take the zip path")
+
+    monkeypatch.setattr(deploy, "extract_zip_map", _no_zip)
+    called = {}
+
+    def _fake_7z(client_dir, data, emap):
+        called["emap"] = emap
+        return ["wow_optimize.dll"]
+
+    monkeypatch.setattr(deploy, "extract_7z_map", _fake_7z)
+    written = mods.install_mod(mod, str(client))
+    assert written == ["wow_optimize.dll"]
+    assert called["emap"] == {"wow_optimize.dll": "wow_optimize.dll"}
+    assert mod["_resolved_version"] == "v3.19.2"
 
 
 def test_checked_rel_rejects_traversal_and_absolute():
@@ -629,26 +644,8 @@ def test_fetch_updater_latest_tag_stores_result(tmp_path, monkeypatch):
     config_store.save_config({})
 
     payload = json.dumps({"tag_name": "v3.0.0"}).encode()
-    buf = bytearray(payload)
 
-    class _R:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *x):
-            return False
-
-        @staticmethod
-        def read(n=-1):
-            # Chunked reads (the capped transfer layer reads 64 KiB).
-            if n is None or n < 0:
-                chunk, buf[:] = bytes(buf), b""
-            else:
-                chunk = bytes(buf[:n])
-                del buf[:n]
-            return chunk
-
-    monkeypatch.setattr(self_update, "secure_urlopen", lambda *a, **k: _R())
+    monkeypatch.setattr(self_update, "secure_urlopen", fake_urlopen(payload))
 
     assert self_update.fetch_updater_latest_tag() == "v3.0.0"
     cache = config_store.load_config()["updater_release_cache"]
@@ -877,7 +874,7 @@ def test_catalog_is_stale_false_with_repo_content_only(
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
-    config_store.save_config({})
+    config_store.save_config({"mods_default_enabled": False})
     monkeypatch.setattr(launcher, "mods_registry_url_explicit", lambda: False)
     catalog_svc = __import__(
         "nostalgia_launcher.services.catalog", fromlist=["catalog"]

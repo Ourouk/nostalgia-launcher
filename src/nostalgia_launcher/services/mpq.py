@@ -20,7 +20,7 @@ refuses anything outside the client's ``Data/`` folder. ``Data/Cache``
 
 import os
 
-from . import catalog
+from ..core.safety import safe_relpath
 
 # Locale subfolder codes shipped by the installers ({L} placeholder).
 LOCALES = (
@@ -265,7 +265,7 @@ def remove_custom_mpq(client_dir: str, rel_path: str) -> str:
     """Delete one scanned MPQ from the client's Data tree. Refuses paths
     outside Data/ (or anything unsafe) so a tampered UI value cannot delete
     arbitrary files. Returns '' on success, else an error message."""
-    if not catalog.safe_relpath(rel_path):
+    if not safe_relpath(rel_path):
         return f"Refusing unsafe path: {rel_path}"
     parts = rel_path.replace("\\", "/").split("/")
     if len(parts) < 2 or parts[0].lower() != "data":

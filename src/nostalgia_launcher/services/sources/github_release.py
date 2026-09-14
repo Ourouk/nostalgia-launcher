@@ -19,13 +19,13 @@ from ...core.config_store import load_config, update_config
 from ...core.constants import GITHUB_API, UA
 from ...core.errors import describe_net_error
 from ...core.log_sink import log
+from ...core.safety import safe_slug, valid_extract_map
 from ...core.security_http import (
     allowed_download_hosts,
     read_capped,
     secure_urlopen,
 )
 from .base import FetchResult, SourceBackend, register
-from .safety import safe_slug, valid_extract_map
 
 _MOD_VERSION_CACHE_TTL = 3600
 # Release-API responses are small JSON documents; anything larger is not one.
@@ -195,9 +195,15 @@ class GitHubReleaseBackend(SourceBackend):
             rel.get("assets", []), src["asset_pattern"], src.get("prefer_no")
         )
         if not asset:
+            available = [
+                a.get("name", "?") for a in rel.get("assets", [])[:10]
+            ]
+            suffix = (
+                f" (available: {', '.join(available)})" if available else ""
+            )
             raise RuntimeError(
                 f"No matching asset '{src['asset_pattern']}' in "
-                f"{entry['id']} release"
+                f"{entry['id']} release{suffix}"
             )
         log(
             f"  Downloading {asset['name']} "

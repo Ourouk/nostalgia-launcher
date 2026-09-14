@@ -17,7 +17,6 @@ from dataclasses import dataclass
 
 from ..core.config_store import load_config, update_config
 from ..core.filesystem import (
-    get_client_version,
     pick_game_executable,
     remove_wdb,
 )
@@ -28,7 +27,7 @@ from ..services.self_update import (
     fetch_updater_latest_tag,
     updater_update_available,
 )
-from ..services.update_backend.http_update import (
+from ..services.update.workflow import (
     UpdateWorker,
     VerifyWorker,
     torrent_recovery_available,
@@ -75,6 +74,32 @@ class Readiness:
     mode: str
     label: str
     status: str
+
+
+def can_skip_verification(
+    state,
+    *,
+    running: bool,
+    game_running: bool,
+    addons_installing: bool,
+    client_update_enabled: bool,
+    playable: bool,
+) -> bool:
+    """Unified gate for 'Skip verification' — single source of truth.
+
+    No WoW.exe is the only unavailable scenario, so every pending state
+    (Verifying…, UPDATE, DOWNLOAD, error) requires a playable client to be
+    skippable. Used by both SettingsController and MainWindow.
+    """
+    if running or game_running or addons_installing:
+        return False
+    if state.client_ready:
+        return False
+    if not client_update_enabled:
+        return False
+    # Any pending torrent state — require playable; Verifying… now also gated
+    # on WoW.exe presence (no WoW.exe == unavailable == not skippable).
+    return bool(playable)
 
 
 # Cap on captured child-process (umu/Wine, WoW.exe) lines per run — a chatty
@@ -224,7 +249,7 @@ class UpdateController:
         self.state.torrent_stale = None
         threading.Thread(
             target=worker.run,
-            args=(None, torrent_wanted),
+            args=(torrent_wanted,),
             daemon=True,
         ).start()
         self._dispatcher.post(StatusChanged("Updating…"))
@@ -299,11 +324,15 @@ class UpdateController:
             pass
 
     def read_client_version(self) -> str:
-        """The client version straight from disk, cached on state (footer
-        label at startup, before any worker has run)."""
-        self.state.client_version = get_client_version(
-            (self._get_out_dir() or "").strip()
-        )
+        """Declarative client version, cached on state.
+
+        Post-offset removal this no longer sniffs ``WoW.exe`` on disk;
+        the value comes from the server-pinned ``launcher.client_version()``
+        (``1.12.1`` / ``2.4.3`` / ``3.3.5a``).
+        """
+        from ..core import launcher as _launcher
+
+        self.state.client_version = _launcher.client_version()
         return self.state.client_version
 
     def check_updater_update(self):
@@ -319,6 +348,66 @@ class UpdateController:
             self.updater_update_available = bool(updater_update_available(tag))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def realm_status(self, client_dir: str | None = None):
+        """Realm mismatch status for ``client_dir`` (or current game folder)."""
+        from ..services import tweaks as _tweaks
+
+        out = (
+            client_dir
+            if client_dir is not None
+            else (self._get_out_dir() or "").strip()
+        )
+        if not out:
+            # No folder — nothing to compare; report no mismatch with expected.
+            from ..services.tweaks import RealmStatus, expected_realm
+
+            exp = expected_realm()
+            return RealmStatus(
+                expected=exp,
+                actual_config=None,
+                actual_realmlist=None,
+                mismatch=False,
+                config_exists=False,
+                realmlist_exists=False,
+            )
+        return _tweaks.check_realm_mismatch(out)
+
+    def inject_realm(self, client_dir: str | None = None) -> bool:
+        """Inject the expected realm into WTF/Config.wtf + realmlist.wtf."""
+        from ..services import tweaks as _tweaks
+
+        out = (
+            client_dir
+            if client_dir is not None
+            else (self._get_out_dir() or "").strip()
+        )
+        if not out:
+            self._dispatcher.post(
+                LogMessage("✗  Game folder not set.\n", "err")
+            )
+            return False
+        try:
+            ok = _tweaks.inject_realm(out)
+            if ok:
+                self._dispatcher.post(
+                    LogMessage(
+                        f"Realm injected: {_tweaks.expected_realm()}\n", "ok"
+                    )
+                )
+                return True
+            self._dispatcher.post(
+                LogMessage(
+                    "Could not inject realm: write verification failed.\n",
+                    "err",
+                )
+            )
+            return False
+        except Exception as e:  # pragma: no cover
+            self._dispatcher.post(
+                LogMessage(f"Could not inject realm: {e}\n", "err")
+            )
+            return False
 
     def launch_game(self) -> tuple:
         """Launch the client detached.
@@ -885,6 +974,7 @@ class UpdateController:
 
     def _on_torrent_reachable(self, event: TorrentReachable):
         self.state.torrent_reachable = True
+        self.state.torrent_error = None
 
     def _on_torrent_unreachable(self, event: TorrentUnavailable):
         self._torrent_failure(event.message, reachable=False)
@@ -920,6 +1010,8 @@ class UpdateController:
     def _on_torrent_diff(self, event: TorrentDiffReady):
         self.state.running = False
         self.state.client_ready = False
+        self.state.torrent_reachable = True
+        self.state.torrent_error = None
         self.state.torrent_stale = list(event.stale) if event.stale else []
         self._op = None
         self._dispatcher.post(ProgressChanged(0.0, ""))
@@ -931,6 +1023,8 @@ class UpdateController:
     def _on_torrent_up_to_date(self, event: TorrentUpToDate):
         self.state.running = False
         self.state.client_ready = True
+        self.state.torrent_reachable = True
+        self.state.torrent_error = None
         self.state.torrent_stale = None
         self._op = None
         self._dispatcher.post(ProgressChanged(1.0, ""))
@@ -939,6 +1033,8 @@ class UpdateController:
     def _on_torrent_recovery_done(self, event: TorrentRecoveryDone):
         self.state.running = False
         self.state.client_ready = True
+        self.state.torrent_reachable = True
+        self.state.torrent_error = None
         self.state.torrent_stale = None
         self._op = None
         self._dispatcher.post(ProgressChanged(1.0, ""))

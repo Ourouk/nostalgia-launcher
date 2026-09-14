@@ -829,3 +829,256 @@ def test_addons_catalog_from_cache_full_precedence(tmp_path, monkeypatch):
     )
     reg = {a["name"]: a["git"] for a in addons.catalog_from_cache()}
     assert reg["X"] == "https://github.com/e/repocustom"
+
+
+# ── multi-addon repos ────────────────────────────────────────────────────────
+
+
+def _pack_zip(entries):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in entries.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+def _two_pack(interface="11200"):
+    return _pack_zip(
+        {
+            "pack-sha/Pack/Pack.toc": f"## Interface: {interface}\n",
+            "pack-sha/Pack/core.lua": "-- core",
+            "pack-sha/PackExtra/PackExtra.toc": (
+                f"## Interface: {interface}\n"
+            ),
+            "pack-sha/PackExtra/x.lua": "-- x",
+        }
+    )
+
+
+def test_discover_repo_addons_multi():
+    found = addons.discover_repo_addons(_two_pack(), "1.12.1")
+    assert {n for n, _p in found} == {"Pack", "PackExtra"}
+    assert dict(found) == {"Pack": "Pack", "PackExtra": "PackExtra"}
+
+
+def test_discover_repo_addons_single_root_toc_names_folder():
+    """A root-level toc names the addon (often different from the catalog
+    row, e.g. ModernMapMarkers.toc inside ModernMapMarkers-WotLK) with an
+    empty prefix = whole-tree install."""
+    data = _pack_zip(
+        {
+            "pfUI-master/pfUI.toc": "## Title: pfUI\n",
+            "pfUI-master/lib/x.lua": "-- lib",
+        }
+    )
+    assert addons.discover_repo_addons(data, "1.12.1") == [("pfUI", "")]
+
+
+def test_discover_repo_addons_root_claim_shadows_nested_lib():
+    """A root toc claims the tree: bundled libs (LibStub) and
+    wrong-expansion strays (Interface 00000) are not separate addons."""
+    data = _pack_zip(
+        {
+            "q-1/Questie-335.toc": "## Interface: 30300\n",
+            "q-1/Questie.toc": "## Interface: 00000\n",
+            "q-1/Libs/LibStub/LibStub.toc": "## Interface: 30300\n",
+        }
+    )
+    assert addons.discover_repo_addons(data, "3.3.5a") == [("Questie-335", "")]
+
+
+def test_discover_repo_addons_filters_wrong_expansion():
+    data = _two_pack(interface="11200")
+    assert addons.discover_repo_addons(data, "3.3.5a") == []
+    assert {n for n, _p in addons.discover_repo_addons(data, "1.12.1")} == {
+        "Pack",
+        "PackExtra",
+    }
+
+
+def test_discover_repo_addons_missing_interface_kept():
+    data = _pack_zip({"pack-sha/NoIf/NoIf.toc": "## Title: NoIf\n"})
+    assert addons.discover_repo_addons(data, "3.3.5a") == [("NoIf", "NoIf")]
+
+
+def test_discover_repo_addons_nested_collapses_to_outer():
+    data = _pack_zip(
+        {
+            "pack-sha/Outer/Outer.toc": "## Interface: 11200\n",
+            "pack-sha/Outer/Inner/Inner.toc": "## Interface: 11200\n",
+        }
+    )
+    assert addons.discover_repo_addons(data, "1.12.1") == [("Outer", "Outer")]
+
+
+def test_discover_repo_addons_ignores_mismatched_stem():
+    data = _pack_zip({"pack-sha/Weird/Other.toc": "## Interface: 11200\n"})
+    assert addons.discover_repo_addons(data, "1.12.1") == []
+
+
+def test_discover_repo_addons_toc_extension_case_insensitive():
+    data = _pack_zip({"pack-sha/Foo/FOO.TOC": "## Interface: 11200\n"})
+    assert addons.discover_repo_addons(data, "1.12.1") == [("Foo", "Foo")]
+
+
+def test_discover_repo_addons_corrupt_zip_raises():
+    with pytest.raises(zipfile.BadZipFile):
+        addons.discover_repo_addons(b"not a zip", "1.12.1")
+
+
+def test_install_addon_files_multi_repo_selective(tmp_path, monkeypatch):
+    client = tmp_path / "client"
+    payload = _two_pack()
+    monkeypatch.setattr(
+        addons._GIT_BACKEND,
+        "fetch_archive",
+        lambda url, sha: payload,
+    )
+    # The requested folder alone installs just itself…
+    assert addons.install_addon_files(
+        str(client),
+        "Pack",
+        "https://github.com/a/pack",
+        "abcd" * 10,
+    ) == ["Pack"]
+    assert (client / "Interface" / "AddOns" / "Pack" / "core.lua").exists()
+    assert not (client / "Interface" / "AddOns" / "PackExtra").exists()
+    # …while a pack-level row installs every discovered addon.
+    assert addons.install_addon_files(
+        str(client),
+        "Pack Row",
+        "https://github.com/a/pack",
+        "abcd" * 10,
+    ) == ["Pack", "PackExtra"]
+    assert (client / "Interface" / "AddOns" / "PackExtra" / "x.lua").exists()
+
+
+def test_addon_repo_names_caches_per_sha(tmp_path, monkeypatch):
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config({})
+    fetches = []
+    monkeypatch.setattr(addons, "addon_remote_sha", lambda *a, **k: "SHA1")
+    monkeypatch.setattr(
+        addons._GIT_BACKEND,
+        "fetch_archive",
+        lambda url, sha: fetches.append(sha) or _two_pack(),
+    )
+    assert addons.addon_repo_names("https://github.com/a/pack") == [
+        "Pack",
+        "PackExtra",
+    ]
+    # Same sha → served from the repo cache, no second fetch.
+    assert addons.addon_repo_names("https://github.com/a/pack") == [
+        "Pack",
+        "PackExtra",
+    ]
+    assert fetches == ["SHA1"]
+
+
+def test_addon_repo_names_offline_serves_cache(tmp_path, monkeypatch):
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config(
+        {
+            "addon_repo_cache": {
+                "https://github.com/a/pack#": {
+                    "sha": "OLD",
+                    "names": ["Pack"],
+                    "timestamp": 1,
+                }
+            }
+        }
+    )
+    monkeypatch.setattr(addons, "addon_remote_sha", lambda *a, **k: None)
+
+    def _boom(url, sha):
+        raise AssertionError("must not fetch while offline")
+
+    monkeypatch.setattr(addons._GIT_BACKEND, "fetch_archive", _boom)
+    assert addons.addon_repo_names("https://github.com/a/pack") == ["Pack"]
+
+
+def test_addon_repo_names_rejects_disallowed_host(monkeypatch):
+    monkeypatch.setattr(addons, "is_allowed_git_url", lambda url: False)
+    assert addons.addon_repo_names("https://evil.example/a/b") == []
+
+
+# ── archive CDN + stale branch pins ──────────────────────────────────────────
+
+
+def test_addon_zip_hosts_cover_github_archive_redirect():
+    """github.com/.../archive/...zip 302s to codeload.github.com — the
+    redirect target must pass the archive allowlist or every GitHub addon
+    download (install + discovery) is refused."""
+    from nostalgia_launcher.core import security_http
+
+    hosts = set(git_archive.ADDON_ZIP_HOSTS) | {"github.com"}
+    security_http._check_url(
+        "https://github.com/o/r/archive/abc123.zip", hosts
+    )
+    security_http._check_url(
+        "https://codeload.github.com/o/r/zip/abc123", hosts
+    )
+
+
+def test_addon_remote_sha_falls_back_to_default_branch(tmp_path, monkeypatch):
+    """A stale branch pin (repo renamed main↔master) resolves via the
+    default branch instead of leaving the addon permanently unresolvable."""
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config({})
+    sha = "beef" * 10
+
+    def api(url, timeout=10):
+        if "/commits/main" in url:
+            raise urllib.error.HTTPError(url, 404, "not found", {}, None)
+        return [{"sha": sha}]
+
+    monkeypatch.setattr(git_archive, "_api_json", api)
+    monkeypatch.setattr(git_archive, "ls_remote_sha", lambda url, pin: None)
+    assert (
+        addons.addon_remote_sha("https://github.com/a/b", branch="main") == sha
+    )
+    # Resolved under the pinned cache key, so the next verify is a hit.
+    assert (
+        addons.addon_cached_sha("https://github.com/a/b", branch="main") == sha
+    )
+
+
+def test_addon_remote_sha_none_when_repo_gone(tmp_path, monkeypatch):
+    """A deleted repo (pin and default both fail) still returns None."""
+    config_store.configure(
+        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
+    )
+    config_store.save_config({})
+
+    def api_boom(url, timeout=10):
+        raise urllib.error.HTTPError(url, 404, "not found", {}, None)
+
+    monkeypatch.setattr(git_archive, "_api_json", api_boom)
+    monkeypatch.setattr(git_archive, "ls_remote_sha", lambda url, pin: None)
+    assert (
+        addons.addon_remote_sha("https://github.com/a/b", branch="main")
+        is None
+    )
+
+
+def test_snapjaw_cache_repo_urls_reads_git_configs(tmp_path):
+    clone = tmp_path / "AddOns" / ".snapjaw_cache" / "ab12"
+    (clone / ".git").mkdir(parents=True)
+    (clone / ".git" / "config").write_text(
+        "[core]\n\trepositoryformatversion = 0\n"
+        '[remote "origin"]\n\turl = https://github.com/a/pack.git\n',
+        encoding="utf-8",
+    )
+    assert addons.snapjaw_cache_repo_urls(str(tmp_path / "AddOns")) == {
+        "https://github.com/a/pack.git"
+    }
+
+
+def test_snapjaw_cache_repo_urls_missing_cache_is_empty(tmp_path):
+    assert addons.snapjaw_cache_repo_urls(str(tmp_path / "AddOns")) == set()

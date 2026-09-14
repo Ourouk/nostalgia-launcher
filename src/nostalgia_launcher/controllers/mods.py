@@ -203,7 +203,9 @@ class ModsController:
         if self._busy:
             return False
         out = (self._get_out_dir() or "").strip()
-        if not out or not os.path.exists(os.path.join(out, "WoW.exe")):
+        from ..core.filesystem import game_executable_exists
+
+        if not out or not game_executable_exists(out):
             return False
         mods_cfg = config_store.load_config().get("mods", {})
         pending = False

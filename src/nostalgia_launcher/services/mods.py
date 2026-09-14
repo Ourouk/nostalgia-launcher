@@ -17,6 +17,7 @@ import time
 from ..core.config_store import load_config
 from ..core.filesystem import atomic_write_text as _atomic_write
 from ..core.log_sink import log
+from ..core.safety import safe_relpath
 from . import catalog
 from .sources import deploy
 from .sources import get as _source_get
@@ -31,15 +32,32 @@ def catalog_timestamp() -> float | None:
     return catalog.catalog_timestamp("mods")
 
 
+def _default_enabled() -> bool:
+    """Per-profile toggle for the community default — True when absent."""
+    try:
+        val = load_config().get("mods_default_enabled")
+    except Exception:
+        return True
+    if val is None:
+        return True
+    return bool(val)
+
+
 def has_remote_catalog() -> bool:
-    """Whether a mod catalog is actually fetchable: a user URL override, or
-    an explicitly launcher-configured URL. The base_url-derived default does
-    not count — a config that embeds its mod list has nothing to refetch."""
+    """Whether a mod catalog is actually fetchable: a user URL override, an
+    explicitly launcher-configured URL, or a community default (when enabled
+    and available for this ``client_version``)."""
     if catalog.get_registry_url("mods"):
         return True
     from ..core import launcher
 
-    return launcher.mods_registry_url_explicit()
+    if launcher.mods_registry_url_explicit():
+        return True
+    if not _default_enabled():
+        return False
+    return bool(
+        launcher.default_mods_url_for_version(launcher.client_version())
+    )
 
 
 def embedded_mods() -> list:
@@ -102,16 +120,37 @@ def mods_registry(force=False) -> list:
 
 
 def registry_url() -> str:
-    """The active mod catalog URL: a user override (Settings), else the
-    launcher-configured URL, else ''."""
-    return catalog.get_registry_url("mods") or mods_registry_default_url()
+    """The active mod catalog URL: a user override, else the launcher/server
+    explicit URL, else the version-aware community default (when enabled)."""
+    override = catalog.get_registry_url("mods")
+    if override:
+        return override
+    from ..core import launcher
+
+    explicit = launcher.mods_registry_url()
+    if explicit:
+        return explicit
+    if not _default_enabled():
+        return ""
+    return launcher.default_mods_url_for_version(launcher.client_version())
 
 
 def mods_registry_default_url() -> str:
-    """The launcher-configured mod catalog URL ('' when not configured)."""
+    """The launcher-configured mod catalog URL ('' when not configured).
+
+    Kept for tests — returns only the explicit server URL, not the community
+    default. Use ``registry_url()`` for the effective URL.
+    """
     from ..core import launcher
 
     return launcher.mods_registry_url()
+
+
+def mods_default_available() -> bool:
+    """Whether a community default exists for this ``client_version``."""
+    from ..core import launcher
+
+    return launcher.has_default_mods_for_version(launcher.client_version())
 
 
 def set_registry_url(url: str) -> str | None:
@@ -199,8 +238,10 @@ def install_mod(
                     deploy.checked_rel(result.name),
                 )
             )
-        elif (result.name or "").endswith((".tar.gz", ".tgz")):
+        elif (result.name or "").lower().endswith((".tar.gz", ".tgz")):
             written += deploy.extract_tar_map(client_dir, result.data, emap)
+        elif (result.name or "").lower().endswith(".7z"):
+            written += deploy.extract_7z_map(client_dir, result.data, emap)
         else:
             written += deploy.extract_zip_map(
                 client_dir, result.data, mod["id"], emap
@@ -228,7 +269,7 @@ def uninstall_mod(mod: dict, client_dir: str):
     for rel in files:
         # Recorded paths are bookkeeping data — re-validate before they are
         # ever joined onto the client dir (same gate as install).
-        if not isinstance(rel, str) or not catalog.safe_relpath(rel):
+        if not isinstance(rel, str) or not safe_relpath(rel):
             continue
         full = os.path.join(client_dir, rel)
         if os.path.exists(full):
@@ -296,7 +337,7 @@ def remove_unknown_mod(client_dir: str, name: str):
             return
     # dlls.txt is mod-written, so its entries are untrusted: never resolve
     # one to a path outside client_dir.
-    if catalog.safe_relpath(name):
+    if safe_relpath(name):
         full = os.path.join(client_dir, name)
         if os.path.exists(full):
             os.remove(full)
@@ -315,7 +356,7 @@ def add_dll(client_dir: str, name: str):
             return
     if any(line.strip().lower() == name.lower() for line in lines):
         return
-    if not catalog.safe_relpath(name.strip()):
+    if not safe_relpath(name.strip()):
         log(f"  Refusing unsafe dlls.txt entry: {name!r}")
         return
     lines = [line for line in lines if line.strip()] + [name]

@@ -6,6 +6,7 @@ what lets every download backend serve every vertical:
 * plain ``dest``            → `install_plain` (single file)
 * ``extract_map`` + zip     → `extract_zip_map`
 * ``extract_map`` + tar.gz  → `extract_tar_map`
+* ``extract_map`` + 7z      → `extract_7z_map` (system 7z binary)
 * addon folder target       → `unpack_folder` (strip the archive's top-level
                               dir into Interface/AddOns/<folder>)
 
@@ -27,6 +28,28 @@ from ...core.safety import safe_relative_path
 # Per-member uncompressed ceiling: far above any legitimate game file,
 # far below disk-filling territory.
 _MAX_MEMBER_BYTES = 1 * 1024 * 1024 * 1024
+
+# System 7z binary candidates: upstream 7-Zip ships `7zz`, p7zip and most
+# distro/brew packages ship `7z`, minimal builds ship `7za`. Probed in
+# order via `find_seven_z` (mirrors services/umu.find_umu).
+SEVEN_Z_CANDIDATES = ("7zz", "7z", "7za")
+
+SEVEN_Z_MISSING_MSG = (
+    "7z backend missing — install 7-Zip (Windows: 7-Zip with 7z.exe "
+    "on PATH; Linux: p7zip-full / p7zip / 7zip package; macOS: "
+    "brew install sevenzip) then retry"
+)
+
+
+def find_seven_z() -> str:
+    """Locate a system 7z binary. Returns '' when none is installed."""
+    import shutil
+
+    for name in SEVEN_Z_CANDIDATES:
+        found = shutil.which(name)
+        if found:
+            return found
+    return ""
 
 
 def checked_rel(dest_rel) -> str:
@@ -135,6 +158,98 @@ def extract_tar_map(
         return written
 
 
+def extract_7z_map(
+    client_dir: str, data: bytes, extract_map: dict
+) -> list[str]:
+    """Write every extract_map {7z entry pattern: dest} found in a .7z.
+
+    Extracts via the system 7z binary into an isolated temp dir (never
+    directly into the client dir, so hostile member names stay inside
+    the throwaway dir) and installs only the mapped members through
+    `install_plain`, which re-validates every destination. Matching is
+    exact-first with an `fnmatch` fallback, like `extract_tar_map`.
+    Raises RuntimeError with install instructions when no 7z binary is
+    on PATH.
+    """
+    import fnmatch
+    import subprocess
+    import tempfile
+
+    seven_z = find_seven_z()
+    if not seven_z:
+        raise RuntimeError(SEVEN_Z_MISSING_MSG)
+    with tempfile.TemporaryDirectory(prefix="nl7z-") as tmp:
+        archive = os.path.join(tmp, "payload.7z")
+        outdir = os.path.join(tmp, "out")
+        os.makedirs(outdir, exist_ok=True)
+        with open(archive, "wb") as f:
+            f.write(data)
+        try:
+            proc = subprocess.run(
+                [seven_z, "x", archive, f"-o{outdir}", "-y", "-bd"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(SEVEN_Z_MISSING_MSG) from None
+        except subprocess.SubprocessError as e:
+            raise RuntimeError(f"7z extraction failed: {e}") from e
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            detail = detail[-500:] if len(detail) > 500 else detail
+            suffix = f": {detail}" if detail else ""
+            raise RuntimeError(f"7z extraction failed{suffix}")
+        members: dict[str, str] = {}
+        for root, _dirs, files in os.walk(outdir):
+            for name in files:
+                full = os.path.join(root, name)
+                if os.path.islink(full):
+                    continue
+                rel = os.path.relpath(full, outdir).replace("\\", "/")
+                members.setdefault(rel, full)
+        all_names = list(members)
+        written = []
+        total = 0
+        for pattern, dest_rel in extract_map.items():
+            matched = (
+                pattern
+                if pattern in members
+                else next(
+                    (n for n in all_names if fnmatch.fnmatch(n, pattern)),
+                    None,
+                )
+            )
+            if matched is None:
+                log(f"  Warning: no file matching '{pattern}' in 7z, skipping")
+                continue
+            with open(members[matched], "rb") as f:
+                payload = f.read()
+            if len(payload) > _MAX_MEMBER_BYTES:
+                log(
+                    f"  Warning: {matched} exceeds the extraction size "
+                    "cap, skipping"
+                )
+                continue
+            total += len(payload)
+            if total > _MAX_MEMBER_BYTES * 4:
+                raise RuntimeError(
+                    "archive exceeds the total extraction budget"
+                )
+            written.append(install_plain(client_dir, payload, dest_rel))
+        return written
+
+
+def _stripped_parts(filename: str) -> list[str]:
+    """A zip member path with the archive's top-level "<repo>-<sha>/"
+    component removed and separators normalised ("" / "." dropped)."""
+    return [
+        p
+        for p in filename.replace("\\", "/").split("/")[1:]
+        if p not in ("", ".")
+    ]
+
+
 def unpack_folder(data: bytes, dest_root: str) -> None:
     """Atomically unpack a repo-style zip (entries under one top-level
     directory) into ``dest_root``, replacing any existing copy.
@@ -144,6 +259,24 @@ def unpack_folder(data: bytes, dest_root: str) -> None:
     in-depth absolute-path check runs before every write. A failure never
     leaves a half-written ".tmp_install" behind.
     """
+    unpack_prefix(data, "", dest_root)
+
+
+def unpack_prefix(data: bytes, prefix: str, dest_root: str) -> None:
+    """Like unpack_folder but installs only the members under one
+    stripped-root-relative subdirectory (``prefix`` with "/" separators;
+    "" installs everything, i.e. unpack_folder).
+
+    Lets one repo archive install a single addon folder (a Git repo often
+    ships several addons — e.g. AtlasLoot's seven modules) into its own
+    Interface/AddOns/<folder> without dragging the whole tree along. Same
+    traversal guards + atomic replace as unpack_folder.
+    """
+    wanted = [
+        p for p in prefix.replace("\\", "/").split("/") if p not in ("", ".")
+    ]
+    if ".." in wanted:
+        raise RuntimeError(f"Refusing unsafe unpack prefix: {prefix!r}")
     tmp_root = dest_root + ".tmp_install"
     tmp_abs = os.path.abspath(tmp_root)
     if os.path.isdir(tmp_root):
@@ -165,14 +298,14 @@ def unpack_folder(data: bytes, dest_root: str) -> None:
                     raise RuntimeError(
                         "archive exceeds the total extraction budget"
                     )
-                parts = [
-                    p
-                    for p in info.filename.replace("\\", "/").split("/")[1:]
-                    if p not in ("", ".")
-                ]
+                parts = _stripped_parts(info.filename)
                 if not parts or ".." in parts:
                     continue
-                target = os.path.join(tmp_root, *parts)
+                if wanted and (
+                    len(parts) <= len(wanted) or parts[: len(wanted)] != wanted
+                ):
+                    continue
+                target = os.path.join(tmp_root, *parts[len(wanted) :])
                 if not os.path.abspath(target).startswith(tmp_abs + os.sep):
                     continue
                 os.makedirs(os.path.dirname(target), exist_ok=True)

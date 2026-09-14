@@ -1,13 +1,34 @@
-"""Hardened HTTP via httpx: HTTPS-only, host allowlist, capped reads."""
+"""Hardened HTTP via httpx: HTTPS-only, host allowlist, capped reads.
+
+All network I/O goes through :func:`make_secure_client` / :func:`secure_urlopen`
+which refuse non-HTTPS URLs, optionally enforce a host allowlist, validate
+every redirect hop, and use a shared TLS context that verifies against the
+system trust store (plus ``certifi`` roots when bundled). ``httpx`` manages
+redirect following; we validate the resulting ``response.history``.
+
+The legacy ``urllib`` opener has been replaced with :mod:`httpx` + a
+centralised :mod:`tenacity` retry policy. ``secure_urlopen`` is retained as
+a compatibility shim that delegates to :mod:`httpx` so existing callers and
+test monkeypatches keep working while new code should prefer
+:func:`make_secure_client`.
+"""
 
 from __future__ import annotations
 
+import io
+import logging
 import ssl
+import urllib.error
+import urllib.request
 from urllib.parse import urlsplit
 
 import httpx
+import tenacity
 
 from . import launcher
+from .constants import UA
+
+_log = logging.getLogger(__name__)
 
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = True
@@ -64,6 +85,9 @@ def _check_redirect_chain(resp: httpx.Response, allowed_hosts) -> None:
         loc = str(hist.headers.get("location", ""))
         if loc and "://" in loc:
             _check_url(loc, allowed)
+        # Handle protocol-relative redirects (//evil.com/path)
+        elif loc.startswith("//"):
+            _check_url(f"https:{loc}", allowed)
     _check_url(str(resp.url), allowed)
 
 
@@ -76,18 +100,81 @@ def _validate(resp: httpx.Response, allowed_hosts) -> None:
         _check_url(str(resp.url), None)
 
 
-# Deprecated alias for backward compat (old urllib handler)
-class _HttpsOnlyRedirectHandler:  # type: ignore[no-redef]
-    def __init__(self, allowed_hosts=None):
-        self.allowed_hosts = (
-            {h.lower() for h in allowed_hosts} if allowed_hosts else None
-        )
+def _enforce_https_request(request: httpx.Request) -> None:
+    """httpx request hook — every request (including redirects) must stay HTTPS."""
+    if request.url.scheme != "https":
+        raise RuntimeError(f"Refusing non-HTTPS redirect: {request.url}")
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        import urllib.request
 
-        _check_url(newurl, self.allowed_hosts)
-        return urllib.request.Request(newurl, headers=dict(req.headers))
+def make_secure_client(
+    *,
+    timeout: float | httpx.Timeout = 10.0,
+    follow_redirects: bool = True,
+) -> httpx.Client:
+    """Canonical secure HTTP client.
+
+    Centralises TLS, certificate, redirect, UA, and timeout policy. Host
+    allowlist validation remains per-request via :func:`_check_url` /
+    :func:`_validate` so different call sites can supply different
+    allowlists while sharing the same TLS configuration.
+    """
+    return httpx.Client(
+        verify=SSL_CTX,
+        follow_redirects=follow_redirects,
+        timeout=timeout,
+        headers={"User-Agent": UA},
+        event_hooks={"request": [_enforce_https_request]},
+        trust_env=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tenacity retry policy — transient transport/5xx only, never security failures
+# ---------------------------------------------------------------------------
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Whether *exc* is a transient failure worth retrying."""
+    if isinstance(exc, RuntimeError) and "Refusing" in str(exc):
+        return False
+    if isinstance(exc, RuntimeError) and "Cancelled" in str(exc):
+        return False
+    if isinstance(exc, httpx.TimeoutException):
+        return True
+    if isinstance(exc, httpx.NetworkError):
+        return True
+    if isinstance(exc, httpx.TransportError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return 500 <= exc.response.status_code < 600  # type: ignore[attr-defined]
+    if isinstance(exc, urllib.error.URLError):
+        return True
+    if isinstance(exc, urllib.error.HTTPError):
+        return 500 <= exc.code < 600
+    if isinstance(exc, OSError):
+        return True
+    return False
+
+
+httpx_retry = tenacity.retry(
+    stop=tenacity.stop_after_attempt(5),
+    wait=tenacity.wait_exponential(multiplier=1, min=1, max=10)
+    + tenacity.wait_random(0, 1),
+    retry=tenacity.retry_if_exception(_is_retryable),
+    reraise=True,
+    before_sleep=tenacity.before_sleep_log(_log, logging.WARNING),
+)
+
+
+def _httpx_to_http_error(url: str, response: httpx.Response) -> None:
+    """Raise a :class:`urllib.error.HTTPError` mirroring httpx's 4xx/5xx."""
+    raise urllib.error.HTTPError(
+        url,
+        response.status_code,
+        response.reason_phrase,
+        dict(response.headers),  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+    )
 
 
 def read_capped(r, max_bytes: int) -> bytes:
@@ -125,9 +212,7 @@ def _request(
     content: bytes | None = None,
 ) -> httpx.Response:
     _check_url(url, allowed_hosts)
-    with httpx.Client(
-        verify=SSL_CTX, timeout=httpx.Timeout(timeout), follow_redirects=True
-    ) as client:
+    with make_secure_client(timeout=timeout, follow_redirects=True) as client:
         req = client.build_request(
             method, url, headers=headers or {}, content=content
         )
@@ -197,6 +282,16 @@ class _HttpxResponseWrapper:
     def __exit__(self, *exc):
         self.close()
         return False
+
+
+# Compatibility alias for refactor branch imports
+_HttpxCompatResponse = _HttpxResponseWrapper
+
+
+class _CompatBytesIO(io.BytesIO):
+    """Alias for tests that import io.BytesIO wrapper."""
+
+    pass
 
 
 def secure_get(

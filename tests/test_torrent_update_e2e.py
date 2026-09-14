@@ -34,7 +34,6 @@ and that the reference client verifies clean.
 """
 
 import hashlib
-import io
 import json
 import os
 import queue
@@ -43,10 +42,11 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from _torrent_fakes import BodyResp, failing_urlopen
 
-import nostalgia_launcher.services.update_backend.http_update as client_update
+import nostalgia_launcher.services.update.workflow as client_update
 import nostalgia_launcher.services.update_backend.torrent_update as torrent_update
-from nostalgia_launcher.services.update_backend.http_update import (
+from nostalgia_launcher.services.update.workflow import (
     DownloadSource,
     VerifyWorker,
 )
@@ -131,11 +131,7 @@ def _patch_fetch(monkeypatch, content_hash=None, info_hash=None):
 def _patch_source(
     monkeypatch, torrent_url="file://context/wow-client.torrent"
 ):
-    source = DownloadSource(
-        "https://server.test/manifest.json",
-        "https://server.test/client",
-        torrent_url,
-    )
+    source = DownloadSource(torrent_url=torrent_url)
     monkeypatch.setattr(client_update, "_download_source", lambda: source)
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
@@ -170,9 +166,7 @@ def _manifest_unavailable(monkeypatch):
     monkeypatch.setattr(
         client_update,
         "secure_urlopen",
-        lambda *a, **k: (_ for _ in ()).throw(
-            ConnectionError("manifest unavailable")
-        ),
+        failing_urlopen(ConnectionError("manifest unavailable")),
     )
 
 
@@ -307,20 +301,12 @@ def test_e2e_manifest_verify_reports_up_to_date_for_real_client(
         }
     }
 
-    class _Resp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *x):
-            return False
-
-        def read(self, n=-1):
-            return io.BytesIO(json.dumps(manifest).encode()).read(n)
-
     _patch_source(monkeypatch)
     _patch_cache(monkeypatch)
     monkeypatch.setattr(
-        client_update, "secure_urlopen", lambda *a, **k: _Resp()
+        client_update,
+        "secure_urlopen",
+        lambda *a, **k: BodyResp(json.dumps(manifest).encode()),
     )
 
     torrent_calls = {"n": 0}

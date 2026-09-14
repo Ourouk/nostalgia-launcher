@@ -376,9 +376,19 @@ class LauncherConfigDialog(QDialog):
         lives (pre-filled with the Games/<ServerName> suggestion)."""
         self._validated = (kind, source, raw, config)
         if not self._folder.text().strip():
-            suggestion = platform_support.default_game_folder(
-                config.server_name
-            )
+            try:
+                suggestion = platform_support.default_game_folder(
+                    config.server_name, config.client_version
+                )
+            except TypeError as exc:
+                if (
+                    "unexpected" not in str(exc).lower()
+                    and "takes" not in str(exc).lower()
+                ):
+                    raise
+                suggestion = platform_support.default_game_folder(
+                    config.server_name
+                )
             if suggestion:
                 self._folder.setText(suggestion)
         self._set_stage("folder")

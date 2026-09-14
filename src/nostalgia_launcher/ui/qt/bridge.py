@@ -18,7 +18,7 @@ Event → signal mapping:
     ModsLoaded(state)                    → modsLoaded(object)       # ModsLoaded
     AssetsLoaded(state)                  → assetsLoaded(object)     # AssetsLoaded
     AddonsLoaded(state)                  → addonsLoaded(object)     # AddonsLoaded
-    MirrorStatusChanged(ok, text)        → mirrorStatusChanged(bool, str)
+    SourceStatusChanged(ok, text)        → sourceStatusChanged(bool, str)
     OperationFinished(kind, ok, message) → operationFinished(str, bool, str)
     OperationFailed(kind, message)       → operationFailed(str, str)
     GameLaunched(pid, pgid)              → gameLaunched(int, int)
@@ -46,12 +46,12 @@ from ...state.events import (
     GameExited,
     GameLaunched,
     LogMessage,
-    MirrorStatusChanged,
     ModsLoaded,
     NewsLoaded,
     OperationFailed,
     OperationFinished,
     ProgressChanged,
+    SourceStatusChanged,
     StatusChanged,
     UpdateFilesList,
 )
@@ -77,7 +77,7 @@ class ControllerBridge(QObject):
     modsLoaded = Signal(object)
     assetsLoaded = Signal(object)
     addonsLoaded = Signal(object)
-    mirrorStatusChanged = Signal(bool, str)
+    sourceStatusChanged = Signal(bool, str)
     operationFinished = Signal(str, bool, str)
     operationFailed = Signal(str, str)
     gameLaunched = Signal(int, int)
@@ -117,8 +117,8 @@ class ControllerBridge(QObject):
             self.assetsLoaded.emit(event)
         elif isinstance(event, AddonsLoaded):
             self.addonsLoaded.emit(event)
-        elif isinstance(event, MirrorStatusChanged):
-            self.mirrorStatusChanged.emit(event.ok, event.text)
+        elif isinstance(event, SourceStatusChanged):
+            self.sourceStatusChanged.emit(event.ok, event.text)
         elif isinstance(event, OperationFinished):
             self.operationFinished.emit(event.kind, event.ok, event.message)
         elif isinstance(event, OperationFailed):

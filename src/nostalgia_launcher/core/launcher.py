@@ -14,8 +14,9 @@ auto-discovery on later runs.
 **No endpoint derivation.** Every URL is a direct, fully-qualified link — the
 config declares exactly what the launcher talks to; there are no
 server-specific path conventions spliced onto a base URL. The optional
-``server.url`` is identity/display only (and falls back to the host of the
-manifest when omitted); it is never used to build other endpoints.
+``server.url`` is identity/display only (and falls back to the host of
+the fallback/torrent URLs when omitted); it is never used to build
+other endpoints.
 
     {
       "server": {
@@ -137,6 +138,8 @@ class LauncherConfig:
     theme: dict | None = None
     addon_git_hosts: list[str] = field(default_factory=list)
     torrent_root_marker: str = "WoW.exe"
+    # Pinned client version for this server profile (subset of mpq.SUPPORTED_VERSIONS).
+    client_version: str = "1.12.1"
     # Server-specific trusted hosts for downloads (beyond auto-derived ones)
     trusted_hosts: set[str] = field(default_factory=set)
     embedded_mods: list[dict] = field(default_factory=list)
@@ -208,20 +211,6 @@ class LauncherConfig:
             return bool(self.download_torrent_update)
         return bool(self.download_torrent_url)
 
-    def download_capable(self) -> bool:
-        """Whether any update source exists (torrent snapshot or HTTP
-        fallback)."""
-
-        return bool(
-            self.download_torrent_url
-            or self.download_torrent_magnet
-            or self.download_fallback_url
-        )
-
-    def all_bases(self) -> list[str]:
-        """The server identity URL (no longer a list of mirror bases)."""
-        return [self.server_url] if self.server_url else []
-
     def _all_urls(self) -> list[str]:
         """Every endpoint URL the app may contact, so the security allowlist
         covers them."""
@@ -242,9 +231,22 @@ class LauncherConfig:
             if u:
                 urls.append(u)
         urls += self.addons_registry_urls
+        # Version-aware community defaults — even when a server leaves the
+        # catalog blank, the fallback is still a legitimate contact point.
+        for v in DEFAULT_MODS_URL_BY_VERSION.values():
+            if v:
+                urls.append(v)
+        for v in DEFAULT_ADDONS_URL_BY_VERSION.values():
+            if v:
+                urls.append(v)
         for a in self.embedded_assets:
             if isinstance(a, dict) and isinstance(a.get("url"), str):
                 urls.append(a["url"])
+        for m in self.embedded_mods:
+            if isinstance(m, dict):
+                src = m.get("source")
+                if isinstance(src, dict) and isinstance(src.get("url"), str):
+                    urls.append(src["url"])
         return urls
 
 
@@ -286,6 +288,8 @@ def _valid_host(host: str) -> bool:
         return False
     if ".." in host:
         return False
+    if not all(c.isalnum() or c in ".-" for c in host):
+        return False
     return True
 
 
@@ -298,6 +302,45 @@ def _parse_root_marker(value: object) -> str:
         if v and "/" not in v and "\\" not in v and ".." not in v:
             return v
     return "WoW.exe"
+
+
+ALLOWED_CLIENT_VERSIONS = ("1.12.1", "2.4.3", "3.3.5a")
+
+# Community defaults for when a server leaves a catalog URL blank.
+# One entry per client_version that actually has a community catalog; absent
+# versions mean "no community catalog" (checkbox will be grayed).
+DEFAULT_MODS_URL_BY_VERSION: dict[str, str] = {
+    "1.12.1": "https://raw.githubusercontent.com/Ourouk/Nostalgia-addons/main/vanilla_mods.json",
+    "3.3.5a": "https://raw.githubusercontent.com/Ourouk/Nostalgia-addons/main/wotlk_mods.json",
+}
+DEFAULT_ADDONS_URL_BY_VERSION: dict[str, str] = {
+    "1.12.1": "https://raw.githubusercontent.com/Ourouk/Nostalgia-addons/main/vanilla_addons.json",
+    "3.3.5a": "https://raw.githubusercontent.com/Ourouk/Nostalgia-addons/main/wotlk_addons.json",
+}
+
+
+def _parse_client_version(value: object) -> str:
+    """Validate ``server.client_version`` — must be one of ALLOWED_CLIENT_VERSIONS.
+
+    Defaults to ``1.12.1`` for backward compatibility with existing Vanilla
+    installs. Unknown values are a hard error (no silent fallback).
+    """
+    if value is None:
+        return "1.12.1"
+    if isinstance(value, str):
+        v = value.strip()
+        if not v:
+            return "1.12.1"
+        if v in ALLOWED_CLIENT_VERSIONS:
+            return v
+        raise ValueError(
+            "launcher config 'server.client_version' must be one of "
+            f"{', '.join(ALLOWED_CLIENT_VERSIONS)} (got {v!r})"
+        )
+    raise ValueError(
+        "launcher config 'server.client_version' must be one of "
+        f"{', '.join(ALLOWED_CLIENT_VERSIONS)}"
+    )
 
 
 def _https_url(value: object) -> str | None:
@@ -408,15 +451,46 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
     raw_theme = data.get("theme")
     theme = raw_theme if isinstance(raw_theme, dict) else None
 
-    # Server-specific trusted hosts for downloads (beyond auto-derived ones)
+    # Server-specific trusted hosts for downloads (beyond auto-derived ones).
+    # Accepts both plain hostnames (launcher.example.com) and full HTTPS
+    # URLs (https://launcher.example.com/path) — the hostname is extracted
+    # so a common mistake of pasting a URL does not silently break the
+    # allowlist (see Project Legacy report).
     raw_trusted_hosts = server.get("trusted_hosts")
     trusted_hosts: set[str] = set()
     if isinstance(raw_trusted_hosts, list):
         for h in raw_trusted_hosts:
-            if isinstance(h, str):
-                h = h.strip().lower()
-                if h and _valid_host(h):
-                    trusted_hosts.add(h)
+            if not isinstance(h, str):
+                continue
+            raw = h.strip()
+            if not raw:
+                continue
+            host = ""
+            if "://" in raw:
+                try:
+                    host = urlsplit(raw).hostname or ""
+                except ValueError:
+                    host = ""
+            else:
+                # Plain hostname; be tolerant of accidental path/port
+                # (e.g. "host.example.com/path" or "host:443").
+                if "/" in raw or ":" in raw:
+                    try:
+                        host = urlsplit("https://" + raw).hostname or ""
+                    except ValueError:
+                        host = ""
+                    if not host:
+                        host = raw.split("/")[0].split(":")[0]
+                else:
+                    host = raw
+            host = host.strip().lower()
+            if host and _valid_host(host):
+                trusted_hosts.add(host)
+            elif raw:
+                log(
+                    f"  Launcher config: ignoring invalid trusted_hosts entry {raw!r}",
+                    "err",
+                )
 
     # Asset registry URL — explicit only: a config without one simply has no
     # remote asset catalog. Assets may also be embedded directly via the
@@ -446,6 +520,7 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
 
     addon_git_hosts = _parse_git_hosts(data.get("addon_git_hosts"))
     torrent_root_marker = _parse_root_marker(server.get("torrent_root_marker"))
+    client_version = _parse_client_version(server.get("client_version"))
 
     # ── server.download block ──
     dl = server.get("download")
@@ -513,6 +588,7 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
         download_torrent_update=download_torrent_update,
         download_fallback_url=download_fallback_url,
         download_content_type=content_type,
+        client_version=client_version,
     )
 
 
@@ -910,16 +986,6 @@ def download_content_type() -> str:
     return c.download_content_type if c else "folder"
 
 
-def download_manifest_url() -> str:
-    """Removed: manifest model hard-deleted."""
-    return ""
-
-
-def download_client_url() -> str:
-    """Removed: per-file client base hard-deleted."""
-    return ""
-
-
 def download_fallback_url() -> str:
     c = config()
     return c.download_fallback_url or "" if c else ""
@@ -933,6 +999,40 @@ def download_torrent_url() -> str:
 def download_torrent_magnet() -> str:
     c = config()
     return c.download_torrent_magnet or "" if c else ""
+
+
+def default_mods_url_for_version(version: str) -> str:
+    """Community fallback mods catalog for a ``client_version``, else ""."""
+    return DEFAULT_MODS_URL_BY_VERSION.get((version or "").strip(), "") or ""
+
+
+def default_addons_url_for_version(version: str) -> str:
+    """Community fallback addons catalog for a ``client_version``, else ""."""
+    return DEFAULT_ADDONS_URL_BY_VERSION.get((version or "").strip(), "") or ""
+
+
+def default_addons_urls_for_version(version: str) -> list[str]:
+    url = default_addons_url_for_version(version)
+    return [url] if url else []
+
+
+def has_default_mods_for_version(version: str) -> bool:
+    return bool(default_mods_url_for_version(version))
+
+
+def has_default_addons_for_version(version: str) -> bool:
+    return bool(default_addons_url_for_version(version))
+
+
+def client_version() -> str:
+    """The server-declared client version (declarative, no binary sniffing).
+
+    Returns ``""`` when no launcher config is loaded (wizard case); the
+    configured default ``1.12.1`` is already materialized in
+    ``LauncherConfig.client_version`` when a config exists.
+    """
+    c = config()
+    return c.client_version if c else ""
 
 
 def torrent_update_allowed() -> bool:
@@ -956,6 +1056,28 @@ def effective_client_updates_enabled() -> bool:
     return bool(user)
 
 
+def mods_registry_effective_url() -> str:
+    """Server explicit mods URL, else community default for ``client_version``."""
+    c = config()
+    if not c:
+        return ""
+    if c.mods_registry_url:
+        return c.mods_registry_url
+    return default_mods_url_for_version(c.client_version)
+
+
+def addons_registry_effective_urls() -> list[str]:
+    """Server explicit addon URLs, else community default for ``client_version``."""
+    c = config()
+    if not c:
+        return []
+    non_empty = [u for u in c.addons_registry_urls if u and u.strip()]
+    if non_empty:
+        return non_empty
+    default = default_addons_url_for_version(c.client_version)
+    return [default] if default else []
+
+
 def addons_registry_urls() -> list[str]:
     """The ordered launcher-configured addon catalog URLs — later entries
     override earlier ones by addon folder name."""
@@ -966,9 +1088,3 @@ def addons_registry_urls() -> list[str]:
 def realm() -> str:
     c = config()
     return c.realm if c else ""
-
-
-def mirrors() -> list:
-    """Mirrors were removed; the single download source lives in
-    ``server.download``. Kept as an empty list for any legacy caller."""
-    return []

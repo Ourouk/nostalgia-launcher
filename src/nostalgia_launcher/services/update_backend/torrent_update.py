@@ -3,18 +3,15 @@
 `TorrentDownloader` fetches a ``.torrent`` over HTTPS (through the same
 hardened, allowlisted transport as the HTTP downloads) or resolves a
 ``magnet:`` URI from its swarm, and uses libtorrent to bulk-download the
-files the manifest flagged as stale. Peers in the swarm are untrusted — a
-malicious peer can only inject data that fails the piece hashes embedded in
+files whose covering pieces are missing or differ. Peers in the swarm
+are untrusted — a malicious peer can only inject data that fails the
+piece hashes embedded in
 the ``.torrent`` (which itself came over TLS) or in magnet-resolved metadata
 (which libtorrent only accepts when its info section hashes to the info-hash
 embedded in the configured magnet URI).
 
-Integrity layering: when a manifest diff tree exists, the caller re-verifies
-the delivered files' SHA-1s against the manifest and re-fetches any mismatch
-over HTTPS, so the torrent backend cannot weaken the manifest's guarantee. In
-the manifest-less recovery path there is no per-file hash list to check
-against — there, the torrent's piece hashes are the integrity guarantee by
-themselves.
+Integrity: the torrent's piece hashes are the integrity guarantee —
+there is no per-file hash list to check against beyond them.
 
 The session otherwise follows libtorrent's default storage and connection
 configuration. The torrent is paused and removed from the session once every
@@ -38,7 +35,8 @@ from ...core.security_http import allowed_download_hosts, secure_urlopen
 from .worker_base import WorkerBase
 
 # Inactivity guard: if no wanted bytes arrive for this long, the swarm is dead
-# and the caller should fall back to per-file HTTP downloads.
+# and the download fails (single-zip HTTP fallback applies to first install
+# only, never as an incremental path).
 STALL_TIMEOUT = 60
 # Grace period before the stall check kicks in, allowing time for DHT
 # bootstrap, tracker announces, peer discovery, and the first piece transfer.
@@ -711,7 +709,7 @@ class TorrentVerifier(WorkerBase):
         self, h, files, piece_length: int, root_marker: str = "WoW.exe"
     ) -> list[str]:
         """Files whose covering pieces are not all present after the recheck,
-        with the torrent root directory stripped to match the manifest
+        with the torrent root directory stripped to match the game-folder
         layout.  The root is auto-detected from the unique root marker
         position."""
         mapping = _map_torrent_paths(files, root_marker)
@@ -732,8 +730,8 @@ class TorrentVerifier(WorkerBase):
         """Hash-check the local files against the torrent and return the stale
         (missing or differing) file paths. Raises RuntimeError on failure or
         cancellation. Never downloads or seeds — read-only. This is a
-        torrent-piece check; the update controller performs the authoritative
-        manifest hash check afterwards.
+        torrent-piece check; the piece hashes are the authoritative
+        integrity check.
 
         ``snapshot`` may be a pre-fetched :class:`TorrentSnapshot`; when given,
         it is used directly instead of fetching the ``.torrent`` again (the

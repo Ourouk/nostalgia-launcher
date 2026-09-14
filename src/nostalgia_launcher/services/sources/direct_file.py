@@ -21,9 +21,14 @@ import tempfile
 import urllib.request
 
 from ...core.constants import UA
+from ...core.safety import (
+    https_url,
+    safe_relpath,
+    valid_extract_map,
+    valid_sha1,
+)
 from ...core.security_http import allowed_download_hosts, secure_urlopen
 from .base import FetchResult, SourceBackend, StreamedFile, register
-from .safety import https_url, safe_relpath, valid_extract_map, valid_sha1
 
 
 def _fetch_headers(r) -> dict:

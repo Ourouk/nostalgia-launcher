@@ -41,14 +41,13 @@ class UpdatePanel(QWidget):
         title_row.addWidget(title)
         title_row.addStretch(1)
         # Force recheck: drop the hash/torrent-verdict cache and re-verify
-        # every file — SHA-1 checksums when the manifest is reachable,
-        # BitTorrent piece hashes otherwise (the worker picks per backend).
+        # every file against the torrent snapshot's piece hashes.
         self._recheck = QToolButton(self)
         self._recheck.setObjectName("updateRecheck")
         self._recheck.setText("⟳  Force recheck")
         self._recheck.setToolTip(
-            "Re-verify every game file from scratch — checksums when the "
-            "manifest is reachable, BitTorrent piece hashes otherwise"
+            "Re-verify every game file from scratch against the torrent "
+            "snapshot's piece hashes"
         )
         self._recheck.setCursor(Qt.PointingHandCursor)
         self._recheck.setStyleSheet(

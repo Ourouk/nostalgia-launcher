@@ -51,7 +51,7 @@ def _parse_args(argv=None) -> argparse.Namespace:
         "--launcher-config",
         metavar="PATH",
         help="Path to the nostalgia_launcher.json file that configures "
-        "the server, endpoints and mirrors (auto-discovered next to "
+        "the server, endpoints and sources (auto-discovered next to "
         "the executable / in the repo root when omitted).",
     )
     parser.add_argument(
