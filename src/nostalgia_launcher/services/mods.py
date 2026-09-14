@@ -238,8 +238,10 @@ def install_mod(
                     deploy.checked_rel(result.name),
                 )
             )
-        elif (result.name or "").endswith((".tar.gz", ".tgz")):
+        elif (result.name or "").lower().endswith((".tar.gz", ".tgz")):
             written += deploy.extract_tar_map(client_dir, result.data, emap)
+        elif (result.name or "").lower().endswith(".7z"):
+            written += deploy.extract_7z_map(client_dir, result.data, emap)
         else:
             written += deploy.extract_zip_map(
                 client_dir, result.data, mod["id"], emap

@@ -195,9 +195,15 @@ class GitHubReleaseBackend(SourceBackend):
             rel.get("assets", []), src["asset_pattern"], src.get("prefer_no")
         )
         if not asset:
+            available = [
+                a.get("name", "?") for a in rel.get("assets", [])[:10]
+            ]
+            suffix = (
+                f" (available: {', '.join(available)})" if available else ""
+            )
             raise RuntimeError(
                 f"No matching asset '{src['asset_pattern']}' in "
-                f"{entry['id']} release"
+                f"{entry['id']} release{suffix}"
             )
         log(
             f"  Downloading {asset['name']} "

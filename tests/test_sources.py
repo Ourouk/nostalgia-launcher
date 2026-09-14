@@ -359,3 +359,137 @@ def test_extract_tar_map_skips_directory_members(tmp_path):
     )
     # The directory match was skipped; nothing was installed for it.
     assert written == []
+
+
+# ── 7z support (system binary) ───────────────────────────────────────────────
+
+
+def _fake_7z_run(files, returncode=0, stderr=""):
+    """Fake subprocess.run that materialises ``files`` into the -o outdir."""
+
+    class _Proc:
+        def __init__(self):
+            self.returncode = returncode
+            self.stdout = ""
+            self.stderr = stderr
+
+    def _run(args, **kwargs):
+        import os
+
+        outdir = next(
+            a[2:] for a in args if isinstance(a, str) and a.startswith("-o")
+        )
+        for rel, payload in files.items():
+            full = os.path.join(outdir, rel)
+            parent = os.path.dirname(full)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(full, "wb") as f:
+                f.write(payload)
+        return _Proc()
+
+    return _run
+
+
+def test_find_seven_z_probes_candidates(monkeypatch):
+    import shutil
+
+    monkeypatch.setattr(
+        shutil, "which", lambda n: "/usr/bin/7z" if n == "7z" else None
+    )
+    assert deploy.find_seven_z() == "/usr/bin/7z"
+    monkeypatch.setattr(shutil, "which", lambda n: None)
+    assert deploy.find_seven_z() == ""
+
+
+def test_extract_7z_map_missing_backend(monkeypatch, tmp_path):
+    """No 7z binary → actionable error, and 7z is never spawned."""
+    import subprocess
+
+    monkeypatch.setattr(deploy, "find_seven_z", lambda: "")
+
+    def _boom(*a, **k):
+        raise AssertionError("7z must not be spawned without a backend")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    with pytest.raises(RuntimeError, match="7z backend missing"):
+        deploy.extract_7z_map(str(tmp_path), b"fake", {"a": "a.dll"})
+
+
+def test_extract_7z_map_happy_path_and_glob(monkeypatch, tmp_path):
+    import subprocess
+
+    client = tmp_path / "client"
+    client.mkdir()
+    monkeypatch.setattr(deploy, "find_seven_z", lambda: "/usr/bin/7z")
+    files = {
+        "version.dll": b"V",
+        "wow_optimize.dll": b"D",
+        "wow_optimize_launcher.exe": b"E",
+        "pkg/nested.dll": b"N",
+    }
+    monkeypatch.setattr(subprocess, "run", _fake_7z_run(files))
+    emap = {k: k for k in list(files)[:3]}
+    emap["*/nested.dll"] = "nested.dll"
+    emap["missing.dll"] = "missing.dll"
+    written = deploy.extract_7z_map(str(client), b"fake-7z", emap)
+    assert written == [
+        "version.dll",
+        "wow_optimize.dll",
+        "wow_optimize_launcher.exe",
+        "nested.dll",
+    ]
+    assert (client / "nested.dll").read_bytes() == b"N"
+
+
+def test_extract_7z_map_failed_process(monkeypatch, tmp_path):
+    import subprocess
+
+    client = tmp_path / "client"
+    client.mkdir()
+    monkeypatch.setattr(deploy, "find_seven_z", lambda: "/usr/bin/7z")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        _fake_7z_run({}, returncode=2, stderr="ERROR: bad archive"),
+    )
+    with pytest.raises(RuntimeError, match="7z extraction failed"):
+        deploy.extract_7z_map(str(client), b"fake-7z", {"a": "a.dll"})
+
+
+def test_extract_7z_map_traversal_dest_refused(monkeypatch, tmp_path):
+    import subprocess
+
+    client = tmp_path / "client"
+    client.mkdir()
+    monkeypatch.setattr(deploy, "find_seven_z", lambda: "/usr/bin/7z")
+    monkeypatch.setattr(subprocess, "run", _fake_7z_run({"version.dll": b"V"}))
+    with pytest.raises(RuntimeError, match="unsafe install path"):
+        deploy.extract_7z_map(
+            str(client), b"fake-7z", {"version.dll": "../evil"}
+        )
+
+
+def test_github_no_match_lists_available_assets():
+    b = sources.get("github_release")
+    entry = {
+        "id": "wow-optimize",
+        "source": {
+            "kind": "github_release",
+            "owner": "a",
+            "repo": "b",
+            "asset_pattern": "Release.zip",
+        },
+    }
+    rel = {
+        "tag_name": "v3.19.2",
+        "assets": [
+            {
+                "name": "Release.7z",
+                "size": 1,
+                "browser_download_url": "https://example.com/x",
+            }
+        ],
+    }
+    with pytest.raises(RuntimeError, match=r"Release\.7z"):
+        b.fetch(entry, release=rel)

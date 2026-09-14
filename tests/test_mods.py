@@ -547,6 +547,50 @@ def test_install_mod_rejects_traversal_dest(tmp_path, monkeypatch):
     assert list(client.iterdir()) == []
 
 
+@pytest.mark.parametrize("asset_name", ["Release.7z", "Release.7Z"])
+def test_install_mod_routes_7z_by_extension(tmp_path, monkeypatch, asset_name):
+    """A .7z release asset deploys via extract_7z_map (case-insensitive),
+    never the zip path — the wow-optimize v3.19.2 shape."""
+    from nostalgia_launcher.services.sources.base import FetchResult
+
+    client = tmp_path / "client"
+    client.mkdir()
+    mod = {
+        "id": "wow-optimize",
+        "source": {
+            "kind": "github_release",
+            "owner": "suprepupre",
+            "repo": "wow-optimize",
+            "asset_pattern": "Release.*",
+            "extract_map": {"wow_optimize.dll": "wow_optimize.dll"},
+        },
+    }
+
+    class _Backend:
+        def fetch(self, entry, client_dir=None, release=None):
+            return FetchResult(
+                data=b"fake-7z", version="v3.19.2", name=asset_name
+            )
+
+    monkeypatch.setattr(mods, "_source_get", lambda kind: _Backend())
+
+    def _no_zip(*a, **k):
+        raise AssertionError("7z payload must not take the zip path")
+
+    monkeypatch.setattr(deploy, "extract_zip_map", _no_zip)
+    called = {}
+
+    def _fake_7z(client_dir, data, emap):
+        called["emap"] = emap
+        return ["wow_optimize.dll"]
+
+    monkeypatch.setattr(deploy, "extract_7z_map", _fake_7z)
+    written = mods.install_mod(mod, str(client))
+    assert written == ["wow_optimize.dll"]
+    assert called["emap"] == {"wow_optimize.dll": "wow_optimize.dll"}
+    assert mod["_resolved_version"] == "v3.19.2"
+
+
 def test_checked_rel_rejects_traversal_and_absolute():
     assert deploy.checked_rel("mod/mod.dll") == "mod/mod.dll"
     for bad in (
