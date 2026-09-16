@@ -1,6 +1,6 @@
 # CODEBASE_REVIEW — Nostalgia Launcher (`octo-updater`)
 
-> A durable technical map and context-handoff document for the **Vanilla WoW
+> A durable technical map and context-handoff document for the **old-school WoW
 > Launcher** (importable package `nostalgia_launcher`, repo root `octo-updater`).
 > Written for both a human developer picking up the project and a future AI
 > agent that must modify, debug, or extend it.
@@ -24,7 +24,7 @@ from the code), or **[unknown]** (could not be confirmed).
 
 ## 1. Executive Summary
 
-**What it is.** A cross-platform desktop companion for *Vanilla* (1.12.x) World
+**What it is.** A cross-platform desktop companion for old-school (1.12.x/2.4.3/3.3.5a) World
 of Warcraft private-server clients. It updates the game client (incremental HTTP
 + optional BitTorrent bulk download), installs/updates server-registered
 **mods** and Git-hosted **addons**, applies a curated set of `Config.wtf`
@@ -1229,7 +1229,7 @@ Remove the stale `controllers.full_update` import (K2).
 ## 19. AI Handoff Context
 
 ### Project identity
-A **PySide6 desktop app** that updates/mods/launches a *Vanilla WoW* client for
+A **PySide6 desktop app** that updates/mods/launches an *old-school WoW* client for
 private servers. It is **not** a game, not a server emulator, and ships no
 assets. Everything is driven by a single `nostalgia_launcher.json`.
 

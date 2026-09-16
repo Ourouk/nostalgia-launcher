@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "nostalgia-launcher"
 version = "0.0.4"
-description = "Standalone updater and mod manager for the Vanilla WoW client"
+description = "Standalone updater and mod manager for old-school WoW clients"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"

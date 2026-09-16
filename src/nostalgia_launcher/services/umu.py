@@ -28,12 +28,12 @@ DEFAULT_PROTON = "UMU-Proton"
 # Canonical codenames surfaced in the Proton selector alongside any locally
 # installed builds discovered in the Steam compatibility-tools dirs.
 PROTON_CODENAMES = ("UMU-Proton", "GE-Proton", "Proton-Experimental", "Proton")
-# Not a real umu-database id — there is no Vanilla WoW entry — so it just
+# Not a real umu-database id — there is no old-school WoW entry — so it just
 # names the prefix/token and skips unrelated game fixes.
 DEFAULT_GAME_ID = "umu-nostalgia-launcher"
 DEFAULT_STORE = "none"
 
-# Renderer presets for the Vanilla-era (D3D8/OpenGL) client. Each maps to
+# Renderer presets for the old-school-era (D3D8/OpenGL) client. Each maps to
 # Proton env vars set on the umu-run process and to a Config.wtf gxApi value
 # (written by services/tweaks.py). "auto" leaves Proton's defaults untouched.
 RENDERER_AUTO = "auto"

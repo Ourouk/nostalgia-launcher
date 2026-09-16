@@ -44,8 +44,8 @@ _GUARD_SERVER_KEY: str | None = None
 def _parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="nostalgia-launcher",
-        description="Nostalgia Launcher — updater and mod manager for the Vanilla "
-        "WoW client.",
+        description="Nostalgia Launcher — updater and mod manager for old-school "
+        "WoW clients.",
     )
     parser.add_argument(
         "--launcher-config",

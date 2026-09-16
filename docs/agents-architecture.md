@@ -265,7 +265,7 @@ the QLocalServer guard remains authoritative there.
 - **realmlist.wtf**: `services/tweaks.write_realmlist_wtf(client_dir)`
   writes `SET realmlist <server.realm>` (value sanitized, unquoted) into the client root wherever a
   fresh `WTF/Config.wtf` is seeded (verify with overwrite/missing config,
-  torrent recovery, tweaks apply on a missing config) — vanilla clients
+  torrent recovery, tweaks apply on a missing config) — old-school clients
   read both files.
 - The ADDONS list is sectioned, not flat: stale installs get a **NEED
   UPDATE** section rendered above **INSTALLED** (only when non-empty),

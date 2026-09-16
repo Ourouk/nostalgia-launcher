@@ -296,7 +296,7 @@ def _valid_host(host: str) -> bool:
 def _parse_root_marker(value: object) -> str:
     """Validate `server.torrent_root_marker` — the filename used to detect
     the torrent root. Must be a single unsafe-free name. Defaults to
-    `WoW.exe` for Vanilla WoW client compatibility."""
+    `WoW.exe` for old-school WoW client compatibility."""
     if isinstance(value, str):
         v = value.strip()
         if v and "/" not in v and "\\" not in v and ".." not in v:
@@ -322,7 +322,7 @@ DEFAULT_ADDONS_URL_BY_VERSION: dict[str, str] = {
 def _parse_client_version(value: object) -> str:
     """Validate ``server.client_version`` — must be one of ALLOWED_CLIENT_VERSIONS.
 
-    Defaults to ``1.12.1`` for backward compatibility with existing Vanilla
+    Defaults to ``1.12.1`` for backward compatibility with existing old-school
     installs. Unknown values are a hard error (no silent fallback).
     """
     if value is None:

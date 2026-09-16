@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Nostalgia Launcher
-GenericName=Vanilla WoW updater
-Comment=Updater and mod manager for the Vanilla WoW client
+GenericName=Old-school WoW updater
+Comment=Updater and mod manager for old-school WoW clients
 Exec=NostalgiaLauncher
 Icon=NostalgiaLauncher
 Terminal=false

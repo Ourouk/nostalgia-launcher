@@ -96,7 +96,7 @@ def get_client_version(out_dir: str) -> str:  # noqa: ARG001
 def _find_case_insensitive(client_dir: str, filename: str) -> str | None:
     """Case-insensitive lookup for ``filename`` directly under ``client_dir``.
 
-    Vanilla ships ``WoW.exe``, TBC/WotLK ship ``Wow.exe`` — on Windows the
+    Vanilla (1.12) ships ``WoW.exe``, TBC/WotLK ship ``Wow.exe`` — on Windows the
     difference is invisible, on Linux ``os.path.isfile("WoW.exe")`` misses
     ``Wow.exe``. Returns the absolute path with the on-disk spelling, or
     None when absent/unreadable.

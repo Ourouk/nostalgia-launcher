@@ -224,7 +224,7 @@ TWEAKS_ITEMS = [
         "number",
         False,
         None,
-        "Maximum render distance. May cause crashes. [Vanilla max: 777] [Tweaks max: 10000]",
+        "Maximum render distance. May cause crashes. [1.12 max: 777] [Tweaks max: 10000]",
         100,
         10000,
         1,
@@ -235,7 +235,7 @@ TWEAKS_ITEMS = [
         "number",
         False,
         None,
-        "Ground clutter render distance. [Vanilla max: 70] [Tweaks max: 300]",
+        "Ground clutter render distance. [1.12 max: 70] [Tweaks max: 300]",
         0,
         300,
         1,
@@ -246,7 +246,7 @@ TWEAKS_ITEMS = [
         "number",
         False,
         None,
-        "Maximum camera (zoom out) distance. [Vanilla max: 50] [Tweaks max: 100]",
+        "Maximum camera (zoom out) distance. [1.12 max: 50] [Tweaks max: 100]",
         50,
         100,
         1,
@@ -490,7 +490,7 @@ def write_config_wtf(client_dir: str, tweaks: dict | None = None):
 def write_realmlist_wtf(client_dir: str):
     """Write the client-root ``realmlist.wtf`` from the configured realm.
 
-    Vanilla 1.12.1 reads the root realmlist.wtf (WTF/Config.wtf's
+    1.12 reads the root realmlist.wtf (WTF/Config.wtf's
     ``realmList`` usually wins after a first run, but a fresh client folder
     only has the file — belt and braces, as private-server launchers do).
     Never raises; best-effort like `write_config_wtf`.

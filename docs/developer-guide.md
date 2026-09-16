@@ -5,8 +5,7 @@ end-user installation and usage, see the [README](../README.md).
 
 ## Overview
 
-Nostalgia Launcher is a PySide6 desktop app (updater + mod manager for the
-Vanilla WoW client). Runtime dependencies are **PySide6** (GUI) and
+Nostalgia Launcher is a PySide6 desktop app (updater + mod manager for old-school WoW clients). Runtime dependencies are **PySide6** (GUI) and
 **libtorrent** (the BitTorrent backend for client updates). libtorrent is
 imported lazily — incremental updates are torrent-only, so without it only
 the single-zip HTTP fallback (`server.download.http.fallback`) for a
@@ -181,7 +180,7 @@ The client-update engine lives in `services/update/workflow.py`
 - **Torrent root auto-detection**: the launcher locates the unique `WoW.exe`
   file in the torrent (case-insensitive). Its parent directory is the *root*
   — all torrent paths are mapped into the selected WoW folder by stripping
-  that root prefix. For a Vanilla WoW client: `client/WoW.exe` →
+  that root prefix. For an old-school WoW client: `client/WoW.exe` →
   `<wow_folder>/WoW.exe`. The marker is configurable via
   `server.torrent_root_marker` (defaults to `WoW.exe`).
   A `TorrentLayoutError` is raised when `WoW.exe` is missing, duplicated, or

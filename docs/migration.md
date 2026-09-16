@@ -82,7 +82,7 @@ derivation and no mirrors. See `docs/developer-guide.md` for the full schema.
   (github.com, gitlab.com, gitea.com, codeberg.org). Hostnames only; no
   schemes, ports, or paths.
 - `server.torrent_root_marker` — the filename used to detect the root of a
-  client snapshot torrent (defaults to `WoW.exe` for Vanilla WoW clients).
+  client snapshot torrent (defaults to `WoW.exe` for old-school WoW clients).
   Set it if your snapshot uses a different executable name.
 
 ### We do not provide client sources

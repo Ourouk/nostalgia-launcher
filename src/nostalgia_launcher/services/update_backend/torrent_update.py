@@ -466,7 +466,7 @@ def _detect_torrent_root(
     Scans every file path in the torrent (case-insensitive) looking for the
     single entry whose basename equals ``root_marker``. The parent directory
     of that entry is the *root*; all other torrent paths are expected to live
-    under the same root. Defaults to ``WoW.exe`` for Vanilla WoW client
+    under the same root. Defaults to ``WoW.exe`` for old-school WoW client
     compatibility.
 
     Returns ``(torrent_root, {torrent_path: local_path})`` where:
