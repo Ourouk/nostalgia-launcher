@@ -160,6 +160,28 @@ def test_build_env_sets_umu_contract(monkeypatch, tmp_path):
     assert env.get("HOME") == home  # inherits the rest of the environment
 
 
+def test_build_env_scrubs_launcher_env(monkeypatch, tmp_path):
+    """Bundled Qt/venv vars must not leak into the system-python umu-run
+    child (AppImage AppRun exports LD_LIBRARY_PATH at bundled libs; `uv
+    run` sets VIRTUAL_ENV) — otherwise /usr/bin/python3 dies importing
+    umu while a clean terminal works."""
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/appimage/_internal")
+    monkeypatch.setenv("PYTHONPATH", "/app/venv")
+    monkeypatch.setenv("PYTHONHOME", "/app/venv")
+    monkeypatch.setenv("VIRTUAL_ENV", "/app/venv")
+    monkeypatch.setenv("QT_PLUGIN_PATH", "/appimage/plugins")
+    env = umu.build_env("UMU-Proton", "id")
+    for key in (
+        "LD_LIBRARY_PATH",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "VIRTUAL_ENV",
+        "QT_PLUGIN_PATH",
+    ):
+        assert key not in env
+    assert env["GAMEID"] == "id"
+
+
 def test_build_env_resolves_proton_codename(monkeypatch, tmp_path):
     root = tmp_path / "compat-tools"
     (root / "GE-Proton9-4").mkdir()
