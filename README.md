@@ -1,200 +1,54 @@
 # Nostalgia Launcher
 
-<img src="NostalgiaLauncher.svg" alt="Nostalgia Launcher logo" align="left" width="180" /> Nostalgia Launcher is a desktop application that helps you verify, update,
-and configure a game installation — for example an old-school WoW (1.12.1)
-client — against a **configuration that you supply yourself**. It is a local
-tool: it does not include, host, or distribute any game files, and it does
-not maintain or recommend any server directory.
+<img src="NostalgiaLauncher.svg" alt="Nostalgia Launcher logo" align="left" width="180" /> Nostalgia Launcher keeps your game installation up to date and helps you manage mods, addons, and settings — all in one place. Your community gives you a small setup file, you pick your game folder, and the launcher takes care of the rest.
 
-> **What this project is not.** Nostalgia Launcher does not ship World of
-> Warcraft game files, Blizzard artwork, or private-server lists. It does not
-> operate game servers and does not point you at any particular community.
-> You bring the installation and the configuration; the launcher applies it.
+> **What this project is not.** Nostalgia Launcher does not come with any game files and does not run game servers. It has no built-in server list. You bring the game installation and a setup file from a community you trust; the launcher applies it.
 
-## What it does
+## What you can do with it
 
-- Verifies a selected game folder via BitTorrent piece hashes against a
-  snapshot **your configuration advertises** (`server.download.torrent`).
-  Incremental updates are torrent-only. The folder must be confirmed once in
-  Settings — the launcher never downloads anywhere until you choose where,
-  and the active folder stays visible in the footer.
-- For a first-time install (no playable client), downloads a single archive
-  over HTTPS (`server.download.http.fallback` + `server.download.content.type`)
-  and extracts it. There is no per-file HTTP update path.
-- Installs and updates mods and addons from catalogs **your configuration
-  points at** (Git hosts, validated by host allowlist).
-- Runs **multiple isolated profiles** — one per server/community, each with
-  its own server config, game-folder confirmation, mod records and caches.
-  Switch from the header selector (restarts into that profile); create,
-  duplicate, rename and delete them in Settings → PROFILES. Launching a
-  second copy of the same profile just focuses the running window;
-  different profiles may run side by side.
-- Applies common graphics, camera, sound, and gameplay preferences via
-  `Config.wtf`.
-- Shows news and announcements **only if your configuration provides a
-  feed**.
+- **Keep your game up to date** — pick a folder, press Verify, press Update if needed.
+- **Install mods and addons** — browse what your community offers and install with one click.
+- **Play with your own settings** — graphics and realm are set up for you on first install.
+- **Follow community news** — if your community shares announcements, they show up in the News tab.
+- **Use several communities** — each one gets its own profile with its own game folder and mods.
 
-The launcher starts from a **generic capability**, not a specific game
-client: select a folder, import a configuration, review it, verify it, apply
-it.
+## Get the app
 
-## Trust boundary
-
-```
-Nostalgia Launcher (local tool)
-        │
-        ▼
-  a game installation you already own / selected
-        │
-        ▼
-  a configuration you explicitly import
-  (local .json file, or an https URL you type)
-        │
-        ▼
-   optional, validated content/update sources
-  (torrent snapshot or fallback archive, catalogs, news — all named by the config)
-```
-
-The core repository does not know which servers or communities exist. A
-configuration is an untrusted input: it is validated (schema, HTTPS-only
-URLs, host allowlist, path-traversal guards) before anything is downloaded
-or written.
-
-## Getting the app
-
-Download the latest release from:
+Download the latest version here:
 
 <https://github.com/Ourouk/nostalgia-launcher/releases/latest>
 
-Each release includes per-platform packages plus a matching `.sha256`
-checksum file. Verify the checksum when downloading from an untrusted or
-mirrored source.
+## First steps
 
-## First launch — import a configuration
+1. **Get the setup file from your community.** On first launch the launcher asks for it — either a file they sent you or a link they gave you. Check the summary and accept only if you trust the source.
+2. **Choose your game folder.** The launcher asks once where your game lives and shows it at the bottom of the window. Nothing is downloaded until you choose.
+3. **Verify, then Play.** If files are missing or outdated, press Update first.
 
-The launcher has **no built-in server list**. On first launch it asks you to
-import a launcher configuration:
+That's it — next time, just open the launcher and press Play.
 
-- **Local file** — choose a `nostalgia_launcher.json` file supplied by your
-  community.
-- **URL** — paste an `https://` configuration URL your community provides.
+## Everyday use
 
-Before anything is saved, the launcher shows a **summary** of the
-configuration: the server name, the base URL, every host it will contact,
-and which features are enabled (client updates, BitTorrent, news, mod/addon
-catalogs, mirrors). Only accept a configuration from a source you trust.
+- **Play** — starts your game. The button turns into Terminate while the game runs.
+- **Mods / Addons tabs** — what you see here comes from your community's setup file.
+- **News tab** — empty means your community did not share a news feed.
+- **Profiles** — switch communities from the menu at the top. You can also create, rename, or delete profiles in Settings → Profiles. Opening the same profile twice just brings the open window forward.
+- **Linux note** — on Linux you need `umu-run` installed for the Play button to appear.
 
-You can also supply a configuration explicitly:
+## Need help?
 
-```text
-NostalgiaLauncher --launcher-config PATH
-```
+Open Settings → Troubleshooting → Show logs and share what you see with your community when something goes wrong.
 
-(URL import lives in the first-launch wizard and in Settings; the flag
-itself takes a local file only. A path that is missing or invalid is a hard
-error.)
+## Privacy
 
-> Naming: the installed console script is `nostalgia-launcher`; the frozen
-> release binaries are called `NostalgiaLauncher(.exe/.AppImage)`. The
-> examples use the packaged names.
+No tracking. The launcher only talks to the addresses named in the setup file you accepted.
 
-## Debugging from the command line
-
-Every run appends its diagnostics to a session log next to the config
-(`~/.nostalgia-launcher/launcher.log` on Linux,
-`%APPDATA%\NostalgiaLauncher\launcher.log` on Windows,
-`~/Library/Application Support/NostalgiaLauncher/launcher.log` on macOS).
-When it outgrows 512 KiB it rotates to `launcher.log.old`. Two flags read
-and surface it:
-
-```text
-NostalgiaLauncher --print-log        # whole retained log (old + current)
-NostalgiaLauncher --print-log 50     # just the last 50 lines
-NostalgiaLauncher --show-log         # launch with the Session log window open
-```
-
-`--print-log` prints and exits — it never starts the graphical launcher.
-The **Settings → Troubleshooting → Show logs** row toggles the same Session
-log window during a session. Output of the launched game is captured too:
-on Linux the umu-launcher/Wine messages (`[umu] …`), on Windows WoW.exe's
-console output (`[game] …`) — so a crash report contains what the client
-itself printed.
-
-## Using the launcher
-
-### Verification and updates
-
-The launcher verifies a selected folder against a BitTorrent snapshot
-**your configuration points at** (`torrent_url` and/or `magnet`) by hashing
-local files against the snapshot's piece hashes. Only missing/changed pieces
-are fetched (peer data that fails piece hashes is rejected). For a first-time
-install with no playable client, it fetches a single `fallback` archive
-(`client.zip`/`rar` or `folder`) over HTTPS and extracts it per
-`content.type`. Incremental updates never use per-file HTTP.
-
-### Mods and addons
-
-The **MODS** and **ADDONS** tabs list the catalogs named by your
-configuration. There is no universal built-in list — what you see depends
-entirely on the configuration you imported.
-
-### Game settings
-
-On first install the launcher seeds `WTF/Config.wtf` (plus
-`realmlist.wtf`) with fixed defaults and the configured realm, and
-re-syncs the realm keys before launch when needed. Beyond that it never
-touches game settings — those live in the in-game options. The launcher
-never binary-patches game executables; runtime client fixes (where used)
-are left to loader mods installed by your configuration.
-
-### News
-
-The **NEWS** tab shows announcements **only if your configuration provides
-a news feed**. With no feed configured, the tab is empty.
-
-### Linux
-
-On Linux the play action runs the Windows client through
-[umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) (the
-Unified Launcher for Windows Games). The play button appears only when
-`umu-run` is detected.
-
-## Security and privacy
-
-- Downloads use HTTPS with host restrictions derived from your
-  configuration; redirects stay HTTPS-only; TLS is verified (≥ TLS 1.2).
-- Metadata responses (torrent, catalogs, news, logos) are size-capped.
-- Extracted archives are guarded against path traversal; installed files
-  are confined to the selected game folder.
-- The launcher retrieves content only from the URLs your configuration
-  names. Review those URLs and hosts before using the launcher, and only
-  import configurations from sources you trust.
-- No telemetry or tracking is included.
-
-## Data files
-
-Settings, installation records, and caches live in your user profile:
-Linux `~/.nostalgia-launcher`, Windows `%APPDATA%\NostalgiaLauncher`, macOS
-`~/Library/Application Support/NostalgiaLauncher`. Deleting the settings
-directory resets the launcher.
+Hosting a community or packaging the app yourself? See the [Developer Guide](docs/developer-guide.md).
 
 ## Legal notices
 
-World of Warcraft and Blizzard are trademarks or registered trademarks of
-Blizzard Entertainment. Nostalgia Launcher is independent and is **not
-affiliated with, endorsed by, or sponsored by Blizzard Entertainment**.
+World of Warcraft and Blizzard are trademarks of Blizzard Entertainment. Nostalgia Launcher is independent and is **not affiliated with, endorsed by, or sponsored by Blizzard Entertainment**.
 
-Nostalgia Launcher is a local configuration and update tool. It does not
-create, host, own, or redistribute game files, mods, addons, or patches —
-those are provided by the configuration you import and by the third parties
-that operate the endpoints it names.
-
-You are responsible for ensuring that your use of game software and of any
-third-party services complies with applicable laws, licenses, and the terms
-of those third parties. A technical design can reduce legal exposure, but it
-does not guarantee legal compliance; compatibility with private servers may
-still violate contractual terms or raise legal issues depending on your
-jurisdiction.
+The launcher does not create, host, or share game files, mods, or addons — those come from the setup file you import and the third parties behind it. Make sure your use follows the law and the terms of the game and services you use.
 
 ## Attribution and license
 
