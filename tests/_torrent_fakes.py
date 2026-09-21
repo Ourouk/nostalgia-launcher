@@ -18,7 +18,6 @@ local to their test modules — only the canonical shared shapes live
 here.
 """
 
-import io
 import zipfile
 from types import SimpleNamespace
 
@@ -91,7 +90,7 @@ def fake_urlopen(
     makes every call raise instead (manifest-down paths).
     """
 
-    def _open(req, timeout=10, allowed_hosts=None, **kw):
+    def _open(req, timeout=10, **kw):
         if calls is not None:
             calls.append(req)
         if exc is not None:
@@ -677,18 +676,6 @@ def make_download_config(
 
 
 # ── archive builders ─────────────────────────────────────────────────────────
-
-
-def make_zip(members):
-    """Build zip bytes from ``{name: data_or_ZipInfo}``."""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        for name, data in members.items():
-            if isinstance(data, zipfile.ZipInfo):
-                zf.writestr(data, b"evil")
-            else:
-                zf.writestr(name, data)
-    return buf.getvalue()
 
 
 def write_zip_file(path, members):

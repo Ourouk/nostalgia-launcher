@@ -297,7 +297,7 @@ def test_verify_uses_selected_manifest_url(monkeypatch, tmp_path):
     )
     fetched = []
 
-    def _record(req, timeout, allowed_hosts=None):
+    def _record(req, timeout):
         fetched.append(req.full_url)
         return BodyResp(b"{}")
 

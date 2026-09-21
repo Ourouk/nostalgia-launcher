@@ -523,7 +523,7 @@ def _yes(no_value) -> str:
     return "no" if no_value else "yes"
 
 
-def _catalog_summary(explicit_url: bool, url_count: int, embedded: int) -> str:
+def _catalog_summary(explicit_url: bool, embedded: int) -> str:
     """One-line description of where a content category comes from:
     remote catalog URL(s), embedded entries, or both."""
     if explicit_url and embedded:
@@ -579,7 +579,6 @@ def _summary_text(
         "Mod catalog: "
         + _catalog_summary(
             bool(cfg.mods_registry_url),
-            1,
             len(cfg.embedded_mods),
         ),
         "Addon catalog(s): "
@@ -590,7 +589,7 @@ def _summary_text(
         lines.append(
             "Asset catalog: "
             + _catalog_summary(
-                bool(cfg.assets_registry_url), 1, len(cfg.embedded_assets)
+                bool(cfg.assets_registry_url), len(cfg.embedded_assets)
             )
         )
     saved = []

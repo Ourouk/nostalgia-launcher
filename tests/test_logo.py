@@ -44,7 +44,7 @@ def test_fetch_logo_falls_back_to_cache_on_failure(tmp_path, monkeypatch):
     dest = _patch_cache(tmp_path, monkeypatch)
     dest.write_bytes(LOGO_BYTES)
 
-    def _fail(req, timeout=10, allowed_hosts=None):
+    def _fail(req, timeout=10):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(logo, "secure_urlopen", _fail)
@@ -54,7 +54,7 @@ def test_fetch_logo_falls_back_to_cache_on_failure(tmp_path, monkeypatch):
 def test_fetch_logo_returns_none_without_cache(tmp_path, monkeypatch):
     _patch_cache(tmp_path, monkeypatch)
 
-    def _fail(req, timeout=10, allowed_hosts=None):
+    def _fail(req, timeout=10):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(logo, "secure_urlopen", _fail)

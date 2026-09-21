@@ -463,7 +463,6 @@ class UpdateWorker:
         self._total: int = 0
         self._downloaded: int = 0
         self._counted: dict[str, int] = {}
-        self._torrent_wanted: set[str] = set()
         _wb = _WB(out_dir, dispatcher)
         _wb._cache = self._cache
         self.log = _wb.log  # type: ignore

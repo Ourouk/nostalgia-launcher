@@ -180,7 +180,7 @@ def test_registry_force_fetch_validates_and_caches(tmp_path, monkeypatch):
 def _patch_download(monkeypatch, data, headers=None):
     seen = {}
 
-    def fake(req, timeout=0, allowed_hosts=None):
+    def fake(req, timeout=0):
         seen["url"] = req.full_url if hasattr(req, "full_url") else req
         return BodyResp(data, headers=headers)
 

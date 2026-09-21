@@ -905,11 +905,6 @@ def default_addons_url_for_version(version: str) -> str:
     return DEFAULT_ADDONS_URL_BY_VERSION.get((version or "").strip(), "") or ""
 
 
-def default_addons_urls_for_version(version: str) -> list[str]:
-    url = default_addons_url_for_version(version)
-    return [url] if url else []
-
-
 def has_default_mods_for_version(version: str) -> bool:
     return bool(default_mods_url_for_version(version))
 
@@ -948,28 +943,6 @@ def effective_client_updates_enabled() -> bool:
     if user is None:
         return default
     return bool(user)
-
-
-def mods_registry_effective_url() -> str:
-    """Server explicit mods URL, else community default for ``client_version``."""
-    c = config()
-    if not c:
-        return ""
-    if c.mods_registry_url:
-        return c.mods_registry_url
-    return default_mods_url_for_version(c.client_version)
-
-
-def addons_registry_effective_urls() -> list[str]:
-    """Server explicit addon URLs, else community default for ``client_version``."""
-    c = config()
-    if not c:
-        return []
-    non_empty = [u for u in c.addons_registry_urls if u and u.strip()]
-    if non_empty:
-        return non_empty
-    default = default_addons_url_for_version(c.client_version)
-    return [default] if default else []
 
 
 def addons_registry_urls() -> list[str]:

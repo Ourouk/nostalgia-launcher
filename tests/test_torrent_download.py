@@ -49,9 +49,6 @@ from nostalgia_launcher.state.events import (
     UpdateFailed,
 )
 
-SHA1_X = "11F6AD8EC52A2984ABAAFD7C3B516503785C2072"
-
-
 # ── availability probe ───────────────────────────────────────────────────────
 
 
@@ -484,7 +481,7 @@ def test_download_stall_resets_on_peer_connection(tmp_path, monkeypatch):
     monkeypatch.setattr(
         td,
         "secure_urlopen",
-        lambda req, timeout=10, allowed_hosts=None: _resp(b"fake"),
+        lambda req, timeout=10: _resp(b"fake"),
     )
     # Very short stall timeout — but peers appear before it fires
     monkeypatch.setattr(td, "STALL_TIMEOUT", 0.1)
@@ -627,7 +624,7 @@ def test_download_does_not_treat_read_piece_alert_as_error(
     monkeypatch.setattr(
         td,
         "secure_urlopen",
-        lambda req, timeout=10, allowed_hosts=None: _resp(b"fake"),
+        lambda req, timeout=10: _resp(b"fake"),
     )
     d = td.TorrentDownloader(str(client), EventDispatcher())
     # The read_piece_alert fires on first poll but download is already
@@ -1755,7 +1752,7 @@ def test_fetch_torrent_wraps_http_error(tmp_path, monkeypatch):
         TorrentFetchError,
     )
 
-    def http_not_found(req, timeout=10, allowed_hosts=None):
+    def http_not_found(req, timeout=10):
         raise urllib.error.HTTPError(
             "https://srv/client.torrent", 404, "Not Found", None, None
         )
@@ -1772,7 +1769,7 @@ def test_fetch_torrent_wraps_runtime_error(tmp_path, monkeypatch):
         TorrentFetchError,
     )
 
-    def refuse_evil_host(req, timeout=10, allowed_hosts=None):
+    def refuse_evil_host(req, timeout=10):
         raise RuntimeError("Refusing download from unexpected host: evil.com")
 
     monkeypatch.setattr(td, "secure_urlopen", refuse_evil_host)
@@ -2343,7 +2340,7 @@ def test_download_pump_does_not_stall_during_recheck(tmp_path, monkeypatch):
     monkeypatch.setattr(
         td,
         "secure_urlopen",
-        lambda req, timeout=10, allowed_hosts=None: _resp(b"fake"),
+        lambda req, timeout=10: _resp(b"fake"),
     )
     monkeypatch.setattr(td, "STALL_TIMEOUT", 0.05)
     monkeypatch.setattr(td, "DISCOVERY_TIMEOUT", 0.05)
@@ -2485,7 +2482,7 @@ def test_verifier_progress_reports_piece_counts(tmp_path, monkeypatch):
     monkeypatch.setattr(
         td,
         "secure_urlopen",
-        lambda req, timeout=10, allowed_hosts=None: _resp(b"fake"),
+        lambda req, timeout=10: _resp(b"fake"),
     )
 
     dispatcher = EventDispatcher()
@@ -2631,7 +2628,7 @@ def test_verifier_does_not_stall_when_verified_pieces_unpopulated(
     monkeypatch.setattr(
         td,
         "secure_urlopen",
-        lambda req, timeout=10, allowed_hosts=None: _resp(b"fake"),
+        lambda req, timeout=10: _resp(b"fake"),
     )
 
     dispatcher = EventDispatcher()

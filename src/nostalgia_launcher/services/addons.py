@@ -260,13 +260,6 @@ def registry_urls() -> list[str]:
     return _effective_addons_urls()
 
 
-def addons_registry_default_urls() -> list[str]:
-    """The launcher-configured addon catalog URLs, in override order ('' list
-    when not configured). Kept for tests — explicit only."""
-
-    return launcher.addons_registry_urls()
-
-
 def addons_default_available() -> bool:
     from ..core import launcher as _launcher
 

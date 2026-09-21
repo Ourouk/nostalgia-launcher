@@ -135,17 +135,6 @@ def registry_url() -> str:
     return launcher.default_mods_url_for_version(launcher.client_version())
 
 
-def mods_registry_default_url() -> str:
-    """The launcher-configured mod catalog URL ('' when not configured).
-
-    Kept for tests — returns only the explicit server URL, not the community
-    default. Use ``registry_url()`` for the effective URL.
-    """
-    from ..core import launcher
-
-    return launcher.mods_registry_url()
-
-
 def mods_default_available() -> bool:
     """Whether a community default exists for this ``client_version``."""
     from ..core import launcher
