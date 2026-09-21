@@ -421,12 +421,14 @@ def _freeze_as(tmp_path, monkeypatch, *relpaths, frozen=True):
 
 
 def test_find_seven_z_prefers_bundled(monkeypatch, tmp_path):
+    import os
     import shutil
 
-    _freeze_as(tmp_path, monkeypatch, "_internal/7zz")
+    bundled = "7zr.exe" if os.name == "nt" else "7zz"
+    _freeze_as(tmp_path, monkeypatch, f"_internal/{bundled}")
     monkeypatch.setattr(shutil, "which", lambda n: "/usr/bin/7z")
     found = deploy.find_seven_z()
-    assert found == str(tmp_path / "_internal" / "7zz")
+    assert found == str(tmp_path / "_internal" / bundled)
 
 
 def test_find_seven_z_falls_back_to_path(monkeypatch, tmp_path):
@@ -441,9 +443,11 @@ def test_find_seven_z_falls_back_to_path(monkeypatch, tmp_path):
 
 def test_find_seven_z_ignores_bundle_when_not_frozen(monkeypatch, tmp_path):
     """Dev runs never pick up stray binaries beside the interpreter."""
+    import os
     import shutil
 
-    _freeze_as(tmp_path, monkeypatch, "_internal/7zz", frozen=False)
+    bundled = "7zr.exe" if os.name == "nt" else "7zz"
+    _freeze_as(tmp_path, monkeypatch, f"_internal/{bundled}", frozen=False)
     monkeypatch.setattr(
         shutil, "which", lambda n: "/usr/bin/7z" if n == "7z" else None
     )
