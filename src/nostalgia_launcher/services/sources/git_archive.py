@@ -12,7 +12,6 @@ SourceBackend surface on top.
 """
 
 import json
-import os
 import subprocess
 import time
 import urllib.request
@@ -22,6 +21,7 @@ from ...core.config_store import load_config, update_config
 from ...core.constants import GITHUB_API, UA
 from ...core.errors import describe_net_error
 from ...core.log_sink import log
+from ...core.process_env import clean_system_env
 from ...core.security_http import read_capped, secure_urlopen
 from .base import FetchResult, SourceBackend, register
 
@@ -94,8 +94,7 @@ def ls_remote_sha(git_url: str, pin: str | None) -> str | None:
     out, or the requested ref can't be resolved — never raises."""
     args = ["git", "ls-remote", git_url]
     args.append(pin if pin else "HEAD")
-    env = dict(os.environ)
-    env["GIT_TERMINAL_PROMPT"] = "0"
+    env = clean_system_env({"GIT_TERMINAL_PROMPT": "0"})
     try:
         proc = subprocess.run(
             args, capture_output=True, text=True, timeout=15, env=env

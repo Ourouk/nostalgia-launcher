@@ -21,6 +21,11 @@ import time
 
 from ..core import platform_support
 from ..core.log_sink import log
+from ..core.process_env import (
+    SCRUBBED_ENV_PREFIXES,
+    SCRUBBED_ENV_VARS,
+    clean_system_env,
+)
 
 # A valid umu codename: umu-launcher uses UMU-Proton (its own, continuously
 # updated Proton build) unless the user picks a specific installed build.
@@ -48,26 +53,11 @@ DEFAULT_RENDERER = RENDERER_AUTO
 
 _UMU_EXE = "umu-run"
 
-# Env vars that must never leak from the launcher process into the
-# system-python `umu-run` child. The AppImage AppRun exports
-# LD_LIBRARY_PATH at the bundled Qt/libs (packaging/linux/AppRun), and a
-# `uv run`/venv launch sets VIRTUAL_ENV/PYTHON* — either makes
-# /usr/bin/python3 load incompatible C extensions (_ctypes, zlib, ...) and
-# die on `from umu.__main__ import main` (works in a clean terminal, fails
-# from the AppImage).
-_SCRUBBED_ENV_VARS = (
-    "LD_LIBRARY_PATH",
-    "LD_PRELOAD",
-    "PYTHONHOME",
-    "PYTHONPATH",
-    "VIRTUAL_ENV",
-    "CONDA_PREFIX",
-    "__PYVENV_LAUNCHER__",
-)
-
-# QT_* vars only affect Qt plugin/theme lookup; harmless to umu but also
-# pointless — drop them so the child can't pick up our bundled Qt paths.
-_SCRUBBED_ENV_PREFIXES = ("QT_",)
+# Scrubbed-env single source is `core.process_env` (shared with
+# the 7z/git/folder spawns); the underscore aliases keep the
+# previous attribute paths working.
+_SCRUBBED_ENV_VARS = SCRUBBED_ENV_VARS
+_SCRUBBED_ENV_PREFIXES = SCRUBBED_ENV_PREFIXES
 
 # The compatibility-tools dirs Steam (native and Flatpak) reads for custom
 # Proton builds. GE-Proton/UMU-Proton installs land here as subdirectories.
@@ -236,11 +226,7 @@ def build_env(
     stock DXVK over client-folder DLLs (e.g. a dxvk-gplasync build installed
     via the MODS panel — Wine's default native,builtin overrides load them),
     and the async shader-compilation flags are exported for it."""
-    env = dict(os.environ)
-    for key in _SCRUBBED_ENV_VARS:
-        env.pop(key, None)
-    for key in [k for k in env if k.startswith(_SCRUBBED_ENV_PREFIXES)]:
-        env.pop(key, None)
+    env = clean_system_env()
     env["WINEPREFIX"] = compute_wine_prefix()
     env["PROTONPATH"] = resolve_proton(proton)
     env["GAMEID"] = game_id

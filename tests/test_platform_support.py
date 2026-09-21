@@ -232,9 +232,10 @@ def test_open_folder_windows(fake_platform, monkeypatch):
     popen = mock.Mock()
     monkeypatch.setattr(subprocess, "Popen", popen)
     open_folder("C:\\games")
-    popen.assert_called_once_with(
-        ["explorer.exe", "C:\\games"], close_fds=True
-    )
+    args, kwargs = popen.call_args
+    assert args[0] == ["explorer.exe", "C:\\games"]
+    assert kwargs["close_fds"] is True
+    assert "LD_LIBRARY_PATH" not in kwargs["env"]
 
 
 def test_open_folder_macos(fake_platform, monkeypatch):
@@ -242,15 +243,22 @@ def test_open_folder_macos(fake_platform, monkeypatch):
     popen = mock.Mock()
     monkeypatch.setattr(subprocess, "Popen", popen)
     open_folder("/games")
-    popen.assert_called_once_with(["open", "/games"], close_fds=True)
+    args, kwargs = popen.call_args
+    assert args[0] == ["open", "/games"]
+    assert kwargs["close_fds"] is True
+    assert "LD_LIBRARY_PATH" not in kwargs["env"]
 
 
 def test_open_folder_linux(fake_platform, monkeypatch):
     fake_platform("linux")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/appimage/_internal")
     popen = mock.Mock()
     monkeypatch.setattr(subprocess, "Popen", popen)
     open_folder("/games")
-    popen.assert_called_once_with(["xdg-open", "/games"], close_fds=True)
+    args, kwargs = popen.call_args
+    assert args[0] == ["xdg-open", "/games"]
+    assert kwargs["close_fds"] is True
+    assert "LD_LIBRARY_PATH" not in kwargs["env"]
 
 
 def test_open_folder_missing_binary_raises(fake_platform, monkeypatch):

@@ -8,6 +8,8 @@ from platformdirs import (
     PlatformDirs,  # noqa: F401 - Linux XDG logic mirrors PlatformDirs to respect fake_platform in tests
 )
 
+from .process_env import clean_system_env
+
 _UMU_PROBE = None
 
 
@@ -140,9 +142,13 @@ def default_game_folder(
 
 
 def open_folder(path: str):
+    # Scrubbed env: the AppImage's LD_LIBRARY_PATH would otherwise
+    # leak into xdg-open's child applications (e.g. a file manager
+    # loading the bundled libstdc++ instead of the system's).
+    env = clean_system_env()
     if is_windows():
-        subprocess.Popen(["explorer.exe", path], close_fds=True)
+        subprocess.Popen(["explorer.exe", path], close_fds=True, env=env)
     elif is_macos():
-        subprocess.Popen(["open", path], close_fds=True)
+        subprocess.Popen(["open", path], close_fds=True, env=env)
     else:
-        subprocess.Popen(["xdg-open", path], close_fds=True)
+        subprocess.Popen(["xdg-open", path], close_fds=True, env=env)

@@ -543,6 +543,7 @@ class _FakeProc:
 
 
 def test_git_ls_remote_parses_head(monkeypatch):
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/appimage/_internal")
     proc = _FakeProc(
         stdout=("ab" * 20 + "\tHEAD\n" + "cd" * 20 + "\trefs/heads/main\n")
     )
@@ -558,6 +559,7 @@ def test_git_ls_remote_parses_head(monkeypatch):
     args, kwargs = calls[0]
     assert args[0] == ["git", "ls-remote", "https://github.com/a/b", "HEAD"]
     assert kwargs.get("env", {}).get("GIT_TERMINAL_PROMPT") == "0"
+    assert "LD_LIBRARY_PATH" not in kwargs.get("env", {})
 
 
 def test_git_ls_remote_parses_branch_and_tag(monkeypatch):
