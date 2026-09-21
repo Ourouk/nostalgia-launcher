@@ -93,8 +93,8 @@ persisted config keeps only server/theme. The ``validate_*`` helpers stay
 side-effect-free; a repo write failure aborts the whole import.
 
 A missing or invalid configuration is a hard startup error: the app has
-nothing to point at. This module is network-free; `core/security_http` builds
-its download allowlist from the configured hosts.
+nothing to point at. This module is network-free; downloads trust any
+HTTPS URL the configuration (or its catalogs) declares.
 """
 
 import json
@@ -140,8 +140,6 @@ class LauncherConfig:
     torrent_root_marker: str = "WoW.exe"
     # Pinned client version for this server profile (subset of mpq.SUPPORTED_VERSIONS).
     client_version: str = "1.12.1"
-    # Server-specific trusted hosts for downloads (beyond auto-derived ones)
-    trusted_hosts: set[str] = field(default_factory=set)
     embedded_mods: list[dict] = field(default_factory=list)
     embedded_addons: list[dict] = field(default_factory=list)
     embedded_assets: list[dict] = field(default_factory=list)
@@ -173,17 +171,6 @@ class LauncherConfig:
             or self.mods_registry_url
         )
 
-    def download_hosts(self) -> set[str]:
-        """Every host the configured endpoints may serve from, plus any
-        server-specific trusted hosts, so the security allowlist covers them."""
-        hosts: set[str] = set()
-        for url in self._all_urls():
-            host = urlsplit(url).hostname
-            if host:
-                hosts.add(host)
-        hosts |= self.trusted_hosts
-        return hosts
-
     def addon_git_host_set(self) -> set[str]:
         """The base git hosts plus any community-supplied extra hosts
         (validated hostnames only)."""
@@ -210,44 +197,6 @@ class LauncherConfig:
         if self.download_torrent_update is not None:
             return bool(self.download_torrent_update)
         return bool(self.download_torrent_url)
-
-    def _all_urls(self) -> list[str]:
-        """Every endpoint URL the app may contact, so the security allowlist
-        covers them."""
-        urls: list[str] = []
-        if self.server_url:
-            urls.append(self.server_url)
-        for u in (
-            self.news_url,
-            self.featured_news_url,
-            self.mods_registry_url,
-            self.addons_registry_url,
-            self.assets_registry_url,
-            self.download_fallback_url,
-            self.download_torrent_url,
-            self.download_torrent_magnet,
-            self.discord_url or "",
-        ):
-            if u:
-                urls.append(u)
-        urls += self.addons_registry_urls
-        # Version-aware community defaults — even when a server leaves the
-        # catalog blank, the fallback is still a legitimate contact point.
-        for v in DEFAULT_MODS_URL_BY_VERSION.values():
-            if v:
-                urls.append(v)
-        for v in DEFAULT_ADDONS_URL_BY_VERSION.values():
-            if v:
-                urls.append(v)
-        for a in self.embedded_assets:
-            if isinstance(a, dict) and isinstance(a.get("url"), str):
-                urls.append(a["url"])
-        for m in self.embedded_mods:
-            if isinstance(m, dict):
-                src = m.get("source")
-                if isinstance(src, dict) and isinstance(src.get("url"), str):
-                    urls.append(src["url"])
-        return urls
 
 
 # Base set of git hosts allowlisted for addon installations. A configuration
@@ -278,19 +227,6 @@ def _parse_git_hosts(value) -> list[str]:
         if all(c.isalnum() or c in ".-" for c in h):
             out.append(h)
     return out
-
-
-def _valid_host(host: str) -> bool:
-    """Validate a hostname: non-empty, no path separators, no traversal."""
-    if not host:
-        return False
-    if any(ch in host for ch in "/\\:"):
-        return False
-    if ".." in host:
-        return False
-    if not all(c.isalnum() or c in ".-" for c in host):
-        return False
-    return True
 
 
 def _parse_root_marker(value: object) -> str:
@@ -451,47 +387,6 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
     raw_theme = data.get("theme")
     theme = raw_theme if isinstance(raw_theme, dict) else None
 
-    # Server-specific trusted hosts for downloads (beyond auto-derived ones).
-    # Accepts both plain hostnames (launcher.example.com) and full HTTPS
-    # URLs (https://launcher.example.com/path) — the hostname is extracted
-    # so a common mistake of pasting a URL does not silently break the
-    # allowlist (see Project Legacy report).
-    raw_trusted_hosts = server.get("trusted_hosts")
-    trusted_hosts: set[str] = set()
-    if isinstance(raw_trusted_hosts, list):
-        for h in raw_trusted_hosts:
-            if not isinstance(h, str):
-                continue
-            raw = h.strip()
-            if not raw:
-                continue
-            host = ""
-            if "://" in raw:
-                try:
-                    host = urlsplit(raw).hostname or ""
-                except ValueError:
-                    host = ""
-            else:
-                # Plain hostname; be tolerant of accidental path/port
-                # (e.g. "host.example.com/path" or "host:443").
-                if "/" in raw or ":" in raw:
-                    try:
-                        host = urlsplit("https://" + raw).hostname or ""
-                    except ValueError:
-                        host = ""
-                    if not host:
-                        host = raw.split("/")[0].split(":")[0]
-                else:
-                    host = raw
-            host = host.strip().lower()
-            if host and _valid_host(host):
-                trusted_hosts.add(host)
-            elif raw:
-                log(
-                    f"  Launcher config: ignoring invalid trusted_hosts entry {raw!r}",
-                    "err",
-                )
-
     # Asset registry URL — explicit only: a config without one simply has no
     # remote asset catalog. Assets may also be embedded directly via the
     # top-level "assets" list (kept raw; services/assets sanitizes them).
@@ -578,7 +473,6 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
         theme=theme,
         addon_git_hosts=addon_git_hosts,
         torrent_root_marker=torrent_root_marker,
-        trusted_hosts=trusted_hosts,
         embedded_mods=embedded_mods,
         embedded_addons=embedded_addons,
         embedded_assets=embedded_assets,

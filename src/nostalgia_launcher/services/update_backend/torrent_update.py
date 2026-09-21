@@ -1,7 +1,7 @@
 """BitTorrent update backend for client updates (libtorrent).
 
 `TorrentDownloader` fetches a ``.torrent`` over HTTPS (through the same
-hardened, allowlisted transport as the HTTP downloads) or resolves a
+hardened transport as the HTTP downloads) or resolves a
 ``magnet:`` URI from its swarm, and uses libtorrent to bulk-download the
 files whose covering pieces are missing or differ. Peers in the swarm
 are untrusted — a malicious peer can only inject data that fails the
@@ -31,7 +31,7 @@ from ...core import profiles
 from ...core.constants import DOWNLOAD_TIMEOUT, UA
 from ...core.filesystem import atomic_write_bytes as _atomic_write_bytes
 from ...core.helpers import fmt_size, fmt_speed, redact_url
-from ...core.security_http import allowed_download_hosts, secure_urlopen
+from ...core.security_http import secure_urlopen
 from .worker_base import WorkerBase
 
 # Inactivity guard: if no wanted bytes arrive for this long, the swarm is dead
@@ -111,7 +111,7 @@ def available() -> bool:
 
 class TorrentFetchError(Exception):
     """Raised when the ``.torrent`` file cannot be fetched (HTTP error,
-    DNS failure, allowlist rejection, etc.).  Distinguishes *network*
+    DNS failure, TLS failure, etc.).  Distinguishes *network*
     failures from libtorrent verification failures so the caller can
     mark the snapshot as unreachable vs. simply failed."""
 
@@ -234,15 +234,15 @@ def _fetch_torrent(
 ) -> "TorrentSnapshot":
     """Fetch or resolve the configured BitTorrent snapshot locator.
 
-    An HTTPS locator fetches the ``.torrent`` over the allowlisted
+    An HTTPS locator fetches the ``.torrent`` over the hardened HTTPS
     transport; a ``magnet:`` locator resolves its metadata from the swarm
     (see :func:`_resolve_magnet`). Either way the returned
     :class:`TorrentSnapshot` carries the raw bytes (empty when
     serialization is unavailable), their SHA-256 content hash, and the
     torrent's info hash.
 
-    Network/security failures (HTTP errors, connection refused, DNS, TLS,
-    allowlist rejection) are wrapped in :class:`TorrentFetchError` so the
+    Network/security failures (HTTP errors, connection refused, DNS, TLS)
+    are wrapped in :class:`TorrentFetchError` so the
     caller can distinguish a *missing* snapshot from a *failed* verification.
 
     ``cancel`` is an optional zero-arg callable polled by the magnet
@@ -263,11 +263,7 @@ def _fetch_torrent_url(torrent_url: str, log) -> "TorrentSnapshot":
     log(f"  Fetching torrent: {redact_url(torrent_url)}", "dim")
     req = urllib.request.Request(torrent_url, headers={"User-Agent": UA})
     try:
-        with secure_urlopen(
-            req,
-            timeout=DOWNLOAD_TIMEOUT,
-            allowed_hosts=allowed_download_hosts(),
-        ) as r:
+        with secure_urlopen(req, timeout=DOWNLOAD_TIMEOUT) as r:
             # Stream the torrent file with a size cap to avoid loading a
             # malicious oversized response into memory.
             max_size = 5 * 1024 * 1024  # 5 MiB cap for .torrent files

@@ -700,7 +700,7 @@ class UpdateWorker:
         if self._cancel:
             return self._cancelled_abort() is True
 
-        # Per-hop host allowlist is enforced inside download_file.
+        # HTTPS is enforced inside download_file.
         from ...core import launcher as _launcher
         from ...core.helpers import redact_url
 

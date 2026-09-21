@@ -15,7 +15,6 @@ from _torrent_fakes import (
 )
 
 import nostalgia_launcher.services.update.workflow as client_update
-import nostalgia_launcher.services.update_backend.sources as update_sources
 import nostalgia_launcher.services.update_backend.torrent_update as td
 from nostalgia_launcher.services.update.workflow import (
     DownloadSource,
@@ -274,11 +273,6 @@ def test_download_source_uses_explicit_endpoint_overrides(monkeypatch):
         }
     )
 
-    monkeypatch.setattr(
-        update_sources,
-        "secure_urlopen",
-        fake_urlopen(b"{}"),
-    )
     src = client_update._download_source()
     assert src.fallback_url == "https://dl.example/client.zip"
     assert src.torrent_url == "https://srv.example/client.torrent"
@@ -307,7 +301,6 @@ def test_verify_uses_selected_manifest_url(monkeypatch, tmp_path):
         fetched.append(req.full_url)
         return BodyResp(b"{}")
 
-    monkeypatch.setattr(update_sources, "secure_urlopen", _record)
     monkeypatch.setattr(client_update, "secure_urlopen", _record)
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
     monkeypatch.setattr(client_update, "save_cache", lambda c: None)

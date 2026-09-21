@@ -84,7 +84,7 @@ Config: `server.download.torrent.{torrent_url, magnet, update?}` +
      `fallback_url` is set.
 3. Else `_torrent_verify(src)`:
    - Fetch `.torrent` over `secure_urlopen` (HTTPS-only, TLS ≥ 1.2,
-     host allowlist, 5 MiB cap), cache per-profile at
+     5 MiB cap), cache per-profile at
      `torrents/<info_hash>.torrent`.
    - Magnet: join the swarm **once** to fetch metadata (DHT + embedded
      trackers, throwaway save path, upload-mode when exposed). The `btih`

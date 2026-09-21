@@ -1,21 +1,23 @@
-"""Hardened HTTP via httpx: HTTPS-only, host allowlist, capped reads.
+"""Hardened HTTP via httpx: HTTPS-only, capped reads.
 
 All network I/O goes through :func:`make_secure_client` / :func:`secure_urlopen`
-which refuse non-HTTPS URLs, optionally enforce a host allowlist, validate
-every redirect hop, and use a shared TLS context that verifies against the
-system trust store (plus ``certifi`` roots when bundled). ``httpx`` manages
-redirect following; we validate the resulting ``response.history``.
+which refuse non-HTTPS URLs (including every redirect hop) and use a
+shared TLS context that verifies against the system trust store (plus
+``certifi`` roots when bundled). ``httpx`` manages redirect following;
+we validate the resulting ``response.history`` stays HTTPS.
 
 The legacy ``urllib`` opener has been replaced with :mod:`httpx` + a
 centralised :mod:`tenacity` retry policy. ``secure_urlopen`` is retained as
 a compatibility shim that delegates to :mod:`httpx` so existing callers and
 test monkeypatches keep working while new code should prefer
 :func:`make_secure_client`.
+
+Trust model: any HTTPS URL declared by the launcher config (or its
+catalogs) is trusted — there is no host allowlist.
 """
 
 from __future__ import annotations
 
-import io
 import logging
 import ssl
 import urllib.error
@@ -25,7 +27,6 @@ from urllib.parse import urlsplit
 import httpx
 import tenacity
 
-from . import launcher
 from .constants import UA
 
 _log = logging.getLogger(__name__)
@@ -44,60 +45,29 @@ try:
 except (AttributeError, ValueError):
     pass
 
-ALLOWED_DOWNLOAD_HOSTS = {
-    "github.com",
-    "raw.githubusercontent.com",
-    "objects.githubusercontent.com",
-    "release-assets.githubusercontent.com",
-    "gitlab.com",
-    "codeberg.org",
-}
 
-
-def allowed_download_hosts() -> set[str]:
-    hosts = set(ALLOWED_DOWNLOAD_HOSTS)
-    c = launcher.config()
-    if c is not None:
-        hosts |= c.download_hosts()
-    return hosts
-
-
-def _check_url(url: str, allowed_hosts) -> None:
+def _check_url(url: str) -> None:
     parts = urlsplit(url)
     if parts.scheme != "https":
         raise RuntimeError(f"Refusing non-HTTPS URL: {url}")
-    if allowed_hosts is not None:
-        host = (parts.hostname or "").lower()
-        if host not in {h.lower() for h in allowed_hosts}:
-            raise RuntimeError(
-                f"Refusing download from unexpected host: {host}"
-            )
 
 
-def _check_redirect_chain(resp: httpx.Response, allowed_hosts) -> None:
-    allowed = (
-        {h.lower() for h in allowed_hosts}
-        if allowed_hosts is not None
-        else None
-    )
+def _check_redirect_chain(resp: httpx.Response) -> None:
     for hist in resp.history:
-        _check_url(str(hist.url), allowed)
+        _check_url(str(hist.url))
         loc = str(hist.headers.get("location", ""))
         if loc and "://" in loc:
-            _check_url(loc, allowed)
+            _check_url(loc)
         # Handle protocol-relative redirects (//evil.com/path)
         elif loc.startswith("//"):
-            _check_url(f"https:{loc}", allowed)
-    _check_url(str(resp.url), allowed)
+            _check_url(f"https:{loc}")
+    _check_url(str(resp.url))
 
 
-def _validate(resp: httpx.Response, allowed_hosts) -> None:
-    if allowed_hosts is not None:
-        _check_redirect_chain(resp, allowed_hosts)
-    else:
-        for hist in resp.history:
-            _check_url(str(hist.url), None)
-        _check_url(str(resp.url), None)
+def _validate(resp: httpx.Response) -> None:
+    for hist in resp.history:
+        _check_url(str(hist.url))
+    _check_url(str(resp.url))
 
 
 def _enforce_https_request(request: httpx.Request) -> None:
@@ -113,10 +83,8 @@ def make_secure_client(
 ) -> httpx.Client:
     """Canonical secure HTTP client.
 
-    Centralises TLS, certificate, redirect, UA, and timeout policy. Host
-    allowlist validation remains per-request via :func:`_check_url` /
-    :func:`_validate` so different call sites can supply different
-    allowlists while sharing the same TLS configuration.
+    Centralises TLS, certificate, redirect, UA, and timeout policy. Any
+    HTTPS URL is trusted — hosts are never allowlisted.
     """
     return httpx.Client(
         verify=SSL_CTX,
@@ -207,21 +175,20 @@ def _request(
     url: str,
     *,
     timeout: float,
-    allowed_hosts,
     headers: dict | None = None,
     content: bytes | None = None,
 ) -> httpx.Response:
-    _check_url(url, allowed_hosts)
+    _check_url(url)
     with make_secure_client(timeout=timeout, follow_redirects=True) as client:
         req = client.build_request(
             method, url, headers=headers or {}, content=content
         )
         resp = client.send(req)
-        _validate(resp, allowed_hosts)
+        _validate(resp)
         return resp
 
 
-def secure_urlopen(req, timeout, allowed_hosts=None):
+def secure_urlopen(req, timeout, **_ignored):
     import urllib.request
 
     if isinstance(req, urllib.request.Request):
@@ -235,7 +202,6 @@ def secure_urlopen(req, timeout, allowed_hosts=None):
         method,
         url,
         timeout=timeout,
-        allowed_hosts=allowed_hosts,
         headers=headers,
         content=data,
     )
@@ -284,24 +250,13 @@ class _HttpxResponseWrapper:
         return False
 
 
-# Compatibility alias for refactor branch imports
-_HttpxCompatResponse = _HttpxResponseWrapper
-
-
-class _CompatBytesIO(io.BytesIO):
-    """Alias for tests that import io.BytesIO wrapper."""
-
-    pass
-
-
 def secure_get(
-    url: str, *, timeout=10.0, allowed_hosts=None, headers=None, max_bytes=None
+    url: str, *, timeout=10.0, headers=None, max_bytes=None, **_ignored
 ) -> httpx.Response:
     resp = _request(
         "GET",
         url,
         timeout=timeout,
-        allowed_hosts=allowed_hosts,
         headers=headers,
     )
     if max_bytes is not None and len(resp.content) > max_bytes:
@@ -312,12 +267,11 @@ def secure_get(
 
 
 def secure_head(
-    url: str, *, timeout=10.0, allowed_hosts=None, headers=None
+    url: str, *, timeout=10.0, headers=None, **_ignored
 ) -> httpx.Response:
     return _request(
         "HEAD",
         url,
         timeout=timeout,
-        allowed_hosts=allowed_hosts,
         headers=headers,
     )

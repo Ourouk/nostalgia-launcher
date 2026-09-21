@@ -551,12 +551,16 @@ def _summary_text(
     it is, where it points, every host the launcher would contact, the
     confirmed install folder, and what will be stored locally on accept."""
     cfg = config
-    hosts = sorted(h for h in cfg.download_hosts() if h)
+    hosts: list[str] = []
     for url in (
+        cfg.server_url,
         cfg.news_url,
         cfg.featured_news_url,
         cfg.mods_registry_url,
         *cfg.addons_registry_urls,
+        cfg.assets_registry_url,
+        cfg.download_fallback_url or "",
+        cfg.download_torrent_url or "",
         cfg.discord_url or "",
     ):
         h = _host(url)

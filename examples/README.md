@@ -43,7 +43,6 @@ object may carry:
 | `addons_registry_urls` | `[https URL]` | each `_https_url` | Ordered list — later entries override earlier by addon `name` (`services/addons.py:225`). When present and non-empty it wins over the singular. |
 | `assets_registry_url` | `https URL` |  | Asset catalog URL |
 | `torrent_root_marker` | `string` filename | `launcher.py:299-307` | File used to auto-detect the torrent root (parent of marker). Default `WoW.exe`. Must be a bare filename (no `/`, `\`, `..`). |
-| `trusted_hosts` | `[string]` | `launcher.py:423-457` | Extra download hosts beyond auto-derived ones. Each entry may be a plain hostname (`cdn.example.com`) or a full `https://` URL (hostname extracted). Invalid entries are logged and ignored. |
 | `download.update` | `bool` | default `true` | Server-level “should verify/update client” flag. Per-profile `client_update_enabled` wins (`launcher.py:982-995`). |
 | `download.torrent.torrent_url` | `https URL` `.torrent` |  | BitTorrent snapshot — HTTPS wins over `magnet` when both present |
 | `download.torrent.magnet` | `magnet:?xt=urn:btih/btmh:` | `launcher.py:326-366` validates `xt` topics | Magnet URI; `magnet`-only defaults to first-time-only (`torrent.update` absent → `bool(torrent_url)`) |
@@ -52,8 +51,8 @@ object may carry:
 | `download.content.type` | `"zip"\|"rar"\|"folder"` | `launcher.py:498-500` | How `fallback` is packaged. `folder` = already extracted; `zip`/`rar` = extracted by the launcher |
 
 All endpoint URLs must be `https://` with a host; `http://`, missing-host,
-or credential-embedded URLs are rejected. Hosts feed
-`core/security_http.allowed_download_hosts()` (`launcher.py:173-182`).
+or credential-embedded URLs are rejected. Any HTTPS host declared by the
+configuration or its catalogs is trusted.
 
 ### Top-level (outside `server`)
 
@@ -78,7 +77,7 @@ document into per-profile local repos
   torrent + HTTP fallback, one embedded entry per kind, singular
   `addons_registry_url`. Enough to run offline.
 * **Full** (`community.example.full.json`): every field above populated,
-  including plural `addons_registry_urls`, `trusted_hosts` (plain + URL form),
+  including plural `addons_registry_urls`,
   `torrent_root_marker`, `addon_git_hosts`, `discord_url`, `theme` with
   several `C_*` slots + `logo`, `magnet` with tracker param, and 10
   embedded mods covering all 5 `source.kind` values (see below) plus varied

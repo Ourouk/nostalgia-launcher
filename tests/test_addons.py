@@ -24,15 +24,15 @@ def test_is_allowed_git_url():
     assert not addons.is_allowed_git_url("not a url")
 
 
-def test_addon_host_allowlist_config_and_zip_rejection(tmp_path, monkeypatch):
+def test_addon_git_host_config_extra(tmp_path, monkeypatch):
     """A community git host added via the launcher config is allowed, an
-    unknown host is rejected, and install_addon_files refuses a zip download
-    from an unallowed host before any network contact."""
+    unknown host is rejected by the git-host gate, and install_addon_files
+    fetches archives over plain HTTPS (no download-host gate) — a fetch
+    is attempted before any failure."""
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
     config_store.save_config({})
-    monkeypatch.setattr(git_archive, "ADDON_ZIP_HOSTS", {"github.com"})
 
     assert not addons.is_allowed_git_url("https://evil.example/x/y")
 
@@ -47,10 +47,20 @@ def test_addon_host_allowlist_config_and_zip_rejection(tmp_path, monkeypatch):
     assert addons.is_allowed_git_url("https://extra.example/x/y")
 
     client = tmp_path / "client"
-    with pytest.raises(RuntimeError, match="unexpected host"):
+    calls = []
+    monkeypatch.setattr(
+        addons._GIT_BACKEND,
+        "fetch_archive",
+        lambda git_url, sha: (
+            calls.append(git_url)
+            or (_ for _ in ()).throw(RuntimeError("fetch attempted"))
+        ),
+    )
+    with pytest.raises(RuntimeError, match="fetch attempted"):
         addons.install_addon_files(
             str(client), "x", "https://evil.example/a/x", "abc123"
         )
+    assert calls == ["https://evil.example/a/x"]
 
 
 def test_git_parts_community_gitea():
@@ -1011,19 +1021,16 @@ def test_addon_repo_names_rejects_disallowed_host(monkeypatch):
 # ── archive CDN + stale branch pins ──────────────────────────────────────────
 
 
-def test_addon_zip_hosts_cover_github_archive_redirect():
-    """github.com/.../archive/...zip 302s to codeload.github.com — the
-    redirect target must pass the archive allowlist or every GitHub addon
-    download (install + discovery) is refused."""
+def test_addon_archive_download_trusts_any_https_host():
+    """Addon archives download over plain HTTPS with no host gate:
+    github.com and its archive CDN both pass, while plain HTTP is
+    still refused."""
     from nostalgia_launcher.core import security_http
 
-    hosts = set(git_archive.ADDON_ZIP_HOSTS) | {"github.com"}
-    security_http._check_url(
-        "https://github.com/o/r/archive/abc123.zip", hosts
-    )
-    security_http._check_url(
-        "https://codeload.github.com/o/r/zip/abc123", hosts
-    )
+    security_http._check_url("https://github.com/o/r/archive/abc123.zip")
+    security_http._check_url("https://codeload.github.com/o/r/zip/abc123")
+    with pytest.raises(RuntimeError, match="non-HTTPS"):
+        security_http._check_url("http://github.com/o/r/archive/abc123.zip")
 
 
 def test_addon_remote_sha_falls_back_to_default_branch(tmp_path, monkeypatch):

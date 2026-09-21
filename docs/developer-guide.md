@@ -128,9 +128,8 @@ Key points:
   invalid is a hard `cli.main()` error (no wizard). The wizard validates via
   `launcher.validate_path()` (no global-state side effect) and persists the
   selection to `launcher.user_config_path()` via `launcher.persist()`.
-- The download-host allowlist (`security_http.allowed_download_hosts()`) is
-  built from the launcher's configured server/download hosts plus the git
-  hosts.
+- Any HTTPS host declared by the configuration or its catalogs is trusted;
+  there is no download-host allowlist.
 
 ## Client Update Pipeline
 
@@ -151,8 +150,8 @@ The client-update engine lives in `services/update/workflow.py`
 2. **First-install fallback**: when torrent verification cannot run (no source
    or libtorrent missing) and no playable `WoW.exe` is present, `VerifyWorker`
    resolves `server.download.http.fallback` via `DownloadSource` → `http.py`
-   streams the single zip with `httpx` + `tenacity` + host-allowlisted
-   `secure_urlopen`, then extracts per `content.type`. Otherwise the install
+   streams the single zip with `httpx` + `tenacity` over HTTPS
+   via `secure_urlopen`, then extracts per `content.type`. Otherwise the install
    cannot proceed and the controller offers a disabled VERIFY prompt.
 3. **Update (torrent-only)**: `UpdateWorker` bulk-downloads the stale set via
    `TorrentDownloader` (selective piece priorities keep only gaps downloading;
@@ -166,7 +165,7 @@ The client-update engine lives in `services/update/workflow.py`
 
 ### BitTorrent backend (`services/update_backend/torrent_update.py`)
 
-- The `.torrent` is fetched over HTTPS through the same hardened, allowlisted
+- The `.torrent` is fetched over HTTPS through the same hardened
   transport as the HTTP downloads. Alternatively a `server.download.torrent.magnet`
   URI is resolved once by joining its swarm (DHT + the magnet's trackers):
   `_resolve_magnet` waits for the metadata in a networked session backed by a
@@ -218,7 +217,7 @@ The client-update engine lives in `services/update/workflow.py`
   cap, explicit `urllib.error` handling, and temp-file write failures converted
   to `TorrentDiskError`.
 - Typed exceptions distinguish failure modes:
-  - `TorrentFetchError` (network/TLS/allowlist) → torrent unreachable
+  - `TorrentFetchError` (network/TLS) → torrent unreachable
   - `TorrentCorruptError` (malformed .torrent) → torrent unreachable
   - `TorrentLayoutError` (missing/duplicate WoW.exe, path traversal) → torrent
     unreachable (subclass of `TorrentCorruptError`)
@@ -273,14 +272,14 @@ The launcher is a local tool. It does not include or recommend any server
 directory; it only acts on a **configuration the user explicitly imports**
 (a local file or an `https://` URL typed into the first-launch wizard, or
 passed via `--launcher-config`). The configuration is **untrusted input**:
-it is validated (schema, HTTPS-only URLs, host allowlist, path-traversal
+it is validated (schema, HTTPS-only URLs, path-traversal
 guards) before anything is downloaded or written. The wizard shows a summary
 of the configuration (server name, base URL, every host contacted, enabled
 features) and requires explicit acceptance before it is persisted.
 
 ### Hardening layers
 
-- Downloads use HTTPS and host restrictions derived from the selected
+- Downloads use HTTPS as declared by the selected
   configuration (`core/security_http.py`); redirects remain HTTPS-only and
   TLS is verified (≥ TLS 1.2).
 - Strict game-folder confirmation: `out_dir` is persisted ONLY by a Settings

@@ -24,10 +24,7 @@ from ..core.constants import UA
 from ..core.filesystem import cached_sha1
 from ..core.log_sink import log
 from ..core.safety import safe_relpath
-from ..core.security_http import (
-    allowed_download_hosts,
-    secure_urlopen,
-)
+from ..core.security_http import secure_urlopen
 from . import catalog
 from .sources import deploy
 
@@ -187,11 +184,7 @@ def remote_probe_state(url: str) -> dict | None:
         req = urllib.request.Request(
             url, headers={"User-Agent": UA}, method="HEAD"
         )
-        with secure_urlopen(
-            req,
-            timeout=10,
-            allowed_hosts=allowed_download_hosts(),
-        ) as r:
+        with secure_urlopen(req, timeout=10) as r:
             h = r.headers
             state: dict = {}
             cl = h.get("Content-Length")

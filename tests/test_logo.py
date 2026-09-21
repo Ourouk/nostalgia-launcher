@@ -8,18 +8,13 @@ LOGO_BYTES = b"\x89PNG\r\n\x1a\nfake logo bytes"
 def _patch_cache(tmp_path, monkeypatch):
     dest = tmp_path / "logo.img"
     monkeypatch.setattr(logo, "logo_cache_path", lambda: str(dest))
-    monkeypatch.setattr(
-        logo, "allowed_download_hosts", lambda: {"launcher.test"}
-    )
     return dest
 
 
 def test_fetch_logo_downloads_and_caches(tmp_path, monkeypatch):
     dest = _patch_cache(tmp_path, monkeypatch)
-    captured = {}
 
-    def _open(req, timeout=10, allowed_hosts=None):
-        captured["allowed_hosts"] = allowed_hosts
+    def _open(req, timeout=10, **kw):
 
         class R:
             def __init__(self):
@@ -43,10 +38,6 @@ def test_fetch_logo_downloads_and_caches(tmp_path, monkeypatch):
     path = logo.fetch_logo("https://cdn.example/logo.png")
     assert path == str(dest)
     assert open(path, "rb").read() == LOGO_BYTES
-    # The logo's own host is added to the regular download allowlist.
-    assert captured["allowed_hosts"] == frozenset(
-        {"launcher.test", "cdn.example"}
-    )
 
 
 def test_fetch_logo_falls_back_to_cache_on_failure(tmp_path, monkeypatch):

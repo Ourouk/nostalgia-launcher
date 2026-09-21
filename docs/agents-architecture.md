@@ -43,9 +43,8 @@ src/nostalgia_launcher/
   own store the same way). The config selection itself is persisted to
   `launcher.user_config_path()` (the per-user config dir) via
   `launcher.persist()`, taking precedence over auto-discovery on later runs.
-  The download host allowlist
-  (  `security_http.allowed_download_hosts()`) is built from the launcher's
-  server/download hosts plus the git hosts.
+  Downloads trust any HTTPS URL the configuration (or its catalogs)
+  declares — there is no host allowlist.
 - Game folder is STRICTLY user-confirmed: there are exactly two writers of
   `out_dir` — Settings apply and the first-run wizard's required folder step
   (both set `out_dir_user_set`); controllers read it stored-or-empty and
@@ -235,8 +234,8 @@ the QLocalServer guard remains authoritative there.
   the optional remote catalog at `server.assets_registry_url`
   (**explicit-only**), merged with the
   per-user custom file; embedded ids override catalog ids, custom overrides
-  both. Every asset download URL and the registry URL join the security
-  allowlist (`LauncherConfig._all_urls`). An entry carries its own update
+  both. Every asset download URL and the registry URL are trusted
+  as declared (HTTPS-only). An entry carries its own update
   information — `{url, dest, version?, sha1?, size?, probe?}` — and the
   staleness verdict (`assets.asset_update_available`) uses it in strict
   precedence: version vs installed record → sha1 vs local hash → size vs

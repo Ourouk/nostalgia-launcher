@@ -9,17 +9,12 @@ layer turns the returned file path into a pixmap.
 
 import os
 import urllib.request
-from urllib.parse import urlsplit
 
 from ..core import profiles
 from ..core.constants import UA
 from ..core.filesystem import atomic_write_bytes
 from ..core.log_sink import log
-from ..core.security_http import (
-    allowed_download_hosts,
-    read_capped,
-    secure_urlopen,
-)
+from ..core.security_http import read_capped, secure_urlopen
 
 
 def logo_cache_path() -> str:
@@ -38,24 +33,13 @@ def fetch_logo(url: str) -> str | None:
     """Download the logo to the cache dir and return its local path.
 
     Returns the path on success; on any failure (unreachable, non-https,
-    disallowed host, empty body) the existing cached file is returned when
-    there is one, else None. Never raises — a broken logo must not stop the
-    launcher. The logo's own host is allowed in addition to the regular
-    download allowlist, so a distribution may serve it from a separate CDN.
+    empty body) the existing cached file is returned when there is one,
+    else None. Never raises — a broken logo must not stop the launcher.
     """
     dest = logo_cache_path()
-    hosts = set(allowed_download_hosts())
-    try:
-        host = urlsplit(url).hostname
-        if host:
-            hosts.add(host.lower())
-    except ValueError:
-        host = None
     try:
         req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with secure_urlopen(
-            req, timeout=10, allowed_hosts=frozenset(hosts)
-        ) as r:
+        with secure_urlopen(req, timeout=10) as r:
             data = read_capped(r, 8 * 1024 * 1024)
         if not data:
             raise RuntimeError("empty logo response")

@@ -620,7 +620,6 @@ def _install_lt(monkeypatch, fake, body=b"fake"):
     import sys
 
     monkeypatch.setitem(sys.modules, "libtorrent", fake)
-    monkeypatch.setattr(td, "allowed_download_hosts", lambda: set())
     monkeypatch.setattr(td, "secure_urlopen", fake_urlopen(body))
     return fake
 

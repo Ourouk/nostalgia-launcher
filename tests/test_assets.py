@@ -75,10 +75,10 @@ def test_merge_assets_custom_overrides_remote_by_id():
     assert merged[0]["size"] == 7
 
 
-# ── launcher config parsing / allowlist ──────────────────────────────────────
+# ── launcher config parsing ──────────────────────────────────────────────
 
 
-def test_launcher_embeds_assets_and_extends_allowlist():
+def test_launcher_embeds_assets():
     launcher.configure_from_dict(
         {
             "server": {
@@ -98,7 +98,6 @@ def test_launcher_embeds_assets_and_extends_allowlist():
     cfg = launcher.config()
     assert len(cfg.embedded_assets) == 1
     assert cfg.assets_registry_url == ""
-    assert "dl.vanilla.plus" in cfg.download_hosts()
 
 
 def test_launcher_assets_registry_url_explicit_only():
@@ -112,7 +111,6 @@ def test_launcher_assets_registry_url_explicit_only():
     )
     cfg = launcher.config()
     assert cfg.assets_registry_url == "https://cdn.vanilla.plus/assets.json"
-    assert "cdn.vanilla.plus" in cfg.download_hosts()
     # No derived default: a plain server config has no asset registry.
     launcher.configure_from_dict({"server": {"base_url": "https://x.test"}})
     assert launcher.config().assets_registry_url == ""

@@ -20,11 +20,7 @@ from ...core.constants import GITHUB_API, UA
 from ...core.errors import describe_net_error
 from ...core.log_sink import log
 from ...core.safety import safe_slug, valid_extract_map
-from ...core.security_http import (
-    allowed_download_hosts,
-    read_capped,
-    secure_urlopen,
-)
+from ...core.security_http import read_capped, secure_urlopen
 from .base import FetchResult, SourceBackend, register
 
 _MOD_VERSION_CACHE_TTL = 3600
@@ -96,13 +92,10 @@ def slim_release(rel: dict) -> dict:
 
 
 def fetch_bytes(url: str) -> bytes:
-    """Download one artifact through the hardened transfer layer (the base
-    git-host allowlist plus the launcher config's own hosts), refusing
+    """Download one artifact through the hardened transfer layer, refusing
     responses over the asset size cap."""
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with secure_urlopen(
-        req, timeout=120, allowed_hosts=allowed_download_hosts()
-    ) as r:
+    with secure_urlopen(req, timeout=120) as r:
         return read_capped(r, _ASSET_MAX_BYTES)
 
 

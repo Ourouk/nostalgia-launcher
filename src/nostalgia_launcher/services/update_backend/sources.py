@@ -11,12 +11,9 @@ re-export these names through `services.update.workflow`.
 from dataclasses import dataclass
 
 from ...core.log_sink import debug_emit
-from ...core.security_http import (
-    secure_urlopen,  # noqa: F401  (test compat shim after _source_reachable removal)
-)
 
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class DownloadSource:
     """The resolved endpoints of the active download source (torrent
     primary, HTTP fallback)."""
@@ -25,16 +22,6 @@ class DownloadSource:
     fallback_url: str = ""
     # Server-only alternative to torrent_url
     torrent_magnet: str | None = None
-
-    def __init__(
-        self,
-        torrent_url: str | None = None,
-        fallback_url: str = "",
-        torrent_magnet: str | None = None,
-    ) -> None:
-        object.__setattr__(self, "torrent_url", torrent_url)
-        object.__setattr__(self, "fallback_url", fallback_url or "")
-        object.__setattr__(self, "torrent_magnet", torrent_magnet)
 
     @property
     def torrent_locator(self) -> "str | None":

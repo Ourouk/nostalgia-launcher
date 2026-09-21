@@ -42,7 +42,7 @@ Git wrapper blocks `git commit --no-verify` / `git push --no-verify`; use `pytho
 - **Game folder:** strictly user-confirmed (`out_dir_user_set`). Two writers only: Settings apply + wizard folder stage (`config_store.apply_confirmed_out_dir`). Never reintroduce silent defaults.
 - **Game exe:** case-insensitive — TBC/WotLK ship `Wow.exe`, Vanilla `WoW.exe` (identical on Windows, missed on Linux). Always use `filesystem.game_executable_exists()` / `pick_game_executable()`; never `os.path.join(dir, "WoW.exe")` directly.
 - **Update lifecycle:** workers (`services/update/workflow.py` `VerifyWorker`/`UpdateWorker`) post typed dataclass events from `state/events.py` to `EventDispatcher`; `controllers/update.py::_on_event` mutates `UpdateState`; `ui/qt/bridge.py` drains every 50 ms to Qt signals. Never use string markers (deleted `markers.py`).
-- **Security/transfer:** all downloads via `core/security_http.py:secure_urlopen` (HTTPS-only, TLS ≥1.2 + `certifi`, host allowlist per-hop, capped reads). `httpx` + `tenacity` for retries. `core/safety.py` guards archive extraction (`safe_relpath`/`safe_folder`).
+- **Security/transfer:** all downloads via `core/security_http.py:secure_urlopen` (HTTPS-only every hop, TLS ≥1.2 + `certifi`, capped reads). `httpx` + `tenacity` for retries. `core/safety.py` guards archive extraction (`safe_relpath`/`safe_folder`).
 - **Hands-off:** `context/` (third-party refs + real client for e2e — never lint/execute). Don't run `ruff`/`pyright` on it.
 
 ## Testing quirks

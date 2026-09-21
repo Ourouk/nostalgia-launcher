@@ -27,7 +27,7 @@ from ...core.safety import (
     valid_extract_map,
     valid_sha1,
 )
-from ...core.security_http import allowed_download_hosts, secure_urlopen
+from ...core.security_http import secure_urlopen
 from .base import FetchResult, SourceBackend, StreamedFile, register
 
 
@@ -120,11 +120,7 @@ class DirectFileBackend(SourceBackend):
         header_map: dict = {}
         req = urllib.request.Request(src["url"], headers={"User-Agent": UA})
         try:
-            with secure_urlopen(
-                req,
-                timeout=120,
-                allowed_hosts=allowed_download_hosts(),
-            ) as r:
+            with secure_urlopen(req, timeout=120) as r:
                 header_map = _fetch_headers(r)
                 with open(stage, "wb") as f:
                     while True:

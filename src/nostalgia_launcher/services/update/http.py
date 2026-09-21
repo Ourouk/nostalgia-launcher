@@ -17,7 +17,7 @@ from tenacity import (
 
 from ...core.constants import DOWNLOAD_RETRY, DOWNLOAD_TIMEOUT, UA
 from ...core.helpers import fmt_size, fmt_speed, redact_url
-from ...core.security_http import SSL_CTX, _check_url, allowed_download_hosts
+from ...core.security_http import SSL_CTX, _check_url
 from ...core.security_http import secure_urlopen as _secure_urlopen_default
 
 _MAX_NODE_SIZE = 64 * 1024 * 1024 * 1024
@@ -143,14 +143,10 @@ def download_file(
                     import urllib.request
 
                     req = urllib.request.Request(url, headers=headers)
-                    ctx = sec(
-                        req,
-                        timeout=DOWNLOAD_TIMEOUT,
-                        allowed_hosts=allowed_download_hosts(),
-                    )
+                    ctx = sec(req, timeout=DOWNLOAD_TIMEOUT)
                     resp_obj, is_httpx = ctx, False
                 else:
-                    _check_url(url, allowed_download_hosts())
+                    _check_url(url)
                     client = httpx.Client(
                         verify=SSL_CTX,
                         timeout=httpx.Timeout(DOWNLOAD_TIMEOUT),
@@ -164,14 +160,8 @@ def download_file(
                 close_ctx = resp_obj
                 if is_httpx:
                     for hist in resp.history:  # type: ignore[attr-defined]
-                        _check_url(
-                            str(hist.url),  # type: ignore[attr-defined]
-                            allowed_download_hosts(),
-                        )
-                    _check_url(
-                        str(resp.url),  # type: ignore[attr-defined]
-                        allowed_download_hosts(),
-                    )
+                        _check_url(str(hist.url))  # type: ignore[attr-defined]
+                    _check_url(str(resp.url))  # type: ignore[attr-defined]
                 try:
                     status = (
                         resp.status_code  # type: ignore[attr-defined]

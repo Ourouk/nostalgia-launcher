@@ -352,7 +352,7 @@ def test_effective_client_updates_enabled_merge(tmp_path, monkeypatch):
     assert launcher.effective_client_updates_enabled() is False
 
 
-def test_download_hosts_cover_explicit_endpoints():
+def test_explicit_endpoints_are_stored_as_declared():
     cfg = _config(
         {
             "server": {
@@ -367,11 +367,10 @@ def test_download_hosts_cover_explicit_endpoints():
             }
         }
     )
-    hosts = cfg.download_hosts()
-    assert "srv.example" in hosts
-    assert "news.example" in hosts
-    assert "t.example" in hosts
-    assert "dl.example" in hosts
+    assert cfg.server_url == "https://srv.example"
+    assert cfg.news_url == "https://news.example/n.json"
+    assert cfg.download_torrent_url == "https://t.example/c.torrent"
+    assert cfg.download_fallback_url == "https://dl.example/client.zip"
 
 
 def test_configure_from_file(tmp_path):

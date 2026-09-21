@@ -296,25 +296,11 @@ class GitArchiveBackend(SourceBackend):
         return f"{repo_url}/archive/{sha}.zip"
 
     def fetch_archive(self, git_url: str, sha: str) -> bytes:
-        """The repo archive zip at ``sha``, through the hardened transport
-        with the addon archive-CDN allowlist extended by config hosts."""
+        """The repo archive zip at ``sha`` through the hardened transport."""
         url = self.zip_url(git_url, sha)
-        hosts = set(ADDON_ZIP_HOSTS) | (_config_git_hosts() or set())
         req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with secure_urlopen(req, timeout=120, allowed_hosts=hosts) as r:
+        with secure_urlopen(req, timeout=120) as r:
             return read_capped(r, _ARCHIVE_MAX_BYTES)
-
-
-# The zip-archive hosts extend the git-host allowlist with the Git hosts'
-# archive CDNs so an addon archive download (github.com → codeload) passes.
-# github.com/.../archive/...zip 302-redirects to codeload.github.com
-# (observed 2026-09; codeload.githubusercontent.com is no longer served).
-ADDON_ZIP_HOSTS = {
-    "codeload.github.com",
-    "codeload.githubusercontent.com",
-    "release-assets.githubusercontent.com",
-    "objects.githubusercontent.com",
-}
 
 
 register(GitArchiveBackend())

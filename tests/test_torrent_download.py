@@ -26,7 +26,6 @@ from _torrent_fakes import quiet_log as _quiet_log
 from _torrent_fakes import redirect_torrent_cache as _redirect_torrent_cache
 
 import nostalgia_launcher.services.update.workflow as client_update
-import nostalgia_launcher.services.update_backend.sources as update_sources
 import nostalgia_launcher.services.update_backend.torrent_update as td
 from nostalgia_launcher.core import launcher
 from nostalgia_launcher.services.update.workflow import (
@@ -195,7 +194,7 @@ def test_has_torrent_true_for_magnet_only_config():
     assert launcher.config().has_torrent() is True
 
 
-def test_torrent_hosts_join_download_allowlist():
+def test_torrent_url_is_stored_as_declared():
     launcher.configure_from_dict(
         {
             "server": {
@@ -208,8 +207,11 @@ def test_torrent_hosts_join_download_allowlist():
             }
         }
     )
-    hosts = launcher.config().download_hosts()
-    assert "torrent.example" in hosts
+    assert launcher.config().has_torrent() is True
+    assert (
+        launcher.config().download_torrent_url
+        == "https://torrent.example/client.torrent"
+    )
 
 
 # ── DownloadSource propagation ───────────────────────────────────────────────
@@ -228,11 +230,6 @@ def test_download_source_uses_server_torrent_url(monkeypatch):
                 },
             }
         }
-    )
-    monkeypatch.setattr(
-        update_sources,
-        "secure_urlopen",
-        lambda req, timeout=5, allowed_hosts=None: _resp(b"{}"),
     )
     src = client_update._download_source()
     assert src.torrent_url == "https://dl.example/client.torrent"
@@ -253,11 +250,6 @@ def test_download_source_locator_prefers_url_over_magnet(monkeypatch):
             }
         }
     )
-    monkeypatch.setattr(
-        update_sources,
-        "secure_urlopen",
-        lambda req, timeout=5, allowed_hosts=None: _resp(b"{}"),
-    )
     src = client_update._download_source()
     assert src.torrent_locator == "https://dl.example/client.torrent"
 
@@ -275,11 +267,6 @@ def test_download_source_carries_magnet_when_no_url(monkeypatch):
                 },
             }
         }
-    )
-    monkeypatch.setattr(
-        update_sources,
-        "secure_urlopen",
-        lambda req, timeout=5, allowed_hosts=None: _resp(b"{}"),
     )
     src = client_update._download_source()
     assert src.torrent_url is None
@@ -340,23 +327,19 @@ def test_download_whole_torrent_when_wanted_none(tmp_path, monkeypatch):
     assert ses.atp.file_priorities == [7, 7, 7]
 
 
-def test_download_fetches_torrent_over_allowlisted_https(
-    monkeypatch, tmp_path
-):
+def test_download_fetches_torrent_over_https(monkeypatch, tmp_path):
     client = _mk_client(tmp_path)
     _install_fake_lt(monkeypatch)
     seen = {}
 
-    def fake_urlopen(req, timeout=10, allowed_hosts=None):
+    def fake_urlopen(req, timeout=10, **kw):
         seen["url"] = req.full_url
-        seen["hosts"] = allowed_hosts
         return _resp(b"fake")
 
     monkeypatch.setattr(td, "secure_urlopen", fake_urlopen)
     d = td.TorrentDownloader(str(client), EventDispatcher())
     d.download("https://torrent.example/client.torrent", {"Data/a.bin"})
     assert seen["url"] == "https://torrent.example/client.torrent"
-    assert seen["hosts"] == set()
 
 
 def test_download_cancelled_raises(tmp_path, monkeypatch):
@@ -498,7 +481,6 @@ def test_download_stall_resets_on_peer_connection(tmp_path, monkeypatch):
 
     fake = FakeLT()
     monkeypatch.setitem(sys.modules, "libtorrent", fake)
-    monkeypatch.setattr(td, "allowed_download_hosts", lambda: set())
     monkeypatch.setattr(
         td,
         "secure_urlopen",
@@ -642,7 +624,6 @@ def test_download_does_not_treat_read_piece_alert_as_error(
 
     fake = FakeLT()
     monkeypatch.setitem(sys.modules, "libtorrent", fake)
-    monkeypatch.setattr(td, "allowed_download_hosts", lambda: set())
     monkeypatch.setattr(
         td,
         "secure_urlopen",
@@ -1785,7 +1766,7 @@ def test_fetch_torrent_wraps_http_error(tmp_path, monkeypatch):
 
 
 def test_fetch_torrent_wraps_runtime_error(tmp_path, monkeypatch):
-    """_fetch_torrent wraps RuntimeError (allowlist rejection) in
+    """_fetch_torrent wraps RuntimeError (e.g. a TLS refusal) in
     TorrentFetchError."""
     from nostalgia_launcher.services.update_backend.torrent_update import (
         TorrentFetchError,
@@ -2359,7 +2340,6 @@ def test_download_pump_does_not_stall_during_recheck(tmp_path, monkeypatch):
 
     fake = FakeLT()
     monkeypatch.setitem(sys.modules, "libtorrent", fake)
-    monkeypatch.setattr(td, "allowed_download_hosts", lambda: set())
     monkeypatch.setattr(
         td,
         "secure_urlopen",
@@ -2502,7 +2482,6 @@ def test_verifier_progress_reports_piece_counts(tmp_path, monkeypatch):
             return SimpleNamespace()
 
     monkeypatch.setitem(sys.modules, "libtorrent", FakeLT())
-    monkeypatch.setattr(td, "allowed_download_hosts", lambda: set())
     monkeypatch.setattr(
         td,
         "secure_urlopen",
@@ -2649,7 +2628,6 @@ def test_verifier_does_not_stall_when_verified_pieces_unpopulated(
             return SimpleNamespace()
 
     monkeypatch.setitem(sys.modules, "libtorrent", FakeLT())
-    monkeypatch.setattr(td, "allowed_download_hosts", lambda: set())
     monkeypatch.setattr(
         td,
         "secure_urlopen",
