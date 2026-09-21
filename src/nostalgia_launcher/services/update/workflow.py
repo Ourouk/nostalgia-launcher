@@ -3,7 +3,7 @@
 Orchestrates torrent verification and download, with a single HTTP zip
 fallback for first-time installs only. No manifest/planner — all
 incremental updates go through BitTorrent; HTTP is only for the initial
-client archive when no WoW.exe is present and torrent is unavailable.
+client archive when no game exe is present and torrent is unavailable.
 """
 
 from __future__ import annotations
@@ -131,17 +131,20 @@ class VerifyWorker:
     def _handle_no_torrent(self, message: str) -> None:
         """No torrent incremental path — signal fallback-only.
 
-        For an existing install (WoW.exe present) treat as up-to-date
+        For an existing install (game exe present) treat as up-to-date
         w.r.t. incremental updates (HTTP diff is forbidden). For a fresh
-        folder (no WoW.exe) signal TorrentUnavailable so the controller
+        folder (no game exe) signal TorrentUnavailable so the controller
         can offer the single-zip HTTP fallback via UpdateWorker.
         """
         if self._cancel:
             self._cancel_torrent_verify()
             return
+        from ...core import launcher as _launcher0
         from ...core.filesystem import game_executable_exists as _gee0
 
-        has_exe = _gee0(self.out_dir)
+        has_exe = _gee0(
+            self.out_dir, _launcher0.client_executable() or "WoW.exe"
+        )
         self.log(f"{message} — torrent unavailable.", "err")
         self._dispatcher.post(TorrentUnavailable(message=message))
         if has_exe:
@@ -446,7 +449,7 @@ class UpdateWorker:
 
     Incremental updates are torrent-only. HTTP fallback (single zip/rar
     via ``server.download.http.fallback``) is only for first-time
-    installs when no WoW.exe is present and torrent is unavailable or
+    installs when no game exe is present and torrent is unavailable or
     failed.
     """
 
@@ -636,12 +639,16 @@ class UpdateWorker:
                 if self._cancel:
                     self._cancelled_abort()
                     return False
+        from ...core import launcher as _launcher1
         from ...core.filesystem import game_executable_exists as _gee
 
-        if not _gee(self.out_dir):
-            self.log("Recovered client has no WoW.exe — update failed.", "err")
+        _exe1 = _launcher1.client_executable() or "WoW.exe"
+        if not _gee(self.out_dir, _exe1):
+            self.log(
+                f"Recovered client has no {_exe1} — update failed.", "err"
+            )
             self._dispatcher.post(
-                UpdateFailed(message="no WoW.exe", op="update")
+                UpdateFailed(message=f"no {_exe1}", op="update")
             )
             return False
         self.log("  BitTorrent recovery download complete.", "ok")
@@ -784,10 +791,12 @@ class UpdateWorker:
                 os.remove(dest)
         except OSError:
             pass
+        from ...core import launcher as _launcher2
         from ...core.filesystem import game_executable_exists as _gee2
 
+        _exe2 = _launcher2.client_executable() or "WoW.exe"
         # Also accept external-launcher executables as playable.
-        has_playable = _gee2(self.out_dir)
+        has_playable = _gee2(self.out_dir, _exe2)
         if not has_playable:
             try:
                 from ...core.filesystem import pick_game_executable
@@ -796,17 +805,18 @@ class UpdateWorker:
                 exe2, _ = pick_game_executable(
                     self.out_dir,
                     _mods.external_launcher_executables(self.out_dir),
+                    exe_name=_exe2,
                 )
                 has_playable = os.path.isfile(exe2)
             except Exception:
                 pass
         if not has_playable:
             self.log(
-                "Fallback extracted but no WoW.exe found — update failed.",
+                f"Fallback extracted but no {_exe2} found — update failed.",
                 "err",
             )
             self._dispatcher.post(
-                UpdateFailed(message="no WoW.exe", op="update")
+                UpdateFailed(message=f"no {_exe2}", op="update")
             )
             return False
         remove_wdb(self.out_dir)
@@ -866,7 +876,8 @@ class UpdateWorker:
             )
             from ...core.filesystem import game_executable_exists
 
-            has_exe = game_executable_exists(self.out_dir)
+            _exe3 = _launcher.client_executable() or "WoW.exe"
+            has_exe = game_executable_exists(self.out_dir, _exe3)
             # Also consider external launchers for playability.
             if not has_exe:
                 try:
@@ -878,6 +889,7 @@ class UpdateWorker:
                     exe2, _ = pick_game_executable(
                         self.out_dir,
                         _mods.external_launcher_executables(self.out_dir),
+                        exe_name=_exe3,
                     )
                     has_exe = os.path.isfile(exe2)
                 except Exception:

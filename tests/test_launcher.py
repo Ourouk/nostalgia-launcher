@@ -880,3 +880,70 @@ def test_config_write_failure_rolls_back_repos(
     assert not (user / "local_mods_repo.json").exists()
     assert not (user / "local_addons_repo.json").exists()
     assert json.loads(assets_repo.read_text())["server"] == [{"id": "Keep"}]
+
+
+def test_client_executable_defaults_to_wow():
+    cfg = _config({"server": {"url": "https://srv.example"}})
+    assert cfg is not None
+    assert cfg.client_executable == "WoW.exe"
+    assert launcher.client_executable() == "WoW.exe"
+
+
+def test_client_executable_rejects_unsafe():
+    for bad in ("../evil", "Data/x.exe", "..\\evil", "", "   "):
+        cfg = _config(
+            {
+                "server": {
+                    "url": "https://srv.example",
+                    "client_executable": bad,
+                }
+            }
+        )
+        assert cfg is not None
+        assert cfg.client_executable == "WoW.exe"
+
+
+def test_client_executable_valid_preserved():
+    cfg = _config(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "client_executable": "ExampleClient.exe",
+            }
+        }
+    )
+    assert cfg is not None
+    assert cfg.client_executable == "ExampleClient.exe"
+    assert launcher.client_executable() == "ExampleClient.exe"
+
+
+def test_root_marker_inherits_client_executable():
+    cfg = _config(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "client_executable": "ExampleClient.exe",
+            }
+        }
+    )
+    assert cfg is not None
+    assert cfg.torrent_root_marker == "ExampleClient.exe"
+
+
+def test_root_marker_override_wins():
+    cfg = _config(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "client_executable": "ExampleClient.exe",
+                "torrent_root_marker": "OtherMarker.zip",
+            }
+        }
+    )
+    assert cfg is not None
+    assert cfg.torrent_root_marker == "OtherMarker.zip"
+
+
+def test_client_executable_empty_when_unconfigured():
+    launcher.reset()
+    assert launcher.client_executable() == ""

@@ -172,3 +172,58 @@ def test_pick_game_executable_missing_dir_returns_wow(tmp_path):
     exe, label = filesystem.pick_game_executable(str(tmp_path))
     assert label == "WoW.exe"
     assert exe == str(tmp_path / "WoW.exe")
+
+
+def test_renamed_exe_not_found_by_default(tmp_path):
+    (tmp_path / "ExampleClient.exe").write_bytes(b"MZ")
+    assert filesystem.game_executable_exists(str(tmp_path)) is False
+    exe, label = filesystem.pick_game_executable(str(tmp_path))
+    assert label == "WoW.exe"
+    assert exe == str(tmp_path / "WoW.exe")
+
+
+def test_renamed_exe_found_via_exe_name(tmp_path):
+    (tmp_path / "ExampleClient.exe").write_bytes(b"MZ")
+    assert (
+        filesystem.game_executable_exists(
+            str(tmp_path), exe_name="ExampleClient.exe"
+        )
+        is True
+    )
+    exe, label = filesystem.pick_game_executable(
+        str(tmp_path), exe_name="ExampleClient.exe"
+    )
+    assert label == "ExampleClient.exe"
+    assert exe == str(tmp_path / "ExampleClient.exe")
+
+
+def test_renamed_exe_found_via_launcher_config(tmp_path):
+    from nostalgia_launcher.core import launcher
+
+    (tmp_path / "ExampleClient.exe").write_bytes(b"MZ")
+    launcher.reset()
+    launcher.configure_from_dict(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "client_executable": "ExampleClient.exe",
+            }
+        }
+    )
+    try:
+        assert filesystem.game_executable_exists(str(tmp_path)) is True
+        exe, label = filesystem.pick_game_executable(str(tmp_path))
+        assert label == "ExampleClient.exe"
+    finally:
+        launcher.reset()
+
+
+def test_external_launcher_still_wins_over_renamed(tmp_path):
+    (tmp_path / "ExampleClient.exe").write_bytes(b"MZ")
+    (tmp_path / "ExampleLoader.exe").write_bytes(b"MZ")
+    exe, label = filesystem.pick_game_executable(
+        str(tmp_path),
+        ["ExampleLoader.exe"],
+        exe_name="ExampleClient.exe",
+    )
+    assert label == "ExampleLoader.exe"

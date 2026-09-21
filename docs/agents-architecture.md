@@ -204,7 +204,7 @@ the QLocalServer guard remains authoritative there.
   launch prefers the first on-disk executable from
   `mods.external_launcher_executables()` — active external launchers only:
   required ones always, opt-ins only when enabled in state, and only when the
-  exe exists — else `WoW.exe` (`core/filesystem.pick_game_executable`). There
+  exe exists — else the configured client exe (`server.client_executable`, default `"WoW.exe"`) via `core/filesystem.pick_game_executable`. There
   is NO hardcoded loader preference.
 - **Custom entries are first-class**: MODS and ASSETS panels have an
   "+ Add custom …" banner button (`custom_mod_dialog.py` covers every

@@ -1427,3 +1427,34 @@ def test_torrent_diff_empty_skips_update_and_marks_ready(
     assert controller.state.running is False
     assert len(worker_cls.instances) == 1  # no update worker was created
     assert OperationFinished("update", True) in controller._dispatcher.drain()
+
+
+def test_playable_client_present_with_renamed_exe(
+    dispatcher, tmp_path, monkeypatch
+):
+    """A folder holding only the configured rename counts as playable."""
+    from nostalgia_launcher.core import launcher
+
+    monkeypatch.setattr(
+        "nostalgia_launcher.services.mods.external_launcher_executables",
+        lambda client_dir: [],
+    )
+    game = tmp_path / "renamed"
+    game.mkdir(exist_ok=True)
+    (game / "ExampleClient.exe").write_bytes(b"MZ")
+    probe = UpdateController(dispatcher, get_out_dir=lambda: str(game))
+    assert probe._playable_client_present() is False
+
+    launcher.reset()
+    launcher.configure_from_dict(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "client_executable": "ExampleClient.exe",
+            }
+        }
+    )
+    try:
+        assert probe._playable_client_present() is True
+    finally:
+        launcher.reset()

@@ -449,15 +449,19 @@ class UpdateController:
 
     def _launch_game_windows(self, client_dir: str, cfg: dict) -> tuple:
         """Windows direct launch: prefer an installed external-launcher mod's
-        executable, then WoW.exe, spawned detached from the caller's job
-        object. Its merged output is drained into the session log by a
-        watcher thread that also records the exit (same bookkeeping as the
-        umu path, so the one-game-at-a-time guard holds on Windows too)."""
+        executable, then the configured client exe, spawned detached from
+        the caller's job object. Its merged output is drained into the
+        session log by a watcher thread that also records the exit (same
+        bookkeeping as the umu path, so the one-game-at-a-time guard holds
+        on Windows too)."""
         import subprocess
+
+        from ..core import launcher as _launcher
 
         exe, exe_lbl = pick_game_executable(
             client_dir,
             mods.external_launcher_executables(client_dir),
+            exe_name=_launcher.client_executable() or "WoW.exe",
         )
         if not os.path.exists(exe):
             self._dispatcher.post(
@@ -527,11 +531,13 @@ class UpdateController:
         output goes to a sidecar file and no watcher runs (the launcher exits
         right after spawning, so nothing may depend on our pipes staying
         open)."""
+        from ..core import launcher as _launcher
         from ..services import umu
 
         exe, exe_lbl = pick_game_executable(
             client_dir,
             mods.external_launcher_executables(client_dir),
+            exe_name=_launcher.client_executable() or "WoW.exe",
         )
         if not os.path.exists(exe):
             self._dispatcher.post(
@@ -929,12 +935,15 @@ class UpdateController:
         """Whether the configured game folder holds a launchable executable —
         the same pick ``launch_game`` makes, so a PLAY readiness can trust
         the click to actually start something."""
+        from ..core import launcher as _launcher
+
         client_dir = (self._get_out_dir() or "").strip()
         if not client_dir:
             return False
         exe, _ = pick_game_executable(
             client_dir,
             mods.external_launcher_executables(client_dir),
+            exe_name=_launcher.client_executable() or "WoW.exe",
         )
         return os.path.isfile(exe)
 

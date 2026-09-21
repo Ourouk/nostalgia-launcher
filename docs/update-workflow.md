@@ -61,7 +61,7 @@ UI → UpdateController.start_verify()/start_update()
 Config: `server.download.torrent.{torrent_url, magnet, update?}` +
 `server.download.http.fallback` + `server.download.content.type`
 (`folder`/`zip`/`rar`). `.torrent` wins when both URL and magnet are set.
-`has_exe` = `WoW.exe` (case-insensitive) or external-launcher exe present.
+`has_exe` = configured client exe (`server.client_executable`, default `WoW.exe`, case-insensitive) or external-launcher exe present.
 
 ## 2. Source resolution
 
