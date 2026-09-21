@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
+    QScrollArea,
     QWidget,
 )
 
@@ -28,6 +30,8 @@ from nostalgia_launcher.core.platform_support import default_game_folder
 from nostalgia_launcher.ui.qt.app import create_qt_app
 from nostalgia_launcher.ui.qt.launcher_config_dialog import (
     LauncherConfigDialog,
+    trust_capabilities,
+    trust_hosts,
 )
 
 
@@ -41,12 +45,18 @@ def qapp():
     return create_qt_app()
 
 
-def _write_config(path):
+def _write_config(path, payload=None):
     path.write_text(
-        json.dumps({"server": {"url": "https://launcher.test"}}),
+        json.dumps(payload or {"server": {"url": "https://launcher.test"}}),
         encoding="utf-8",
     )
     return str(path)
+
+
+def _trust_text(dlg, name):
+    label = dlg.findChild(QLabel, name)
+    assert isinstance(label, QLabel)
+    return label.text()
 
 
 def test_dialog_widgets_present(qapp, tmp_path):
@@ -54,8 +64,19 @@ def test_dialog_widgets_present(qapp, tmp_path):
     dlg = LauncherConfigDialog(initial_path=_write_config(path))
     dlg.show()
     try:
-        assert isinstance(dlg.findChild(QLabel, "launcherConfigTitle"), QLabel)
+        title = dlg.findChild(QLabel, "launcherConfigTitle")
+        assert isinstance(title, QLabel)
+        assert title.text() == "Welcome to Nostalgia Launcher"
+        assert isinstance(dlg.findChild(QLabel, "launcherConfigStep"), QLabel)
         assert isinstance(dlg.findChild(QLabel, "launcherConfigIntro"), QLabel)
+        assert isinstance(
+            dlg.findChild(QRadioButton, "launcherConfigSourceFileRadio"),
+            QRadioButton,
+        )
+        assert isinstance(
+            dlg.findChild(QRadioButton, "launcherConfigSourceUrlRadio"),
+            QRadioButton,
+        )
         assert isinstance(
             dlg.findChild(QLineEdit, "launcherConfigUrl"), QLineEdit
         )
@@ -87,9 +108,48 @@ def test_dialog_widgets_present(qapp, tmp_path):
             dlg.findChild(QPushButton, "launcherConfigCancel"), QPushButton
         )
         assert not dlg.findChild(QLabel, "launcherConfigError").isVisible()
-        # Starts in the input stage: no summary, no Back button.
-        assert not dlg.findChild(QLabel, "launcherConfigSummary").isVisible()
+        # Starts in the input stage: trust screen hidden, no Back button.
+        assert not dlg.findChild(
+            QScrollArea, "launcherConfigSummaryScroll"
+        ).isVisible()
         assert not dlg.findChild(QPushButton, "launcherConfigBack").isVisible()
+    finally:
+        dlg.close()
+
+
+def test_source_radios_toggle_visible_row(qapp):
+    dlg = LauncherConfigDialog()
+    dlg.show()
+    try:
+        file_radio = dlg.findChild(
+            QRadioButton, "launcherConfigSourceFileRadio"
+        )
+        url_radio = dlg.findChild(QRadioButton, "launcherConfigSourceUrlRadio")
+        assert file_radio.isChecked()
+        assert dlg.findChild(QWidget, "launcherConfigPathRow").isVisible()
+        assert not dlg.findChild(QWidget, "launcherConfigUrlRow").isVisible()
+        url_radio.setChecked(True)
+        assert dlg.findChild(QWidget, "launcherConfigUrlRow").isVisible()
+        assert not dlg.findChild(QWidget, "launcherConfigPathRow").isVisible()
+        assert not dlg.findChild(QPushButton, "launcherConfigOk").isEnabled()
+        dlg.findChild(QLineEdit, "launcherConfigUrl").setText(
+            "https://example.invalid/community.json"
+        )
+        assert dlg.findChild(QPushButton, "launcherConfigOk").isEnabled()
+    finally:
+        dlg.close()
+
+
+def test_typing_url_selects_url_source(qapp):
+    dlg = LauncherConfigDialog()
+    try:
+        dlg.findChild(QLineEdit, "launcherConfigUrl").setText(
+            "https://example.invalid/community.json"
+        )
+        assert dlg.findChild(
+            QRadioButton, "launcherConfigSourceUrlRadio"
+        ).isChecked()
+        assert dlg._active_source() == "url"
     finally:
         dlg.close()
 
@@ -107,7 +167,7 @@ def test_ok_without_input_shows_error(qapp):
         dlg.close()
 
 
-def test_ok_with_valid_file_accepts_after_summary(qapp, tmp_path):
+def test_ok_with_valid_file_accepts_after_trust(qapp, tmp_path):
     path = tmp_path / "nostalgia_launcher.json"
     dlg = LauncherConfigDialog()
     dlg.show()
@@ -121,13 +181,20 @@ def test_ok_with_valid_file_accepts_after_summary(qapp, tmp_path):
         assert dlg.findChild(QWidget, "launcherConfigFolderGroup").isVisible()
         folder = dlg.findChild(QLineEdit, "launcherConfigFolder")
         assert folder.text() == default_game_folder("launcher.test")
-        # Second submit confirms the folder and shows the summary stage.
+        # Second submit confirms the folder and shows the trust stage.
         dlg.findChild(QPushButton, "launcherConfigOk").click()
         assert dlg._stage == "summary"
-        summary = dlg.findChild(QLabel, "launcherConfigSummary").text()
-        assert "launcher.test" in summary
-        assert f"Install folder: {folder.text()}" in summary
-        # Third submit (Accept) closes the dialog with the selection.
+        assert dlg.findChild(QLabel, "launcherConfigTitle").text() == (
+            "You're about to trust:"
+        )
+        assert "launcher.test" in _trust_text(dlg, "launcherConfigTrustName")
+        assert "launcher.test" in _trust_text(dlg, "launcherConfigTrustHosts")
+        assert folder.text() in _trust_text(dlg, "launcherConfigTrustFolder")
+        assert (
+            dlg.findChild(QPushButton, "launcherConfigOk").text()
+            == "Trust configuration"
+        )
+        # Third submit (Trust) closes the dialog with the selection.
         dlg.findChild(QPushButton, "launcherConfigOk").click()
         assert dlg.result() == QDialog.DialogCode.Accepted
         assert dlg.selection()["kind"] == "file"
@@ -213,7 +280,9 @@ def test_summary_back_returns_to_folder_stage(qapp, tmp_path):
         assert dlg._stage == "summary"
         dlg.findChild(QPushButton, "launcherConfigBack").click()
         assert dlg._stage == "folder"
-        assert not dlg.findChild(QLabel, "launcherConfigSummary").isVisible()
+        assert not dlg.findChild(
+            QScrollArea, "launcherConfigSummaryScroll"
+        ).isVisible()
     finally:
         dlg.close()
 
@@ -289,7 +358,7 @@ def _wait_until(qapp, cond, timeout_ms=4000):
     return True
 
 
-def test_url_submission_reaches_summary(qapp, monkeypatch):
+def test_url_submission_reaches_trust(qapp, monkeypatch):
     import nostalgia_launcher.services.config_import as config_import_module
 
     payload = json.dumps({"server": {"url": "https://x.example"}})
@@ -316,8 +385,7 @@ def test_url_submission_reaches_summary(qapp, monkeypatch):
         assert dlg.selection() is None  # not yet accepted
         dlg.findChild(QPushButton, "launcherConfigOk").click()
         assert dlg._stage == "summary"
-        summary = dlg.findChild(QLabel, "launcherConfigSummary").text()
-        assert "x.example" in summary
+        assert "x.example" in _trust_text(dlg, "launcherConfigTrustName")
         dlg.findChild(QPushButton, "launcherConfigOk").click()
         assert dlg.result() == QDialog.DialogCode.Accepted
         sel = dlg.selection()
@@ -402,46 +470,73 @@ def test_cancel_during_fetch_never_accepts(qapp, monkeypatch):
         dlg.close()
 
 
-# ── three-category summary ───────────────────────────────────────────────────
+# ── trust screen ─────────────────────────────────────────────────────────
 
 
-def test_summary_lists_embedded_and_local_store(qapp, tmp_path):
+def test_trust_lists_hosts_and_capabilities(qapp, tmp_path):
     path = tmp_path / "cfg.json"
-    path.write_text(
-        json.dumps(
-            {
-                "server": {"url": "https://launcher.test"},
-                "mods": [{"id": "m"}],
-                "addons": [{"name": "a", "git": "https://github.com/e/a"}],
-                "assets": [
-                    {
-                        "id": "p",
-                        "url": "https://launcher.test/p.mpq",
-                        "dest": "Data/p.mpq",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
+    _write_config(
+        path,
+        {
+            "server": {
+                "name": "Example Community",
+                "url": "https://launcher.test",
+                "news_url": "https://launcher.test/news.json",
+                "mods_registry_url": "https://launcher.test/mods.json",
+                "addons_registry_urls": ["https://launcher.test/addons.json"],
+                "download": {
+                    "http": {
+                        "fallback": "https://cdn.test/client.zip",
+                    },
+                    "content": {"type": "zip"},
+                },
+            },
+            "mods": [{"id": "m"}],
+            "addons": [{"name": "a", "git": "https://github.com/e/a"}],
+        },
     )
     dlg = LauncherConfigDialog(initial_path=str(path))
     dlg._submit_file(str(path))
     dlg._confirm_folder()  # pre-filled suggestion stands in as the choice
-    text = dlg.findChild(QLabel, "launcherConfigSummary").text()
-    assert "Will store locally: 1 mod, 1 addon, 1 asset" in text
-    assert "+1 embedded" in text
-    assert "Asset catalog:" in text
+    assert dlg._stage == "summary"
+    hosts = _trust_text(dlg, "launcherConfigTrustHosts")
+    for host in ("launcher.test", "cdn.test", "github.com"):
+        assert host in hosts
+    assert _trust_text(dlg, "launcherConfigTrustClient").startswith("✓")
+    assert _trust_text(dlg, "launcherConfigTrustMods").startswith("✓")
+    assert _trust_text(dlg, "launcherConfigTrustAddons").startswith("✓")
+    assert _trust_text(dlg, "launcherConfigTrustNews").startswith("✓")
+    assert "1 embedded" in _trust_text(dlg, "launcherConfigTrustMods")
+    dlg.close()
 
 
-def test_summary_omits_asset_line_when_unconfigured(qapp, tmp_path):
+def test_trust_shows_missing_capabilities_as_unavailable(qapp, tmp_path):
     path = tmp_path / "cfg.json"
-    path.write_text(
-        json.dumps({"server": {"url": "https://launcher.test"}}),
-        encoding="utf-8",
-    )
+    _write_config(path)
     dlg = LauncherConfigDialog(initial_path=str(path))
     dlg._submit_file(str(path))
     dlg._confirm_folder()  # pre-filled suggestion stands in as the choice
-    text = dlg.findChild(QLabel, "launcherConfigSummary").text()
-    assert "Asset catalog:" not in text
-    assert "Will store locally" not in text
+    assert _trust_text(dlg, "launcherConfigTrustClient").startswith("—")
+    assert _trust_text(dlg, "launcherConfigTrustMods").startswith("—")
+    assert _trust_text(dlg, "launcherConfigTrustAddons").startswith("—")
+    assert _trust_text(dlg, "launcherConfigTrustNews").startswith("—")
+    dlg.close()
+
+
+def test_trust_helpers_cover_full_example():
+    from nostalgia_launcher.core import launcher
+
+    with open("examples/community.example.json", encoding="utf-8") as f:
+        config, err = launcher.validate_dict(json.load(f))
+    assert err == ""
+    assert config is not None
+    hosts = trust_hosts(config)
+    assert "launcher.example.com" in hosts
+    assert "github.com" in hosts
+    caps = dict(
+        (k, (ok, label)) for k, ok, label in trust_capabilities(config)
+    )
+    assert caps["client"][0] is True
+    assert caps["mods"][0] is True
+    assert caps["addons"][0] is True
+    assert caps["news"][0] is True

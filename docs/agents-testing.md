@@ -22,7 +22,7 @@ Commands live in `AGENTS.md`; read it first.
 ## Fixture & seam quirks
 
 - Tests get a launcher config from the autouse `_launcher_env` fixture in
-  `tests/conftest.py` (server `https://launcher.test` + a "Backup" mirror) —
+  `tests/conftest.py` (server `https://launcher.test`) —
   never rely on real network in tests. Launcher state is **process-global**:
   `_launcher_env` calls `launcher.reset()` + `launcher.configure_from_dict(...)`
   before and after each test, so override `launcher.*` the same way.
@@ -31,15 +31,16 @@ Commands live in `AGENTS.md`; read it first.
   bare module name. Same for services, e.g.
   `"nostalgia_launcher.services.umu.launch"` (the update controller imports
   the umu module lazily inside its launch method).
-- Download-source probing lives in `update_backend/sources.py`. Faking the
-  network for *mirror probing* requires patching
+- Download-source resolution lives in `update_backend/sources.py` — there is
+  **no mirror failover**, it picks the single `server.download` source. Faking
+  the network there means patching
   `nostalgia_launcher.services.update_backend.sources.secure_urlopen`;
   patching `http_update.secure_urlopen` only covers fallback-zip fetches.
 - libtorrent is faked via `sys.modules["libtorrent"]`; the real library is
   never needed to run the suite (only the e2e tests use it).
 - Tests redirect config to `tmp_path` via `config_store.configure(...)`.
-  The default profile is a real directory resolved through
-  `profiles.active()` (`<config_dir>/profiles/default/`), so using the
+  Every profile is a real directory resolved through
+  `profiles.active()` (`<config_dir>/profiles/<name>/`), so using the
   `fake_home` / `hermetic_cli` conftest fixtures (which redirect the
   per-user config dir via HOME / USERPROFILE / APPDATA / LOCALAPPDATA) keeps
   every profile path off the real HOME — use `hermetic_cli` for any test
