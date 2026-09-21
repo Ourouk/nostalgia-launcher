@@ -649,14 +649,17 @@ def test_run_backend_second_instance_returns_0_without_app(
 ):
     """Pre-existing server for the profile key: main() forwards the raise
     and exits 0 WITHOUT constructing the Qt app shell. hermetic_cli keeps
-    the guard key off the real HOME (a dev machine running a default-
-    profile launcher must not receive this test's raise-op)."""
+    the guard key off the real HOME (a dev machine running a launcher
+    must not receive this test's raise-op)."""
     from nostalgia_launcher.core import app_lock
     from nostalgia_launcher.ui.qt import app_lock_qt
 
-    os.makedirs(os.path.dirname(launcher.user_config_path()), exist_ok=True)
-    with open(launcher.user_config_path(), "w", encoding="utf-8") as f:
-        f.write('{"server": {"url": "https://launcher.test"}}')
+    prof, err = profiles.create(
+        "second", '{"server": {"url": "https://launcher.test"}}'
+    )
+    assert err == ""
+    profiles.set_active("second")
+    profiles.activate(prof)
 
     def boom(*a, **kw):
         raise AssertionError("QtNostalgiaLauncherApp must not be built")
@@ -728,12 +731,20 @@ def test_header_combo_shows_active_profile(qapp, build_app, fake_home):
     carry extra profile directories)."""
     from PySide6.QtWidgets import QComboBox
 
+    profiles.create("alpha")
+    current, err = profiles.create("beta")
+    assert err == ""
+    profiles.set_active("beta")
+    profiles.activate(current)
     app = build_app(startup=False)
     try:
         combo = app._window.findChild(QComboBox, "profileCombo")
         assert combo is not None
-        assert [combo.itemText(i) for i in range(combo.count())] == ["default"]
-        assert combo.currentText() == "default"
+        assert [combo.itemText(i) for i in range(combo.count())] == [
+            "alpha",
+            "beta",
+        ]
+        assert combo.currentText() == "beta"
         assert "restart" in combo.toolTip().lower()
         assert combo.accessibleName()
     finally:
@@ -741,7 +752,7 @@ def test_header_combo_shows_active_profile(qapp, build_app, fake_home):
         app._hub.close()
 
 
-def test_header_combo_reflects_non_default_profile(qapp, build_app, fake_home):
+def test_header_combo_reflects_new_profile(qapp, build_app, fake_home):
     from PySide6.QtWidgets import QComboBox
 
     profiles.create("chipster")
@@ -751,7 +762,6 @@ def test_header_combo_reflects_non_default_profile(qapp, build_app, fake_home):
         combo = app._window.findChild(QComboBox, "profileCombo")
         assert combo.currentText() == "chipster"
         assert [combo.itemText(i) for i in range(combo.count())] == [
-            "default",
             "chipster",
         ]
     finally:
@@ -761,8 +771,9 @@ def test_header_combo_reflects_non_default_profile(qapp, build_app, fake_home):
 
 def test_settings_profiles_section_is_editor_only(qapp, build_app, fake_home):
     """The PROFILES section lists every profile with the active one
-    preselected plus the editor buttons — switching lives in the header,
-    so there is no Switch button here."""
+    preselected plus the Import/Delete buttons — switching lives in the
+    header, so there is no Switch button here, and names derive from
+    the server so there is no Rename/Duplicate either."""
     from PySide6.QtWidgets import QPushButton
 
     profiles.create("alpha")
@@ -771,59 +782,79 @@ def test_settings_profiles_section_is_editor_only(qapp, build_app, fake_home):
         dlg = app._window._settingsDialog
         combo = dlg._profiles_combo
         names = [combo.itemText(i) for i in range(combo.count())]
-        assert names == ["default", "alpha"]
-        assert combo.currentText() == "default"
+        assert names == ["alpha"]
+        assert combo.currentText() == "alpha"
+        for obj_name in ("profilesImport", "profilesDelete"):
+            assert dlg.findChild(QPushButton, obj_name) is not None
         for obj_name in (
             "profilesNew",
             "profilesDuplicate",
             "profilesRename",
-            "profilesDelete",
+            "profilesSwitch",
         ):
-            assert dlg.findChild(QPushButton, obj_name) is not None
-        assert dlg.findChild(QPushButton, "profilesSwitch") is None
+            assert dlg.findChild(QPushButton, obj_name) is None
     finally:
         app._window._settingsDialog.close()
         app.close()
         app._hub.close()
 
 
-def test_settings_profile_add_refreshes_header_combo(
+def test_settings_profile_import_refreshes_header_combo(
     qapp, build_app, fake_home, monkeypatch
 ):
-    """Creating a profile in Settings → PROFILES reloads the header
-    switcher live — no restart needed (profilesChanged → _fill_profile_combo)."""
-    monkeypatch.setattr(
-        "nostalgia_launcher.ui.qt.settings_dialog.QInputDialog.getText",
-        lambda *a, **kw: ("delta", True),
-    )
+    """Importing a profile in Settings → PROFILES creates the
+    server-named profile and reloads the header switcher live — no
+    restart needed (profilesChanged → _fill_profile_combo)."""
+    raw = json.dumps({"server": {"name": "Delta", "url": "https://d.test"}})
 
-    class _SkippedWizard:
-        """The post-create wizard runs modally; reject it so the test
-        only exercises the registry mutation + refresh wiring."""
+    class _AcceptedWizard:
+        """An accepted wizard returning a URL selection for server Delta."""
 
         def __init__(self, *a, **kw):
             pass
 
-        def exec(self):  # QDialog.DialogCode.Rejected == 0
-            return 0
+        def exec(self):  # QDialog.DialogCode.Accepted == 1
+            return 1
+
+        def selection(self):
+            return {
+                "kind": "url",
+                "config_url": "https://example.invalid/c.json",
+                "raw": raw,
+                "install_dir": "",
+                "server_name": "Delta",
+            }
 
     monkeypatch.setattr(
         "nostalgia_launcher.ui.qt.launcher_config_dialog.LauncherConfigDialog",
-        _SkippedWizard,
+        _AcceptedWizard,
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
+        lambda *a, **kw: QMessageBox.No,
     )
 
+    current, err = profiles.create("current")
+    assert err == ""
+    profiles.set_active("current")
+    profiles.activate(current)
     app = _open_settings_window(build_app)
     try:
         win = app._window
         dlg = win._settingsDialog
         try:
-            assert win._profileCombo.findText("delta") < 0
-            dlg._on_profile_new()
+            assert win._profileCombo.findText("Delta") < 0
+            dlg._on_profile_import()
 
-            assert win._profileCombo.findText("delta") >= 0
-            assert dlg._profiles_combo.currentText() == "delta"
-            # The still-active profile stays preselected up top.
-            assert win._profileCombo.currentText() == "default"
+            assert win._profileCombo.findText("Delta") >= 0
+            assert dlg._profiles_combo.currentText() == "Delta"
+            # Importing never switches: the header still shows the
+            # running profile preselected.
+            assert win._profileCombo.currentText() == profiles.active().name
+            with open(
+                profiles.resolve("Delta").launcher_path(), encoding="utf-8"
+            ) as f:
+                assert json.load(f)["server"]["name"] == "Delta"
         finally:
             dlg.close()
     finally:
@@ -837,6 +868,10 @@ def test_header_switch_persists_pointer_and_quits(
     """Picking another profile in the header: confirm → pointer persisted
     → detached relaunch spawned → quit."""
 
+    current, err = profiles.create("current")
+    assert err == ""
+    profiles.set_active("current")
+    profiles.activate(current)
     profiles.create("beta")
     detached = Mock(return_value=True)
     monkeypatch.setattr(
@@ -872,6 +907,10 @@ def test_header_switch_declined_reverts_and_keeps_pointer(
     qapp, build_app, monkeypatch, fake_home
 ):
 
+    current, err = profiles.create("current")
+    assert err == ""
+    profiles.set_active("current")
+    profiles.activate(current)
     profiles.create("beta")
     monkeypatch.setattr(
         "nostalgia_launcher.ui.qt.profiles_ui.QProcess.startDetached",
@@ -890,8 +929,8 @@ def test_header_switch_declined_reverts_and_keeps_pointer(
         win._profileCombo.activated.emit(idx)
 
         # Nothing happened: pointer unchanged, combo reverted.
-        assert profiles.load_index()["active"] == "default"
-        assert win._profileCombo.currentText() == "default"
+        assert profiles.load_index()["active"] == "current"
+        assert win._profileCombo.currentText() == "current"
     finally:
         app.close()
         app._hub.close()
@@ -903,6 +942,10 @@ def test_header_switch_failure_keeps_pointer_but_shows_selection(
     """A failed relaunch leaves the pointer persisted (manual start will
     land on it) and reverts the header selection to the running profile."""
 
+    current, err = profiles.create("current")
+    assert err == ""
+    profiles.set_active("current")
+    profiles.activate(current)
     profiles.create("gamma")
     monkeypatch.setattr(
         "nostalgia_launcher.ui.qt.profiles_ui.QProcess.startDetached",
@@ -921,7 +964,7 @@ def test_header_switch_failure_keeps_pointer_but_shows_selection(
         win._profileCombo.activated.emit(idx)
 
         assert profiles.load_index()["active"] == "gamma"
-        assert win._profileCombo.currentText() == "default"
+        assert win._profileCombo.currentText() == "current"
     finally:
         app.close()
         app._hub.close()
@@ -930,6 +973,7 @@ def test_header_switch_failure_keeps_pointer_but_shows_selection(
 def test_delete_active_resets_pointer_and_offers_restart(
     qapp, build_app, monkeypatch, fake_home
 ):
+    profiles.create("stay")
     profiles.create("gone")
     profiles.set_active("gone")
     profiles.activate(profiles.resolve("gone"))
@@ -945,28 +989,29 @@ def test_delete_active_resets_pointer_and_offers_restart(
         dlg._on_profile_delete()
 
         idx = profiles.load_index()
-        assert idx["active"] == "default"
+        assert idx["active"] == "stay"
         assert "gone" not in idx["order"]
         assert not os.path.exists(
             os.path.join(platform_support.config_dir(), "profiles", "gone")
         )
         # Registry + editor combo are consistent afterwards: the only
-        # profile left is the default (header combo refreshes on restart
+        # profile left is "stay" (header combo refreshes on restart
         # by design).
-        assert profiles.list_profiles() == ["default"]
+        assert profiles.list_profiles() == ["stay"]
         combo = dlg._profiles_combo
-        assert [combo.itemText(i) for i in range(combo.count())] == ["default"]
-        assert combo.currentText() == "default"
+        assert [combo.itemText(i) for i in range(combo.count())] == ["stay"]
+        assert combo.currentText() == "stay"
     finally:
         app.close()
         app._hub.close()
 
 
-def test_delete_active_restart_offer_switches_to_default(
+def test_delete_active_restart_offer_switches_to_remaining(
     qapp, build_app, monkeypatch, fake_home
 ):
-    """Answering Yes to the post-delete offer restarts on 'default' via
-    the shared switch helper (pointer persisted + quit)."""
+    """Answering Yes to the post-delete offer restarts on the remaining
+    profile via the shared switch helper (pointer persisted + quit)."""
+    profiles.create("stay")
     profiles.create("gone")
     profiles.set_active("gone")
     profiles.activate(profiles.resolve("gone"))
@@ -991,7 +1036,7 @@ def test_delete_active_restart_offer_switches_to_default(
         dlg._refresh_profiles_combo(select="gone")
         dlg._on_profile_delete()
 
-        assert profiles.load_index()["active"] == "default"
+        assert profiles.load_index()["active"] == "stay"
         assert detached.called
         assert quit_calls == [1]
     finally:
@@ -1002,6 +1047,7 @@ def test_delete_active_restart_offer_switches_to_default(
 def test_delete_active_restart_offer_failure_reports_manually(
     qapp, build_app, monkeypatch, fake_home
 ):
+    profiles.create("stay")
     profiles.create("gone")
     profiles.set_active("gone")
     profiles.activate(profiles.resolve("gone"))
@@ -1020,38 +1066,56 @@ def test_delete_active_restart_offer_failure_reports_manually(
         dlg._refresh_profiles_combo(select="gone")
         dlg._on_profile_delete()
 
-        assert profiles.load_index()["active"] == "default"
+        assert profiles.load_index()["active"] == "stay"
         assert "manually" in dlg._profiles_status.text().lower()
     finally:
         app.close()
         app._hub.close()
 
 
-def test_delete_default_is_refused_inline(qapp, build_app, fake_home):
+def test_delete_last_profile_offers_no_restart(
+    qapp, build_app, monkeypatch, fake_home
+):
+    """Deleting the only profile leaves an empty registry: no restart
+    target exists, so no offer is made — the next launch opens the
+    import wizard."""
+    profiles.create("gone")
+    profiles.set_active("gone")
+    profiles.activate(profiles.resolve("gone"))
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
+        lambda *a, **kw: QMessageBox.Yes,
+    )
     app = _open_settings_window(build_app)
     try:
         dlg = app._window._settingsDialog
-        dlg._refresh_profiles_combo(select="default")
+        dlg._refresh_profiles_combo(select="gone")
         dlg._on_profile_delete()
-        assert "cannot be deleted" in dlg._profiles_status.text()
-        assert "default" in profiles.list_profiles()
+
+        assert profiles.list_profiles() == []
+        assert profiles.load_index() == {"active": "", "order": []}
+        combo = dlg._profiles_combo
+        assert combo.count() == 0
+        assert dlg._profiles_status.text() == ""
     finally:
         app.close()
         app._hub.close()
 
 
-def test_new_profile_wizard_scopes_repos_and_globals(
+def test_import_wizard_scopes_repos_and_globals(
     qapp, build_app, fake_home, monkeypatch, real_repo_seams
 ):
-    """Settings → New… import: launcher.json AND content repos land in
-    the NEW profile while the ACTIVE profile's stores and the global
-    launcher config stay untouched."""
-    prof, err = profiles.create("fresh2")
+    """Settings → Import…: launcher.json AND content repos land in the
+    NEW server-named profile while the ACTIVE profile's stores and the
+    global launcher config stay untouched."""
+    current, err = profiles.create("current")
     assert err == ""
+    profiles.set_active("current")
+    profiles.activate(current)
     sentinel = '{"server": [{"sentinel": true}], "custom": []}'
-    os.makedirs(profiles.DEFAULT.root, exist_ok=True)
+    os.makedirs(current.root, exist_ok=True)
     with open(
-        profiles.DEFAULT.local_repo_path("mods"),
+        current.local_repo_path("mods"),
         "w",
         encoding="utf-8",
     ) as f:
@@ -1059,13 +1123,13 @@ def test_new_profile_wizard_scopes_repos_and_globals(
 
     raw = json.dumps(
         {
-            "server": {"url": "https://fresh.test"},
+            "server": {"name": "Fresh", "url": "https://fresh.test"},
             "mods": [],
         }
     )
 
     class _FakeWizard:
-        def __init__(self, initial_path=None):
+        def __init__(self, initial_path=None, parent=None):
             pass
 
         def exec(self):
@@ -1076,34 +1140,41 @@ def test_new_profile_wizard_scopes_repos_and_globals(
                 "kind": "url",
                 "config_url": "https://example.invalid/c.json",
                 "raw": raw,
+                "install_dir": "",
+                "server_name": "Fresh",
             }
 
     monkeypatch.setattr(
         "nostalgia_launcher.ui.qt.launcher_config_dialog.LauncherConfigDialog",
         _FakeWizard,
     )
+    monkeypatch.setattr(
+        "nostalgia_launcher.ui.qt.settings_dialog.QMessageBox.question",
+        lambda *a, **kw: QMessageBox.No,
+    )
     app = _open_settings_window(build_app)
     try:
         dlg = app._window._settingsDialog
-        dlg._configure_new_profile(prof)
+        dlg._on_profile_import()
 
+        fresh = profiles.resolve("Fresh")
         # Repos landed in the NEW profile…
-        with open(prof.local_repo_path("mods"), encoding="utf-8") as f:
+        with open(fresh.local_repo_path("mods"), encoding="utf-8") as f:
             assert json.load(f) == {"server": [], "custom": []}
-        with open(prof.launcher_path(), encoding="utf-8") as f:
+        with open(fresh.launcher_path(), encoding="utf-8") as f:
             assert json.load(f)["server"]["url"] == "https://fresh.test"
         # …the ACTIVE profile's store is untouched…
         with open(
-            profiles.DEFAULT.local_repo_path("mods"),
+            current.local_repo_path("mods"),
             encoding="utf-8",
         ) as f:
             assert f.read() == sentinel
         # …and the running session's globals are exactly what they were.
-        assert profiles.active().name == "default"
-        assert profiles.load_index()["active"] == "default"
+        assert profiles.active().name == "current"
+        assert profiles.load_index()["active"] == "current"
         assert launcher.server_url() == "https://launcher.test"
         assert launcher.local_repo_path("mods") == (
-            profiles.DEFAULT.local_repo_path("mods")
+            current.local_repo_path("mods")
         )
     finally:
         app._window._settingsDialog.close()

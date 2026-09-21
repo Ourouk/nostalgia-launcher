@@ -82,19 +82,18 @@ def _launcher_env():
 
 
 @pytest.fixture(autouse=True)
-def _profiles_env():
+def _profiles_env(tmp_path):
     """The active profile is process-global; drop any per-test activation
     so a profile-scoped test can't bleed into later ones.
 
-    Hardened ``profiles.active()`` now fails loudly when nothing was
-    activated — auto-activate the live default so most unit tests keep
-    working without explicit ``profiles.activate()``.
+    There is no reserved default profile: activate a scratch profile
+    under tmp_path so most unit tests keep working without explicit
+    ``profiles.activate()``. The scratch directory exists but is never
+    registered (no index entry), so registry tests start empty.
     """
-    # Use live helper so a HOME redirection is reflected.
-    try:
-        profiles.activate(profiles.default_profile())
-    except Exception:
-        profiles._ACTIVE = None
+    root = tmp_path / "scratch-profile"
+    root.mkdir(exist_ok=True)
+    profiles.activate(profiles.Profile("scratch", str(root)))
     yield
     profiles._ACTIVE = None
 
@@ -140,22 +139,6 @@ def fake_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(home / ".cache"))
     monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
-    # The reserved default profile is a real directory; because its root is
-    # resolved at import time it must be rebound to the (now redirected)
-    # config dir so profile paths stay test-local.
-    # Keep both the deprecated alias and the live helper in sync.
-    patched_default = profiles.Profile(
-        profiles.DEFAULT_PROFILE,
-        profiles.profile_root(profiles.DEFAULT_PROFILE),
-    )
-    monkeypatch.setattr(profiles, "DEFAULT", patched_default)
-    # default_profile() is live via profile_root() -> config_dir() -> HOME,
-    # so no need to patch it, but keep _ACTIVE in sync if auto-activated.
-    if profiles._ACTIVE is not None:
-        try:
-            profiles._ACTIVE = profiles.default_profile()
-        except Exception:
-            pass
     return home
 
 

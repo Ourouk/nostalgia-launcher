@@ -82,7 +82,7 @@ def test_main_returns_1_for_unknown_backend(
 
 
 def test_main_returns_1_without_launcher_config(
-    monkeypatch, capsys, tmp_path, no_persisted_config
+    monkeypatch, capsys, tmp_path, no_persisted_config, hermetic_cli
 ):
     monkeypatch.setenv("NOSTALGIA_UI_BACKEND", "qt")
     monkeypatch.chdir(tmp_path)
@@ -127,7 +127,7 @@ def test_main_wizard_selection_runs_backend(
 
 
 def test_main_wizard_selection_persists_config(
-    monkeypatch, launcher_file, tmp_path
+    monkeypatch, launcher_file, tmp_path, hermetic_cli
 ):
     calls = []
 
@@ -163,7 +163,7 @@ def test_main_wizard_selection_persists_config(
 
 
 def test_main_wizard_persistence_failure_aborts(
-    monkeypatch, capsys, launcher_file, tmp_path
+    monkeypatch, capsys, launcher_file, tmp_path, hermetic_cli
 ):
     """If saving the imported config fails, startup aborts and the backend is
     never constructed."""
@@ -206,7 +206,7 @@ def test_main_wizard_persistence_failure_aborts(
 
 
 def test_main_explicit_bad_config_never_opens_wizard(
-    monkeypatch, capsys, tmp_path
+    monkeypatch, capsys, tmp_path, hermetic_cli
 ):
     recorder = []
     monkeypatch.setattr(
@@ -218,7 +218,7 @@ def test_main_explicit_bad_config_never_opens_wizard(
 
 
 def test_main_wizard_qt_import_failure(
-    monkeypatch, capsys, tmp_path, no_persisted_config
+    monkeypatch, capsys, tmp_path, no_persisted_config, hermetic_cli
 ):
     monkeypatch.setenv("NOSTALGIA_UI_BACKEND", "qt")
     monkeypatch.chdir(tmp_path)

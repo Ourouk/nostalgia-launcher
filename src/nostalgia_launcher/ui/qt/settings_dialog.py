@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -574,10 +573,10 @@ class SettingsDialog(QDialog):
         layout.addWidget(title)
 
         hint = QLabel(
-            "Profile editor — these buttons manage the profile selected "
-            "above (fully isolated server config, game state, mods/addons "
-            "records and caches). Switch profiles from the selector in the "
-            "main-window header; switching restarts the launcher.",
+            "One profile per server — importing a configuration creates "
+            "its profile, named after the server. Switch profiles from "
+            "the selector in the main-window header; switching restarts "
+            "the launcher.",
             self,
         )
         hint.setWordWrap(True)
@@ -600,23 +599,11 @@ class SettingsDialog(QDialog):
         self._refresh_profiles_combo()
         row.addWidget(self._profiles_combo, 1)
 
-        new_btn = QPushButton("New…", self)
-        new_btn.setObjectName("profilesNew")
-        new_btn.setCursor(Qt.PointingHandCursor)
-        new_btn.clicked.connect(self._on_profile_new)
-        row.addWidget(new_btn)
-
-        dup_btn = QPushButton("Duplicate", self)
-        dup_btn.setObjectName("profilesDuplicate")
-        dup_btn.setCursor(Qt.PointingHandCursor)
-        dup_btn.clicked.connect(self._on_profile_duplicate)
-        row.addWidget(dup_btn)
-
-        rename_btn = QPushButton("Rename…", self)
-        rename_btn.setObjectName("profilesRename")
-        rename_btn.setCursor(Qt.PointingHandCursor)
-        rename_btn.clicked.connect(self._on_profile_rename)
-        row.addWidget(rename_btn)
+        import_btn = QPushButton("Import…", self)
+        import_btn.setObjectName("profilesImport")
+        import_btn.setCursor(Qt.PointingHandCursor)
+        import_btn.clicked.connect(self._on_profile_import)
+        row.addWidget(import_btn)
 
         delete_btn = QPushButton("Delete", self)
         delete_btn.setObjectName("profilesDelete")
@@ -649,50 +636,66 @@ class SettingsDialog(QDialog):
     def _profile_error(self, msg: str):
         self._profiles_status.setText(f"✗ {msg}" if msg else "")
 
-    def _prompt_profile_name(self, title, initial=""):
-        name, ok = QInputDialog.getText(
-            self, title, "Profile name:", text=initial
-        )
-        return (name or "").strip(), ok
+    def _on_profile_import(self):
+        """Import a server configuration as a new profile: run the
+        first-launch wizard first (the server name is only known after
+        it validates), then create the server-named profile and persist
+        the selection into it. Never touches the running profile."""
+        from urllib.parse import urlsplit
 
-    def _on_profile_new(self):
-        name, ok = self._prompt_profile_name("New profile")
-        if not ok:
+        from .launcher_config_dialog import LauncherConfigDialog
+
+        dlg = LauncherConfigDialog(
+            initial_path=launcher.discover_path(), parent=self
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        err = profiles.validate_name(name)
-        if err:
-            self._profile_error(err)
-            return
+        sel = dlg.selection()
+        cfg = None
+        if sel["kind"] == "file":
+            cfg, verr = launcher.validate_path(sel["path"])
+            if cfg is None:
+                self._profile_error(f"Invalid launcher configuration: {verr}")
+                return
+        else:
+            raw = sel.get("raw") or ""
+            try:
+                data = json.loads(raw) if raw else None
+            except ValueError as e:
+                self._profile_error(f"Invalid configuration JSON: {e}")
+                return
+            if data is None:
+                self._profile_error("Invalid launcher configuration.")
+                return
+            cfg, verr = launcher.validate_dict(data)
+            if cfg is None:
+                self._profile_error(f"Invalid launcher configuration: {verr}")
+                return
+        host = ""
+        url = (cfg.server_url or "").strip()
+        if url:
+            if "://" in url:
+                try:
+                    host = urlsplit(url).hostname or ""
+                except ValueError:
+                    host = ""
+            else:
+                host = url.split("/")[0].strip()
+        name = profiles.unique_name(
+            profiles.profile_name_for(cfg.server_name, host)
+        )
         prof, err = profiles.create(name)
         if err:
             self._profile_error(err)
             return
-        self._refresh_profiles_combo(select=name)
-        self._profile_error("")
-        self._configure_new_profile(prof)
-
-    def _configure_new_profile(self, prof):
-        """Open the first-launch wizard scoped to the fresh profile: BOTH
-        the persist override and the process-active profile point at it
-        while the dialog runs, so an accepted selection lands its
-        launcher.json AND content repos into the new profile without ever
-        touching the running profile's stores or the global launcher
-        config. The wizard's required install folder is recorded into the
-        new profile's OWN state store (the process store still points at
-        the running profile), so the profile restarts fully configured.
-        Skipping is acceptable — the profile simply stays unconfigured."""
-        from .launcher_config_dialog import LauncherConfigDialog
-
         prev_active = profiles.active()
         try:
             profiles.activate(prof)
-            dlg = LauncherConfigDialog(initial_path=launcher.discover_path())
-            if dlg.exec() != QDialog.DialogCode.Accepted:
-                return
-            sel = dlg.selection()
             err = self._persist_profile_selection(sel)
             if err:
                 self._profile_error(err)
+                profiles.delete(name)
+                self._refresh_profiles_combo()
                 return
             install_dir = (sel.get("install_dir") or "").strip()
             if install_dir:
@@ -701,6 +704,17 @@ class SettingsDialog(QDialog):
                 )
         finally:
             profiles.activate(prev_active)
+        self._refresh_profiles_combo(select=name)
+        self._profile_error("")
+        answer = QMessageBox.question(
+            self,
+            "Profile imported",
+            f"Profile '{name}' is ready. Switch to it now? "
+            "(The launcher will restart.)",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if answer == QMessageBox.Yes and not switch_profile(name):
+            self._profile_error("Restart the launcher manually to switch.")
 
     def _persist_profile_selection(self, sel) -> str:
         """Persist a wizard selection (file or URL) into the CURRENT
@@ -728,44 +742,9 @@ class SettingsDialog(QDialog):
         _dest, err = launcher.persist_text(raw)
         return err
 
-    def _on_profile_duplicate(self):
-        src = self._selected_profile()
-        if not src:
-            return
-        suggestion = f"{src}-copy"
-        name, ok = self._prompt_profile_name(
-            "Duplicate profile",
-            initial=suggestion[:31].rstrip(". "),
-        )
-        if not ok:
-            return
-        err = profiles.duplicate(src, name)
-        if err:
-            self._profile_error(err)
-            return
-        self._profile_error("")
-        self._refresh_profiles_combo(select=name)
-
-    def _on_profile_rename(self):
-        src = self._selected_profile()
-        if not src:
-            return
-        name, ok = self._prompt_profile_name("Rename profile", initial=src)
-        if not ok:
-            return
-        err = profiles.rename(src, name)
-        if err:
-            self._profile_error(err)
-            return
-        self._profile_error("")
-        self._refresh_profiles_combo(select=name)
-
     def _on_profile_delete(self):
         name = self._selected_profile()
         if not name:
-            return
-        if name == profiles.DEFAULT_PROFILE:
-            self._profile_error("The default profile cannot be deleted.")
             return
         answer = QMessageBox.question(
             self,
@@ -784,17 +763,20 @@ class SettingsDialog(QDialog):
         self._profile_error("")
         self._refresh_profiles_combo()
         if was_active:
-            # Pointer was reset to default — offer the immediate restart
+            # Pointer fell back to the first remaining profile (or
+            # nothing — the next launch opens the import wizard). Offer
+            # the immediate restart when a profile is left to run.
+            target = profiles.load_index()["active"]
+            if not target:
+                return
             # (no extra confirm; the deletion itself was just confirmed).
             answer = QMessageBox.question(
                 self,
                 "Profile deleted",
-                f"'{name}' was the active profile. Restart now on 'default'?",
+                f"'{name}' was the active profile. Restart now on '{target}'?",
                 QMessageBox.Yes | QMessageBox.No,
             )
-            if answer == QMessageBox.Yes and not switch_profile(
-                profiles.DEFAULT_PROFILE
-            ):
+            if answer == QMessageBox.Yes and not switch_profile(target):
                 self._profile_error("Restart the launcher manually to switch.")
 
     def _on_reset_registry(self, edit, get_url, on_reset):

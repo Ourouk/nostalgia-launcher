@@ -371,8 +371,8 @@ Keep them in sync when bumping.
   aborts Qt); widget assertions use `objectName`s set in the widgets.
 - Tests redirect config to `tmp_path` via `config_store.configure(...)` and
   use the `fake_home` / `hermetic_cli` conftest fixtures (which redirect the
-  per-user config dir via HOME / USERPROFILE / APPDATA / LOCALAPPDATA) so the
-  `default` profile resolves under `<config_dir>/profiles/default/`.
+  per-user config dir via HOME / USERPROFILE / APPDATA / LOCALAPPDATA) so
+  profiles resolve under a throwaway `<config_dir>/profiles/`.
 - Known flaky: `tests/test_addons_controller.py::test_apply_failure_records_error_and_posts_finished`
   times out intermittently under full-suite load but passes in isolation. Do
   not "fix" by disabling.

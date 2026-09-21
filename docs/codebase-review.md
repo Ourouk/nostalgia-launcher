@@ -529,9 +529,8 @@ the mirror-probe thread. All daemon threads. **[verified]**
 | Logo cache | `<cache_dir>/launcher_logo.img` | binary pixmap | `services/logo` |
 
 **Per-profile note** (`core/profiles.py`): every artifact row above is
-PER-PROFILE. The paths shown are the reserved `default` profile's, resolved
-under `<config_dir>/profiles/default/`; a non-default profile P resolves
-them under `<config_dir>/profiles/P/` as `launcher.json`, `state.json`,
+PER-PROFILE. The paths shown are profile P's, resolved
+under `<config_dir>/profiles/P/` as `launcher.json`, `state.json`,
 `hash_cache.json`, `local_<kind>_repo.json` (content repos),
 `torrents/<hash>.*`,
 `launcher_logo.img`. The registry itself is `<config_dir>/profiles.json`
