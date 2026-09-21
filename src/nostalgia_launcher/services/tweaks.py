@@ -1,9 +1,8 @@
-"""Tweak definitions and Config.wtf handling.
+"""Realm handling and Config.wtf seeding.
 
-Holds the tweak registry (defaults, UI items, clamping limits), the display
-detection used to pick an FOV default, and the Config.wtf reader/writer.
-Runtime fixes are left to the ExampleLoader mod where installed; the
-launcher itself only ever writes Config.wtf.
+Detects realm mismatches, injects the configured realm, and writes a
+fresh Config.wtf with fixed defaults on first install. Game settings
+beyond that are left to the in-game options — there is no tweak UI.
 """
 
 import math
@@ -11,7 +10,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from ..core.config_store import load_config, update_config
+from ..core.config_store import load_config
 from ..core.filesystem import atomic_write_text as _atomic_write
 from ..core.filesystem import ensure_dir
 from ..core.log_sink import log
@@ -22,20 +21,6 @@ def _wtf_str(v) -> str:
     newlines and NULs would let a hostile launcher config inject extra
     Config.wtf directives."""
     return re.sub(r'[\r\n\x00"]', "", str(v))
-
-
-def _wtf_num(v, default):
-    """Coerce a state-file value to a finite number for numeric SET lines;
-    anything else (a string with quotes, NaN, a dict…) falls back to the
-    default so it can never break out of the quoted value. Whole numbers
-    stay ints so the written file matches the historical formatting."""
-    try:
-        num = float(v)
-    except (TypeError, ValueError):
-        return default
-    if math.isnan(num) or math.isinf(num):
-        return default
-    return int(num) if num.is_integer() else num
 
 
 def _host_of(url: str) -> str:
@@ -156,7 +141,7 @@ def inject_realm(client_dir: str) -> bool:
             write_config_wtf(client_dir)
             write_realmlist_wtf(client_dir)
         else:
-            update_config_wtf(client_dir, load_tweaks_config())
+            update_config_wtf(client_dir)
         # Verify write succeeded by checking files exist and contain expected.
         exp = expected_realm().strip().lower()
         cfg_val = parse_config_wtf_realm(client_dir)
@@ -184,96 +169,12 @@ def inject_realm(client_dir: str) -> bool:
         return False
 
 
-TWEAKS_DEFAULTS = {
-    "nameplateRange": 41,
-    "fieldOfView": 110,
-    "farClip": 777,
-    "frillDistance": 70,
-    "cameraDistance": 50,
-    "soundInBackground": True,
-}
-
-TWEAKS_ITEMS = [
-    (None, "GENERAL", "section", False, None, None, None, None, None),
-    (
-        "nameplateRange",
-        "Nameplate range",
-        "number",
-        False,
-        None,
-        "Distance at which nameplates are visible.",
-        0,
-        41,
-        1,
-    ),
-    (None, "CAMERA", "section", False, None, None, None, None, None),
-    (
-        "fieldOfView",
-        "Field of View",
-        "number",
-        False,
-        None,
-        "Recommended values for aspect ratios: [4:3 = 90] [16:9 = 110] [21:9 = 150] [32:9 = 180]",
-        90,
-        180,
-        5,
-    ),
-    (
-        "farClip",
-        "Render distance",
-        "number",
-        False,
-        None,
-        "Maximum render distance. May cause crashes. [1.12 max: 777] [Tweaks max: 10000]",
-        100,
-        10000,
-        1,
-    ),
-    (
-        "frillDistance",
-        "Ground clutter distance",
-        "number",
-        False,
-        None,
-        "Ground clutter render distance. [1.12 max: 70] [Tweaks max: 300]",
-        0,
-        300,
-        1,
-    ),
-    (
-        "cameraDistance",
-        "Camera distance",
-        "number",
-        False,
-        None,
-        "Maximum camera (zoom out) distance. [1.12 max: 50] [Tweaks max: 100]",
-        50,
-        100,
-        1,
-    ),
-    (None, "SOUND", "section", False, None, None, None, None, None),
-    (
-        "soundInBackground",
-        "Background sounds",
-        "checkbox",
-        True,
-        None,
-        "Allows game sounds to play while the game is minimized.",
-        None,
-        None,
-        None,
-    ),
-]
-
-
-# {tweak_id: (min, max)} for every numeric tweak — the single source of
-# truth for clamping, wherever the value is read from the UI.
-TWEAKS_LIMITS = {
-    t[0]: (t[6], t[7])
-    for t in TWEAKS_ITEMS
-    if t[0] is not None and t[2] == "number"
-}
-
+# Fixed defaults for fresh-install Config.wtf seeding (previously
+# TWEAKS_DEFAULTS, owned by the removed tweak UI).
+_FAR_CLIP = 777
+_CAMERA_DISTANCE = 50
+_NAMEPLATE_RANGE = 41
+_BACKGROUND_SOUND = 1
 
 _FOV_REFS = [
     (4 / 3, 90),
@@ -350,42 +251,16 @@ def _get_display_info_safe() -> dict:
     }
 
 
-def load_tweaks_config() -> dict:
-    cfg = load_config()
-    stored = cfg.get("tweaks", {})
-    defaults = dict(TWEAKS_DEFAULTS)
-    defaults["fieldOfView"] = fov_default_for_display()
-    return {k: stored.get(k, v) for k, v in defaults.items()}
-
-
-def save_tweaks_config(values: dict):
-    update_config(lambda c: c.__setitem__("tweaks", values))
-
-
-def write_config_wtf(client_dir: str, tweaks: dict | None = None):
+def write_config_wtf(client_dir: str):
     """Write a fresh Config.wtf from scratch, overwriting any existing one.
     Never raises — logs the error if the file can't be written (read-only,
     locked by a running game, or an unwritable folder)."""
-    if tweaks is None:
-        tweaks = load_tweaks_config()
-    far_clip = _wtf_num(tweaks.get("farClip"), TWEAKS_DEFAULTS["farClip"])
-    cam_dist = _wtf_num(
-        tweaks.get("cameraDistance"), TWEAKS_DEFAULTS["cameraDistance"]
-    )
-    nameplate = _wtf_num(
-        tweaks.get("nameplateRange"), TWEAKS_DEFAULTS["nameplateRange"]
-    )
-    fov_deg = _wtf_num(
-        tweaks.get("fieldOfView"), TWEAKS_DEFAULTS["fieldOfView"]
-    )
+    far_clip = _FAR_CLIP
+    cam_dist = _CAMERA_DISTANCE
+    nameplate = _NAMEPLATE_RANGE
+    fov_deg = fov_default_for_display()
     fov_rad = round(fov_deg * math.pi / 180.0, 6)
-    bg_sound = (
-        1
-        if tweaks.get(
-            "soundInBackground", TWEAKS_DEFAULTS["soundInBackground"]
-        )
-        else 0
-    )
+    bg_sound = _BACKGROUND_SOUND
 
     di = _get_display_info_safe()
     from ..core import launcher
@@ -512,43 +387,24 @@ def write_realmlist_wtf(client_dir: str):
         log(f"Could not write realmlist.wtf: {e}", "err")
 
 
-def update_config_wtf(client_dir: str, tweaks: dict):
+def update_config_wtf(client_dir: str):
+    """Sync only the realm keys onto an existing Config.wtf.
+
+    Graphics/FoV choices the user made in-game are left untouched; a
+    missing Config falls back to a full fresh `write_config_wtf`.
+    """
     cfg_path = os.path.join(client_dir, "WTF", "Config.wtf")
     if not os.path.exists(cfg_path):
-        write_config_wtf(client_dir, tweaks)
+        write_config_wtf(client_dir)
         write_realmlist_wtf(client_dir)
         return
 
-    far_clip = _wtf_num(tweaks.get("farClip"), TWEAKS_DEFAULTS["farClip"])
-    cam_dist = _wtf_num(
-        tweaks.get("cameraDistance"), TWEAKS_DEFAULTS["cameraDistance"]
-    )
-    nameplate = _wtf_num(
-        tweaks.get("nameplateRange"), TWEAKS_DEFAULTS["nameplateRange"]
-    )
-    fov_deg = _wtf_num(
-        tweaks.get("fieldOfView"), TWEAKS_DEFAULTS["fieldOfView"]
-    )
-    fov_rad = round(fov_deg * math.pi / 180.0, 6)
-    bg_sound = (
-        1
-        if tweaks.get(
-            "soundInBackground", TWEAKS_DEFAULTS["soundInBackground"]
-        )
-        else 0
-    )
     from ..core import launcher as _launcher
 
     srv = _launcher.realm() or _host_of(_launcher.server_url()) or "localhost"
     srv = _wtf_str(srv)
 
     updates = {
-        "farClip": str(far_clip),
-        "CameraDistanceMax": str(cam_dist),
-        "NP_NameplateDistance": str(nameplate),
-        "FoV": str(fov_rad),
-        "NameplateRange": str(nameplate),
-        "BackgroundSound": str(bg_sound),
         "realmList": srv,
         "patchList": srv,
     }
@@ -587,9 +443,4 @@ def update_config_wtf(client_dir: str, tweaks: dict):
     except Exception:
         pass
 
-    log(
-        f"  Config.wtf updated: farClip={far_clip}, CameraDistanceMax={cam_dist}, "
-        f"NameplateRange={nameplate}, NP_NameplateDistance={nameplate}, "
-        f"FoV={fov_rad}, realmList={srv}",
-        "dim",
-    )
+    log(f"  Config.wtf updated: realmList={srv}", "dim")

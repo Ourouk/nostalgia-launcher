@@ -51,7 +51,6 @@ from .mods_panel import ModsPanel
 from .news_panel import NewsPanel
 from .settings_dialog import SettingsDialog
 from .theme import apply_theme, logo_for_config, palette_for_config
-from .tweaks_panel import TweaksPanel
 from .update_panel import UpdatePanel
 
 
@@ -103,7 +102,7 @@ class MainWindow(QMainWindow):
     so posting after close is a safe no-op.
     """
 
-    TABS = ["NEWS", "UPDATE", "TWEAKS", "ADDONS", "MODS", "ASSETS"]
+    TABS = ["NEWS", "UPDATE", "ADDONS", "MODS", "ASSETS"]
 
     def __init__(self, hub: ControllerHub, parent=None):
         super().__init__(parent)
@@ -360,13 +359,6 @@ class MainWindow(QMainWindow):
             if name == "NEWS":
                 page = NewsPanel(
                     self._hub.news,
-                    self._hub.bridge,
-                    self._palette,
-                    self._stack,
-                )
-            elif name == "TWEAKS":
-                page = TweaksPanel(
-                    self._hub.tweaks,
                     self._hub.bridge,
                     self._palette,
                     self._stack,

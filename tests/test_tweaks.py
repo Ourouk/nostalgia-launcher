@@ -1,47 +1,11 @@
-"""Unit tests for the tweaks module (Config.wtf)."""
+"""Unit tests for the realm/Config.wtf module."""
 
-import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.services.tweaks as tweaks
-
-
-def test_tweak_limits_cover_all_numeric_items():
-    for (
-        tid,
-        _label,
-        kind,
-        _rec,
-        _d,
-        _desc,
-        lo,
-        hi,
-        _step,
-    ) in tweaks.TWEAKS_ITEMS:
-        if tid is not None and kind == "number":
-            assert tweaks.TWEAKS_LIMITS[tid] == (lo, hi)
-
-
-def test_load_tweaks_config_merges_defaults(tmp_path):
-    config_store.configure(
-        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
-    )
-    config_store.save_config({"tweaks": {"farClip": 1000}})
-    cfg = tweaks.load_tweaks_config()
-    assert cfg["farClip"] == 1000
-    assert cfg["nameplateRange"] == tweaks.TWEAKS_DEFAULTS["nameplateRange"]
-    assert "fieldOfView" in cfg
-
-
-def test_save_tweaks_config(tmp_path):
-    config_store.configure(
-        str(tmp_path / "config.json"), str(tmp_path / "cache.json")
-    )
-    tweaks.save_tweaks_config({"farClip": 42})
-    assert config_store.load_config()["tweaks"] == {"farClip": 42}
 
 
 def test_write_config_wtf_writes_file(tmp_path):
     client = tmp_path / "client"
-    tweaks.write_config_wtf(str(client), tweaks.TWEAKS_DEFAULTS)
+    tweaks.write_config_wtf(str(client))
     cfg = client / "WTF" / "Config.wtf"
     assert cfg.exists()
     content = cfg.read_text(encoding="utf-8")
@@ -51,7 +15,7 @@ def test_write_config_wtf_writes_file(tmp_path):
 
 def test_update_config_wtf_creates_when_missing(tmp_path):
     client = tmp_path / "client"
-    tweaks.update_config_wtf(str(client), tweaks.TWEAKS_DEFAULTS)
+    tweaks.update_config_wtf(str(client))
     assert (client / "WTF" / "Config.wtf").exists()
 
 
@@ -63,7 +27,7 @@ def test_write_config_wtf_sanitizes_hostile_realm(tmp_path, monkeypatch):
         lambda: 'evil"\nSET gxApi "opengl',
     )
     client = tmp_path / "client"
-    tweaks.write_config_wtf(str(client), tweaks.TWEAKS_DEFAULTS)
+    tweaks.write_config_wtf(str(client))
     content = (client / "WTF" / "Config.wtf").read_text(encoding="utf-8")
     assert 'SET realmList "evilSET gxApi opengl"' in content
     # Exactly one SET line per key — the injected newline is gone.
@@ -73,20 +37,24 @@ def test_write_config_wtf_sanitizes_hostile_realm(tmp_path, monkeypatch):
     )
 
 
-def test_update_config_wtf_updates_existing_values(tmp_path):
+def test_update_config_wtf_syncs_realm_only(tmp_path):
     client = tmp_path / "client"
-    tweaks.write_config_wtf(str(client), tweaks.TWEAKS_DEFAULTS)
+    tweaks.write_config_wtf(str(client))
     cfg = client / "WTF" / "Config.wtf"
     cfg.write_text(
-        'SET farClip "777"\nSET NameplateRange "41"\n', encoding="utf-8"
+        'SET realmList "old.realm"\n'
+        'SET patchList "old.realm"\n'
+        'SET farClip "777"\n'
+        'SET FoV "1.0"\n',
+        encoding="utf-8",
     )
-    tweaks.update_config_wtf(
-        str(client), dict(tweaks.TWEAKS_DEFAULTS, farClip=1000)
-    )
+    tweaks.update_config_wtf(str(client))
     content = cfg.read_text(encoding="utf-8")
-    assert 'SET farClip "1000"' in content
-    # Unrelated lines are preserved.
-    assert 'SET NameplateRange "41"' in content
+    assert 'SET realmList "launcher.test"' in content
+    assert 'SET patchList "launcher.test"' in content
+    # In-game graphics choices are left untouched.
+    assert 'SET farClip "777"' in content
+    assert 'SET FoV "1.0"' in content
 
 
 def test_fov_default_for_display_matches_display():
@@ -104,7 +72,7 @@ def _write_with_renderer(monkeypatch, tmp_path, renderer):
         lambda: {"launch": {"umu_renderer": renderer}},
     )
     client = tmp_path / "client"
-    tweaks.write_config_wtf(str(client), tweaks.TWEAKS_DEFAULTS)
+    tweaks.write_config_wtf(str(client))
     return (client / "WTF" / "Config.wtf").read_text(encoding="utf-8")
 
 

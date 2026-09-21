@@ -138,9 +138,12 @@ The **MODS** and **ADDONS** tabs list the catalogs named by your
 configuration. There is no universal built-in list — what you see depends
 entirely on the configuration you imported.
 
-### Tweaks
+### Game settings
 
-The **TWEAKS** tab writes preferences to `Config.wtf` only. The launcher
+On first install the launcher seeds `WTF/Config.wtf` (plus
+`realmlist.wtf`) with fixed defaults and the configured realm, and
+re-syncs the realm keys before launch when needed. Beyond that it never
+touches game settings — those live in the in-game options. The launcher
 never binary-patches game executables; runtime client fixes (where used)
 are left to loader mods installed by your configuration.
 

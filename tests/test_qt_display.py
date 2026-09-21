@@ -314,7 +314,6 @@ def test_real_display_tabs_switch_and_settings_open(qapp, app_no_startup):
     win = app_no_startup._window
     for name, obj in (
         ("NEWS", "newsPanel"),
-        ("TWEAKS", "tweaksPanel"),
         ("ADDONS", "addonsPanel"),
         ("MODS", "modsPanel"),
     ):

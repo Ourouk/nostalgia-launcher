@@ -18,8 +18,8 @@ first-time install remains. Tests never need the real libtorrent (faked via
 src/nostalgia_launcher/
   cli.py          # entry point: config wiring + window loop
   core/           # constants, config_store, launcher, security_http, filesystem, helpers, log_sink, platform_support, errors
-  services/       # catalog, addons, mods, news, tweaks, update_backend, self_update
-  controllers/    # update, news, mods, addons, settings, tweaks (toolkit-agnostic)
+  services/       # catalog, addons, mods, news, realm/Config.wtf seeding, update_backend, self_update
+  controllers/    # update, news, mods, addons, settings (toolkit-agnostic)
   state/          # models.py (state dataclasses), events.py (dispatcher)
   ui/qt/          # app, main_window, bridge, theme, panels, dialogs
 ```
@@ -38,7 +38,10 @@ src/nostalgia_launcher/
 - **There are no hardcoded server/mod/addon values.** Everything is configured
   by `core/launcher.py` reading `nostalgia_launcher.json`.
 - The launcher never binary-patches `WoW.exe` — runtime client fixes are left
-  to the catalog-declared loader mods (external launchers). The only tweak channel is `Config.wtf`.
+  to the catalog-declared loader mods (external launchers). The launcher only
+  writes `Config.wtf` to seed fixed defaults plus the realm on first install
+  (and to re-sync the realm keys before launch); all other game settings live
+  in the in-game options.
 
 ## Launcher Configuration
 
@@ -228,14 +231,14 @@ The client-update engine lives in `services/update/workflow.py`
   cleared at the start of each verify/update attempt and when the game folder
   is invalidated, preventing stale state from leaking between attempts.
 
-## Tweaks
+## Game settings (Config.wtf seeding)
 
-The **TWEAKS** tab applies preferences via `Config.wtf` only
-(`services/tweaks.py`): field of view, render distance, nameplate range,
-camera distance, ground-clutter distance, and background sounds. The launcher
-**never binary-patches `WoW.exe`** — runtime client fixes are left to the
-catalog-declared external-launcher mods where installed. The `Config.wtf` writer is the only
-tweak channel.
+On first install `services/tweaks.py` seeds `WTF/Config.wtf` with fixed
+defaults (plus the configured `realmList`/`patchList`) and the client-root
+`realmlist.wtf`; before launch it re-syncs only the realm keys onto an
+existing Config. The launcher **never binary-patches `WoW.exe`** — runtime
+client fixes are left to the catalog-declared external-launcher mods where
+installed. All other game settings live in the in-game options.
 
 ## Platform Support
 
@@ -283,7 +286,7 @@ features) and requires explicit acceptance before it is persisted.
 - Strict game-folder confirmation: `out_dir` is persisted ONLY by a Settings
   apply (which also writes `out_dir_user_set`; pre-flag installs are
   backfilled once). Controllers read stored-or-empty and refuse to operate —
-  no verify, update, mod, addon or tweak write ever targets an unconfirmed
+  no verify, update, mod, addon or realm/Config.wtf write ever targets an unconfirmed
   folder, and nothing is auto-created on disk.
 - Downloaded archives are extracted with protection against path traversal;
   installed files are confined to the selected game folder.

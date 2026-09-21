@@ -37,7 +37,6 @@ from ...controllers.assets import AssetsController
 from ...controllers.mods import ModsController
 from ...controllers.news import NewsController
 from ...controllers.settings import SettingsController
-from ...controllers.tweaks import TweaksController
 from ...controllers.update import UpdateController
 from ...state.events import (
     AddonsLoaded,
@@ -145,7 +144,7 @@ class ControllerBridge(QObject):
 
 
 class ControllerHub:
-    """Assembles the seven controllers on one shared dispatcher plus the
+    """Assembles the six controllers on one shared dispatcher plus the
     bridge.
 
     Plain Python object (no QObject); it exists so the Qt main window gets a
@@ -162,7 +161,6 @@ class ControllerHub:
         self.mods = ModsController(self.dispatcher, get_out_dir)
         self.assets = AssetsController(self.dispatcher, get_out_dir)
         self.addons = AddonsController(self.dispatcher, get_out_dir)
-        self.tweaks = TweaksController(self.dispatcher, get_out_dir)
         self.settings = SettingsController(
             self.dispatcher,
             self.updater,

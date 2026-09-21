@@ -2,7 +2,7 @@
 
 The launcher configuration (`core/launcher`) is process-global, so every test
 gets a configured server + mirror to keep the code paths (client updates,
-news, settings, registries, tweaks realm) deterministic. It is reset after
+news, settings, registries, realm) deterministic. It is reset after
 each test.
 """
 

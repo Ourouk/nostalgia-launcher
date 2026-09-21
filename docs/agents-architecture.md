@@ -10,8 +10,8 @@ The libtorrent pitfall list lives in `docs/bittorrent-notes.md`.
 src/nostalgia_launcher/
   cli.py          # entry point: config wiring + window loop
   core/           # constants, config_store, launcher, security_http, filesystem, helpers, log_sink, platform_support, profiles, app_lock, errors, themes
-  services/       # catalog, addons, mods, assets, news, tweaks, self_update, umu, logo, mpq, config_import, update_backend/, sources/
-  controllers/    # update, news, mods, assets, addons, settings, tweaks (toolkit-agnostic)
+  services/       # catalog, addons, mods, assets, news, realm/Config.wtf seeding, self_update, umu, logo, mpq, config_import, update_backend/, sources/
+  controllers/    # update, news, mods, assets, addons, settings (toolkit-agnostic)
   state/          # models.py (state dataclasses), events.py (dispatcher)
   ui/qt/          # app, main_window, bridge, theme, panels, dialogs
 ```
@@ -124,7 +124,7 @@ profile — different profiles MAY run side by side.
 
 | Shared across all profiles | Isolated per profile |
 |---|---|
-| wine prefix (`data_dir()/wineprefix`), self-update release cache, session log (`launcher.log`) | server config, state store (out_dir/mods/addons/tweaks/launch), hash cache, custom catalogs, torrent metadata/resume, logo cache |
+| wine prefix (`data_dir()/wineprefix`), self-update release cache, session log (`launcher.log`) | server config, state store (out_dir/mods/addons/launch), hash cache, custom catalogs, torrent metadata/resume, logo cache |
 
 **Single-instance guard**: `cli._run_backend` derives the key from the
 active profile's state path (`core/app_lock.state_key` =
@@ -265,7 +265,7 @@ the QLocalServer guard remains authoritative there.
 - **realmlist.wtf**: `services/tweaks.write_realmlist_wtf(client_dir)`
   writes `SET realmlist <server.realm>` (value sanitized, unquoted) into the client root wherever a
   fresh `WTF/Config.wtf` is seeded (verify with overwrite/missing config,
-  torrent recovery, tweaks apply on a missing config) — old-school clients
+  torrent recovery) — old-school clients
   read both files.
 - The ADDONS list is sectioned, not flat: stale installs get a **NEED
   UPDATE** section rendered above **INSTALLED** (only when non-empty),
@@ -352,7 +352,9 @@ the QLocalServer guard remains authoritative there.
   skips the incremental verify and offers `DOWNLOAD via BitTorrent`
   (first-time only) directly.
 - The launcher never binary-patches `WoW.exe` — runtime client fixes are left
-  to the catalog-declared loader mods (external launchers). The only tweak channel is `Config.wtf`.
+  to the catalog-declared loader mods (external launchers). `Config.wtf` is
+  only seeded with fixed defaults plus the realm on first install (realm keys
+  re-synced before launch); all other game settings live in-game.
 
 ## Update lifecycle & game launch
 

@@ -274,7 +274,6 @@ def test_construction_builds_full_app(qapp, app):
 
     for name, obj in (
         ("NEWS", "newsPanel"),
-        ("TWEAKS", "tweaksPanel"),
         ("ADDONS", "addonsPanel"),
         ("MODS", "modsPanel"),
     ):
@@ -381,7 +380,6 @@ def test_nav_buttons_switch_tabs_and_expose_panels(qapp, app_no_startup):
     win = app_no_startup._window
     for name, obj in (
         ("NEWS", "newsPanel"),
-        ("TWEAKS", "tweaksPanel"),
         ("ADDONS", "addonsPanel"),
         ("MODS", "modsPanel"),
     ):
