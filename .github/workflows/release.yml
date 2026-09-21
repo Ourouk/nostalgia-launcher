@@ -82,6 +82,10 @@ jobs:
           python-version: "3.12"
       - name: Sync dependencies
         run: uv sync --dev
+      - name: Fetch 7z binary (Windows)
+        run: |
+          uv run python packaging/fetch-7z-windows.py
+          test -f packaging/vendor/windows/7zr.exe
       - name: Build (Windows)
         run: uv run pyinstaller --noconfirm --clean NostalgiaLauncher.spec
       - name: Stage artifact
@@ -183,6 +187,11 @@ jobs:
 
       - name: Sync dependencies
         run: uv sync --dev
+
+      - name: Fetch 7z binary (macOS)
+        run: |
+          uv run python packaging/fetch-7z-macos.py
+          test -f packaging/vendor/macos/7zz
 
       - name: Build universal2 DMG (macOS)
         run: ./packaging/macos/build-dmg.sh

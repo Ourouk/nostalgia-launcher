@@ -19,10 +19,12 @@ disk (the archives themselves are capped by the fetch layer).
 import io
 import os
 import shutil
+import sys
 import zipfile
 
 from ...core.filesystem import rmtree_force
 from ...core.log_sink import log
+from ...core.process_env import clean_system_env
 from ...core.safety import safe_relative_path
 
 # Per-member uncompressed ceiling: far above any legitimate game file,
@@ -35,16 +37,56 @@ _MAX_MEMBER_BYTES = 1 * 1024 * 1024 * 1024
 SEVEN_Z_CANDIDATES = ("7zz", "7z", "7za")
 
 SEVEN_Z_MISSING_MSG = (
-    "7z backend missing — install 7-Zip (Windows: 7-Zip with 7z.exe "
-    "on PATH; Linux: p7zip-full / p7zip / 7zip package; macOS: "
-    "brew install sevenzip) then retry"
+    "7z backend missing — Linux: Debian/Ubuntu "
+    "'sudo apt install p7zip-full'; Fedora "
+    "'sudo dnf install p7zip'; Arch 'sudo pacman -S p7zip'; "
+    "then retry (Windows/macOS releases bundle their own 7z; "
+    "dev runs: 7-Zip with 7z.exe on PATH / "
+    "'brew install sevenzip')"
 )
 
 
+def _bundled_seven_z_names() -> tuple:
+    """Bundled 7z binary names for this platform (shipped inside the
+    frozen app on Windows/macOS — see packaging/fetch-7z-*)."""
+    if os.name == "nt":
+        return ("7zr.exe", "7za.exe", "7z.exe")
+    return ("7zz", "7z", "7za")
+
+
+def _bundled_seven_z() -> str:
+    """7z binary shipped inside the frozen app, or '' when absent.
+
+    Only the Windows (onefile) and macOS (.app) bundles ship one;
+    dev runs and the Linux AppImage fall through to the PATH probe
+    in `find_seven_z`.
+    """
+    if not getattr(sys, "frozen", False):
+        return ""
+    meipass = getattr(sys, "_MEIPASS", "")
+    exe_dir = os.path.dirname(sys.executable or "")
+    bases = (meipass, exe_dir, os.path.join(exe_dir, "_internal"))
+    for base in bases:
+        if not base:
+            continue
+        for name in _bundled_seven_z_names():
+            candidate = os.path.join(base, name)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+    return ""
+
+
 def find_seven_z() -> str:
-    """Locate a system 7z binary. Returns '' when none is installed."""
+    """Locate a 7z binary: bundled first, then system PATH.
+
+    Returns '' when none is installed (callers raise
+    SEVEN_Z_MISSING_MSG).
+    """
     import shutil
 
+    bundled = _bundled_seven_z()
+    if bundled:
+        return bundled
     for name in SEVEN_Z_CANDIDATES:
         found = shutil.which(name)
         if found:
@@ -185,11 +227,15 @@ def extract_7z_map(
         with open(archive, "wb") as f:
             f.write(data)
         try:
+            # Scrubbed env: AppImage AppRun exports LD_LIBRARY_PATH
+            # at the bundled libs, which makes the system 7z load
+            # the bundled libstdc++ and die on CXXABI_1.3.15.
             proc = subprocess.run(
                 [seven_z, "x", archive, f"-o{outdir}", "-y", "-bd"],
                 capture_output=True,
                 text=True,
                 timeout=120,
+                env=clean_system_env(),
             )
         except FileNotFoundError:
             raise RuntimeError(SEVEN_Z_MISSING_MSG) from None

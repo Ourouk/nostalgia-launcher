@@ -402,6 +402,54 @@ def test_find_seven_z_probes_candidates(monkeypatch):
     assert deploy.find_seven_z() == ""
 
 
+def _freeze_as(tmp_path, monkeypatch, *relpaths, frozen=True):
+    """Fake a frozen app whose exe lives in tmp_path (files at the
+    given exe-relative paths, executable). Returns the exe dir."""
+    import sys
+
+    for rel in relpaths:
+        full = tmp_path / rel
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_bytes(b"fake-7z")
+        full.chmod(0o755)
+    if frozen:
+        exe = str(tmp_path / "NostalgiaLauncher")
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "_MEIPASS", "", raising=False)
+        monkeypatch.setattr(sys, "executable", exe, raising=False)
+    return str(tmp_path)
+
+
+def test_find_seven_z_prefers_bundled(monkeypatch, tmp_path):
+    import shutil
+
+    _freeze_as(tmp_path, monkeypatch, "_internal/7zz")
+    monkeypatch.setattr(shutil, "which", lambda n: "/usr/bin/7z")
+    found = deploy.find_seven_z()
+    assert found == str(tmp_path / "_internal" / "7zz")
+
+
+def test_find_seven_z_falls_back_to_path(monkeypatch, tmp_path):
+    import shutil
+
+    _freeze_as(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        shutil, "which", lambda n: "/usr/bin/7z" if n == "7z" else None
+    )
+    assert deploy.find_seven_z() == "/usr/bin/7z"
+
+
+def test_find_seven_z_ignores_bundle_when_not_frozen(monkeypatch, tmp_path):
+    """Dev runs never pick up stray binaries beside the interpreter."""
+    import shutil
+
+    _freeze_as(tmp_path, monkeypatch, "_internal/7zz", frozen=False)
+    monkeypatch.setattr(
+        shutil, "which", lambda n: "/usr/bin/7z" if n == "7z" else None
+    )
+    assert deploy.find_seven_z() == "/usr/bin/7z"
+
+
 def test_extract_7z_map_missing_backend(monkeypatch, tmp_path):
     """No 7z binary → actionable error, and 7z is never spawned."""
     import subprocess
@@ -470,6 +518,34 @@ def test_extract_7z_map_traversal_dest_refused(monkeypatch, tmp_path):
         )
 
 
+def test_extract_7z_map_scrubs_bundled_env(monkeypatch, tmp_path):
+    """The system 7z child must not inherit the AppImage's
+    LD_LIBRARY_PATH (bundled libstdc++ → CXXABI_1.3.15 error)."""
+    import subprocess
+
+    client = tmp_path / "client"
+    client.mkdir()
+    monkeypatch.setattr(deploy, "find_seven_z", lambda: "/usr/bin/7z")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/appimage/_internal")
+    monkeypatch.setenv("QT_PLUGIN_PATH", "/appimage/plugins")
+    seen = {}
+    inner = _fake_7z_run({"version.dll": b"V"})
+
+    def _run(args, **kwargs):
+        seen.update(kwargs.get("env", {}))
+        seen["_has_env"] = "env" in kwargs
+        return inner(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    written = deploy.extract_7z_map(
+        str(client), b"fake-7z", {"version.dll": "version.dll"}
+    )
+    assert written == ["version.dll"]
+    assert seen["_has_env"] is True
+    assert "LD_LIBRARY_PATH" not in seen
+    assert "QT_PLUGIN_PATH" not in seen
+
+
 def test_github_no_match_lists_available_assets():
     b = sources.get("github_release")
     entry = {
@@ -493,3 +569,12 @@ def test_github_no_match_lists_available_assets():
     }
     with pytest.raises(RuntimeError, match=r"Release\.7z"):
         b.fetch(entry, release=rel)
+
+
+def test_seven_z_missing_msg_names_distro_commands():
+    assert "sudo apt install p7zip-full" in deploy.SEVEN_Z_MISSING_MSG
+    assert "sudo dnf install p7zip" in deploy.SEVEN_Z_MISSING_MSG
+    assert "sudo pacman -S p7zip" in deploy.SEVEN_Z_MISSING_MSG
+    # Windows/macOS dev runs (no staged vendor dir) still get a hint.
+    assert "7z.exe on PATH" in deploy.SEVEN_Z_MISSING_MSG
+    assert "brew install sevenzip" in deploy.SEVEN_Z_MISSING_MSG

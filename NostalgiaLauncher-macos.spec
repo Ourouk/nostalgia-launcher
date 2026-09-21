@@ -41,6 +41,29 @@ datas = pyside_datas + shiboken_datas + lt_datas + [
 binaries = pyside_binaries + shiboken_binaries + lt_binaries
 hiddenimports = pyside_hiddenimports + shiboken_hiddenimports + lt_hiddenimports
 
+# Bundled 7z console binary: the frozen app probes `7zz` next to the
+# executable first (services/sources/deploy.py::_bundled_seven_z),
+# falling back to system PATH. Staged by packaging/fetch-7z-macos.py.
+_seven_z_src = os.path.join("packaging", "vendor", "macos", "7zz")
+if os.path.isfile(_seven_z_src):
+    binaries.append((_seven_z_src, "."))
+else:
+    print(
+        "WARNING: packaging/vendor/macos/7zz not staged"
+        " (run packaging/fetch-7z-macos.py);"
+        " the .app will fall back to system 7z"
+    )
+_seven_z_license = os.path.join(
+    "packaging", "vendor", "macos", "7-Zip-License.txt"
+)
+if os.path.isfile(_seven_z_license):
+    datas.append((_seven_z_license, "licenses"))
+else:
+    _seven_z_readme = os.path.join("packaging", "vendor", "macos", "README.md")
+    if os.path.isfile(_seven_z_readme):
+        datas.append((_seven_z_readme, "licenses"))
+
+
 # The panels/dialogs are constructed by the Qt main window at runtime, so
 # list every app module explicitly to be safe under a frozen build.
 # The panels/dialogs are constructed by the Qt main window at runtime, so

@@ -35,6 +35,9 @@ Thumbs.db
 # Vendored reference source (third-party, not part of the package)
 context
 
+# Staged third-party bundle binaries (fetch scripts; not committed)
+packaging/vendor/
+
 # opencode (local config — not shared; pyright/Context7 enforcement is opt-in per-dev)
 opencode.json
 opencode.jsonc

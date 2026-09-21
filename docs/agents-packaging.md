@@ -32,6 +32,30 @@ uv run pyinstaller --noconfirm --clean NostalgiaLauncher.spec        # Windows o
   icon). The result is unsigned by default — signing/notarization are opt-in
   via env vars.
 
+## Vendored 7z (Windows/macOS bundles)
+
+`.7z` mods extract via the system 7z binary — linuxdeploy-style,
+the Windows onefile and macOS `.app` ship their own so users never
+install anything:
+
+- `packaging/fetch-7z-windows.py` → `packaging/vendor/windows/7zr.exe`
+  (standalone single-file upstream asset, no extraction step).
+- `packaging/fetch-7z-macos.py` → `packaging/vendor/macos/7zz`
+  (upstream `7z2603-mac` is a genuine x86_64+arm64 fat binary —
+  verified with `file(1)` — so the universal2 story holds).
+- Both scripts pin URL + SHA-256 (same supply-chain pattern as
+  `LINUXDEPLOY_SHA256` in `release.yml`), are idempotent, stdlib-only,
+  and also stage the upstream `License.txt` (LGPL attribution,
+  bundled under `licenses/`).
+- `packaging/vendor/` is gitignored; the specs bundle the binary only
+  when staged, else print a warning and fall back to system 7z (local
+  dev builds keep working). `release.yml` runs the fetch before
+  pyinstaller and fails the job when the binary is missing.
+- Runtime lookup is `services/sources/deploy.py::find_seven_z`:
+  bundled first (`sys._MEIPASS` → exe dir → `_internal/`), then PATH.
+  Linux never bundles — the AppImage relies on the system package and
+  the missing-backend error carries per-distro install commands.
+
 ## CI/CD
 
 GitHub Actions:
