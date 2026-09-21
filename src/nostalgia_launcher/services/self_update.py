@@ -14,7 +14,35 @@ from ..core.security_http import read_capped, secure_urlopen
 
 # Self-update: the updater checks its own GitHub releases once a day.
 UPDATER_REPO = "Ourouk/nostalgia-launcher"
+GITHUB_WEB = "https://github.com"
 UPDATER_CHECK_TTL = 86400  # 1 day, cached in the config file
+
+# Release asset per OS (mirrors release.yml STAGED_NAME values).
+_UPDATER_ASSETS = {
+    "windows": "NostalgiaLauncher-windows-x86_64.exe",
+    "linux": "NostalgiaLauncher-linux-x86_64.AppImage",
+    "macos": "NostalgiaLauncher-universal2.dmg",
+}
+
+
+def release_page_url(tag: str | None) -> str:
+    """GitHub release page for ``tag`` (or the latest page)."""
+    if tag:
+        return f"{GITHUB_WEB}/{UPDATER_REPO}/releases/tag/{tag}"
+    return f"{GITHUB_WEB}/{UPDATER_REPO}/releases/latest"
+
+
+def platform_asset_name() -> str | None:
+    """Expected release asset for this OS, or None when unknown."""
+    from ..core import platform_support as _ps
+
+    if _ps.is_windows():
+        return _UPDATER_ASSETS["windows"]
+    if _ps.is_macos():
+        return _UPDATER_ASSETS["macos"]
+    if _ps.is_linux():
+        return _UPDATER_ASSETS["linux"]
+    return None
 
 
 def _invalidate_cache():

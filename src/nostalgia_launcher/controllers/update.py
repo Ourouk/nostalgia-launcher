@@ -132,6 +132,7 @@ class UpdateController:
         # Set by check_updater_update(): a newer updater release exists and
         # the header "Update available!" label should be shown.
         self.updater_update_available: bool = False
+        self.updater_latest_tag: str | None = None
         if get_out_dir is None:
 
             def _default_get_out_dir() -> str:
@@ -345,6 +346,7 @@ class UpdateController:
                 tag = fetch_updater_latest_tag()
             except Exception:
                 tag = None
+            self.updater_latest_tag = tag
             self.updater_update_available = bool(updater_update_available(tag))
 
         threading.Thread(target=worker, daemon=True).start()

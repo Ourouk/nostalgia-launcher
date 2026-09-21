@@ -183,17 +183,27 @@ class MainWindow(QMainWindow):
         self._wordmark.setFont(font)
         self._wordmark.setStyleSheet(f"color: {p.purple.name()};")
         # "Update available!" sits under the wordmark (hidden until the
-        # daily self-update check finds a newer release).
+        # daily self-update check finds a newer release). Clickable:
+        # opens the GitHub release page for this platform's asset.
+        from .list_panel import ClickableLabel
+
         wordmarkBox = QWidget(header)
         wmLayout = QVBoxLayout(wordmarkBox)
         wmLayout.setContentsMargins(0, 0, 0, 0)
         wmLayout.setSpacing(0)
         wmLayout.addWidget(self._wordmark)
-        self._updateAvailableLabel = QLabel("Update available!", wordmarkBox)
+        self._updateAvailableLabel = ClickableLabel(
+            "Update available!", wordmarkBox
+        )
+        self._updateAvailableLabel.setObjectName("updateAvailableLabel")
+        self._updateAvailableLabel.setCursor(Qt.PointingHandCursor)
         self._updateAvailableLabel.setStyleSheet(
             f"color: {p.gold.name()}; font-weight: bold;"
             f" font-size: {metrics.PT_BADGE}pt;"
+            " text-decoration: underline;"
         )
+        self._updateAvailableLabel.setToolTip("Open GitHub releases")
+        self._updateAvailableLabel.clicked.connect(self._open_updater_release)
         self._updateAvailableLabel.hide()
         wmLayout.addWidget(self._updateAvailableLabel)
         self._updateAvailableShown = False
@@ -750,9 +760,34 @@ class MainWindow(QMainWindow):
         if available != self._updateAvailableShown:
             self._updateAvailableShown = available
             if available:
+                self._updateAvailableLabel.setToolTip(
+                    self._updater_release_tooltip()
+                )
                 self._updateAvailableLabel.show()
             else:
                 self._updateAvailableLabel.hide()
+
+    def _updater_release_tooltip(self) -> str:
+        """Tooltip naming this platform's asset for the pending release."""
+        from ...services import self_update as _su
+
+        tag = getattr(self._hub.updater, "updater_latest_tag", None)
+        asset = _su.platform_asset_name()
+        if asset and tag:
+            return f"{tag}: download {asset} from GitHub releases"
+        if asset:
+            return f"Download {asset} from GitHub releases"
+        return "Open GitHub releases"
+
+    def _open_updater_release(self):
+        """Open the pending release page (click on 'Update available!')."""
+        from ...services import self_update as _su
+
+        tag = getattr(self._hub.updater, "updater_latest_tag", None)
+        try:
+            webbrowser.open(_su.release_page_url(tag))
+        except Exception:
+            pass
 
     def _render_log(self, msg: str, tag: str = ""):
         """Normalize a raw log message (trailing newline, auto-tag when
