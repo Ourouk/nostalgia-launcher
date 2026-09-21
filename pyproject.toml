@@ -38,6 +38,8 @@ dev = [
     "pyinstaller>=6.0",
     "ruff>=0.15",
     "pyright>=1.1",
+    "pylint>=3.0",
+    "vulture>=2.0",
 ]
 
 [tool.pytest.ini_options]
