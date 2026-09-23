@@ -58,7 +58,9 @@ ApplicationWindow {
             Layout.fillWidth: true
             TabButton { text: "NEWS" }
             TabButton { text: "UPDATE" }
-            TabButton { text: "ADDONS" }
+            TabButton {
+                text: addonsModel.updatesCount > 0 ? "ADDONS (" + addonsModel.updatesCount + ")" : "ADDONS"
+            }
             TabButton {
                 text: modsModel.updatesCount > 0 ? "MODS (" + modsModel.updatesCount + ")" : "MODS"
             }
@@ -80,26 +82,9 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
             }
-            Rectangle {
-                // ADDONS keeps its placeholder until its own model
-                // lands (git flows differ from the shared list core).
-                color: appTheme.colors["C_PANEL"]
-                ColumnLayout {
-                    anchors.centerIn: parent
-                    Label {
-                        Layout.alignment: Qt.AlignHCenter
-                        text: "ADDONS"
-                        font.bold: true
-                        font.pointSize: 16
-                        color: appTheme.colors["C_GOLD_LT"]
-                    }
-                    Label {
-                        Layout.alignment: Qt.AlignHCenter
-                        text: "QML view not migrated yet"
-                        font.pointSize: 10
-                        color: appTheme.colors["C_TEXT_DIM"]
-                    }
-                }
+            AddonsView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
             }
             ContentView {
                 Layout.fillWidth: true

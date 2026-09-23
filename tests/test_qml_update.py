@@ -22,6 +22,7 @@ from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication
 
 from nostalgia_launcher.state.events import ProgressChanged, UpdateFilesList
+from nostalgia_launcher.ui.qml.addons import AddonsModel
 from nostalgia_launcher.ui.qml.app import qml_dir
 from nostalgia_launcher.ui.qml.content import ContentListModel
 from nostalgia_launcher.ui.qml.viewmodels import (
@@ -76,6 +77,7 @@ def engine(qapp):
     eng.rootContext().setContextProperty(
         "assetsModel", ContentListModel("assets empty")
     )
+    eng.rootContext().setContextProperty("addonsModel", AddonsModel())
     update = UpdateState()
     eng.rootContext().setContextProperty("updateState", update)
     eng.load(QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml")))

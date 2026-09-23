@@ -20,9 +20,12 @@ from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication
 
 from ...core import launcher
+from ...core.helpers import relative_age
+from ...services import addons as addons_service
 from ...state.events import LogMessage
 from ..qt.bridge import ControllerHub
 from ..qt.theme import palette_for_config
+from .addons import AddonsModel, build_items, expected_interface
 from .content import ContentListModel, build_rows, essential_pending
 from .viewmodels import (
     LauncherState,
@@ -134,6 +137,8 @@ class QmlNostalgiaLauncherApp:
         self._wire_content(
             self._assets, self._hub.assets, "assets", bridge.assetsLoaded
         )
+        self._addons_qml = AddonsModel()
+        self._wire_addons()
         self._engine = QQmlApplicationEngine()
         self._engine.rootContext().setContextProperty(
             "launcherState", self._state
@@ -146,6 +151,9 @@ class QmlNostalgiaLauncherApp:
         self._engine.rootContext().setContextProperty("modsModel", self._mods)
         self._engine.rootContext().setContextProperty(
             "assetsModel", self._assets
+        )
+        self._engine.rootContext().setContextProperty(
+            "addonsModel", self._addons_qml
         )
         self._engine.load(
             QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml"))
@@ -305,6 +313,83 @@ class QmlNostalgiaLauncherApp:
         if kind == op_kind:
             model.set_running(False)
             model.refresh()
+
+    # ── addons tab (git flows, own model) ─────────────────────────────
+
+    def _wire_addons(self):
+        """Snapshot provider + action callbacks for the ADDONS tab."""
+        model = self._addons_qml
+        ctrl = self._hub.addons
+
+        def snapshot():
+            state = ctrl.state
+            footer_text, footer_color, cursor = ctrl.footer_state()
+            ts = addons_service.catalog_last_updated()
+            return {
+                "items": build_items(
+                    state,
+                    recommended=ctrl.recommended,
+                    expected=expected_interface(launcher.client_version()),
+                    needle=model.current_filter(),
+                ),
+                "updates_count": state.updates_count,
+                "apply_visible": bool(state.pending),
+                "recommended_enabled": bool(
+                    set(ctrl.recommended) - set(state.addons)
+                )
+                and not state.busy,
+                "footer_text": footer_text,
+                "footer_color": footer_color,
+                "footer_clickable": cursor == "hand2",
+                "age_text": (
+                    f"Catalog updated {relative_age(ts)}" if ts else ""
+                ),
+            }
+
+        def on_toggle(folder, checked):
+            is_installed = folder in ctrl.state.addons
+            if checked == is_installed:
+                ctrl.state.pending.pop(folder, None)
+            else:
+                ctrl.toggle(folder, checked)
+            model.refresh()
+
+        def on_section(title):
+            sections = ctrl.state.sections_open
+            sections[title] = not sections.get(title, True)
+            model.refresh()
+
+        def on_update_one(folder):
+            rec = ctrl.state.addons.get(folder)
+            if rec is None:
+                return False
+            return ctrl.apply([rec.to_dict()])
+
+        def on_update_all():
+            return ctrl.apply(ctrl.update_all())
+
+        model.set_snapshot_provider(snapshot)
+        model.set_handlers(
+            toggle=on_toggle,
+            section=on_section,
+            update_one=on_update_one,
+            update_all=on_update_all,
+            apply=ctrl.apply_pending,
+            recommended=ctrl.apply_recommended_addons,
+            check=lambda: ctrl.verify(force=True),
+        )
+        bridge = self._hub.bridge
+        bridge.addonsLoaded.connect(lambda _e: model.refresh())
+        bridge.operationFinished.connect(
+            lambda k, ok, m: self._after_addons_op(k)
+        )
+        bridge.operationFailed.connect(lambda k, m: self._after_addons_op(k))
+        model.refresh()
+
+    def _after_addons_op(self, kind: str):
+        if kind == "addons":
+            self._addons_qml.set_running(False)
+            self._addons_qml.refresh()
 
     @property
     def engine(self) -> QQmlApplicationEngine:

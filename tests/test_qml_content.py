@@ -21,6 +21,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication
 
+from nostalgia_launcher.ui.qml.addons import AddonsModel
 from nostalgia_launcher.ui.qml.app import qml_dir
 from nostalgia_launcher.ui.qml.content import (
     ContentListModel,
@@ -89,6 +90,7 @@ def engine(qapp):
     assets = ContentListModel("assets empty")
     eng.rootContext().setContextProperty("modsModel", mods)
     eng.rootContext().setContextProperty("assetsModel", assets)
+    eng.rootContext().setContextProperty("addonsModel", AddonsModel())
     eng.load(QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml")))
     yield eng, mods, assets
 
