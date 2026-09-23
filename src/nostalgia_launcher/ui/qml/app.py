@@ -20,9 +20,15 @@ from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication
 
 from ...core import launcher
+from ...state.events import LogMessage
 from ..qt.bridge import ControllerHub
 from ..qt.theme import palette_for_config
-from .viewmodels import LauncherState, NewsFeedModel, ThemeBridge
+from .viewmodels import (
+    LauncherState,
+    NewsFeedModel,
+    ThemeBridge,
+    UpdateState,
+)
 
 
 def _repo_file(*parts: str) -> str:
@@ -97,18 +103,93 @@ class QmlNostalgiaLauncherApp:
             lambda: self._hub.news.refresh_announcements(force=True)
         )
         self._hub.bridge.newsLoaded.connect(self._news.on_event)
+        self._update = UpdateState()
+        self._update.set_primary_handler(self._primary_action)
+        self._update.set_recheck_handler(self._force_recheck)
+        bridge = self._hub.bridge
+        bridge.updateProgressChanged.connect(self._update.on_progress)
+        bridge.updateFilesList.connect(self._update.on_files)
+        bridge.statusChanged.connect(self._update.on_status)
+        bridge.operationFinished.connect(self._on_operation_finished)
+        bridge.operationFailed.connect(self._on_operation_failed)
+        bridge.gameLaunched.connect(self._refresh_primary)
+        bridge.gameExited.connect(self._refresh_primary)
         self._engine = QQmlApplicationEngine()
         self._engine.rootContext().setContextProperty(
             "launcherState", self._state
         )
         self._engine.rootContext().setContextProperty("appTheme", self._theme)
         self._engine.rootContext().setContextProperty("newsModel", self._news)
+        self._engine.rootContext().setContextProperty(
+            "updateState", self._update
+        )
         self._engine.load(
             QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml"))
         )
         # Same background fetch the widget shell schedules: cached news
         # stays visible, TTL decides the refetch (threads, never blocks).
         self._hub.news.load()
+        self._refresh_primary()
+
+    def _on_operation_finished(self, kind: str, ok: bool, message: str):
+        self._update.on_finished(kind, ok, message)
+        self._refresh_primary()
+
+    def _on_operation_failed(self, kind: str, message: str):
+        self._update.on_failed(kind, message)
+        self._refresh_primary()
+
+    def _refresh_primary(self, *_args):
+        """Footer button state from the updater readiness decision."""
+        ready = self._hub.updater.compute_readiness(
+            addons_installing=self._hub.addons.installing
+        )
+        if ready.mode in ("play", "update", "download", "terminate"):
+            self._update.update_primary(ready.label, True)
+        else:
+            self._update.update_primary(ready.label, False)
+
+    def _need_game_folder(self) -> bool:
+        """Guard + error post when no folder is confirmed (widget parity)."""
+        if (self._hub.settings.state.path or "").strip():
+            return False
+        self._hub.dispatcher.post(
+            LogMessage("\u2717  Please set the game folder first.\n", "err")
+        )
+        return True
+
+    def _primary_action(self):
+        """Footer click — mirrors MainWindow._on_update_button_clicked.
+
+        Realm-mismatch prompting stays widget-only until the Phase 6 QML
+        dialogs land; play launches directly (as answering "No" would).
+        """
+        updater = self._hub.updater
+        if updater.running:
+            return
+        ready = updater.compute_readiness(
+            addons_installing=self._hub.addons.installing
+        )
+        if ready.mode == "play":
+            updater.launch_game()
+        elif ready.mode == "update":
+            if self._need_game_folder():
+                return
+            updater.start_update()
+        elif ready.mode == "download":
+            if self._need_game_folder():
+                return
+            updater.start_client_download()
+        elif ready.mode == "terminate":
+            updater.terminate_game()
+        self._refresh_primary()
+
+    def _force_recheck(self):
+        """UPDATE-tab Force recheck (mirrors _on_force_recheck)."""
+        if self._need_game_folder():
+            return
+        self._hub.settings.verify_files()
+        self._refresh_primary()
 
     @property
     def engine(self) -> QQmlApplicationEngine:

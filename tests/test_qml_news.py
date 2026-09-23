@@ -27,6 +27,7 @@ from nostalgia_launcher.ui.qml.viewmodels import (
     LauncherState,
     NewsFeedModel,
     ThemeBridge,
+    UpdateState,
 )
 from nostalgia_launcher.ui.qt.theme import Palette
 
@@ -69,10 +70,12 @@ def engine(qapp):
     state = LauncherState()
     theme = ThemeBridge(Palette())
     news = NewsFeedModel()
+    update = UpdateState()
     eng = QQmlApplicationEngine()
     eng.rootContext().setContextProperty("launcherState", state)
     eng.rootContext().setContextProperty("appTheme", theme)
     eng.rootContext().setContextProperty("newsModel", news)
+    eng.rootContext().setContextProperty("updateState", update)
     eng.load(QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml")))
     yield eng, news
 

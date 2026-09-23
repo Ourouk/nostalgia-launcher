@@ -72,8 +72,12 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
             }
+            UpdateView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+            }
             Repeater {
-                model: ["UPDATE", "ADDONS", "MODS", "ASSETS"]
+                model: ["ADDONS", "MODS", "ASSETS"]
                 Rectangle {
                     // Placeholder page per tab (Phase 3+ replaces these
                     // with NewsView/UpdateView/… backed by list models).
@@ -125,7 +129,9 @@ ApplicationWindow {
             }
             Button {
                 objectName: "qmlPrimaryButton"
-                text: "UPDATE"
+                text: updateState.primaryLabel
+                enabled: updateState.primaryEnabled
+                onClicked: updateState.primary()
             }
         }
     }

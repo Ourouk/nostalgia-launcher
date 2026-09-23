@@ -17,13 +17,20 @@ construct headlessly); the engine wiring lives in `ui.qml.app`.
 from PySide6.QtCore import (
     Property,
     QAbstractListModel,
+    QModelIndex,
     QObject,
     Qt,
     Signal,
     Slot,
 )
 
-from ...state.events import NewsLoaded, ProgressChanged, StatusChanged
+from ...core.helpers import fmt_size, fmt_speed
+from ...state.events import (
+    NewsLoaded,
+    ProgressChanged,
+    StatusChanged,
+    UpdateFilesList,
+)
 
 
 class LauncherState(QObject):
@@ -263,3 +270,300 @@ class NewsFeedModel(QAbstractListModel):
         if status != self._status:
             self._status = status
             self.statusTextChanged.emit()
+
+
+class UpdateFilesModel(QAbstractListModel):
+    """Updated-files list for QML (mirrors panel file tracking)."""
+
+    NameRole = Qt.ItemDataRole.UserRole + 1
+    DoneRole = Qt.ItemDataRole.UserRole + 2
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._files: list = []
+        self._done: set = set()
+
+    def rowCount(self, parent=None) -> int:
+        if parent is not None and parent.isValid():
+            return 0
+        return len(self._files)
+
+    def roleNames(self) -> dict:
+        return {
+            UpdateFilesModel.NameRole: b"name",
+            UpdateFilesModel.DoneRole: b"done",
+        }
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return None
+        name = self._files[index.row()]
+        if role == UpdateFilesModel.NameRole:
+            return name
+        if role == UpdateFilesModel.DoneRole:
+            return name in self._done
+        return None
+
+    def set_files(self, files):
+        """Replace the list (separators normalized to "/"), all pending."""
+        self.beginResetModel()
+        try:
+            self._files = [str(f).replace("\\", "/") for f in (files or [])]
+            self._done = set()
+        finally:
+            self.endResetModel()
+
+    def mark_done(self, path: str) -> bool:
+        """Mark a listed file done; True when it was listed."""
+        name = str(path).replace("\\", "/")
+        if name not in self._files:
+            return False
+        if name not in self._done:
+            self._done.add(name)
+            row = self._files.index(name)
+            idx = self.index(row)
+            self.dataChanged.emit(idx, idx, [UpdateFilesModel.DoneRole])
+        return True
+
+    def append_done(self, path: str):
+        """Append an already-updated file (dedups against listed ones)."""
+        name = str(path).replace("\\", "/")
+        if name in self._files:
+            self.mark_done(name)
+            return
+        row = len(self._files)
+        self.beginInsertRows(QModelIndex(), row, row)
+        self._files.append(name)
+        self._done.add(name)
+        self.endInsertRows()
+
+    def mark_all_done(self):
+        """Mark every listed file done (successful verify/update)."""
+        if len(self._done) == len(self._files):
+            return
+        self._done = set(self._files)
+        if self._files:
+            top = self.index(0)
+            bottom = self.index(len(self._files) - 1)
+            self.dataChanged.emit(top, bottom, [UpdateFilesModel.DoneRole])
+
+
+class UpdateState(QObject):
+    """UPDATE tab + footer primary button (mirrors UpdatePanel + footer).
+
+    Formatting (sizes, speeds) happens here via `core.helpers` so QML
+    stays declarative. Controller calls arrive as injected callbacks
+    (`set_primary_handler` / `set_recheck_handler`) — never imports.
+    """
+
+    phaseTextChanged = Signal()
+    progressChanged = Signal()
+    fileTextChanged = Signal()
+    statsChanged = Signal()
+    primaryChanged = Signal()
+    filesChanged = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._phase = "Idle"
+        self._progress_value = 0.0
+        self._progress_visible = True
+        self._file = "No update is running."
+        self._transport = "-"
+        self._amount = "-"
+        self._speed = "-"
+        self._peers = "-"
+        self._primary_label = "UPDATE"
+        self._primary_enabled = True
+        self._files = UpdateFilesModel(self)
+        self._on_primary = None
+        self._on_recheck = None
+
+    # ── properties ──────────────────────────────────────────────────
+
+    def _get_phase(self) -> str:
+        return self._phase
+
+    phaseText = Property(str, _get_phase, notify=phaseTextChanged)
+
+    def _get_progress_value(self) -> float:
+        return self._progress_value
+
+    progressValue = Property(
+        float, _get_progress_value, notify=progressChanged
+    )
+
+    def _get_progress_visible(self) -> bool:
+        return self._progress_visible
+
+    progressVisible = Property(
+        bool, _get_progress_visible, notify=progressChanged
+    )
+
+    def _get_file(self) -> str:
+        return self._file
+
+    fileText = Property(str, _get_file, notify=fileTextChanged)
+
+    def _get_transport(self) -> str:
+        return self._transport
+
+    transportText = Property(str, _get_transport, notify=statsChanged)
+
+    def _get_amount(self) -> str:
+        return self._amount
+
+    amountText = Property(str, _get_amount, notify=statsChanged)
+
+    def _get_speed(self) -> str:
+        return self._speed
+
+    speedText = Property(str, _get_speed, notify=statsChanged)
+
+    def _get_peers(self) -> str:
+        return self._peers
+
+    peersText = Property(str, _get_peers, notify=statsChanged)
+
+    def _get_primary_label(self) -> str:
+        return self._primary_label
+
+    primaryLabel = Property(str, _get_primary_label, notify=primaryChanged)
+
+    def _get_primary_enabled(self) -> bool:
+        return self._primary_enabled
+
+    primaryEnabled = Property(
+        bool, _get_primary_enabled, notify=primaryChanged
+    )
+
+    def _get_files(self) -> QObject:
+        return self._files
+
+    files = Property(QObject, _get_files, notify=filesChanged)
+
+    # ── controller callbacks ────────────────────────────────────────
+
+    def set_primary_handler(self, callback):
+        """Footer primary-button click (test seam)."""
+        self._on_primary = callback
+
+    def set_recheck_handler(self, callback):
+        """Force-recheck click (test seam)."""
+        self._on_recheck = callback
+
+    @Slot()
+    def primary(self):
+        if self._on_primary is not None:
+            self._on_primary()
+
+    @Slot()
+    def recheck(self):
+        if self._on_recheck is not None:
+            self._on_recheck()
+
+    def update_primary(self, label: str, enabled: bool):
+        """Footer button state from the readiness decision."""
+        if (label, enabled) != (self._primary_label, self._primary_enabled):
+            self._primary_label = label
+            self._primary_enabled = bool(enabled)
+            self.primaryChanged.emit()
+
+    # ── event intake (mirrors UpdatePanel) ──────────────────────────
+
+    def on_progress(self, event):
+        """Full `ProgressChanged` (via `bridge.updateProgressChanged`)."""
+        if not isinstance(event, ProgressChanged):
+            return
+        if event.phase:
+            self._set_phase(event.phase)
+        elif event.label:
+            self._set_phase("Working")
+        value = max(0.0, min(1.0, event.value))
+        if (value, 0.0 < value < 1.0) != (
+            self._progress_value,
+            self._progress_visible,
+        ):
+            # (progressVisible follows the footer mini-bar rule: only
+            # visible while something is actually in flight.)
+            self._progress_value = value
+            self._progress_visible = 0.0 < value < 1.0
+            self.progressChanged.emit()
+        if event.current_file or event.label:
+            self._set_file(event.current_file or event.label)
+        self._set_stats(
+            event.transport or "-",
+            (
+                f"{fmt_size(event.downloaded)} / {fmt_size(event.total)}"
+                if event.total
+                else f"{event.value * 100:.0f}%"
+            ),
+            fmt_speed(event.speed) if event.speed else "-",
+            str(event.peers) if event.peers else "-",
+        )
+        if event.current_file and "/" in event.current_file:
+            path = event.current_file.replace("\\", "/")
+            if not self._files.mark_done(path):
+                self._files.append_done(path)
+
+    def on_files(self, event):
+        if isinstance(event, UpdateFilesList):
+            self._files.set_files(event.files or [])
+
+    def on_status(self, text: str):
+        if text in ("Verifying…", "Updating…"):
+            self._set_phase(text)
+            self._set_file("Preparing client update…")
+
+    def on_finished(self, kind: str, ok: bool, message: str):
+        if kind in ("update", "verify"):
+            self._set_visible(False)
+            if ok:
+                self._set_phase("Verified" if kind == "verify" else "Complete")
+                self._files.mark_all_done()
+            else:
+                self._set_phase(
+                    "Update required" if kind == "verify" else "Failed"
+                )
+                self._set_file(message or "Update failed.")
+        elif kind == "mods" and ok:
+            self._set_phase("Updating addons and mods")
+            self._set_file("Mods complete; checking addons…")
+        elif kind == "addons" and ok:
+            self._set_phase("Complete")
+
+    def on_failed(self, kind: str, message: str):
+        if kind in ("update", "verify"):
+            self._set_visible(False)
+            self._set_phase("Failed")
+            self._set_file(message or "Update failed.")
+
+    # ── internals ───────────────────────────────────────────────────
+
+    def _set_phase(self, text: str):
+        if text != self._phase:
+            self._phase = text
+            self.phaseTextChanged.emit()
+
+    def _set_file(self, text: str):
+        if text != self._file:
+            self._file = text
+            self.fileTextChanged.emit()
+
+    def _set_visible(self, visible: bool):
+        if visible != self._progress_visible:
+            self._progress_visible = visible
+            self.progressChanged.emit()
+
+    def _set_stats(self, transport, amount, speed, peers):
+        if (transport, amount, speed, peers) != (
+            self._transport,
+            self._amount,
+            self._speed,
+            self._peers,
+        ):
+            self._transport = transport
+            self._amount = amount
+            self._speed = speed
+            self._peers = peers
+            self.statsChanged.emit()
