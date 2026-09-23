@@ -1,10 +1,10 @@
 // Nostalgia Launcher QML shell.
 //
 // Mirrors ui/qt/main_window.py: header wordmark, NEWS/UPDATE/ADDONS/MODS/
-// ASSETS tabs, footer status + progress. NEWS is migrated (NewsView.qml);
-// the remaining tabs are placeholders until their migration lands.
-// Bindings read the live view-models (`launcherState`, `newsModel`,
-// `appTheme`) exposed by ui/qml/app.py.
+// ASSETS tabs, footer status + progress, gear-button settings dialog and
+// session-log viewer. Bindings read the live view-models (`launcherState`,
+// `newsModel`, `updateState`, `modsModel`, `assetsModel`, `addonsModel`,
+// `settingsModel`, `logModel`, `appTheme`) exposed by ui/qml/app.py.
 
 import QtQuick
 import QtQuick.Controls
@@ -45,6 +45,39 @@ ApplicationWindow {
                 font.pointSize: 9
                 color: appTheme.colors["C_TEXT_DIM"]
             }
+            ToolButton {
+                objectName: "qmlGearButton"
+                text: "⚙"
+                Accessible.name: "Open settings"
+                ToolTip.text: "Settings"
+                ToolTip.visible: hovered
+                onClicked: settingsDialog.open()
+            }
+        }
+    }
+
+    SettingsView {
+        id: settingsDialog
+        objectName: "qmlSettingsDialog"
+    }
+
+    LogDialog {
+        id: logDialog
+        objectName: "qmlLogDialog"
+        onLogDialogVisible: (open) => {
+            if (open)
+                logModel.refresh();
+            settingsModel.setLogsOpen(open);
+        }
+    }
+
+    Connections {
+        target: settingsModel
+        function onLogsRequested() {
+            if (logDialog.visible)
+                logDialog.close();
+            else
+                logDialog.open();
         }
     }
 

@@ -13,20 +13,22 @@ in frozen builds (bundled via the PyInstaller specs' `datas`).
 import os
 import sys
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QObject, QUrl
 from PySide6.QtGui import QFontDatabase, QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication
 
-from ...core import launcher
+from ...core import launcher, platform_support, profiles
 from ...core.helpers import relative_age
 from ...services import addons as addons_service
 from ...state.events import LogMessage
 from ..qt.bridge import ControllerHub
+from ..qt.profiles_ui import switch_profile
 from ..qt.theme import palette_for_config
 from .addons import AddonsModel, build_items, expected_interface
 from .content import ContentListModel, build_rows, essential_pending
+from .settings import LogModel, SettingsModel
 from .viewmodels import (
     LauncherState,
     NewsFeedModel,
@@ -106,7 +108,8 @@ def create_qml_app():
 class QmlNostalgiaLauncherApp:
     """QML application shell — hub + view-models + QQmlApplicationEngine."""
 
-    def __init__(self):
+    def __init__(self, open_log: bool = False):
+        self._open_log = bool(open_log)
         self._app = create_qml_app()
         self._hub = ControllerHub()
         self._state = LauncherState()
@@ -139,6 +142,9 @@ class QmlNostalgiaLauncherApp:
         )
         self._addons_qml = AddonsModel()
         self._wire_addons()
+        self._settings = SettingsModel()
+        self._log_model = LogModel()
+        self._wire_settings()
         self._engine = QQmlApplicationEngine()
         self._engine.rootContext().setContextProperty(
             "launcherState", self._state
@@ -155,6 +161,12 @@ class QmlNostalgiaLauncherApp:
         self._engine.rootContext().setContextProperty(
             "addonsModel", self._addons_qml
         )
+        self._engine.rootContext().setContextProperty(
+            "settingsModel", self._settings
+        )
+        self._engine.rootContext().setContextProperty(
+            "logModel", self._log_model
+        )
         self._engine.load(
             QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml"))
         )
@@ -162,6 +174,8 @@ class QmlNostalgiaLauncherApp:
         # stays visible, TTL decides the refetch (threads, never blocks).
         self._hub.news.load()
         self._refresh_primary()
+        if self._open_log:
+            self.open_session_log()
 
     def _on_operation_finished(self, kind: str, ok: bool, message: str):
         self._update.on_finished(kind, ok, message)
@@ -390,6 +404,108 @@ class QmlNostalgiaLauncherApp:
         if kind == "addons":
             self._addons_qml.set_running(False)
             self._addons_qml.refresh()
+
+    # ── settings dialog + session log ─────────────────────────────────
+
+    def _wire_settings(self):
+        """Snapshot provider + action callbacks for the Settings tabs."""
+        model = self._settings
+        settings = self._hub.settings
+
+        def snapshot():
+            names = settings._source_names()
+            cfg = settings.state.config
+            return {
+                "game_path": settings.state.path,
+                "game_suggestion": settings.state.suggestion,
+                "sources": [
+                    {
+                        "name": name,
+                        "status": settings.source_statuses.get(name, ""),
+                    }
+                    for name in names
+                ],
+                "clear_wdb": bool(cfg.get("clear_wdb_on_launch", False)),
+                "close_on_launch": bool(cfg.get("close_on_launch", False)),
+                "client_updates": settings.client_update_enabled,
+                "can_launch": platform_support.can_launch_client(),
+                "can_antivirus": (platform_support.can_manage_antivirus()),
+                "addons_url": settings.addons_registry_url(),
+                "mods_url": settings.mods_registry_url(),
+                "addons_default": settings.addons_default_enabled,
+                "mods_default": settings.mods_default_enabled,
+                "addons_default_avail": (settings.addons_default_available()),
+                "mods_default_avail": (settings.mods_default_available()),
+                "profiles": profiles.list_profiles(),
+                "active_profile": profiles.active().name,
+            }
+
+        def delete_profile(name):
+            if not name:
+                return ""
+            was_active = name == profiles.active().name
+            err = profiles.delete(name)
+            if err:
+                return err
+            if was_active:
+                target = profiles.load_index()["active"]
+                if target and not switch_profile(target):
+                    return "Restart the launcher manually to switch."
+            return ""
+
+        model.set_snapshot_provider(snapshot)
+        model.set_handlers(
+            open_folder=settings.open_client_folder,
+            set_path=settings.set_path,
+            check_sources=settings.check_source,
+            verify=settings.verify_files,
+            antivirus=settings.allow_through_antivirus,
+            clear_wdb=settings.set_clear_wdb,
+            close_on_launch=settings.set_close_on_launch,
+            client_updates=settings.set_client_update_enabled,
+            addons_default=settings.set_addons_default_enabled,
+            mods_default=settings.set_mods_default_enabled,
+            set_addons_url=settings.set_addons_registry_url,
+            set_mods_url=settings.set_mods_registry_url,
+            reset_addons_url=settings.reset_addons_registry_url,
+            reset_mods_url=settings.reset_mods_registry_url,
+            reload_addons=settings.reload_addons_registry,
+            reload_mods=settings.reload_mods_registry,
+            open_addons_custom=settings.open_addons_custom_file,
+            open_mods_custom=settings.open_mods_custom_file,
+            clear_addons_custom=settings.clear_addons_custom,
+            clear_mods_custom=settings.clear_mods_custom,
+            delete_profile=delete_profile,
+        )
+        bridge = self._hub.bridge
+        bridge.sourceStatusChanged.connect(lambda _ok, _text: model.refresh())
+        model.logsRequested.connect(self.toggle_session_log)
+        bridge.logMessage.connect(self._log_model.appendLine)
+        model.refresh()
+
+    def toggle_session_log(self):
+        """Show/Hide logs request from the Troubleshooting tab."""
+        roots = self._engine.rootObjects()
+        if not roots:
+            return
+        dialog = roots[0].findChild(QObject, "qmlLogDialog")
+        if dialog is None:
+            return
+        if dialog.property("visible"):
+            dialog.setProperty("visible", False)
+        else:
+            self._log_model.refresh()
+            dialog.setProperty("visible", True)
+
+    def open_session_log(self):
+        """CLI --show-log: bring the session log up immediately."""
+        roots = self._engine.rootObjects()
+        if not roots:
+            return
+        dialog = roots[0].findChild(QObject, "qmlLogDialog")
+        if dialog is not None:
+            self._log_model.refresh()
+            dialog.setProperty("visible", True)
 
     @property
     def engine(self) -> QQmlApplicationEngine:

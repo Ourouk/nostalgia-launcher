@@ -25,6 +25,7 @@ from nostalgia_launcher.state.events import ProgressChanged, StatusChanged
 from nostalgia_launcher.ui.qml.addons import AddonsModel
 from nostalgia_launcher.ui.qml.app import QmlNostalgiaLauncherApp, qml_dir
 from nostalgia_launcher.ui.qml.content import ContentListModel
+from nostalgia_launcher.ui.qml.settings import LogModel, SettingsModel
 from nostalgia_launcher.ui.qml.viewmodels import (
     LauncherState,
     NewsFeedModel,
@@ -59,6 +60,8 @@ def engine(qapp):
         "assetsModel", ContentListModel("assets empty")
     )
     eng.rootContext().setContextProperty("addonsModel", AddonsModel())
+    eng.rootContext().setContextProperty("settingsModel", SettingsModel())
+    eng.rootContext().setContextProperty("logModel", LogModel())
     eng.rootContext().setContextProperty("updateState", update)
     eng.load(QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml")))
     yield eng, state, theme
