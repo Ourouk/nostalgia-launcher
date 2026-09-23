@@ -1,12 +1,14 @@
-// Nostalgia Launcher QML shell (Phase 1: chrome only).
+// Nostalgia Launcher QML shell.
 //
 // Mirrors ui/qt/main_window.py: header wordmark, NEWS/UPDATE/ADDONS/MODS/
-// ASSETS tabs, footer status + progress. Panels are placeholders until the
-// per-tab migration lands; bindings already read the live view-models
-// (`launcherState`, `appTheme`) exposed by ui/qml/app.py.
+// ASSETS tabs, footer status + progress. NEWS is migrated (NewsView.qml);
+// the remaining tabs are placeholders until their migration lands.
+// Bindings read the live view-models (`launcherState`, `newsModel`,
+// `appTheme`) exposed by ui/qml/app.py.
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Material
 import QtQuick.Layouts
 
 ApplicationWindow {
@@ -17,6 +19,8 @@ ApplicationWindow {
     height: 700
     title: "Nostalgia Launcher"
     color: appTheme.colors["C_BG"]
+    Material.theme: Material.Dark
+    Material.accent: appTheme.colors["C_GOLD"]
 
     header: ToolBar {
         objectName: "qmlHeader"
@@ -64,8 +68,12 @@ ApplicationWindow {
             Layout.fillHeight: true
             currentIndex: navBar.currentIndex
 
+            NewsView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+            }
             Repeater {
-                model: ["NEWS", "UPDATE", "ADDONS", "MODS", "ASSETS"]
+                model: ["UPDATE", "ADDONS", "MODS", "ASSETS"]
                 Rectangle {
                     // Placeholder page per tab (Phase 3+ replaces these
                     // with NewsView/UpdateView/… backed by list models).

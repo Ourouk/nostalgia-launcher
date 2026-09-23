@@ -16,12 +16,13 @@ import sys
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QFontDatabase, QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication
 
 from ...core import launcher
 from ..qt.bridge import ControllerHub
 from ..qt.theme import palette_for_config
-from .viewmodels import LauncherState, ThemeBridge
+from .viewmodels import LauncherState, NewsFeedModel, ThemeBridge
 
 
 def _repo_file(*parts: str) -> str:
@@ -63,8 +64,13 @@ def create_qml_app():
     """Return the process-wide QApplication, creating it exactly once.
 
     QApplication (not QGuiApplication) so the widget shell can later host
-    migrated views via QQuickWidget during the strangler period.
+    migrated views via QQuickWidget during the strangler period. Pins the
+    QtQuick.Controls style to Material (the modern one); the brand
+    dark/gold itself comes from `appTheme` (QML sets Material Dark +
+    gold accent on top of it).
     """
+    os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Material")
+    QQuickStyle.setStyle("Material")
     app = QApplication.instance()
     if app is not None:
         return app
@@ -86,14 +92,23 @@ class QmlNostalgiaLauncherApp:
         self._state.attach(self._hub.bridge)
         palette = palette_for_config(launcher.config())
         self._theme = ThemeBridge(palette)
+        self._news = NewsFeedModel()
+        self._news.set_refresh_handler(
+            lambda: self._hub.news.refresh_announcements(force=True)
+        )
+        self._hub.bridge.newsLoaded.connect(self._news.on_event)
         self._engine = QQmlApplicationEngine()
         self._engine.rootContext().setContextProperty(
             "launcherState", self._state
         )
         self._engine.rootContext().setContextProperty("appTheme", self._theme)
+        self._engine.rootContext().setContextProperty("newsModel", self._news)
         self._engine.load(
             QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml"))
         )
+        # Same background fetch the widget shell schedules: cached news
+        # stays visible, TTL decides the refetch (threads, never blocks).
+        self._hub.news.load()
 
     @property
     def engine(self) -> QQmlApplicationEngine:
