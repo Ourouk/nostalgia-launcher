@@ -1,12 +1,14 @@
 """Nostalgia Launcher Qt (PySide6) settings dialog.
 
-A dark QDialog rendering the GAME FOLDER row (open-folder link, readonly path
-entry, Change), the DOWNLOAD SOURCE rows (one per configured server/source:
-status dot + name + status label + a check button), the TROUBLESHOOTING
-clickable rows and the GENERAL checkboxes. It renders the SettingsController's
-state and forwards user actions straight into the toolkit-agnostic
-controller; source results arrive as SourceStatusChanged events through the
-ControllerBridge and are rendered here.
+A dark QDialog with Game / Sources / Profiles / Troubleshooting tabs.
+Game holds the GAME FOLDER row (open-folder link, readonly path entry,
+Change) plus the GENERAL checkboxes; Sources holds the DOWNLOAD SOURCE
+rows (status dot + name + status label + check button) and the CATALOG
+REGISTRIES rows; Profiles holds the profile import/delete controls; and
+Troubleshooting holds the clickable rows. It renders the
+SettingsController's state and forwards user actions straight into the
+toolkit-agnostic controller; source results arrive as SourceStatusChanged
+events through the ControllerBridge and are rendered here.
 """
 
 import json
@@ -26,6 +28,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -141,19 +144,9 @@ class SettingsDialog(QDialog):
         root.setSpacing(0)
         root.addWidget(self._build_header())
         root.addWidget(self._build_divider())
-        body = self._build_body()
-        scroll = QScrollArea(self)
-        scroll.setObjectName("settingsScroll")
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setWidget(body)
-        scroll.setStyleSheet(
-            f"QScrollArea {{ background-color: {p.bg.name()}; border: none; }}"
-            f"QScrollBar:vertical {{ width: 8px; background: {p.panel.name()}; }}"
-            f"QScrollBar::handle:vertical {{ background: {p.divider.name()}; border-radius: 4px; }}"
-        )
-        root.addWidget(scroll, 1)
+        tabs = self._build_tabs()
+        tabs.setObjectName("settingsTabs")
+        root.addWidget(tabs, 1)
 
         bridge.sourceStatusChanged.connect(self._on_source_status)
 
@@ -177,21 +170,56 @@ class SettingsDialog(QDialog):
     def _build_divider(self) -> QFrame:
         return make_hairline(self)
 
-    def _build_body(self) -> QWidget:
+    def _build_tabs(self) -> QTabWidget:
+        tabs = QTabWidget(self)
+        game = self._build_game_page()
+        game.setObjectName("settingsTabGame")
+        sources = self._build_sources_page()
+        sources.setObjectName("settingsTabSources")
+        profiles = self._build_profiles_page()
+        profiles.setObjectName("settingsTabProfiles")
+        trouble = self._build_troubleshooting_page()
+        trouble.setObjectName("settingsTabTroubleshooting")
+        tabs.addTab(self._wrap_scroll(game), "Game")
+        tabs.addTab(self._wrap_scroll(sources), "Sources")
+        tabs.addTab(self._wrap_scroll(profiles), "Profiles")
+        tabs.addTab(self._wrap_scroll(trouble), "Troubleshooting")
+        return tabs
+
+    def _wrap_scroll(self, page: QWidget) -> QScrollArea:
         p = self._palette
-        body = QWidget(self)
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(22, 16, 22, 12)
-        body_layout.setSpacing(8)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(page)
+        scroll.setStyleSheet(
+            f"QScrollArea {{ background-color: {p.bg.name()}; border: none; }}"
+            f"QScrollBar:vertical {{ width: 8px; background: {p.panel.name()}; }}"
+            f"QScrollBar::handle:vertical {{ background: {p.divider.name()}; border-radius: 4px; }}"
+        )
+        return scroll
+
+    def _new_page(self) -> tuple[QWidget, QVBoxLayout]:
+        page = QWidget(self)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(22, 16, 22, 12)
+        layout.setSpacing(8)
+        layout.setAlignment(Qt.AlignTop)
+        return page, layout
+
+    def _build_game_page(self) -> QWidget:
+        p = self._palette
+        page, body_layout = self._new_page()
 
         folder_row = QHBoxLayout()
-        folder_label = QLabel("GAME FOLDER", body)
+        folder_label = QLabel("GAME FOLDER", page)
         folder_label.setStyleSheet(
             f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
         )
         folder_row.addWidget(folder_label)
         folder_row.addStretch(1)
-        open_link = ClickableLabel("Open folder", body)
+        open_link = ClickableLabel("Open folder", page)
         open_link.setObjectName("settingsOpenFolder")
         open_link.setCursor(Qt.PointingHandCursor)
         open_link.setStyleSheet(f"color: {p.text_dim.name()}; font-size: 9pt;")
@@ -200,7 +228,7 @@ class SettingsDialog(QDialog):
         body_layout.addLayout(folder_row)
 
         path_row = QHBoxLayout()
-        self._path_edit = QLineEdit(self._settings.state.path, body)
+        self._path_edit = QLineEdit(self._settings.state.path, page)
         self._path_edit.setObjectName("settingsPath")
         self._path_edit.setReadOnly(True)
         # No confirmed folder yet: suggest Games/<ServerName> without
@@ -213,13 +241,55 @@ class SettingsDialog(QDialog):
             QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         )
         path_row.addWidget(self._path_edit, 1)
-        change_btn = QPushButton("Change", body)
+        change_btn = QPushButton("Change", page)
         change_btn.setObjectName("settingsChange")
         change_btn.clicked.connect(self._on_change_dir)
         path_row.addWidget(change_btn)
         body_layout.addLayout(path_row)
 
-        source_title = QLabel("DOWNLOAD SOURCE", body)
+        general_title = QLabel("GENERAL", page)
+        general_title.setStyleSheet(
+            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
+        )
+        body_layout.addWidget(general_title)
+
+        cfg = self._settings.state.config
+        self._clear_wdb_check = None
+        self._close_on_launch_check = None
+        if platform_support.can_launch_client():
+            self._clear_wdb_check = self._add_check(
+                body_layout,
+                "Clear WDB on game launch",
+                "settingsClearWdb",
+                bool(cfg.get("clear_wdb_on_launch", False)),
+                self._settings.set_clear_wdb,
+            )
+            self._close_on_launch_check = self._add_check(
+                body_layout,
+                "Close Nostalgia Launcher on game launch",
+                "settingsCloseOnLaunch",
+                bool(cfg.get("close_on_launch", False)),
+                self._settings.set_close_on_launch,
+            )
+        self._client_update_check = self._add_check(
+            body_layout,
+            "Enable client updates",
+            "settingsClientUpdate",
+            self._settings.client_update_enabled,
+            self._settings.set_client_update_enabled,
+        )
+
+        if platform_support.is_linux():
+            self._build_linux_button(body_layout)
+
+        body_layout.addStretch(1)
+        return page
+
+    def _build_sources_page(self) -> QWidget:
+        p = self._palette
+        page, body_layout = self._new_page()
+
+        source_title = QLabel("DOWNLOAD SOURCE", page)
         source_title.setStyleSheet(
             f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
         )
@@ -236,22 +306,22 @@ class SettingsDialog(QDialog):
                 if cfg is None or not cfg.configured
                 else "No download source configured — set server.download.http."
             )
-            hint = QLabel(text, body)
+            hint = QLabel(text, page)
             hint.setObjectName("settingsSourceEmpty")
             hint.setStyleSheet(f"color: {p.text_dim.name()}; font-size: 9pt;")
             body_layout.addWidget(hint)
         else:
             for name in names:
                 row = QHBoxLayout()
-                dot = QLabel("●", body)
+                dot = QLabel("●", page)
                 dot.setStyleSheet(f"color: {p.text_dim.name()};")
                 row.addWidget(dot)
-                label = QLabel(name, body)
+                label = QLabel(name, page)
                 label.setStyleSheet(
                     f"color: {p.text.name()}; font-weight: bold; font-size: 10pt;"
                 )
                 row.addWidget(label)
-                status = QLabel("", body)
+                status = QLabel("", page)
                 status.setObjectName(f"settingsSourceStatus_{name}")
                 status.setStyleSheet(
                     f"color: {p.text_dim.name()}; font-size: 9pt;"
@@ -261,7 +331,7 @@ class SettingsDialog(QDialog):
                 body_layout.addLayout(row)
                 self._source_rows[name] = status
                 self._source_dots[name] = dot
-        refresh = QToolButton(body)
+        refresh = QToolButton(page)
         refresh.setObjectName("settingsSourceRefresh")
         refresh.setText("⟳  Check source")
         refresh.setToolTip("Check download source reachability")
@@ -276,24 +346,28 @@ class SettingsDialog(QDialog):
 
         self._render_source_statuses()
 
-        body_layout.addSpacing(6)
+        self._build_registry_section(body_layout)
+        body_layout.addStretch(1)
+        return page
 
-        cols = QHBoxLayout()
-        cols.setSpacing(24)
-        lcol = QWidget(body)
-        lcol_layout = QVBoxLayout(lcol)
-        lcol_layout.setContentsMargins(0, 0, 0, 0)
-        lcol_layout.setSpacing(0)
-        lcol_layout.setAlignment(Qt.AlignTop)
+    def _build_profiles_page(self) -> QWidget:
+        page, body_layout = self._new_page()
+        self._build_profiles_section(body_layout)
+        body_layout.addStretch(1)
+        return page
 
-        ts_title = QLabel("TROUBLESHOOTING", lcol)
+    def _build_troubleshooting_page(self) -> QWidget:
+        p = self._palette
+        page, body_layout = self._new_page()
+
+        ts_title = QLabel("TROUBLESHOOTING", page)
         ts_title.setStyleSheet(
             f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
         )
-        lcol_layout.addWidget(ts_title)
+        body_layout.addWidget(ts_title)
 
         self._add_row(
-            lcol_layout,
+            body_layout,
             "✓",
             "Verify game files",
             self._settings.verify_files,
@@ -301,7 +375,7 @@ class SettingsDialog(QDialog):
             p.gold,
         )
         self._logsRow = self._add_row(
-            lcol_layout,
+            body_layout,
             "☰",
             "Show logs",
             self.logsToggleRequested.emit,
@@ -310,7 +384,7 @@ class SettingsDialog(QDialog):
         )
         if platform_support.can_manage_antivirus():
             self._add_row(
-                lcol_layout,
+                body_layout,
                 "⛊",
                 "Add game folder to Defender exclusions",
                 self._settings.allow_through_antivirus,
@@ -318,54 +392,8 @@ class SettingsDialog(QDialog):
                 p.gold,
             )
 
-        rcol = QWidget(body)
-        rcol_layout = QVBoxLayout(rcol)
-        rcol_layout.setContentsMargins(0, 0, 0, 0)
-        rcol_layout.setSpacing(4)
-        rcol_layout.setAlignment(Qt.AlignTop)
-
-        general_title = QLabel("GENERAL", rcol)
-        general_title.setStyleSheet(
-            f"color: {p.gold.name()}; font-weight: bold; font-size: 10pt;"
-        )
-        rcol_layout.addWidget(general_title)
-
-        cfg = self._settings.state.config
-        self._clear_wdb_check = None
-        self._close_on_launch_check = None
-        if platform_support.can_launch_client():
-            self._clear_wdb_check = self._add_check(
-                rcol_layout,
-                "Clear WDB on game launch",
-                "settingsClearWdb",
-                bool(cfg.get("clear_wdb_on_launch", False)),
-                self._settings.set_clear_wdb,
-            )
-            self._close_on_launch_check = self._add_check(
-                rcol_layout,
-                "Close Nostalgia Launcher on game launch",
-                "settingsCloseOnLaunch",
-                bool(cfg.get("close_on_launch", False)),
-                self._settings.set_close_on_launch,
-            )
-        self._client_update_check = self._add_check(
-            rcol_layout,
-            "Enable client updates",
-            "settingsClientUpdate",
-            self._settings.client_update_enabled,
-            self._settings.set_client_update_enabled,
-        )
-
-        if platform_support.is_linux():
-            self._build_linux_button(rcol_layout)
-
-        cols.addWidget(lcol, 3)
-        cols.addWidget(rcol, 2)
-        body_layout.addLayout(cols, 1)
-
-        self._build_registry_section(body_layout)
-        self._build_profiles_section(body_layout)
-        return body
+        body_layout.addStretch(1)
+        return page
 
     def _add_row(self, layout, icon, text, command, object_name, color):
         row = _ClickableRow(icon, text, self._palette, color, self)
