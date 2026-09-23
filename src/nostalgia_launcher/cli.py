@@ -86,9 +86,9 @@ def resolve_backend(name=None) -> type | None:
     """Return the Qt app class for the selected GUI backend.
 
     Reads the NOSTALGIA_UI_BACKEND environment variable when ``name`` is None
-    (``qt`` is the default; ``pyside6`` is accepted as an alias). Raises
-    ImportError when the Qt module cannot be imported; returns None for an
-    unknown backend name.
+    (``qt`` is the default; ``pyside6`` is accepted as an alias, ``qml``
+    selects the in-progress QML shell). Raises ImportError when the Qt
+    module cannot be imported; returns None for an unknown backend name.
     """
     if name is None:
         name = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")
@@ -96,12 +96,16 @@ def resolve_backend(name=None) -> type | None:
         from .ui.qt.app import QtNostalgiaLauncherApp
 
         return QtNostalgiaLauncherApp
+    if name == "qml":
+        from .ui.qml.app import QmlNostalgiaLauncherApp
+
+        return QmlNostalgiaLauncherApp
     return None
 
 
 def backend_error_message(name, exc) -> str:
     """Map a failed backend import to a user-facing stderr message."""
-    if name in ("qt", "pyside6"):
+    if name in ("qt", "pyside6", "qml"):
         return _QT_UNAVAILABLE
     return f"Failed to import the Nostalgia Launcher GUI: {exc}\n"
 
