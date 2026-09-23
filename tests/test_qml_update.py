@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QApplication
 
 from nostalgia_launcher.state.events import ProgressChanged, UpdateFilesList
 from nostalgia_launcher.ui.qml.app import qml_dir
+from nostalgia_launcher.ui.qml.content import ContentListModel
 from nostalgia_launcher.ui.qml.viewmodels import (
     LauncherState,
     NewsFeedModel,
@@ -69,6 +70,12 @@ def engine(qapp):
     eng.rootContext().setContextProperty("launcherState", LauncherState())
     eng.rootContext().setContextProperty("appTheme", ThemeBridge(Palette()))
     eng.rootContext().setContextProperty("newsModel", NewsFeedModel())
+    eng.rootContext().setContextProperty(
+        "modsModel", ContentListModel("mods empty")
+    )
+    eng.rootContext().setContextProperty(
+        "assetsModel", ContentListModel("assets empty")
+    )
     update = UpdateState()
     eng.rootContext().setContextProperty("updateState", update)
     eng.load(QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml")))

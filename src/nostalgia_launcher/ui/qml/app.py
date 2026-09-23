@@ -23,11 +23,23 @@ from ...core import launcher
 from ...state.events import LogMessage
 from ..qt.bridge import ControllerHub
 from ..qt.theme import palette_for_config
+from .content import ContentListModel, build_rows, essential_pending
 from .viewmodels import (
     LauncherState,
     NewsFeedModel,
     ThemeBridge,
     UpdateState,
+)
+
+_MODS_EMPTY = (
+    "No mods catalog available.\n"
+    "Configure a catalog URL under Settings → Catalog "
+    "registries, then use Reload."
+)
+_ASSETS_EMPTY = (
+    "No server content available.\n"
+    "This server does not publish downloadable assets "
+    "(client patches such as MPQs)."
 )
 
 
@@ -114,6 +126,14 @@ class QmlNostalgiaLauncherApp:
         bridge.operationFailed.connect(self._on_operation_failed)
         bridge.gameLaunched.connect(self._refresh_primary)
         bridge.gameExited.connect(self._refresh_primary)
+        self._mods = ContentListModel(_MODS_EMPTY)
+        self._assets = ContentListModel(_ASSETS_EMPTY)
+        self._wire_content(
+            self._mods, self._hub.mods, "mods", bridge.modsLoaded
+        )
+        self._wire_content(
+            self._assets, self._hub.assets, "assets", bridge.assetsLoaded
+        )
         self._engine = QQmlApplicationEngine()
         self._engine.rootContext().setContextProperty(
             "launcherState", self._state
@@ -122,6 +142,10 @@ class QmlNostalgiaLauncherApp:
         self._engine.rootContext().setContextProperty("newsModel", self._news)
         self._engine.rootContext().setContextProperty(
             "updateState", self._update
+        )
+        self._engine.rootContext().setContextProperty("modsModel", self._mods)
+        self._engine.rootContext().setContextProperty(
+            "assetsModel", self._assets
         )
         self._engine.load(
             QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml"))
@@ -190,6 +214,97 @@ class QmlNostalgiaLauncherApp:
             return
         self._hub.settings.verify_files()
         self._refresh_primary()
+
+    # ── content tabs (shared MODS/ASSETS core) ────────────────────────
+
+    def _wire_content(self, model, ctrl, kind, loaded_signal):
+        """Snapshot provider + action callbacks for one content tab."""
+        if kind == "mods":
+
+            def required_of(entry):
+                return entry.get("installation") == "required"
+
+            def version_of(entry, rec, state):
+                return (
+                    (rec.installed_version if rec else None)
+                    or state.latest_versions.get(entry["id"])
+                    or "unknown"
+                )
+
+            def apply_one(eid):
+                return ctrl.apply(only_mod_id=eid)
+
+            def apply_all():
+                return ctrl.apply()
+
+            def essential():
+                return ctrl.apply_essential_mods()
+
+            op_kind = "mods"
+        else:
+
+            def required_of(entry):
+                return bool(entry.get("essential", False))
+
+            def version_of(entry, rec, state):
+                return (rec.installed_version if rec else None) or "unknown"
+
+            def apply_one(eid):
+                return ctrl.apply(only_asset_id=eid)
+
+            def apply_all():
+                return ctrl.apply()
+
+            def essential():
+                return ctrl.apply_essential_assets()
+
+            op_kind = "assets"
+
+        def snapshot():
+            state = ctrl.state
+            rows = build_rows(
+                ctrl.registry,
+                state,
+                required_of=required_of,
+                version_of=version_of,
+                action_for=ctrl.action_for,
+            )
+            return (
+                rows,
+                state.updates_count,
+                state.has_pending_changes,
+                state.has_errors,
+                essential_pending(
+                    ctrl.registry, state, required_of=required_of
+                ),
+            )
+
+        def on_toggle(eid, checked):
+            ctrl.toggle(eid, checked)
+            model.refresh()
+
+        model.set_snapshot_provider(snapshot)
+        model.set_handlers(
+            toggle=on_toggle,
+            action=apply_one,
+            apply=apply_all,
+            essential=essential,
+            reload=ctrl.reload_catalog,
+        )
+        loaded_signal.connect(lambda _e: model.refresh())
+        self._hub.bridge.operationFinished.connect(
+            lambda k, ok, m: self._after_content_op(model, k, op_kind)
+        )
+        self._hub.bridge.operationFailed.connect(
+            lambda k, m: self._after_content_op(model, k, op_kind)
+        )
+        model.refresh()
+
+    def _after_content_op(self, model, kind: str, op_kind: str):
+        """Drop the busy chrome when this tab's operation settles."""
+        if kind == op_kind:
+            model.set_running(False)
+            model.refresh()
 
     @property
     def engine(self) -> QQmlApplicationEngine:

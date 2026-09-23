@@ -59,8 +59,12 @@ ApplicationWindow {
             TabButton { text: "NEWS" }
             TabButton { text: "UPDATE" }
             TabButton { text: "ADDONS" }
-            TabButton { text: "MODS" }
-            TabButton { text: "ASSETS" }
+            TabButton {
+                text: modsModel.updatesCount > 0 ? "MODS (" + modsModel.updatesCount + ")" : "MODS"
+            }
+            TabButton {
+                text: assetsModel.updatesCount > 0 ? "ASSETS (" + assetsModel.updatesCount + ")" : "ASSETS"
+            }
         }
 
         StackLayout {
@@ -76,29 +80,42 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
             }
-            Repeater {
-                model: ["ADDONS", "MODS", "ASSETS"]
-                Rectangle {
-                    // Placeholder page per tab (Phase 3+ replaces these
-                    // with NewsView/UpdateView/… backed by list models).
-                    color: appTheme.colors["C_PANEL"]
-                    ColumnLayout {
-                        anchors.centerIn: parent
-                        Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: modelData
-                            font.bold: true
-                            font.pointSize: 16
-                            color: appTheme.colors["C_GOLD_LT"]
-                        }
-                        Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: "QML view not migrated yet"
-                            font.pointSize: 10
-                            color: appTheme.colors["C_TEXT_DIM"]
-                        }
+            Rectangle {
+                // ADDONS keeps its placeholder until its own model
+                // lands (git flows differ from the shared list core).
+                color: appTheme.colors["C_PANEL"]
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: "ADDONS"
+                        font.bold: true
+                        font.pointSize: 16
+                        color: appTheme.colors["C_GOLD_LT"]
+                    }
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: "QML view not migrated yet"
+                        font.pointSize: 10
+                        color: appTheme.colors["C_TEXT_DIM"]
                     }
                 }
+            }
+            ContentView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                contentModel: modsModel
+                tabTitle: "MODS"
+                legendText: "★ required"
+                essentialText: "★  Install Required"
+            }
+            ContentView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                contentModel: assetsModel
+                tabTitle: "ASSETS"
+                legendText: ""
+                essentialText: "★  Install Essential"
             }
         }
     }
