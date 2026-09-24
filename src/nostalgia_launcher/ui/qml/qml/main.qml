@@ -1,6 +1,6 @@
 // Nostalgia Launcher QML shell.
 //
-// Mirrors ui/qt/main_window.py: header wordmark, NEWS/UPDATE/ADDONS/MODS/
+// Implements the main window: header wordmark, NEWS/UPDATE/ADDONS/MODS/
 // ASSETS tabs, footer status + progress, gear-button settings dialog and
 // session-log viewer. Bindings read the live view-models (`launcherState`,
 // `newsModel`, `updateState`, `modsModel`, `assetsModel`, `addonsModel`,

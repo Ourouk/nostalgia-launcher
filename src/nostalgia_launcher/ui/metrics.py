@@ -1,4 +1,4 @@
-"""UI metrics: responsive layout math for the Qt interface.
+"""UI metrics: responsive layout math for the interface.
 
 The interface is designed around fixed logical dimensions (1000x700). All
 geometry flows through these pure helpers, which compute placements from a

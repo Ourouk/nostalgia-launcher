@@ -37,7 +37,7 @@ from nostalgia_launcher.ui.qml.viewmodels import (
     ThemeBridge,
     UpdateState,
 )
-from nostalgia_launcher.ui.qt.theme import Palette
+from nostalgia_launcher.ui.theme import Palette
 
 
 def _rec(folder, **kw):

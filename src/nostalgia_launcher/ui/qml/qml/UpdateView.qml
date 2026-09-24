@@ -1,4 +1,4 @@
-// Client update progress (Phase 4). Mirrors ui/qt/update_panel.py:
+// Client update progress (Phase 4):
 // title + force-recheck, phase, progress bar (visible only in flight),
 // current file, Method/Progress/Speed/Peers grid, updated-files list.
 // Reads the `updateState` context property (ui/qml/viewmodels.py).

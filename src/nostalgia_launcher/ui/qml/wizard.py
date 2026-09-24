@@ -1,6 +1,6 @@
 """First-launch/import wizard model for QML (Phase 6b).
 
-Mirrors `ui/qt/launcher_config_dialog.py`: input stage (file or URL) →
+Implements the import wizard: input stage (file or URL) →
 fetch/read + validate → install-folder stage (REQUIRED, pre-filled with
 the Games/<ServerName> suggestion) → trust stage (hosts, capabilities,
 folder, explicit Trust). Nothing is persisted; the selection dict matches
@@ -15,12 +15,9 @@ from PySide6.QtQml import QQmlApplicationEngine
 
 from ...core import launcher, platform_support
 from ...core.log_sink import log
+from ...core.trust import trust_capabilities, trust_hosts
 from ...services import config_import
-from ..qt.launcher_config_dialog import (
-    trust_capabilities,
-    trust_hosts,
-)
-from ..qt.theme import palette_for_config
+from ..theme import palette_for_config
 from .viewmodels import ThemeBridge
 
 STAGE_INPUT = "input"

@@ -1,6 +1,6 @@
 """Linux (UMU) settings for QML (Phase 6b).
 
-Mirrors `ui/qt/linux_settings_dialog.py`: umu-run hint, Proton combo,
+Implements the Linux (UMU) settings: umu-run hint, Proton combo,
 renderer combo, DXVK/GameMode/Wayland checks, GAMEID field, umu-run path
 field. Snapshot + callbacks come from `SettingsController` via the tab
 glue in `ui.qml.app`.

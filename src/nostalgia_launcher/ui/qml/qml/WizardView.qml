@@ -1,5 +1,5 @@
 // Import wizard dialog (Phase 6b). Mirrors
-// ui/qt/launcher_config_dialog.py: input (file/URL) → install folder →
+// Import wizard: input (file/URL) → install folder →
 // trust stages. Reads the `wizard` context property
 // (ui/qml/wizard.py:WizardModel). Used standalone at first launch
 // (WizardWindow.qml) and embedded for profile import.

@@ -22,10 +22,15 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication
 
-from nostalgia_launcher.core import launcher
 from nostalgia_launcher.ui.qml.addons import AddonsModel
 from nostalgia_launcher.ui.qml.app import qml_dir
 from nostalgia_launcher.ui.qml.content import ContentListModel
+from nostalgia_launcher.ui.qml.custom import (
+    CustomAddonModel,
+    CustomAssetModel,
+    CustomModModel,
+)
+from nostalgia_launcher.ui.qml.linux import LinuxModel
 from nostalgia_launcher.ui.qml.settings import LogModel, SettingsModel
 from nostalgia_launcher.ui.qml.viewmodels import (
     LauncherState,
@@ -34,13 +39,7 @@ from nostalgia_launcher.ui.qml.viewmodels import (
     UpdateState,
 )
 from nostalgia_launcher.ui.qml.wizard import WizardModel
-from nostalgia_launcher.ui.qml.custom import (
-    CustomAddonModel,
-    CustomAssetModel,
-    CustomModModel,
-)
-from nostalgia_launcher.ui.qml.linux import LinuxModel
-from nostalgia_launcher.ui.qt.theme import Palette
+from nostalgia_launcher.ui.theme import Palette
 
 VALID_CONFIG = {
     "server": {

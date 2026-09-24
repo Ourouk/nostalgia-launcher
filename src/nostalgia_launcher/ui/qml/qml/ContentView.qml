@@ -1,4 +1,4 @@
-// Shared MODS/ASSETS list (Phase 5). Mirrors ui/qt/content_panel.py:
+// Shared MODS/ASSETS list (Phase 5):
 // banner (title + search + All/Installed/Updates chips + reload), rows
 // (checkbox, ★, name/version, retry/update action, repo link, description,
 // error), empty state, ★-install/Apply footer. Instantiated per tab with a

@@ -1,7 +1,7 @@
 """Settings dialog + session-log models for QML (Phase 6a).
 
-Mirrors `ui/qt/settings_dialog.py` (Game / Sources / Profiles /
-Troubleshooting tabs) and `ui/qt/log_window.py` (session-log viewer).
+Implements the Settings dialog (Game / Sources / Profiles /
+Troubleshooting tabs) and the session-log viewer.
 `SettingsModel` flattens `SettingsController` state into properties; the
 snapshot provider and action callbacks in `ui.qml.app` own the controller
 wiring. Transient statuses (registry/profiles) are model-owned.
@@ -356,7 +356,7 @@ class SettingsModel(QObject):
 
 
 class LogModel(QObject):
-    """Session-log viewer (mirrors `ui/qt/log_window.py`)."""
+    """Session-log viewer (retained log + live tail)."""
 
     changed = Signal()
 

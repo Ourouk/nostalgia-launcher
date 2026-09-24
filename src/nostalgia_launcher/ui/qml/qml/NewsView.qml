@@ -1,5 +1,5 @@
 // Announcements list (Phase 3 pilot). Mirrors
-// ui/qt/news_panel.py:AnnouncementsPanel — header + refresh, status line,
+// Announcements panel — header + refresh, status line,
 // dated entries (date / title / author / body / link). Reads the
 // `newsModel` context property (ui/qml/viewmodels.py:NewsFeedModel).
 

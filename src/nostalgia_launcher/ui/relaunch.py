@@ -1,23 +1,18 @@
-"""Shared profile-switch plumbing for the Qt layer.
+"""Detached profile relaunch (UI-toolkit neutral, QtCore only).
 
-Used by BOTH switch surfaces: the main-window header combo (quick
-switch) and the Settings PROFILES editor's delete-active restart offer.
-Kept in its own module so neither widget needs to import the other
-(main_window ↔ settings_dialog would be circular).
-
-Flow is always: persist the pointer (`profiles.set_active`) FIRST, then
-relaunch detached; a failed relaunch leaves the pointer persisted, so a
-manual start still lands on the chosen profile.
+Single switch surface now that the shell is QML: persist the pointer
+(`profiles.set_active`) FIRST, then relaunch detached; a failed relaunch
+leaves the pointer persisted, so a manual start still lands on the
+chosen profile. Confirmation lives in QML (switch-prompt dialog).
 """
 
 import os
 import sys
 
-from PySide6.QtCore import QProcess
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtCore import QCoreApplication, QProcess
 
-from ...core import profiles
-from ...core.log_sink import log
+from ..core import profiles
+from ..core.log_sink import log
 
 
 def relaunch_with_profile(name: str) -> bool:
@@ -65,17 +60,6 @@ def relaunch_with_profile(name: str) -> bool:
             os.environ["NOSTALGIA_RELAUNCH"] = prev
 
 
-def confirm_switch(parent, name: str) -> bool:
-    """The standard "the launcher will restart" confirmation."""
-    answer = QMessageBox.question(
-        parent,
-        "Switch profile",
-        f"The launcher will restart using profile '{name}'.",
-        QMessageBox.Yes | QMessageBox.No,
-    )
-    return answer == QMessageBox.Yes
-
-
 def switch_profile(name: str) -> bool:
     """Persist the active pointer, spawn the detached child and quit.
 
@@ -85,7 +69,7 @@ def switch_profile(name: str) -> bool:
     """
     profiles.set_active(name)
     if relaunch_with_profile(name):
-        QApplication.quit()
+        QCoreApplication.quit()
         return True
     log(
         "Could not relaunch automatically — restart manually to "

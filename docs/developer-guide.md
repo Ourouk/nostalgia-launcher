@@ -21,19 +21,19 @@ src/nostalgia_launcher/
   services/       # catalog, addons, mods, news, realm/Config.wtf seeding, update_backend, self_update
   controllers/    # update, news, mods, addons, settings (toolkit-agnostic)
   state/          # models.py (state dataclasses), events.py (dispatcher)
-  ui/qt/          # app, main_window, bridge, theme, panels, dialogs
+  ui/             # bridge, theme, metrics, relaunch + qml/ (app, view-models, views)
 ```
 
 ### Architecture rules
 
 - **Controllers are toolkit-agnostic**: they post dataclass *events* to a
   shared `EventDispatcher` (`state/events.py`) from worker threads; they never
-  touch widgets. The Qt side (`ui/qt/bridge.py`) converts events to Qt signals
-  on the main thread.
+  touch UI code. The QML side (`ui/bridge.py`) converts events to Qt signals
+  on the main thread, exposed to QML as properties by view-models.
 - Inside the package use **relative** imports; tests import via
   `nostalgia_launcher.*` absolute paths. Tests monkeypatch by dotted path
   with the FULL package name (e.g.
-  `nostalgia_launcher.ui.qt.addons_panel.QMessageBox.question`), not the bare
+  `nostalgia_launcher.services.umu.launch`), not the bare
   module name.
 - **There are no hardcoded server/mod/addon values.** Everything is configured
   by `core/launcher.py` reading `nostalgia_launcher.json`.
@@ -320,10 +320,9 @@ uv run ruff check .              # lint gate: E4/E7/E9/F/I/W/UP/B
 - **Ruff is the only lint/format gate — there is no type checker.** `ruff
   check` selects E4/E7/E9/F/I/W/UP/B with `line-length = 79` and
   `target-version = "py310"` (see `pyproject.toml`).
-- Qt widget tests set `QT_QPA_PLATFORM=offscreen` themselves; no display
-  needed.
-- Real-display checks are opt-in and skipped by default:
-  `QT_QPA_PLATFORM=xcb RUN_QT_DISPLAY_TESTS=1 uv run pytest tests/test_qt_display.py -k display`
+- QML tests set `QT_QPA_PLATFORM=offscreen` + `QT_QUICK_BACKEND=software`
+  themselves; no display needed. Visual checks happen on a real display per
+  `docs/display-test-matrix.md`.
 - Manual run against a real server config:
   `uv run nostalgia-launcher --launcher-config examples/community.example.json`
 
@@ -367,8 +366,8 @@ Keep them in sync when bumping.
   before and after each test.
 - libtorrent is never needed to run the suite: a fake `lt` module is injected
   into `sys.modules`.
-- Qt tests share one `QApplication` via `create_qt_app()` (a second instance
-  aborts Qt); widget assertions use `objectName`s set in the widgets.
+- QML tests share one `QApplication` per module (a second instance
+  aborts Qt); view assertions use `objectName`s set in the QML.
 - Tests redirect config to `tmp_path` via `config_store.configure(...)` and
   use the `fake_home` / `hermetic_cli` conftest fixtures (which redirect the
   per-user config dir via HOME / USERPROFILE / APPDATA / LOCALAPPDATA) so
@@ -379,11 +378,8 @@ Keep them in sync when bumping.
 
 ## Code Style Gotchas
 
-- The QSS in `ui/qt/main_window.py` is built from **f-strings that mix CSS
-  braces with `{p.*.name()}` interpolations**: an opening `{` must be `{{` and
-  a literal closing `}` must be `}}`. A single unescaped `}` is a hard
-  `SyntaxError` at import time that takes down every Qt test — it survives
-  `ruff format` too (which aborts on the unparseable file).
+- Styling is QtQuick.Controls Material (Dark + brand-gold accent) driven by
+  `ui/theme.py` palette slots exposed as `appTheme`; never hardcode hex in QML.
 - `context/` holds third-party reference sources (e.g. the OctoLauncher repo) —
   not part of the package, not packaged or executed. Leave it alone; don't
   lint/format/refactor anything under it.

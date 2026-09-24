@@ -42,7 +42,7 @@ from nostalgia_launcher.ui.qml.viewmodels import (
     UpdateState,
 )
 from nostalgia_launcher.ui.qml.wizard import WizardModel
-from nostalgia_launcher.ui.qt.theme import Palette
+from nostalgia_launcher.ui.theme import Palette
 
 ENTRIES = [
     {

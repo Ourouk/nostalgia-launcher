@@ -1,6 +1,6 @@
 """ADDONS tab model for QML (Phase 5b).
 
-Mirrors `ui/qt/addons_panel.py`: NEED UPDATE / INSTALLED / AVAILABLE
+Implements the ADDONS tab: NEED UPDATE / INSTALLED / AVAILABLE
 sections (collapsible), rows (checkbox, ★, stripped title, status action,
 repo link, description, error), search, catalog age, ★-recommended/Apply
 footer. Title color escapes are stripped (per-segment colors deferred).

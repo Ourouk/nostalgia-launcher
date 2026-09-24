@@ -32,13 +32,13 @@ together with the bridge — the main window may equally do the assembly by hand
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 
-from ...controllers.addons import AddonsController
-from ...controllers.assets import AssetsController
-from ...controllers.mods import ModsController
-from ...controllers.news import NewsController
-from ...controllers.settings import SettingsController
-from ...controllers.update import UpdateController
-from ...state.events import (
+from ..controllers.addons import AddonsController
+from ..controllers.assets import AssetsController
+from ..controllers.mods import ModsController
+from ..controllers.news import NewsController
+from ..controllers.settings import SettingsController
+from ..controllers.update import UpdateController
+from ..state.events import (
     AddonsLoaded,
     AssetsLoaded,
     EventDispatcher,
@@ -153,7 +153,7 @@ class ControllerHub:
 
     def __init__(self, get_out_dir=None):
         self.dispatcher = EventDispatcher()
-        from ...core import log_sink as _log_sink
+        from ..core import log_sink as _log_sink
 
         _log_sink.set_dispatcher(self.dispatcher)
         self.updater = UpdateController(self.dispatcher, get_out_dir)
@@ -173,7 +173,7 @@ class ControllerHub:
 
     def close(self):
         self.bridge.close()
-        from ...core import log_sink as _log_sink
+        from ..core import log_sink as _log_sink
 
         if _log_sink._dispatcher is self.dispatcher:
             _log_sink.set_dispatcher(None)

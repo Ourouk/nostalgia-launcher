@@ -1,4 +1,4 @@
-// ADDONS tab (Phase 5b). Mirrors ui/qt/addons_panel.py: legend + catalog
+// ADDONS tab (Phase 5b): legend + catalog
 // age + check-for-updates + search header, NEED UPDATE / INSTALLED /
 // AVAILABLE collapsible sections, rows (checkbox, ★, title, status action,
 // repo link, description, error), ★-recommended/Apply/footer-label footer.

@@ -1,6 +1,6 @@
 """Shared content-list model for the MODS/ASSETS QML tabs.
 
-Mirrors `ui/qt/content_panel.py`: one catalog-entry row (checkbox, required
+Implements the shared MODS/ASSETS list: one catalog-entry row (checkbox, required
 star, name/version, repo link, retry/update action, description, error),
 a banner with search + All/Installed/Updates chips, an empty state, and a
 ★-install/Apply footer. `build_rows` flattens a controller registry +

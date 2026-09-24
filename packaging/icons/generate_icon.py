@@ -24,7 +24,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication
 
-# Palette (mirrors the app theme — see ui/qt/theme.py).
+# Palette (mirrors the app theme — see ui/theme.py).
 C_PANEL = "#161120"  # dark purple background
 C_PANEL_BDR = "#261d3a"  # subtle border
 C_GOLD = "#c8922a"  # primary gold fill

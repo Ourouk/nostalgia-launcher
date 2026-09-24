@@ -1,4 +1,4 @@
-"""Nostalgia Launcher Qt (PySide6) design system — palette, stylesheet, metrics.
+"""Nostalgia Launcher design system — palette for the QML shell.
 
 Two theming modes:
 
@@ -18,7 +18,7 @@ Pure Qt (PySide6) — no other GUI toolkit involved.
 
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 
-from ...core.themes import (
+from ..core.themes import (
     DEFAULT_COLORS,
     has_valid_theme,
     resolve_colors,

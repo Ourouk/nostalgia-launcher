@@ -1,10 +1,9 @@
 """Nostalgia Launcher QML application shell (`NOSTALGIA_UI_BACKEND=qml`).
 
-Mirrors `ui.qt.app.QtNostalgiaLauncherApp` so `cli.main()` works unchanged:
+Implements the application shell so `cli.main()` works unchanged:
 construction wires the toolkit-agnostic `ControllerHub` (shared dispatcher
 + controllers) into QML view-models, `show()`/`run()` drive the engine.
-The QtWidgets shell stays the default backend — this one is opt-in until
-the per-panel migration (News → Update → content lists → dialogs) lands.
+This is the only GUI shell (the legacy widget shell was removed).
 
 QML sources resolve from `ui/qml/qml/` in dev and from `sys._MEIPASS/qml`
 in frozen builds (bundled via the PyInstaller specs' `datas`).
@@ -23,9 +22,9 @@ from ...core import launcher, platform_support, profiles
 from ...core.helpers import relative_age
 from ...services import addons as addons_service
 from ...state.events import LogMessage
-from ..qt.bridge import ControllerHub
-from ..qt.profiles_ui import switch_profile
-from ..qt.theme import palette_for_config
+from ..bridge import ControllerHub
+from ..relaunch import switch_profile
+from ..theme import palette_for_config
 from .addons import AddonsModel, build_items, expected_interface
 from .content import ContentListModel, build_rows, essential_pending
 from .custom import CustomAddonModel, CustomAssetModel, CustomModModel

@@ -5,9 +5,9 @@ Commands live in `AGENTS.md`; read it first.
 
 ## Running tests
 
-- Qt widget tests set `QT_QPA_PLATFORM=offscreen` themselves; no display needed.
-- Real-display checks are opt-in and skipped by default:
-  `QT_QPA_PLATFORM=xcb RUN_QT_DISPLAY_TESTS=1 uv run pytest tests/test_qt_display.py -k display`
+- QML tests set `QT_QPA_PLATFORM=offscreen` + `QT_QUICK_BACKEND=software`
+  themselves; no display needed. (Note: `uv run pytest` resolves a shim that
+  collects nothing here — use `.venv/bin/python -m pytest`.)
 - **E2E tests** (`tests/test_torrent_update_e2e.py`, marked `e2e`) exercise the
   *real* libtorrent against `context/client` + `context/wow-client.torrent`.
   They skip unless `RUN_E2E=1` and both artifacts exist; CI runs
@@ -27,7 +27,7 @@ Commands live in `AGENTS.md`; read it first.
   `_launcher_env` calls `launcher.reset()` + `launcher.configure_from_dict(...)`
   before and after each test, so override `launcher.*` the same way.
 - Tests monkeypatch by dotted path with the FULL package name (e.g.
-  `"nostalgia_launcher.ui.qt.addons_panel.QMessageBox.question"`), not the
+  `"nostalgia_launcher.services.umu.launch"`), not the
   bare module name. Same for services, e.g.
   `"nostalgia_launcher.services.umu.launch"` (the update controller imports
   the umu module lazily inside its launch method).
@@ -45,8 +45,8 @@ Commands live in `AGENTS.md`; read it first.
   per-user config dir via HOME / USERPROFILE / APPDATA / LOCALAPPDATA) keeps
   every profile path off the real HOME — use `hermetic_cli` for any test
   that drives `cli.main()`.
-- Qt tests share one `QApplication` via `create_qt_app()` (a second instance
-  aborts Qt); widget assertions use `objectName`s set in the widgets.
+- QML tests share one `QApplication` per module (a second instance
+  aborts Qt); view assertions use `objectName`s set in the QML.
 
 ## Known flaky
 

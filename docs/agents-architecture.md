@@ -13,7 +13,7 @@ src/nostalgia_launcher/
   services/       # catalog, addons, mods, assets, news, realm/Config.wtf seeding, self_update, umu, logo, mpq, config_import, update_backend/, sources/
   controllers/    # update, news, mods, assets, addons, settings (toolkit-agnostic)
   state/          # models.py (state dataclasses), events.py (dispatcher)
-  ui/qt/          # app, main_window, bridge, theme, panels, dialogs
+  ui/             # bridge, theme, metrics, relaunch, app_lock_qt + qml/ (app, view-models, qml/)
 ```
 
 - Config discovery: `launcher.discover_path()` looks next to the exe when
@@ -31,7 +31,7 @@ src/nostalgia_launcher/
   repo root, or `--launcher-config`). Every endpoint is a direct, fully-qualified
   HTTPS URL — there is no base-URL derivation and no mirrors. Missing/invalid
   config with no `--launcher-config`
-  opens a **modal first-launch wizard** (`ui/qt/launcher_config_dialog.py`,
+  opens a **modal first-launch wizard** (`ui/qml/wizard.py` + `qml/WizardWindow.qml`,
   driven by `cli._pick_launcher_config()`); an explicit `--launcher-config`
   that is missing/invalid is a hard `cli.main()` error (no wizard). The wizard
   validates via `launcher.validate_path()` (no global-state side effect) and
@@ -132,7 +132,7 @@ profile — different profiles MAY run side by side.
 **Single-instance guard**: `cli._run_backend` derives the key from the
 active profile's state path (`core/app_lock.state_key` =
 `"nostalgia-launcher-" + sha1(state_path)[:12]`) and serves a Qt
-`QLocalServer` (`ui/qt/app_lock_qt.py`; Qt imports stay inside
+`QLocalServer` (`ui/app_lock_qt.py`; Qt imports stay inside
 functions so core stays PySide6-free). A second launch of the SAME
 profile connects, forwards `{"op": "raise"}`, prints "Already running
 (profile X) — focusing existing window." and exits 0; the running window
@@ -231,7 +231,7 @@ the QLocalServer guard remains authoritative there.
   republish silently instead of failing with "Mod catalog URL is not
   configured."
 - **Assets are the third content vertical** (`services/assets.py`,
-  `controllers/assets.py`, `ui/qt/assets_panel.py`, state in
+  `controllers/assets.py`, `ui/qml/qml/ContentView.qml`, state in
   `AssetsState`) — single-file server content patches such as MPQs, kept
   strictly separate from mods (DLLs) and addons (Lua/XML folders). The list
   comes from the launcher config's top-level `"assets": […]` entries plus
@@ -262,7 +262,8 @@ the QLocalServer guard remains authoritative there.
   **custom_foreign** (untracked). Read-only except
   `remove_custom_mpq`, which refuses anything outside `Data/`;
   `Data/Cache` is skipped. Surfaced inside the ASSETS tab
-  (`ui/qt/assets_panel.py`): the panel re-scans on every render (init,
+  (`ui/qml/qml/ContentView.qml` extras block): the model re-scans on every
+  refresh (init,
   AssetsLoaded, apply completion) for the version picked in its header
   combo, and offers confirmed per-row removal of foreign files.
 - **realmlist.wtf**: `services/tweaks.write_realmlist_wtf(client_dir)`
@@ -286,8 +287,8 @@ the QLocalServer guard remains authoritative there.
 
 - Controllers are toolkit-agnostic: they post dataclass *events* to a shared
   `EventDispatcher` (`state/events.py`) from worker threads; they never touch
-  widgets. The Qt side (`ui/qt/bridge.py`) converts events to Qt signals on the
-  main thread.
+  UI code. The QML side (`ui/bridge.py`) converts events to Qt signals on the
+  main thread, exposed to QML as properties by view-models.
 - Client updates are **torrent-only for incremental**
   + single-zip HTTP fallback for first install: the active
   download source is `server.download.torrent` (`torrent_url`
@@ -389,7 +390,7 @@ the QLocalServer guard remains authoritative there.
   `umu_renderer` (`auto`/`dxvk-d3d8`/`wined3d-opengl`), `umu_gamemode`,
   `umu_wayland`, `umu_binary_path`, `umu_game_id`, `umu_skip_builtin_dxvk`.
   They render in a **dedicated
-  `LinuxSettingsDialog`** (`ui/qt/linux_settings_dialog.py`) opened by the
+  `LinuxSettingsView`** (`ui/qml/qml/LinuxSettingsView.qml`) opened by the
   "Linux (UMU) Settings…" button in the main Settings dialog — *not* a section of
   it. Renderer maps to `PROTON_DXVK_D3D8`/`PROTON_USE_WINED3D` env vars and the
   `Config.wtf` `gxApi`; GameMode wraps launch in `gamemoderun` (only if

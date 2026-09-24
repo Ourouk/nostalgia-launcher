@@ -48,7 +48,7 @@ flowchart TD
 | `TorrentVerifier` / `TorrentDownloader` | `services/update_backend/torrent_update.py` | libtorrent execution only, no policy |
 | `DownloadSource` / `_download_source()` | `services/update_backend/sources.py` | Resolve `torrent_url` / `magnet` / `fallback_url` from `server.download` |
 | `UpdateController` | `controllers/update.py` | Lifecycle owner; `_on_event` mutates `UpdateState`; `compute_readiness()` drives footer |
-| `ControllerBridge` | `ui/qt/bridge.py` | Drains `EventDispatcher` every 50 ms → Qt signals |
+| `ControllerBridge` | `ui/bridge.py` | Drains `EventDispatcher` every 50 ms → Qt signals |
 | Events | `state/events.py` | Typed dataclasses (`TorrentDiffReady`, `TorrentUpToDate`, `UpdateCompleted`, …) |
 
 ```

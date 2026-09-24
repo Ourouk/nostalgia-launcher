@@ -83,19 +83,15 @@ def _parse_args(argv=None) -> argparse.Namespace:
 
 
 def resolve_backend(name=None) -> type | None:
-    """Return the Qt app class for the selected GUI backend.
+    """Return the QML app class for the selected GUI backend.
 
-    Reads the NOSTALGIA_UI_BACKEND environment variable when ``name`` is None
-    (``qml`` is the default; ``qt``/``pyside6`` select the legacy widget
-    shell). Raises ImportError when the Qt module cannot be imported;
-    returns None for an unknown backend name.
+    Reads the NOSTALGIA_UI_BACKEND environment variable when ``name`` is
+    None (``qml`` is the only backend since the widget shell was removed).
+    Raises ImportError when the Qt module cannot be imported; returns None
+    for an unknown backend name.
     """
     if name is None:
         name = os.environ.get("NOSTALGIA_UI_BACKEND", "qml")
-    if name in ("qt", "pyside6"):
-        from .ui.qt.app import QtNostalgiaLauncherApp
-
-        return QtNostalgiaLauncherApp
     if name == "qml":
         from .ui.qml.app import QmlNostalgiaLauncherApp
 
@@ -105,7 +101,7 @@ def resolve_backend(name=None) -> type | None:
 
 def backend_error_message(name, exc) -> str:
     """Map a failed backend import to a user-facing stderr message."""
-    if name in ("qt", "pyside6", "qml"):
+    if name == "qml":
         return _QT_UNAVAILABLE
     return f"Failed to import the Nostalgia Launcher GUI: {exc}\n"
 
@@ -319,20 +315,11 @@ def _pick_launcher_config() -> dict | None:
     ``{"kind": "url", "config_url", "raw", "install_dir",
     "server_name"}``) or None on cancel."""
     backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qml")
-    if backend == "qml":
-        from .ui.qml.wizard import run_import_wizard_qml
-
-        return run_import_wizard_qml(initial_path=launcher.discover_path())
-    from PySide6.QtWidgets import QDialog
-
-    from .ui.qt.app import create_qt_app
-    from .ui.qt.launcher_config_dialog import LauncherConfigDialog
-
-    create_qt_app()
-    dlg = LauncherConfigDialog(initial_path=launcher.discover_path())
-    if dlg.exec() != QDialog.DialogCode.Accepted:
+    if backend != "qml":
         return None
-    return dlg.selection()
+    from .ui.qml.wizard import run_import_wizard_qml
+
+    return run_import_wizard_qml(initial_path=launcher.discover_path())
 
 
 def _guard_enter(key, prof):
@@ -346,7 +333,7 @@ def _guard_enter(key, prof):
     in which case the store lock alone still guards the profile.
     """
     try:
-        from .ui.qt import app_lock_qt
+        from .ui import app_lock_qt
     except ImportError:
         return None  # no Qt at all: lock-only protection
     global _GUARD_SERVER_KEY
@@ -445,7 +432,7 @@ def _guard_shutdown():
         return
     _GUARD_SERVER_KEY = None
     try:
-        from .ui.qt import app_lock_qt
+        from .ui import app_lock_qt
 
         app_lock_qt.stop_server(key)
     except ImportError:

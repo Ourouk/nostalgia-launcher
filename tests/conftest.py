@@ -108,7 +108,7 @@ def _single_instance_env():
     import sys
 
     yield
-    mod = sys.modules.get("nostalgia_launcher.ui.qt.app_lock_qt")
+    mod = sys.modules.get("nostalgia_launcher.ui.app_lock_qt")
     if mod is not None:
         mod.stop_all()
 

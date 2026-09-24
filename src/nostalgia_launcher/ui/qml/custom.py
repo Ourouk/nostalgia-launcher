@@ -1,6 +1,6 @@
 """Custom-entry dialogs for QML (Phase 6b).
 
-Mirrors `ui/qt/custom_{mod,addon,asset}_dialog.py`: form models assemble a
+Implements the custom-entry dialogs: form models assemble a
 catalog entry, validate it (`catalog.validate_mod/asset`,
 `addons.is_allowed_git_url`), and emit `entryReady` on success — the tab
 glue in `ui.qml.app` persists/applies exactly like the widget shell.

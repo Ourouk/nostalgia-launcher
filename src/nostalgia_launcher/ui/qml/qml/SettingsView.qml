@@ -1,4 +1,4 @@
-// Settings dialog (Phase 6a). Mirrors ui/qt/settings_dialog.py: Game /
+// Settings dialog (Phase 6a): Game /
 // Sources / Profiles / Troubleshooting tabs. Reads the `settingsModel`
 // context property (ui/qml/settings.py:SettingsModel). Profile import and
 // the Linux (UMU) window land with the wizard dialogs (Phase 6b).

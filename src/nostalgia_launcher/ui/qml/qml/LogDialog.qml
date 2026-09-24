@@ -1,4 +1,4 @@
-// Session-log viewer (Phase 6a). Mirrors ui/qt/log_window.py: a scrollable
+// Session-log viewer (Phase 6a): a scrollable
 // monospace view of the retained session log with live tailing. Reads the
 // `logModel` context property (ui/qml/settings.py:LogModel).
 
