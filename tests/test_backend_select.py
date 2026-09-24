@@ -34,14 +34,14 @@ def no_persisted_config(monkeypatch, tmp_path):
     )
 
 
-def test_resolve_backend_default_is_qt(monkeypatch):
-    import nostalgia_launcher.ui.qt.app as qt_app
+def test_resolve_backend_default_is_qml(monkeypatch):
+    import nostalgia_launcher.ui.qml.app as qml_app
 
     monkeypatch.delenv("NOSTALGIA_UI_BACKEND", raising=False)
-    assert cli.resolve_backend() is qt_app.QtNostalgiaLauncherApp
+    assert cli.resolve_backend() is qml_app.QmlNostalgiaLauncherApp
 
 
-def test_resolve_backend_qt_returns_app_class():
+def test_resolve_backend_qt_still_available():
     import nostalgia_launcher.ui.qt.app as qt_app
 
     assert cli.resolve_backend("qt") is qt_app.QtNostalgiaLauncherApp

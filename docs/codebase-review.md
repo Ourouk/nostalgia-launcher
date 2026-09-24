@@ -305,8 +305,9 @@ change to this contract.** **[verified]**
    - `config_store.configure(state, cache)` — sets the active profile's
      global store paths (`profiles.active().state_path()` /
      `cache_path()`).
-   - Resolve backend via `NOSTALGIA_UI_BACKEND` (default `qt`).
-   - Construct `QtNostalgiaLauncherApp` → `app.show()` → `app.run()` (Qt event
+   - Resolve backend via `NOSTALGIA_UI_BACKEND` (default `qml`;
+     `qt`/`pyside6` select the legacy widget shell).
+   - Construct `QmlNostalgiaLauncherApp` → `app.show()` → `app.run()` (Qt event
      loop).
 5. `QtNostalgiaLauncherApp.__init__` (`app.py:92-103`):
    - `create_qt_app()` (single `QApplication`, fonts loaded, HiDPI policy).
@@ -595,7 +596,7 @@ stateDiagram-v2
 ### 8.2 Environment variables
 | Var | Effect | Verified |
 |-----|--------|----------|
-| `NOSTALGIA_UI_BACKEND` | backend selector (`qt`/`pyside6`, default `qt`) | ✓ |
+| `NOSTALGIA_UI_BACKEND` | backend selector (`qml` default, `qt`/`pyside6` legacy fallback) | ✓ |
 | `NOSTALGIA_DEBUG` | mirror log lines to stdout (non-`0/false/no`) | ✓ (`log_sink.py`) |
 | `QT_QPA_PLATFORM` | Qt platform (`offscreen` for tests) | ✓ (tests) |
 | `XDG_CONFIG_HOME`/`XDG_CACHE_HOME`/`XDG_DATA_HOME` | per-user dir roots (Linux) | ✓ |

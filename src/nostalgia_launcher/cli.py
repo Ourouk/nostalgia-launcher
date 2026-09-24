@@ -86,12 +86,12 @@ def resolve_backend(name=None) -> type | None:
     """Return the Qt app class for the selected GUI backend.
 
     Reads the NOSTALGIA_UI_BACKEND environment variable when ``name`` is None
-    (``qt`` is the default; ``pyside6`` is accepted as an alias, ``qml``
-    selects the in-progress QML shell). Raises ImportError when the Qt
-    module cannot be imported; returns None for an unknown backend name.
+    (``qml`` is the default; ``qt``/``pyside6`` select the legacy widget
+    shell). Raises ImportError when the Qt module cannot be imported;
+    returns None for an unknown backend name.
     """
     if name is None:
-        name = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")
+        name = os.environ.get("NOSTALGIA_UI_BACKEND", "qml")
     if name in ("qt", "pyside6"):
         from .ui.qt.app import QtNostalgiaLauncherApp
 
@@ -237,7 +237,8 @@ def _first_launch(show_log: bool = False) -> int:
     try:
         chosen = _pick_launcher_config()
     except ImportError as e:
-        sys.stderr.write(backend_error_message("qt", e))
+        backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qml")
+        sys.stderr.write(backend_error_message(backend, e))
         return 1
     if chosen is None:
         sys.stderr.write(
@@ -317,13 +318,11 @@ def _pick_launcher_config() -> dict | None:
     (``{"kind": "file", "path", "raw", "install_dir", "server_name"}`` or
     ``{"kind": "url", "config_url", "raw", "install_dir",
     "server_name"}``) or None on cancel."""
-    backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")
+    backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qml")
     if backend == "qml":
         from .ui.qml.wizard import run_import_wizard_qml
 
-        return run_import_wizard_qml(
-            initial_path=launcher.discover_path()
-        )
+        return run_import_wizard_qml(initial_path=launcher.discover_path())
     from PySide6.QtWidgets import QDialog
 
     from .ui.qt.app import create_qt_app
@@ -409,7 +408,7 @@ def _run_backend(show_log: bool = False) -> int:
             f"── Nostalgia Launcher {UPDATER_VERSION} · session start ──",
             "dim",
         )
-        backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")
+        backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qml")
         try:
             app_cls = resolve_backend(backend)
         except ImportError as e:
