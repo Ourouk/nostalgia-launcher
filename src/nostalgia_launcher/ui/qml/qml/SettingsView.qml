@@ -217,7 +217,7 @@ Dialog {
                     }
                     Label {
                         Layout.fillWidth: true
-                        text: "One profile per server. Switching restarts the launcher. Importing a new server arrives with the wizard (Phase 6b)."
+                        text: "One profile per server — importing a configuration creates its profile, named after the server. Switch profiles from the selector in the main-window header; switching restarts the launcher."
                         font.pointSize: 9
                         color: appTheme.colors["C_TEXT_DIM"]
                         wrapMode: Text.WordWrap
@@ -230,6 +230,14 @@ Dialog {
                             Layout.fillWidth: true
                             model: settingsModel.profiles
                             currentIndex: Math.max(0, settingsModel.profiles.indexOf(settingsModel.activeProfile))
+                        }
+                        Button {
+                            objectName: "qmlProfilesImport"
+                            text: "Import…"
+                            onClicked: {
+                                wizard.reset();
+                                importWizard.open();
+                            }
                         }
                         Button {
                             objectName: "qmlProfilesDelete"

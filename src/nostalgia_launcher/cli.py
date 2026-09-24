@@ -317,6 +317,13 @@ def _pick_launcher_config() -> dict | None:
     (``{"kind": "file", "path", "raw", "install_dir", "server_name"}`` or
     ``{"kind": "url", "config_url", "raw", "install_dir",
     "server_name"}``) or None on cancel."""
+    backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")
+    if backend == "qml":
+        from .ui.qml.wizard import run_import_wizard_qml
+
+        return run_import_wizard_qml(
+            initial_path=launcher.discover_path()
+        )
     from PySide6.QtWidgets import QDialog
 
     from .ui.qt.app import create_qt_app

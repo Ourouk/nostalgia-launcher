@@ -35,6 +35,7 @@ from .viewmodels import (
     ThemeBridge,
     UpdateState,
 )
+from .wizard import WizardModel
 
 _MODS_EMPTY = (
     "No mods catalog available.\n"
@@ -145,6 +146,7 @@ class QmlNostalgiaLauncherApp:
         self._settings = SettingsModel()
         self._log_model = LogModel()
         self._wire_settings()
+        self._import_wizard = WizardModel()
         self._engine = QQmlApplicationEngine()
         self._engine.rootContext().setContextProperty(
             "launcherState", self._state
@@ -166,6 +168,9 @@ class QmlNostalgiaLauncherApp:
         )
         self._engine.rootContext().setContextProperty(
             "logModel", self._log_model
+        )
+        self._engine.rootContext().setContextProperty(
+            "wizard", self._import_wizard
         )
         self._engine.load(
             QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml"))
@@ -405,6 +410,107 @@ class QmlNostalgiaLauncherApp:
             self._addons_qml.set_running(False)
             self._addons_qml.refresh()
 
+    # ── profile import (wizard selection → server-named profile) ──────
+
+    def _finish_profile_import(self):
+        """Port of SettingsDialog._on_profile_import (QML-confirmed)."""
+        import json
+        from urllib.parse import urlsplit
+
+        sel = self._import_wizard.takeSelection()
+        if not sel:
+            return
+        if sel["kind"] == "file":
+            cfg, verr = launcher.validate_path(sel["path"])
+            if cfg is None:
+                self._profile_error(f"Invalid launcher configuration: {verr}")
+                return
+        else:
+            raw = sel.get("raw") or ""
+            try:
+                data = json.loads(raw) if raw else None
+            except ValueError as exc:
+                self._profile_error(f"Invalid configuration JSON: {exc}")
+                return
+            if data is None:
+                self._profile_error("Invalid launcher configuration.")
+                return
+            cfg, verr = launcher.validate_dict(data)
+            if cfg is None:
+                self._profile_error(f"Invalid launcher configuration: {verr}")
+                return
+        url = (cfg.server_url or "").strip()
+        host = ""
+        if url:
+            if "://" in url:
+                try:
+                    host = urlsplit(url).hostname or ""
+                except ValueError:
+                    host = ""
+            else:
+                host = url.split("/")[0].strip()
+        name = profiles.unique_name(
+            profiles.profile_name_for(cfg.server_name, host)
+        )
+        prof, err = profiles.create(name)
+        if err:
+            self._profile_error(err)
+            return
+        prev_active = profiles.active()
+        try:
+            profiles.activate(prof)
+            err = self._persist_import_selection(sel)
+            if err:
+                self._profile_error(err)
+                profiles.delete(name)
+                self._settings.refresh()
+                return
+            install_dir = (sel.get("install_dir") or "").strip()
+            if install_dir:
+                from ...core import config_store
+
+                config_store.apply_confirmed_out_dir(
+                    prof.state_path(), install_dir
+                )
+        finally:
+            profiles.activate(prev_active)
+        self._settings.refresh()
+        self._profile_error("")
+        self._settings.prompt_switch(name)
+
+    def _persist_import_selection(self, sel) -> str:
+        import json
+
+        from ...services import config_import
+
+        if sel["kind"] == "file":
+            _dest, err = launcher.persist(sel["path"])
+            return err
+        raw = sel.get("raw")
+        if not raw:
+            _data, raw, err = config_import.fetch_config_url(sel["config_url"])
+            if err:
+                return err
+        try:
+            cfg, verr = launcher.validate_dict(json.loads(raw))
+        except (ValueError, TypeError) as exc:
+            return f"Invalid configuration JSON: {exc}"
+        if cfg is None:
+            return f"Invalid launcher configuration: {verr}"
+        _dest, err = launcher.persist_text(raw)
+        return err
+
+    def _profile_error(self, msg: str):
+        self._settings._profiles_status = f"✗ {msg}" if msg else ""
+        self._settings.transientChanged.emit()
+        self._settings.refresh()
+
+    def _resolve_switch(self, yes: bool):
+        target = self._settings._switch_prompt
+        self._settings.clear_switch_prompt()
+        if yes and target and not switch_profile(target):
+            self._profile_error("Restart the launcher manually to switch.")
+
     # ── settings dialog + session log ─────────────────────────────────
 
     def _wire_settings(self):
@@ -476,6 +582,8 @@ class QmlNostalgiaLauncherApp:
             clear_addons_custom=settings.clear_addons_custom,
             clear_mods_custom=settings.clear_mods_custom,
             delete_profile=delete_profile,
+            finish_import=self._finish_profile_import,
+            resolve_switch=self._resolve_switch,
         )
         bridge = self._hub.bridge
         bridge.sourceStatusChanged.connect(lambda _ok, _text: model.refresh())

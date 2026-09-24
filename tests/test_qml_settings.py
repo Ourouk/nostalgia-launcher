@@ -24,6 +24,7 @@ from nostalgia_launcher.ui.qml.addons import AddonsModel
 from nostalgia_launcher.ui.qml.app import qml_dir
 from nostalgia_launcher.ui.qml.content import ContentListModel
 from nostalgia_launcher.ui.qml.settings import LogModel, SettingsModel
+from nostalgia_launcher.ui.qml.wizard import WizardModel
 from nostalgia_launcher.ui.qml.viewmodels import (
     LauncherState,
     NewsFeedModel,
@@ -92,6 +93,7 @@ def engine(qapp):
     settings.refresh()
     eng.rootContext().setContextProperty("settingsModel", settings)
     eng.rootContext().setContextProperty("logModel", LogModel())
+    eng.rootContext().setContextProperty("wizard", WizardModel())
     eng.load(QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml")))
     yield eng, settings
 

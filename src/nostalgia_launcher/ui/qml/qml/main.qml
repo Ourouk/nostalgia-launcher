@@ -9,6 +9,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
+import QtQuick.Dialogs
 import QtQuick.Layouts
 
 ApplicationWindow {
@@ -59,6 +60,22 @@ ApplicationWindow {
     SettingsView {
         id: settingsDialog
         objectName: "qmlSettingsDialog"
+    }
+
+    WizardView {
+        id: importWizard
+        objectName: "qmlImportWizard"
+        onAccepted: settingsModel.finishImport()
+    }
+
+    MessageDialog {
+        id: switchConfirm
+        title: "Profile imported"
+        text: "Profile '" + settingsModel.switchPrompt + "' is ready. Switch to it now? (The launcher will restart.)"
+        buttons: MessageDialog.Yes | MessageDialog.No
+        visible: settingsModel.switchPrompt !== ""
+        onAccepted: settingsModel.resolveSwitch(true)
+        onRejected: settingsModel.resolveSwitch(false)
     }
 
     LogDialog {

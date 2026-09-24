@@ -41,6 +41,7 @@ class SettingsModel(QObject):
         self._logs_open = False
         self._registry_status = ""
         self._profiles_status = ""
+        self._switch_prompt = ""
         self._snapshot_provider = None
         self._handlers: dict = {}
 
@@ -178,6 +179,11 @@ class SettingsModel(QObject):
         str, _get_profiles_status, notify=transientChanged
     )
 
+    def _get_switch_prompt(self) -> str:
+        return self._switch_prompt
+
+    switchPrompt = Property(str, _get_switch_prompt, notify=transientChanged)
+
     @Slot(bool)
     def setLogsOpen(self, open_: bool):
         open_ = bool(open_)
@@ -306,6 +312,23 @@ class SettingsModel(QObject):
     @Slot()
     def requestLogs(self):
         self.logsRequested.emit()
+
+    @Slot()
+    def finishImport(self):
+        self._call("finish_import")
+
+    @Slot(bool)
+    def resolveSwitch(self, yes: bool):
+        self._call("resolve_switch", bool(yes))
+
+    def prompt_switch(self, target: str):
+        """Ask whether to restart on a freshly imported profile."""
+        self._switch_prompt = target
+        self.transientChanged.emit()
+
+    def clear_switch_prompt(self):
+        self._switch_prompt = ""
+        self.transientChanged.emit()
 
 
 class LogModel(QObject):
