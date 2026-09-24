@@ -362,6 +362,7 @@ class UpdateState(QObject):
     statsChanged = Signal()
     primaryChanged = Signal()
     filesChanged = Signal()
+    realmChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -378,6 +379,8 @@ class UpdateState(QObject):
         self._files = UpdateFilesModel(self)
         self._on_primary = None
         self._on_recheck = None
+        self._on_realm = None
+        self._realm_prompt = ""
 
     # ── properties ──────────────────────────────────────────────────
 
@@ -442,6 +445,11 @@ class UpdateState(QObject):
 
     files = Property(QObject, _get_files, notify=filesChanged)
 
+    def _get_realm_prompt(self) -> str:
+        return self._realm_prompt
+
+    realmPrompt = Property(str, _get_realm_prompt, notify=realmChanged)
+
     # ── controller callbacks ────────────────────────────────────────
 
     def set_primary_handler(self, callback):
@@ -452,6 +460,10 @@ class UpdateState(QObject):
         """Force-recheck click (test seam)."""
         self._on_recheck = callback
 
+    def set_realm_handler(self, callback):
+        """Realm-prompt answer (test seam)."""
+        self._on_realm = callback
+
     @Slot()
     def primary(self):
         if self._on_primary is not None:
@@ -461,6 +473,22 @@ class UpdateState(QObject):
     def recheck(self):
         if self._on_recheck is not None:
             self._on_recheck()
+
+    @Slot(bool)
+    def resolveRealm(self, inject: bool):
+        self._realm_prompt = ""
+        self.realmChanged.emit()
+        if self._on_realm is not None:
+            self._on_realm(bool(inject))
+
+    def prompt_realm(self, actual: str, expected: str):
+        """Show the realm-mismatch prompt before launching."""
+        self._realm_prompt = (
+            f"The game folder realm is '{actual}' but this server wants "
+            f"'{expected}'. Injecting overwrites the realm files with a "
+            "third-party address. Only proceed if you trust this server."
+        )
+        self.realmChanged.emit()
 
     def update_primary(self, label: str, enabled: bool):
         """Footer button state from the readiness decision."""

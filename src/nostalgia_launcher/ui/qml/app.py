@@ -28,6 +28,8 @@ from ..qt.profiles_ui import switch_profile
 from ..qt.theme import palette_for_config
 from .addons import AddonsModel, build_items, expected_interface
 from .content import ContentListModel, build_rows, essential_pending
+from .custom import CustomAddonModel, CustomAssetModel, CustomModModel
+from .linux import LinuxModel, renderer_label, renderer_labels
 from .settings import LogModel, SettingsModel
 from .viewmodels import (
     LauncherState,
@@ -147,6 +149,11 @@ class QmlNostalgiaLauncherApp:
         self._log_model = LogModel()
         self._wire_settings()
         self._import_wizard = WizardModel()
+        self._custom_mod = CustomModModel()
+        self._custom_addon = CustomAddonModel()
+        self._custom_asset = CustomAssetModel()
+        self._linux = LinuxModel()
+        self._wire_custom()
         self._engine = QQmlApplicationEngine()
         self._engine.rootContext().setContextProperty(
             "launcherState", self._state
@@ -171,6 +178,18 @@ class QmlNostalgiaLauncherApp:
         )
         self._engine.rootContext().setContextProperty(
             "wizard", self._import_wizard
+        )
+        self._engine.rootContext().setContextProperty(
+            "customModModel", self._custom_mod
+        )
+        self._engine.rootContext().setContextProperty(
+            "customAddonModel", self._custom_addon
+        )
+        self._engine.rootContext().setContextProperty(
+            "customAssetModel", self._custom_asset
+        )
+        self._engine.rootContext().setContextProperty(
+            "linuxModel", self._linux
         )
         self._engine.load(
             QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml"))
@@ -210,11 +229,7 @@ class QmlNostalgiaLauncherApp:
         return True
 
     def _primary_action(self):
-        """Footer click — mirrors MainWindow._on_update_button_clicked.
-
-        Realm-mismatch prompting stays widget-only until the Phase 6 QML
-        dialogs land; play launches directly (as answering "No" would).
-        """
+        """Footer click — mirrors MainWindow._on_update_button_clicked."""
         updater = self._hub.updater
         if updater.running:
             return
@@ -222,7 +237,7 @@ class QmlNostalgiaLauncherApp:
             addons_installing=self._hub.addons.installing
         )
         if ready.mode == "play":
-            updater.launch_game()
+            self._launch_with_realm_check()
         elif ready.mode == "update":
             if self._need_game_folder():
                 return
@@ -234,6 +249,22 @@ class QmlNostalgiaLauncherApp:
         elif ready.mode == "terminate":
             updater.terminate_game()
         self._refresh_primary()
+
+    def _launch_with_realm_check(self):
+        """Play with the realm-mismatch prompt (QML MessageDialog)."""
+        updater = self._hub.updater
+        client_dir = (self._hub.settings.state.path or "").strip()
+        if client_dir:
+            status = updater.realm_status(client_dir)
+            if status.mismatch:
+                actual = (
+                    status.actual_config
+                    or status.actual_realmlist
+                    or "<unknown>"
+                )
+                self._update.prompt_realm(actual, status.expected)
+                return
+        updater.launch_game()
 
     def _force_recheck(self):
         """UPDATE-tab Force recheck (mirrors _on_force_recheck)."""
@@ -510,6 +541,101 @@ class QmlNostalgiaLauncherApp:
         self._settings.clear_switch_prompt()
         if yes and target and not switch_profile(target):
             self._profile_error("Restart the launcher manually to switch.")
+
+    # ── custom entries + linux settings + realm prompt ────────────────
+
+    def _wire_custom(self):
+        """Custom dialogs, Linux settings and the realm prompt."""
+        from ...core.log_sink import log
+
+        hub = self._hub
+        self._custom_mod.entryReady.connect(self._on_custom_mod_apply)
+        self._custom_addon.entryReady.connect(self._on_custom_addon_apply)
+        self._custom_asset.entryReady.connect(self._on_custom_asset_apply)
+        self._linux.set_snapshot_provider(self._linux_snapshot)
+        self._linux.set_handlers(
+            proton=hub.settings.set_umu_proton,
+            renderer=hub.settings.set_umu_renderer,
+            dxvk=hub.settings.set_umu_skip_builtin_dxvk,
+            gamemode=hub.settings.set_umu_gamemode,
+            wayland=hub.settings.set_umu_wayland,
+            game_id=hub.settings.set_umu_game_id,
+            umu_path=hub.settings.set_umu_binary_path,
+        )
+        self._update.set_realm_handler(self._resolve_realm)
+        self._log = log
+
+    def _on_custom_mod_apply(self, entry: dict):
+        err = self._hub.mods.add_custom_entry(entry)
+        if err:
+            self._log(f"✗ Custom mod {entry.get('id')}: {err}\n", "err")
+            return
+        self._log(
+            f"\nCustom mod {entry['id']} saved to the local repo.\n",
+            "acct",
+        )
+        self._mods.refresh()
+
+    def _on_custom_addon_apply(self, rec: dict):
+        err = self._hub.addons.add_custom_entry(
+            {"name": rec["folder"], "git": rec.get("git")}
+        )
+        if err:
+            self._log(f"✗ Custom addon {rec['folder']}: {err}\n", "err")
+            return
+        self._log(f"\nInstalling custom addon {rec['folder']}…\n", "acct")
+        self._hub.addons.apply([rec])
+
+    def _on_custom_asset_apply(self, entry: dict):
+        err = self._hub.assets.add_custom_entry(entry)
+        if err:
+            self._log(f"✗ Custom asset {entry.get('id')}: {err}\n", "err")
+            return
+        self._log(
+            f"\nCustom asset {entry['id']} saved to the local repo.\n",
+            "acct",
+        )
+        self._assets.refresh()
+
+    def _linux_snapshot(self) -> dict:
+        settings = self._hub.settings
+        launch = settings.launch
+        options = settings.available_protons()
+        if launch.umu_proton and launch.umu_proton not in options:
+            options = [launch.umu_proton] + options
+        features = settings.linux_features()
+        umu_bin = settings.resolve_umu_binary()
+        return {
+            "umu_hint": (
+                f"umu-run detected at: {umu_bin}"
+                if umu_bin
+                else "umu-run not found on PATH — install umu-launcher "
+                "(e.g. `pacman -S umu-launcher` / `apt install "
+                "umu-launcher`) to enable PLAY on Linux."
+            ),
+            "proton_options": options,
+            "proton": launch.umu_proton or "UMU-Proton",
+            "renderer_options": renderer_labels(),
+            "renderer": renderer_label(launch.umu_renderer),
+            "dxvk": launch.umu_skip_builtin_dxvk,
+            "gamemode": launch.umu_gamemode,
+            "gamemode_avail": features["gamemode_available"],
+            "wayland": launch.umu_wayland,
+            "wayland_avail": features["wayland_session"],
+            "game_id": launch.umu_game_id,
+            "umu_path": launch.umu_binary_path,
+        }
+
+    def _resolve_realm(self, inject: bool):
+        """Realm-prompt answer: optionally inject, then launch."""
+        updater = self._hub.updater
+        client_dir = (self._hub.settings.state.path or "").strip()
+        if inject and client_dir:
+            updater.inject_realm(client_dir)
+        updater.launch_game()
+        self._refresh_primary()
+
+    # ── custom entries + linux settings + realm prompt ────────────────
 
     # ── settings dialog + session log ─────────────────────────────────
 

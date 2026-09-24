@@ -18,6 +18,7 @@ class SettingsModel(QObject):
     changed = Signal()
     transientChanged = Signal()
     logsRequested = Signal()
+    linuxRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -117,6 +118,11 @@ class SettingsModel(QObject):
         return self._can_antivirus
 
     canAntivirus = Property(bool, _get_can_antivirus, notify=changed)
+
+    def _get_is_linux(self) -> bool:
+        return self._is_linux
+
+    isLinux = Property(bool, _get_is_linux, notify=changed)
 
     def _get_addons_url(self) -> str:
         return self._addons_url
@@ -312,6 +318,10 @@ class SettingsModel(QObject):
     @Slot()
     def requestLogs(self):
         self.logsRequested.emit()
+
+    @Slot()
+    def requestLinux(self):
+        self.linuxRequested.emit()
 
     @Slot()
     def finishImport(self):

@@ -238,6 +238,12 @@ ColumnLayout {
         }
         Item { Layout.fillWidth: true }
         Button {
+            objectName: "qmlAddonsCustom"
+            text: "+  Add custom git addon"
+            flat: true
+            onClicked: customAddonDialog.open()
+        }
+        Button {
             objectName: "qmlAddonsApply"
             text: addonsModel.busy ? "Applying…" : "Apply"
             visible: addonsModel.applyVisible

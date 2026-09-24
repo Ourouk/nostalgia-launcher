@@ -34,6 +34,12 @@ from nostalgia_launcher.ui.qml.viewmodels import (
     UpdateState,
 )
 from nostalgia_launcher.ui.qml.wizard import WizardModel
+from nostalgia_launcher.ui.qml.custom import (
+    CustomAddonModel,
+    CustomAssetModel,
+    CustomModModel,
+)
+from nostalgia_launcher.ui.qml.linux import LinuxModel
 from nostalgia_launcher.ui.qt.theme import Palette
 
 VALID_CONFIG = {
@@ -243,6 +249,14 @@ def test_wizard_dialog_loads(engine):
 def test_first_launch_window_loads(qapp):
     eng = QQmlApplicationEngine()
     eng.rootContext().setContextProperty("wizard", WizardModel())
+    eng.rootContext().setContextProperty("customModModel", CustomModModel())
+    eng.rootContext().setContextProperty(
+        "customAddonModel", CustomAddonModel()
+    )
+    eng.rootContext().setContextProperty(
+        "customAssetModel", CustomAssetModel()
+    )
+    eng.rootContext().setContextProperty("linuxModel", LinuxModel())
     eng.rootContext().setContextProperty("appTheme", ThemeBridge(Palette()))
     eng.load(QUrl.fromLocalFile(os.path.join(qml_dir(), "WizardWindow.qml")))
     assert eng.rootObjects()

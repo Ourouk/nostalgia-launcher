@@ -27,6 +27,12 @@ from nostalgia_launcher.ui.qml.app import QmlNostalgiaLauncherApp, qml_dir
 from nostalgia_launcher.ui.qml.content import ContentListModel
 from nostalgia_launcher.ui.qml.settings import LogModel, SettingsModel
 from nostalgia_launcher.ui.qml.wizard import WizardModel
+from nostalgia_launcher.ui.qml.custom import (
+    CustomAddonModel,
+    CustomAssetModel,
+    CustomModModel,
+)
+from nostalgia_launcher.ui.qml.linux import LinuxModel
 from nostalgia_launcher.ui.qml.viewmodels import (
     LauncherState,
     NewsFeedModel,
@@ -64,6 +70,14 @@ def engine(qapp):
     eng.rootContext().setContextProperty("settingsModel", SettingsModel())
     eng.rootContext().setContextProperty("logModel", LogModel())
     eng.rootContext().setContextProperty("wizard", WizardModel())
+    eng.rootContext().setContextProperty("customModModel", CustomModModel())
+    eng.rootContext().setContextProperty(
+        "customAddonModel", CustomAddonModel()
+    )
+    eng.rootContext().setContextProperty(
+        "customAssetModel", CustomAssetModel()
+    )
+    eng.rootContext().setContextProperty("linuxModel", LinuxModel())
     eng.rootContext().setContextProperty("updateState", update)
     eng.load(QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml")))
     yield eng, state, theme

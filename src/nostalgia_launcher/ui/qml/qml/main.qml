@@ -78,6 +78,44 @@ ApplicationWindow {
         onRejected: settingsModel.resolveSwitch(false)
     }
 
+    MessageDialog {
+        id: realmConfirm
+        title: "Realm mismatch"
+        text: updateState.realmPrompt + "\n\nUpdate the realm before launching?"
+        buttons: MessageDialog.Yes | MessageDialog.No
+        visible: updateState.realmPrompt !== ""
+        onAccepted: updateState.resolveRealm(true)
+        onRejected: updateState.resolveRealm(false)
+    }
+
+    CustomModDialog {
+        id: customModDialog
+        objectName: "qmlCustomModDialog"
+    }
+
+    CustomAddonDialog {
+        id: customAddonDialog
+        objectName: "qmlCustomAddonDialog"
+    }
+
+    CustomAssetDialog {
+        id: customAssetDialog
+        objectName: "qmlCustomAssetDialog"
+    }
+
+    LinuxSettingsView {
+        id: linuxDialog
+        objectName: "qmlLinuxSettingsDialog"
+    }
+
+    Connections {
+        target: settingsModel
+        function onLinuxRequested() {
+            linuxModel.refresh();
+            linuxDialog.open();
+        }
+    }
+
     LogDialog {
         id: logDialog
         objectName: "qmlLogDialog"
@@ -143,6 +181,8 @@ ApplicationWindow {
                 tabTitle: "MODS"
                 legendText: "★ required"
                 essentialText: "★  Install Required"
+                customLabel: "+  Add custom mod"
+                onCustomRequested: customModDialog.open()
             }
             ContentView {
                 Layout.fillWidth: true
@@ -151,6 +191,8 @@ ApplicationWindow {
                 tabTitle: "ASSETS"
                 legendText: ""
                 essentialText: "★  Install Essential"
+                customLabel: "+  Add custom asset"
+                onCustomRequested: customAssetDialog.open()
             }
         }
     }

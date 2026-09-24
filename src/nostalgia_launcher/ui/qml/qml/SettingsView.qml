@@ -111,6 +111,13 @@ Dialog {
                         checked: settingsModel.clientUpdates
                         onCheckedChanged: settingsModel.setClientUpdates(checked)
                     }
+                    Button {
+                        objectName: "qmlSettingsLinuxButton"
+                        text: "Linux (UMU) Settings…"
+                        visible: settingsModel.isLinux
+                        flat: true
+                        onClicked: settingsModel.requestLinux()
+                    }
                     Item { Layout.fillHeight: true }
                 }
             }

@@ -18,6 +18,8 @@ ColumnLayout {
     property string tabTitle: ""
     property string legendText: ""
     property string essentialText: ""
+    property string customLabel: ""
+    signal customRequested()
 
     ToolBar {
         Layout.fillWidth: true
@@ -44,6 +46,12 @@ ColumnLayout {
                     font.pointSize: 9
                     color: appTheme.colors["C_TEXT_DIM"]
                     visible: root.legendText !== ""
+                }
+                Button {
+                    text: root.customLabel
+                    visible: root.customLabel !== ""
+                    flat: true
+                    onClicked: root.customRequested()
                 }
                 ToolButton {
                     objectName: "qmlContentReload"
