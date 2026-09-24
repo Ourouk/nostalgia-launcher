@@ -519,3 +519,42 @@ def test_extras_render_in_engine(engine):
         ],
     )
     assert root.findChild(QObject, "qmlExtrasBottom") is not None
+
+
+def test_loading_until_data_or_event(model):
+    assert model.property("loading") is True
+    model.set_snapshot([])
+    assert model.property("loading") is True
+    model.markLoaded()
+    assert model.property("loading") is False
+    model2 = ContentListModel("x")
+    model2.set_snapshot(
+        [
+            {
+                "eid": "a",
+                "name": "A",
+                "version": "1",
+                "description": "",
+                "repoUrl": "",
+                "installed": False,
+                "enabled": False,
+                "required": False,
+                "action": "",
+                "error": "",
+            }
+        ]
+    )
+    assert model2.property("loading") is False
+
+
+def test_waiting_screen_visibility(engine):
+    eng, mods, _assets = engine
+    root = eng.rootObjects()[0]
+    root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 3)
+    waitings = root.findChildren(QObject, "qmlContentWaiting")
+    assert waitings
+    assert any(w.property("visible") is True for w in waitings)
+    empties = root.findChildren(QObject, "qmlContentEmpty")
+    assert all(e.property("visible") is False for e in empties)
+    _snapshot(mods)
+    assert all(w.property("visible") is False for w in waitings)

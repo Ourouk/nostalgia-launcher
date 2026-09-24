@@ -194,6 +194,7 @@ ApplicationWindow {
                 legendText: "★ required"
                 essentialText: "★  Install Required"
                 customLabel: "+  Add custom mod"
+                loadingText: "Loading mods…"
                 onCustomRequested: customModDialog.open()
             }
             ContentView {
@@ -204,6 +205,7 @@ ApplicationWindow {
                 legendText: ""
                 essentialText: "★  Install Essential"
                 customLabel: "+  Add custom asset"
+                loadingText: "Loading assets…"
                 onCustomRequested: customAssetDialog.open()
             }
         }

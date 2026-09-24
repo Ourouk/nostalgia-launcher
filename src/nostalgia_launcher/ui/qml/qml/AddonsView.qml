@@ -65,6 +65,24 @@ ColumnLayout {
         color: appTheme.colors["C_DIVIDER"]
     }
 
+    ColumnLayout {
+        objectName: "qmlAddonsWaiting"
+        Layout.fillWidth: true
+        Layout.topMargin: 32
+        spacing: 12
+        visible: addonsModel.loading && addonList.count === 0
+        BusyIndicator {
+            Layout.alignment: Qt.AlignHCenter
+            running: parent.visible
+        }
+        Label {
+            Layout.alignment: Qt.AlignHCenter
+            text: "Loading addons…"
+            font.pointSize: 10
+            color: appTheme.colors["C_TEXT_DIM"]
+        }
+    }
+
     ListView {
         id: addonList
         objectName: "qmlAddonsList"

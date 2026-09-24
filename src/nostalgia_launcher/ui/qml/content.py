@@ -174,6 +174,7 @@ class ContentListModel(QAbstractListModel):
         self._apply_visible = False
         self._essential_pending = False
         self._busy = False
+        self._loading = True
         self._empty_text = empty_text
         self._extras_on_top = bool(extras_on_top)
         self._extra_headline = ""
@@ -313,6 +314,10 @@ class ContentListModel(QAbstractListModel):
         self._updates_count = int(updates_count or 0)
         self._apply_visible = bool(has_pending or has_errors)
         self._essential_pending = bool(essential_pending)
+        if self._rows:
+            # Data on screen: nothing left to wait for, even before the
+            # first loaded event arrives.
+            self._loading = False
         self._extra_sections = list(extras or [])
         self._extra_headline = str(headline or "")
         if scan_versions is not None:
@@ -350,6 +355,18 @@ class ContentListModel(QAbstractListModel):
         return self._busy
 
     busy = Property(bool, _get_busy, notify=chromeChanged)
+
+    def _get_loading(self) -> bool:
+        return self._loading
+
+    loading = Property(bool, _get_loading, notify=chromeChanged)
+
+    @Slot()
+    def markLoaded(self):
+        """First loaded event arrived: leave the waiting screen."""
+        if self._loading:
+            self._loading = False
+            self.chromeChanged.emit()
 
     def _get_empty_text(self) -> str:
         return self._empty_text

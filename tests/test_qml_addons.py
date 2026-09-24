@@ -346,3 +346,41 @@ def test_addons_badge(engine):
         if btn.property("text")
     ]
     assert "ADDONS (2)" in texts
+
+
+def test_loading_until_data_or_event(qapp):
+    model = AddonsModel()
+    assert model.property("loading") is True
+    model.set_snapshot({"items": []})
+    assert model.property("loading") is True
+    model.markLoaded()
+    assert model.property("loading") is False
+    model2 = AddonsModel()
+    model2.set_snapshot(
+        {
+            "items": [
+                {
+                    "kind": "row",
+                    "folder": "A",
+                    "title": "A",
+                    "checked": False,
+                    "recommended": False,
+                    "statusKind": "none",
+                    "statusText": "",
+                    "repoUrl": "",
+                    "description": "",
+                    "error": "",
+                }
+            ]
+        }
+    )
+    assert model2.property("loading") is False
+
+
+def test_waiting_screen_visibility(engine):
+    eng, _addons = engine
+    root = eng.rootObjects()[0]
+    root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 2)
+    waiting = root.findChild(QObject, "qmlAddonsWaiting")
+    assert waiting is not None
+    assert waiting.property("visible") is True

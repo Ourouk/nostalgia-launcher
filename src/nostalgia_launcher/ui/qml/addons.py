@@ -201,6 +201,7 @@ class AddonsModel(QAbstractListModel):
         super().__init__(parent)
         self._items: list = []
         self._filter = ""
+        self._loading = True
         self._updates_count = 0
         self._apply_visible = False
         self._recommended_pending = False
@@ -276,6 +277,9 @@ class AddonsModel(QAbstractListModel):
         self.beginResetModel()
         try:
             self._items = list(snap.get("items", []))
+            if any(i.get("kind") == "row" for i in self._items):
+                # Rows on screen: nothing left to wait for.
+                self._loading = False
             self._updates_count = int(snap.get("updates_count", 0))
             self._apply_visible = bool(snap.get("apply_visible", False))
             self._recommended_pending = bool(
@@ -319,6 +323,18 @@ class AddonsModel(QAbstractListModel):
         return self._busy
 
     busy = Property(bool, _get_busy, notify=chromeChanged)
+
+    def _get_loading(self) -> bool:
+        return self._loading
+
+    loading = Property(bool, _get_loading, notify=chromeChanged)
+
+    @Slot()
+    def markLoaded(self):
+        """First loaded event arrived: leave the waiting screen."""
+        if self._loading:
+            self._loading = False
+            self.chromeChanged.emit()
 
     def _get_footer_text(self) -> str:
         return self._footer_text

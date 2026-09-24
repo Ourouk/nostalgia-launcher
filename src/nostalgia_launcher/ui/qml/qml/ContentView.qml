@@ -20,6 +20,7 @@ ColumnLayout {
     property string legendText: ""
     property string essentialText: ""
     property string customLabel: ""
+    property string loadingText: "Loading…"
     signal customRequested()
 
     ToolBar {
@@ -118,11 +119,29 @@ ColumnLayout {
         Layout.leftMargin: 16
         Layout.rightMargin: 16
         Layout.topMargin: 12
-        visible: root.contentModel.emptyVisible
+        visible: root.contentModel.emptyVisible && !root.contentModel.loading
         text: root.contentModel.emptyText
         font.pointSize: 10
         color: appTheme.colors["C_TEXT_DIM"]
         wrapMode: Text.WordWrap
+    }
+
+    ColumnLayout {
+        objectName: "qmlContentWaiting"
+        Layout.fillWidth: true
+        Layout.topMargin: 32
+        spacing: 12
+        visible: root.contentModel.emptyVisible && root.contentModel.loading
+        BusyIndicator {
+            Layout.alignment: Qt.AlignHCenter
+            running: parent.visible
+        }
+        Label {
+            Layout.alignment: Qt.AlignHCenter
+            text: root.loadingText
+            font.pointSize: 10
+            color: appTheme.colors["C_TEXT_DIM"]
+        }
     }
 
     ListView {

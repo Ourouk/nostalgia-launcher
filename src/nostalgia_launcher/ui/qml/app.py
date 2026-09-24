@@ -12,7 +12,7 @@ in frozen builds (bundled via the PyInstaller specs' `datas`).
 import os
 import sys
 
-from PySide6.QtCore import QObject, QUrl
+from PySide6.QtCore import QObject, QTimer, QUrl
 from PySide6.QtGui import QFontDatabase, QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
@@ -197,6 +197,13 @@ class QmlNostalgiaLauncherApp:
         # stays visible, TTL decides the refetch (threads, never blocks).
         self._hub.news.load()
         self._refresh_primary()
+        # Content startup loads (widget schedule parity, staggered so the
+        # shell paints first): latest mod versions, asset verdicts, and an
+        # unconditional addons verify so first-launch users see the catalog
+        # list (TTL skips redundant rescans on later launches).
+        QTimer.singleShot(900, self._hub.mods.load_latest_versions)
+        QTimer.singleShot(1100, self._hub.assets.refresh_verdicts)
+        QTimer.singleShot(1500, self._hub.addons.verify)
         if self._open_log:
             self.open_session_log()
 
@@ -391,6 +398,7 @@ class QmlNostalgiaLauncherApp:
             extra=on_extra,
         )
         loaded_signal.connect(lambda _e: model.refresh())
+        loaded_signal.connect(lambda _e: model.markLoaded())
         self._hub.bridge.operationFinished.connect(
             lambda k, ok, m: self._after_content_op(model, k, op_kind)
         )
@@ -471,6 +479,7 @@ class QmlNostalgiaLauncherApp:
         )
         bridge = self._hub.bridge
         bridge.addonsLoaded.connect(lambda _e: model.refresh())
+        bridge.addonsLoaded.connect(lambda _e: model.markLoaded())
         bridge.operationFinished.connect(
             lambda k, ok, m: self._after_addons_op(k)
         )
