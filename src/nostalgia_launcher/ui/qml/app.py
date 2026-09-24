@@ -298,6 +298,15 @@ class QmlNostalgiaLauncherApp:
             def essential():
                 return ctrl.apply_essential_mods()
 
+            def extras_of(state):
+                from .content import unknown_sections
+
+                return unknown_sections(getattr(state, "unknown", None)), ""
+
+            def on_extra(section, name):
+                ctrl.remove_unknown(name)
+                model.refresh()
+
             op_kind = "mods"
         else:
 
@@ -316,9 +325,33 @@ class QmlNostalgiaLauncherApp:
             def essential():
                 return ctrl.apply_essential_assets()
 
+            def extras_of(state):
+                from ...core import launcher as _launcher
+                from ...services import mpq
+                from .content import managed_names, scan_extras
+
+                version = model.current_scan_version()
+                if not version:
+                    version = (
+                        _launcher.client_version() or mpq.SUPPORTED_VERSIONS[0]
+                    )
+                    model._scan_version = version
+                scan = ctrl.data_scan(version)
+                return scan_extras(
+                    scan,
+                    managed_names(ctrl.registry),
+                    ctrl.client_dir(),
+                )
+
+            def on_extra(section, name):
+                ctrl.remove_foreign_mpq(name)
+                model.refresh()
+
             op_kind = "assets"
 
         def snapshot():
+            from ...services import mpq
+
             state = ctrl.state
             rows = build_rows(
                 ctrl.registry,
@@ -326,6 +359,10 @@ class QmlNostalgiaLauncherApp:
                 required_of=required_of,
                 version_of=version_of,
                 action_for=ctrl.action_for,
+            )
+            extras, headline = extras_of(state)
+            scan_versions = (
+                list(mpq.SUPPORTED_VERSIONS) if op_kind == "assets" else []
             )
             return (
                 rows,
@@ -335,12 +372,16 @@ class QmlNostalgiaLauncherApp:
                 essential_pending(
                     ctrl.registry, state, required_of=required_of
                 ),
+                extras,
+                headline,
+                scan_versions,
             )
 
         def on_toggle(eid, checked):
             ctrl.toggle(eid, checked)
             model.refresh()
 
+        model._extras_on_top = op_kind == "assets"
         model.set_snapshot_provider(snapshot)
         model.set_handlers(
             toggle=on_toggle,
@@ -348,6 +389,7 @@ class QmlNostalgiaLauncherApp:
             apply=apply_all,
             essential=essential,
             reload=ctrl.reload_catalog,
+            extra=on_extra,
         )
         loaded_signal.connect(lambda _e: model.refresh())
         self._hub.bridge.operationFinished.connect(

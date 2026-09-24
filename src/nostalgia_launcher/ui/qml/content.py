@@ -65,6 +65,88 @@ def essential_pending(entries, state, *, required_of) -> bool:
     return False
 
 
+def unknown_sections(unknown) -> list:
+    """MODS extra: dlls.txt entries no catalog mod claims."""
+    if not unknown:
+        return []
+    return [
+        {
+            "title": "Detected (not in catalog)",
+            "color": "dim",
+            "rows": [
+                {"name": name, "meta": "", "action": "Remove", "confirm": ""}
+                for name in unknown
+            ],
+        }
+    ]
+
+
+def managed_names(registry) -> dict:
+    """dest basename (lowercased) → display name for launcher assets."""
+    index = {}
+    for entry in registry or []:
+        if not isinstance(entry, dict):
+            continue
+        dest = entry.get("dest")
+        if not dest:
+            continue
+        base = str(dest).replace("\\", "/").rsplit("/", 1)[-1]
+        index[base.lower()] = (
+            f"{entry.get('name', entry.get('id', '?'))} (launcher asset)"
+        )
+    return index
+
+
+def scan_extras(scan, names: dict, client_dir: str) -> tuple:
+    """ASSETS extras: (headline, sections) for the Data/ scan block."""
+    from ...services.mpq import human_size
+
+    if not client_dir:
+        return (
+            "Set the game folder in Settings to scan its Data/ folder.",
+            [],
+        )
+    headline = (
+        f"Data/ scan ({scan['version']}): "
+        f"{len(scan['stock'])} stock Blizzard archive(s), "
+        f"{len(scan['custom_managed'])} launcher-managed, "
+        f"{len(scan['custom_foreign'])} foreign/untracked."
+    )
+    sections = []
+    foreign = [
+        {
+            "name": info["path"],
+            "meta": human_size(info.get("size")),
+            "action": "Remove",
+            "confirm": (f"Delete {info['path']} from the client folder?"),
+        }
+        for info in scan.get("custom_foreign") or []
+    ]
+    if foreign:
+        sections.append(
+            {"title": "Foreign / untracked", "color": "err", "rows": foreign}
+        )
+    managed = []
+    for info in scan.get("custom_managed") or []:
+        base = info["path"].rsplit("/", 1)[-1]
+        note = names.get(base.lower(), "")
+        meta = "  ·  ".join(
+            x for x in (human_size(info.get("size")), note) if x
+        )
+        managed.append(
+            {"name": info["path"], "meta": meta, "action": "", "confirm": ""}
+        )
+    if managed:
+        sections.append(
+            {
+                "title": "Launcher-managed custom",
+                "color": "gold",
+                "rows": managed,
+            }
+        )
+    return headline, sections
+
+
 class ContentListModel(QAbstractListModel):
     """Filterable catalog list (one instance per tab: mods / assets)."""
 
@@ -82,7 +164,7 @@ class ContentListModel(QAbstractListModel):
     changed = Signal()
     chromeChanged = Signal()
 
-    def __init__(self, empty_text="", parent=None):
+    def __init__(self, empty_text="", extras_on_top=False, parent=None):
         super().__init__(parent)
         self._rows: list = []
         self._visible: list = []
@@ -93,12 +175,20 @@ class ContentListModel(QAbstractListModel):
         self._essential_pending = False
         self._busy = False
         self._empty_text = empty_text
+        self._extras_on_top = bool(extras_on_top)
+        self._extra_headline = ""
+        self._extra_sections: list = []
+        self._scan_versions: list = []
+        self._scan_version = ""
+        self._extra_confirm = ""
+        self._pending_extra = None
         self._snapshot_provider = None
         self._on_toggle = None
         self._on_action = None
         self._on_apply = None
         self._on_essential = None
         self._on_reload = None
+        self._on_extra = None
 
     # ── model ─────────────────────────────────────────────────────────
 
@@ -187,8 +277,26 @@ class ContentListModel(QAbstractListModel):
         """Re-pull rows + chrome from the provider (loaded events)."""
         if self._snapshot_provider is None:
             return
-        rows, updates, pending, errors, essential = self._snapshot_provider()
-        self.set_snapshot(rows, updates, pending, errors, essential)
+        (
+            rows,
+            updates,
+            pending,
+            errors,
+            essential,
+            extras,
+            headline,
+            scan_versions,
+        ) = self._snapshot_provider()
+        self.set_snapshot(
+            rows,
+            updates,
+            pending,
+            errors,
+            essential,
+            extras=extras,
+            headline=headline,
+            scan_versions=scan_versions,
+        )
 
     def set_snapshot(
         self,
@@ -197,11 +305,18 @@ class ContentListModel(QAbstractListModel):
         has_pending=False,
         has_errors=False,
         essential_pending=False,
+        extras=None,
+        headline="",
+        scan_versions=None,
     ):
         self._rows = list(rows or [])
         self._updates_count = int(updates_count or 0)
         self._apply_visible = bool(has_pending or has_errors)
         self._essential_pending = bool(essential_pending)
+        self._extra_sections = list(extras or [])
+        self._extra_headline = str(headline or "")
+        if scan_versions is not None:
+            self._scan_versions = list(scan_versions)
         self._refilter()
         self.chromeChanged.emit()
 
@@ -251,6 +366,44 @@ class ContentListModel(QAbstractListModel):
 
     filterMode = Property(str, _get_filter_mode, notify=changed)
 
+    def _get_extras_on_top(self) -> bool:
+        return self._extras_on_top
+
+    extrasOnTop = Property(bool, _get_extras_on_top, constant=True)
+
+    def _get_extra_headline(self) -> str:
+        return self._extra_headline
+
+    extraHeadline = Property(str, _get_extra_headline, notify=chromeChanged)
+
+    def _get_extra_sections(self) -> list:
+        return list(self._extra_sections)
+
+    extraSections = Property(
+        "QVariantList", _get_extra_sections, notify=chromeChanged
+    )
+
+    def _get_scan_versions(self) -> list:
+        return list(self._scan_versions)
+
+    scanVersions = Property(
+        "QVariantList", _get_scan_versions, notify=chromeChanged
+    )
+
+    def _get_scan_version(self) -> str:
+        return self._scan_version
+
+    scanVersion = Property(str, _get_scan_version, notify=chromeChanged)
+
+    def current_scan_version(self) -> str:
+        """Active Data/ scan version (read by the snapshot provider)."""
+        return self._scan_version
+
+    def _get_extra_confirm(self) -> str:
+        return self._extra_confirm
+
+    extraConfirmText = Property(str, _get_extra_confirm, notify=chromeChanged)
+
     # ── actions (controller callbacks, test seams) ────────────────────
 
     def set_handlers(
@@ -261,12 +414,14 @@ class ContentListModel(QAbstractListModel):
         apply=None,
         essential=None,
         reload=None,
+        extra=None,
     ):
         self._on_toggle = toggle
         self._on_action = action
         self._on_apply = apply
         self._on_essential = essential
         self._on_reload = reload
+        self._on_extra = extra
 
     def _row(self, eid):
         for row in self._rows:
@@ -306,3 +461,46 @@ class ContentListModel(QAbstractListModel):
     def reloadCatalog(self):
         if self._on_reload is not None:
             self._on_reload()
+
+    @Slot(str)
+    def setScanVersion(self, version: str):
+        if version != self._scan_version:
+            self._scan_version = version
+            self.refresh()
+
+    @Slot(str, str)
+    def requestExtra(self, section: str, name: str):
+        """Extra-row action: confirm first when the row demands it."""
+        row = self._extra_row(section, name)
+        if row is None:
+            return
+        if row.get("confirm"):
+            self._pending_extra = (section, name)
+            self._extra_confirm = str(row["confirm"])
+            self.chromeChanged.emit()
+            return
+        if self._on_extra is not None:
+            self._on_extra(section, name)
+
+    @Slot()
+    def confirmExtra(self):
+        pending, self._pending_extra = self._pending_extra, None
+        self._extra_confirm = ""
+        self.chromeChanged.emit()
+        if pending is not None and self._on_extra is not None:
+            self._on_extra(*pending)
+
+    @Slot()
+    def cancelExtra(self):
+        self._pending_extra = None
+        self._extra_confirm = ""
+        self.chromeChanged.emit()
+
+    def _extra_row(self, section: str, name: str):
+        for sec in self._extra_sections:
+            if sec.get("title") != section:
+                continue
+            for row in sec.get("rows", []):
+                if row.get("name") == name:
+                    return row
+        return None

@@ -7,6 +7,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Material
+import QtQuick.Dialogs
 import QtQuick.Layouts
 
 ColumnLayout {
@@ -52,6 +53,15 @@ ColumnLayout {
                     visible: root.customLabel !== ""
                     flat: true
                     onClicked: root.customRequested()
+                }
+                ComboBox {
+                    objectName: "qmlContentScanVersion"
+                    visible: root.contentModel.scanVersions.length > 0
+                    model: root.contentModel.scanVersions
+                    Component.onCompleted: currentIndex = Math.max(0, find(root.contentModel.scanVersion))
+                    ToolTip.text: "The client's game version — decides which Data/ archives count as stock"
+                    ToolTip.visible: hovered
+                    onCurrentTextChanged: root.contentModel.setScanVersion(currentText)
                 }
                 ToolButton {
                     objectName: "qmlContentReload"
@@ -122,6 +132,16 @@ ColumnLayout {
         Layout.fillHeight: true
         clip: true
         model: root.contentModel
+        header: ExtraBlock {
+            objectName: "qmlExtrasTop"
+            showHeadline: true
+            visible: root.contentModel.extrasOnTop && (root.contentModel.extraHeadline !== "" || root.contentModel.extraSections.length > 0)
+        }
+        footer: ExtraBlock {
+            objectName: "qmlExtrasBottom"
+            showHeadline: false
+            visible: !root.contentModel.extrasOnTop && root.contentModel.extraSections.length > 0
+        }
         delegate: ColumnLayout {
             width: entryList.width
             spacing: 2
@@ -190,6 +210,73 @@ ColumnLayout {
                 Layout.bottomMargin: 6
                 height: 1
                 color: appTheme.colors["C_DIVIDER"]
+            }
+        }
+    }
+
+    MessageDialog {
+        id: extraConfirm
+        title: "Remove file"
+        text: root.contentModel.extraConfirmText
+        buttons: MessageDialog.Yes | MessageDialog.No
+        visible: root.contentModel.extraConfirmText !== ""
+        onAccepted: root.contentModel.confirmExtra()
+        onRejected: root.contentModel.cancelExtra()
+    }
+
+    // Extra sections: Data/ scan block (assets, top) or detected-DLL
+    // block (mods, bottom). Instantiated as the list header/footer.
+    component ExtraBlock: ColumnLayout {
+        property bool showHeadline: false
+        spacing: 2
+        Label {
+            objectName: "qmlExtrasHeadline"
+            Layout.fillWidth: true
+            Layout.leftMargin: 16
+            Layout.rightMargin: 16
+            Layout.topMargin: 6
+            visible: showHeadline && root.contentModel.extraHeadline !== ""
+            text: root.contentModel.extraHeadline
+            font.pointSize: 9
+            color: appTheme.colors["C_TEXT_DIM"]
+            wrapMode: Text.WordWrap
+        }
+        Repeater {
+            model: root.contentModel.extraSections
+            ColumnLayout {
+                width: parent.width
+                spacing: 2
+                property string sectionTitle: modelData.title
+                Label {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.topMargin: 10
+                    text: modelData.title
+                    font.bold: true
+                    color: modelData.color === "err" ? appTheme.colors["C_ERR"] : (modelData.color === "gold" ? appTheme.colors["C_GOLD"] : appTheme.colors["C_TEXT_DIM"])
+                }
+                Repeater {
+                    model: modelData.rows
+                    RowLayout {
+                        width: parent.width
+                        Layout.leftMargin: 16
+                        Layout.rightMargin: 12
+                        spacing: 8
+                        Label {
+                            Layout.fillWidth: true
+                            text: modelData.name + (modelData.meta !== "" ? "  ·  " + modelData.meta : "")
+                            font.pointSize: 9
+                            color: modelData.action !== "" ? appTheme.colors["C_ERR"] : appTheme.colors["C_TEXT"]
+                            elide: Text.ElideMiddle
+                        }
+                        Button {
+                            text: modelData.action
+                            visible: modelData.action !== ""
+                            flat: true
+                            onClicked: root.contentModel.requestExtra(sectionTitle, modelData.name)
+                        }
+                    }
+                }
             }
         }
     }

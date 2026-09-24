@@ -28,20 +28,20 @@ from nostalgia_launcher.ui.qml.content import (
     build_rows,
     essential_pending,
 )
-from nostalgia_launcher.ui.qml.settings import LogModel, SettingsModel
-from nostalgia_launcher.ui.qml.wizard import WizardModel
 from nostalgia_launcher.ui.qml.custom import (
     CustomAddonModel,
     CustomAssetModel,
     CustomModModel,
 )
 from nostalgia_launcher.ui.qml.linux import LinuxModel
+from nostalgia_launcher.ui.qml.settings import LogModel, SettingsModel
 from nostalgia_launcher.ui.qml.viewmodels import (
     LauncherState,
     NewsFeedModel,
     ThemeBridge,
     UpdateState,
 )
+from nostalgia_launcher.ui.qml.wizard import WizardModel
 from nostalgia_launcher.ui.qt.theme import Palette
 
 ENTRIES = [
@@ -320,7 +320,9 @@ def test_action_apply_essential_reload(model):
 
 def test_refresh_uses_provider(model):
     _snapshot(model, updates_count=0)
-    model.set_snapshot_provider(lambda: ([], 0, False, False, False))
+    model.set_snapshot_provider(
+        lambda: ([], 0, False, False, False, [], "", [])
+    )
     model.refresh()
     assert model.rowCount() == 0
     assert model.property("updatesCount") == 0
@@ -368,3 +370,152 @@ def test_nav_badge_follows_updates(engine):
         if btn.property("text")
     ]
     assert "MODS (1)" in texts
+
+
+# ── extras ────────────────────────────────────────────────────────────
+
+
+def test_unknown_sections():
+    from nostalgia_launcher.ui.qml.content import unknown_sections
+
+    assert unknown_sections([]) == []
+    assert unknown_sections(None) == []
+    sections = unknown_sections(["stray.dll"])
+    assert sections[0]["title"] == "Detected (not in catalog)"
+    assert sections[0]["rows"][0] == {
+        "name": "stray.dll",
+        "meta": "",
+        "action": "Remove",
+        "confirm": "",
+    }
+
+
+def test_managed_names():
+    from nostalgia_launcher.ui.qml.content import managed_names
+
+    registry = [
+        {"id": "a", "name": "Patch A", "dest": "Data\\patch-a.mpq"},
+        {"id": "b", "name": "No dest"},
+    ]
+    assert managed_names(registry) == {
+        "patch-a.mpq": "Patch A (launcher asset)"
+    }
+
+
+def test_scan_extras_no_client():
+    from nostalgia_launcher.ui.qml.content import scan_extras
+
+    headline, sections = scan_extras({}, {}, "")
+    assert "game folder" in headline
+    assert sections == []
+
+
+def test_scan_extras_shapes_sections():
+    from nostalgia_launcher.ui.qml.content import scan_extras
+
+    scan = {
+        "version": "1.12.1",
+        "stock": [{}, {}],
+        "custom_managed": [{"path": "Data/patch-a.mpq", "size": 8}],
+        "custom_foreign": [{"path": "Data/stray.mpq", "size": 4}],
+    }
+    headline, sections = scan_extras(
+        scan, {"patch-a.mpq": "Patch A (launcher asset)"}, "/games/wow"
+    )
+    assert "2 stock" in headline
+    assert sections[0]["title"] == "Foreign / untracked"
+    assert sections[0]["color"] == "err"
+    assert "Delete Data/stray.mpq" in sections[0]["rows"][0]["confirm"]
+    assert sections[1]["title"] == "Launcher-managed custom"
+    assert "Patch A" in sections[1]["rows"][0]["meta"]
+
+
+def test_extras_snapshot_and_confirm(model):
+    extras = [
+        {
+            "title": "Foreign / untracked",
+            "color": "err",
+            "rows": [
+                {
+                    "name": "Data/x.mpq",
+                    "meta": "",
+                    "action": "Remove",
+                    "confirm": "Delete it?",
+                }
+            ],
+        }
+    ]
+    model.set_snapshot([], headline="scan!", extras=extras)
+    assert model.property("extraHeadline") == "scan!"
+    assert model.property("extraSections") == extras
+    calls = []
+    model.set_handlers(extra=lambda s, n: calls.append((s, n)))
+    model.requestExtra("Foreign / untracked", "Data/x.mpq")
+    assert model.property("extraConfirmText") == "Delete it?"
+    assert calls == []
+    model.confirmExtra()
+    assert calls == [("Foreign / untracked", "Data/x.mpq")]
+    assert model.property("extraConfirmText") == ""
+
+
+def test_extra_direct_action_and_cancel(model):
+    model.set_snapshot(
+        [],
+        extras=[
+            {
+                "title": "Detected (not in catalog)",
+                "color": "dim",
+                "rows": [
+                    {
+                        "name": "s.dll",
+                        "meta": "",
+                        "action": "Remove",
+                        "confirm": "",
+                    }
+                ],
+            }
+        ],
+    )
+    calls = []
+    model.set_handlers(extra=lambda s, n: calls.append((s, n)))
+    model.requestExtra("Detected (not in catalog)", "s.dll")
+    assert calls == [("Detected (not in catalog)", "s.dll")]
+    model.requestExtra("Nope", "s.dll")
+    assert len(calls) == 1
+    model.cancelExtra()
+    assert model.property("extraConfirmText") == ""
+
+
+def test_scan_version_slot(model):
+    model.set_snapshot([], scan_versions=["1.12.1", "2.4.3"])
+    assert model.property("scanVersions") == ["1.12.1", "2.4.3"]
+    model.set_snapshot_provider(
+        lambda: ([], 0, False, False, False, [], "", [])
+    )
+    model.setScanVersion("2.4.3")
+    assert model.current_scan_version() == "2.4.3"
+
+
+def test_extras_render_in_engine(engine):
+    eng, mods, _assets = engine
+    root = eng.rootObjects()[0]
+    root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 3)
+    _snapshot(mods)
+    mods.set_snapshot(
+        [],
+        extras=[
+            {
+                "title": "Detected (not in catalog)",
+                "color": "dim",
+                "rows": [
+                    {
+                        "name": "s.dll",
+                        "meta": "",
+                        "action": "Remove",
+                        "confirm": "",
+                    }
+                ],
+            }
+        ],
+    )
+    assert root.findChild(QObject, "qmlExtrasBottom") is not None
