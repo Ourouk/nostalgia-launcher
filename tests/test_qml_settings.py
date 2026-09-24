@@ -23,20 +23,20 @@ from PySide6.QtWidgets import QApplication
 from nostalgia_launcher.ui.qml.addons import AddonsModel
 from nostalgia_launcher.ui.qml.app import qml_dir
 from nostalgia_launcher.ui.qml.content import ContentListModel
-from nostalgia_launcher.ui.qml.settings import LogModel, SettingsModel
-from nostalgia_launcher.ui.qml.wizard import WizardModel
 from nostalgia_launcher.ui.qml.custom import (
     CustomAddonModel,
     CustomAssetModel,
     CustomModModel,
 )
 from nostalgia_launcher.ui.qml.linux import LinuxModel
+from nostalgia_launcher.ui.qml.settings import LogModel, SettingsModel
 from nostalgia_launcher.ui.qml.viewmodels import (
     LauncherState,
     NewsFeedModel,
     ThemeBridge,
     UpdateState,
 )
+from nostalgia_launcher.ui.qml.wizard import WizardModel
 from nostalgia_launcher.ui.qt.theme import Palette
 
 
@@ -58,6 +58,7 @@ def _snapshot(**kw):
         "mods_default_avail": False,
         "profiles": ["one", "two"],
         "active_profile": "one",
+        "client_version": "1.12.1",
     }
     snap.update(kw)
     return snap
@@ -127,6 +128,7 @@ def test_snapshot_properties(model):
     assert model.property("addonsUrl") == "https://example.test/addons.json"
     assert model.property("profiles") == ["one", "two"]
     assert model.property("activeProfile") == "one"
+    assert model.property("clientVersion") == "1.12.1"
     assert model.property("logsOpen") is False
 
 
@@ -264,3 +266,32 @@ def test_log_dialog_follows_model(engine):
     log_dialog = root.findChild(QObject, "qmlLogDialog")
     assert log_dialog is not None
     assert root.findChild(QObject, "qmlLogList") is not None
+
+
+def test_request_switch_prompts_for_other(model):
+    model.requestSwitch("one")
+    assert model.property("switchPrompt") == ""
+    model.requestSwitch("two")
+    assert model.property("switchPrompt") == "two"
+    model.requestSwitch("")
+    assert model.property("switchPrompt") == "two"
+
+
+def test_resolve_switch_calls_handler(model):
+    calls = []
+    model.set_handlers(resolve_switch=lambda yes: calls.append(yes))
+    model.requestSwitch("two")
+    model.resolveSwitch(False)
+    assert calls == [False]
+    assert model.property("switchPrompt") == ""
+
+
+def test_header_switcher_follows_model(engine):
+    eng, settings = engine
+    root = eng.rootObjects()[0]
+    combo = root.findChild(QObject, "qmlProfileCombo")
+    assert combo is not None
+    assert combo.property("currentText") == "one"
+    pill = root.findChild(QObject, "qmlVersionPill")
+    assert pill.property("text") == "1.12.1"
+    assert pill.property("visible") is True

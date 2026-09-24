@@ -580,7 +580,6 @@ class QmlNostalgiaLauncherApp:
 
     def _resolve_switch(self, yes: bool):
         target = self._settings._switch_prompt
-        self._settings.clear_switch_prompt()
         if yes and target and not switch_profile(target):
             self._profile_error("Restart the launcher manually to switch.")
 
@@ -712,6 +711,7 @@ class QmlNostalgiaLauncherApp:
                 "mods_default_avail": (settings.mods_default_available()),
                 "profiles": profiles.list_profiles(),
                 "active_profile": profiles.active().name,
+                "client_version": launcher.client_version(),
             }
 
         def delete_profile(name):

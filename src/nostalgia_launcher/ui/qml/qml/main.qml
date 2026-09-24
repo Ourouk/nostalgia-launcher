@@ -40,11 +40,23 @@ ApplicationWindow {
                 color: appTheme.colors["C_GOLD_LT"]
             }
             Item { Layout.fillWidth: true }
+            ComboBox {
+                objectName: "qmlProfileCombo"
+                Accessible.name: "Active profile"
+                ToolTip.text: "Active profile — selecting another one restarts the launcher"
+                ToolTip.visible: hovered
+                model: settingsModel.profiles
+                currentIndex: Math.max(0, settingsModel.profiles.indexOf(settingsModel.activeProfile))
+                onActivated: (index) => settingsModel.requestSwitch(textAt(index))
+            }
             Label {
                 objectName: "qmlVersionPill"
-                text: "QML preview"
-                font.pointSize: 9
+                visible: settingsModel.clientVersion !== ""
+                text: settingsModel.clientVersion
+                font.pointSize: 8
                 color: appTheme.colors["C_TEXT_DIM"]
+                ToolTip.text: "Declared client version for this profile"
+                ToolTip.visible: hovered
             }
             ToolButton {
                 objectName: "qmlGearButton"
@@ -70,8 +82,8 @@ ApplicationWindow {
 
     MessageDialog {
         id: switchConfirm
-        title: "Profile imported"
-        text: "Profile '" + settingsModel.switchPrompt + "' is ready. Switch to it now? (The launcher will restart.)"
+        title: "Switch profile"
+        text: "Switch to profile '" + settingsModel.switchPrompt + "'? (The launcher will restart.)"
         buttons: MessageDialog.Yes | MessageDialog.No
         visible: settingsModel.switchPrompt !== ""
         onAccepted: settingsModel.resolveSwitch(true)

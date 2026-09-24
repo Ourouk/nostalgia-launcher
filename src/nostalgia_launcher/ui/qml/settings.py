@@ -39,6 +39,7 @@ class SettingsModel(QObject):
         self._mods_default_avail = False
         self._profiles: list = []
         self._active_profile = ""
+        self._client_version = ""
         self._logs_open = False
         self._registry_status = ""
         self._profiles_status = ""
@@ -75,6 +76,7 @@ class SettingsModel(QObject):
         self._mods_default_avail = bool(snap.get("mods_default_avail", False))
         self._profiles = list(snap.get("profiles", []))
         self._active_profile = str(snap.get("active_profile", ""))
+        self._client_version = str(snap.get("client_version", ""))
         self.changed.emit()
 
     # ── properties ────────────────────────────────────────────────────
@@ -165,6 +167,11 @@ class SettingsModel(QObject):
         return self._active_profile
 
     activeProfile = Property(str, _get_active_profile, notify=changed)
+
+    def _get_client_version(self) -> str:
+        return self._client_version
+
+    clientVersion = Property(str, _get_client_version, notify=changed)
 
     def _get_logs_open(self) -> bool:
         return self._logs_open
@@ -315,6 +322,12 @@ class SettingsModel(QObject):
         self.transientChanged.emit()
         self.refresh()
 
+    @Slot(str)
+    def requestSwitch(self, name: str):
+        """Header combo pick: confirm, then restart into the profile."""
+        if name and name != self._active_profile:
+            self.prompt_switch(name)
+
     @Slot()
     def requestLogs(self):
         self.logsRequested.emit()
@@ -330,6 +343,7 @@ class SettingsModel(QObject):
     @Slot(bool)
     def resolveSwitch(self, yes: bool):
         self._call("resolve_switch", bool(yes))
+        self.clear_switch_prompt()
 
     def prompt_switch(self, target: str):
         """Ask whether to restart on a freshly imported profile."""
