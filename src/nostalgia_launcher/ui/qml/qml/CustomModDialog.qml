@@ -87,31 +87,30 @@ Dialog {
                 model: customModModel.sourceKinds
                 onCurrentTextChanged: customModModel.setField("kind", currentText)
             }
-            property bool isRelease: kindCombo.currentText === "github_release" || kindCombo.currentText === "codeberg_release"
 
-            Field { caption: "OWNER"; visible: isRelease; onEdit: (t) => customModModel.setField("owner", t) }
-            Field { caption: "REPOSITORY"; visible: isRelease; onEdit: (t) => customModModel.setField("repo", t) }
-            Field { caption: "RELEASE ASSET PATTERN (fnmatch)"; visible: isRelease; onEdit: (t) => customModModel.setField("pattern", t) }
-            Field { caption: "PREFER ASSETS WITHOUT SUBSTRING (optional)"; visible: isRelease; onEdit: (t) => customModModel.setField("preferNo", t) }
+            Field { caption: "OWNER"; visible: kindCombo.currentText === "github_release" || kindCombo.currentText === "codeberg_release"; onEdit: (t) => customModModel.setField("owner", t) }
+            Field { caption: "REPOSITORY"; visible: kindCombo.currentText === "github_release" || kindCombo.currentText === "codeberg_release"; onEdit: (t) => customModModel.setField("repo", t) }
+            Field { caption: "RELEASE ASSET PATTERN (fnmatch)"; visible: kindCombo.currentText === "github_release" || kindCombo.currentText === "codeberg_release"; onEdit: (t) => customModModel.setField("pattern", t) }
+            Field { caption: "PREFER ASSETS WITHOUT SUBSTRING (optional)"; visible: kindCombo.currentText === "github_release" || kindCombo.currentText === "codeberg_release"; onEdit: (t) => customModModel.setField("preferNo", t) }
             CheckBox {
                 text: "Derive the version from the matched asset name"
-                visible: isRelease
-                onCheckedChanged: customModModel.setFlag("versionFromAsset", checked)
+                visible: kindCombo.currentText === "github_release" || kindCombo.currentText === "codeberg_release"
+                onToggled: customModModel.setFlag("versionFromAsset", checked)
             }
-            Field { caption: "FILE URL (https)"; visible: !isRelease; onEdit: (t) => customModModel.setField("fileUrl", t) }
-            Field { caption: "DESTINATION PATH (relative to the game folder)"; visible: !isRelease; onEdit: (t) => customModModel.setField("dest", t) }
-            Field { caption: "PINNED VERSION (optional)"; visible: !isRelease; onEdit: (t) => customModModel.setField("pinnedVersion", t) }
+            Field { caption: "FILE URL (https)"; visible: !(kindCombo.currentText === "github_release" || kindCombo.currentText === "codeberg_release"); onEdit: (t) => customModModel.setField("fileUrl", t) }
+            Field { caption: "DESTINATION PATH (relative to the game folder)"; visible: !(kindCombo.currentText === "github_release" || kindCombo.currentText === "codeberg_release"); onEdit: (t) => customModModel.setField("dest", t) }
+            Field { caption: "PINNED VERSION (optional)"; visible: !(kindCombo.currentText === "github_release" || kindCombo.currentText === "codeberg_release"); onEdit: (t) => customModModel.setField("pinnedVersion", t) }
 
             Label {
                 text: "Extract map — one \"zip-pattern=dest/path\" line per entry:"
                 font.bold: true
                 color: appTheme.colors["C_GOLD"]
-                visible: !isRelease
+                visible: !(kindCombo.currentText === "github_release" || kindCombo.currentText === "codeberg_release")
             }
             ScrollView {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 64
-                visible: !isRelease
+                visible: !(kindCombo.currentText === "github_release" || kindCombo.currentText === "codeberg_release")
                 TextArea {
                     objectName: "qmlCustomModExtractMap"
                     placeholderText: "ExampleMod.dll = ExampleMod.dll"

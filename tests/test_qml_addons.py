@@ -194,6 +194,36 @@ def test_build_row_fields():
     assert row["repoUrl"] == "https://example.test/a"
 
 
+def test_build_pending_overrides_checked():
+    """Staged checkbox changes render instead of snapping back (mods
+    build_rows parity): a checked AVAILABLE row stays checked, an
+    unchecked INSTALLED row stays unchecked."""
+    state = _state(
+        addons={"A": _rec("A")},
+        available=[_rec("B", git="https://example.test/b.git")],
+    )
+    items = build_items(
+        state, recommended=set(), expected="11200", pending={"A": False}
+    )
+    by_folder = {i.get("folder"): i for i in items if i["kind"] == "row"}
+    assert by_folder["A"]["checked"] is False
+    assert by_folder["B"]["checked"] is False
+    items = build_items(
+        state,
+        recommended=set(),
+        expected="11200",
+        pending={"A": False, "B": True},
+    )
+    by_folder = {i.get("folder"): i for i in items if i["kind"] == "row"}
+    assert by_folder["A"]["checked"] is False
+    assert by_folder["B"]["checked"] is True
+    # Without pending the on-disk truth renders as before.
+    items = build_items(state, recommended=set(), expected="11200")
+    by_folder = {i.get("folder"): i for i in items if i["kind"] == "row"}
+    assert by_folder["A"]["checked"] is True
+    assert by_folder["B"]["checked"] is False
+
+
 def test_build_search_and_collapse():
     state = _sample_state()
     items = build_items(
@@ -346,6 +376,282 @@ def test_addons_badge(engine):
         if btn.property("text")
     ]
     assert "ADDONS (2)" in texts
+
+
+def _delegate_texts(obj, _depth=0):
+    """Collect label texts under a QML item (delegate tree walk)."""
+    found = []
+    try:
+        text = obj.property("text")
+    except Exception:
+        text = None
+    if isinstance(text, str) and text:
+        found.append(text)
+    if _depth > 12:
+        return found
+    try:
+        if hasattr(obj, "childItems"):
+            children = obj.childItems()
+        else:
+            children = obj.children()
+    except Exception:
+        children = []
+    for child in children:
+        found += _delegate_texts(child, _depth + 1)
+    return found
+
+
+def test_toggleEntry_echo_dropped():
+    """Delegate creation sets CheckBox.checked programmatically — those
+    onCheckedChanged echoes must not reach the toggle handler (each one
+    triggered model.refresh() mid-build, destroying the sibling
+    delegates so only the last installed row survived)."""
+    from nostalgia_launcher.ui.qml.addons import AddonsModel as M
+
+    model = M()
+    calls = []
+    model.set_handlers(toggle=lambda f, c: calls.append((f, c)))
+    model.set_snapshot(
+        {
+            "items": [
+                {
+                    "kind": "section",
+                    "title": "INSTALLED",
+                    "count": 2,
+                    "open": True,
+                    "empty": "",
+                },
+                {
+                    "kind": "row",
+                    "folder": "A",
+                    "title": "A",
+                    "checked": True,
+                    "recommended": False,
+                    "statusKind": "none",
+                    "statusText": "",
+                    "repoUrl": "",
+                    "description": "",
+                    "error": "",
+                },
+                {
+                    "kind": "row",
+                    "folder": "B",
+                    "title": "B",
+                    "checked": False,
+                    "recommended": False,
+                    "statusKind": "none",
+                    "statusText": "",
+                    "repoUrl": "",
+                    "description": "",
+                    "error": "",
+                },
+            ]
+        }
+    )
+    # Echoes of the current state are dropped…
+    model.toggleEntry("A", True)
+    model.toggleEntry("B", False)
+    assert calls == []
+    # …while real user flips still reach the handler.
+    model.toggleEntry("A", False)
+    model.toggleEntry("B", True)
+    assert calls == [("A", False), ("B", True)]
+
+
+def test_all_installed_rows_render(engine, qapp):
+    """End-to-end: with the real refresh-on-toggle handler wired, all
+    installed rows must render (no reentrant reset during delegate
+    build). Role-derived objectNames are not findChild-visible (QTBUG),
+    so titles are collected via a delegate tree walk."""
+    eng, addons = engine
+    root = eng.rootObjects()[0]
+    root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 2)
+    qapp.processEvents()
+
+    toggles = []
+
+    def on_toggle(folder, checked):
+        toggles.append((folder, checked))
+        addons.refresh()
+
+    def snapshot():
+        items = [
+            {
+                "kind": "section",
+                "title": "INSTALLED",
+                "count": 3,
+                "open": True,
+                "empty": "",
+            }
+        ]
+        for folder in ("Alpha", "Beta", "Gamma"):
+            items.append(
+                {
+                    "kind": "row",
+                    "folder": folder,
+                    "title": folder,
+                    "checked": True,
+                    "recommended": False,
+                    "statusKind": "none",
+                    "statusText": "",
+                    "repoUrl": "",
+                    "description": "desc " + folder,
+                    "error": "",
+                }
+            )
+        return {"items": items}
+
+    addons.set_snapshot_provider(snapshot)
+    addons.set_handlers(toggle=on_toggle, section=lambda t: None)
+    addons.refresh()
+    for _ in range(10):
+        qapp.processEvents()
+
+    assert toggles == []
+    lst = root.findChild(QObject, "qmlAddonsList")
+    assert lst.property("count") == 4
+    titles = sorted(set(_delegate_texts(lst)) & {"Alpha", "Beta", "Gamma"})
+    assert titles == ["Alpha", "Beta", "Gamma"]
+
+
+def _pending_snapshot(pending):
+    """Snapshot provider shaped like app.py: pending overrides checked."""
+
+    def provider():
+        items = [
+            {
+                "kind": "section",
+                "title": "INSTALLED",
+                "count": 1,
+                "open": True,
+                "empty": "",
+            },
+            {
+                "kind": "row",
+                "folder": "Alpha",
+                "title": "Alpha",
+                "checked": True,
+                "recommended": False,
+                "statusKind": "none",
+                "statusText": "",
+                "repoUrl": "",
+                "description": "d",
+                "error": "",
+            },
+            {
+                "kind": "section",
+                "title": "AVAILABLE",
+                "count": 1,
+                "open": True,
+                "empty": "",
+            },
+            {
+                "kind": "row",
+                "folder": "Beta",
+                "title": "Beta",
+                "checked": False,
+                "recommended": False,
+                "statusKind": "note",
+                "statusText": "Not versioned",
+                "repoUrl": "",
+                "description": "d",
+                "error": "",
+            },
+        ]
+        for item in items:
+            staged = pending.get(item.get("folder", ""))
+            if item.get("kind") == "row" and staged is not None:
+                item["checked"] = bool(staged)
+        return {"items": items, "apply_visible": bool(pending)}
+
+    return provider
+
+
+def _model_checked(model, folder):
+    """The rendered `checked` value for `folder`'s row in the model.
+
+    The delegate's CheckBox binds `checked: model.checked` directly,
+    so the model item IS the rendered state. (ListView only
+    instantiates visible delegates, so a childItems walk can't reach
+    off-screen rows — the model is the reliable assertion point.)
+    """
+    for item in model._items:
+        if item.get("kind") == "row" and item.get("folder") == folder:
+            return ("found", bool(item.get("checked")))
+    return ("miss", None)
+
+
+def test_staged_toggle_stays_visible(engine, qapp):
+    """Staging a checkbox survives the refresh: the row keeps the staged
+    state and Apply appears (previously the tick snapped back)."""
+    eng, addons = engine
+    root = eng.rootObjects()[0]
+    root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 2)
+    qapp.processEvents()
+
+    pending = {}
+    toggles = []
+
+    def on_toggle(folder, checked):
+        toggles.append((folder, checked))
+        installed = folder == "Alpha"  # on-disk truth in this fixture
+        if checked == installed:
+            pending.pop(folder, None)
+        else:
+            pending[folder] = checked
+        addons.refresh()
+
+    addons.set_snapshot_provider(_pending_snapshot(pending))
+    addons.set_handlers(toggle=on_toggle, section=lambda t: None)
+    addons.refresh()
+    for _ in range(6):
+        qapp.processEvents()
+
+    # Stage an install and a removal through the model's slot (user flip).
+    addons.toggleEntry("Beta", True)
+    addons.toggleEntry("Alpha", False)
+    for _ in range(6):
+        qapp.processEvents()
+
+    assert toggles == [("Beta", True), ("Alpha", False)]
+    assert pending == {"Beta": True, "Alpha": False}
+    assert addons.property("applyVisible") is True
+    assert _model_checked(addons, "Beta") == ("found", True)
+    assert _model_checked(addons, "Alpha") == ("found", False)
+
+
+def test_staged_toggle_revert_restores(engine, qapp):
+    """Flipping a staged row back to its on-disk state clears pending and
+    restores the row (no stuck checkbox, no phantom Apply)."""
+    eng, addons = engine
+    root = eng.rootObjects()[0]
+    root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 2)
+    qapp.processEvents()
+
+    pending = {"Beta": True}
+
+    def on_toggle(folder, checked):
+        installed = folder == "Alpha"
+        if checked == installed:
+            pending.pop(folder, None)
+        else:
+            pending[folder] = checked
+        addons.refresh()
+
+    addons.set_snapshot_provider(_pending_snapshot(pending))
+    addons.set_handlers(toggle=on_toggle, section=lambda t: None)
+    addons.refresh()
+    for _ in range(6):
+        qapp.processEvents()
+
+    assert _model_checked(addons, "Beta") == ("found", True)
+    addons.toggleEntry("Beta", False)
+    for _ in range(6):
+        qapp.processEvents()
+
+    assert pending == {}
+    assert addons.property("applyVisible") is False
+    assert _model_checked(addons, "Beta") == ("found", False)
 
 
 def test_loading_until_data_or_event(qapp):

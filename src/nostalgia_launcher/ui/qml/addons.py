@@ -78,11 +78,18 @@ def row_status(rec, installed: bool, warning: str):
     return ("note", "Not versioned")
 
 
-def build_items(state, *, recommended, expected, needle=""):
-    """Flat section/row items for the ListView (widget `_render` parity)."""
+def build_items(state, *, recommended, expected, needle="", pending=None):
+    """Flat section/row items for the ListView (widget `_render` parity).
+
+    ``pending`` maps folder → bool for staged checkbox changes not yet
+    applied: it overrides the rendered ``checked`` state (mods parity)
+    so staging is visible instead of snapping back on refresh. Row
+    status/warning text still reflects on-disk truth.
+    """
     addons = getattr(state, "addons", {}) or {}
     available = getattr(state, "available", []) or []
     installed_names = set(addons)
+    pending = pending or {}
     installed_gits = {}
     for folder, rec in addons.items():
         if isinstance(folder, str) and folder.strip().casefold():
@@ -151,6 +158,8 @@ def build_items(state, *, recommended, expected, needle=""):
             continue
         for rec in rows:
             installed = rec.folder in installed_names
+            staged = pending.get(rec.folder)
+            checked = bool(staged) if staged is not None else installed
             warning = row_warning(rec, installed, installed_names, expected)
             kind, text = row_status(rec, installed, warning)
             toc = rec.toc or {}
@@ -160,7 +169,7 @@ def build_items(state, *, recommended, expected, needle=""):
                     "kind": "row",
                     "folder": rec.folder,
                     "title": strip_wow_colors(toc.get("Title") or rec.folder),
-                    "checked": installed,
+                    "checked": checked,
                     "recommended": rec.folder in recommended,
                     "statusKind": kind,
                     "statusText": text,
@@ -381,6 +390,16 @@ class AddonsModel(QAbstractListModel):
 
     @Slot(str, bool)
     def toggleEntry(self, folder: str, checked: bool):
+        # Drop echoes: QML re-fires onCheckedChanged when a delegate is
+        # created (initial `checked` set) and after every programmatic
+        # refresh. Forwarding those to the handler calls model.refresh()
+        # mid-build (beginResetModel while delegates instantiate), which
+        # destroys the siblings being created — only the last row survives.
+        for item in self._items:
+            if item.get("kind") == "row" and item.get("folder") == folder:
+                if bool(item.get("checked")) == bool(checked):
+                    return
+                break
         handler = self._handlers.get("toggle")
         if handler is not None:
             handler(folder, bool(checked))

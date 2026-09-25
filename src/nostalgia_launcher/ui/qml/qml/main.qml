@@ -41,6 +41,7 @@ ApplicationWindow {
             }
             Item { Layout.fillWidth: true }
             ComboBox {
+                id: profileCombo
                 objectName: "qmlProfileCombo"
                 Accessible.name: "Active profile"
                 ToolTip.text: "Active profile — selecting another one restarts the launcher"
@@ -48,6 +49,17 @@ ApplicationWindow {
                 model: settingsModel.profiles
                 currentIndex: Math.max(0, settingsModel.profiles.indexOf(settingsModel.activeProfile))
                 onActivated: (index) => settingsModel.requestSwitch(textAt(index))
+                Layout.preferredWidth: 320
+                Layout.maximumWidth: 420
+                // Elide long server names so the dropdown arrow stays
+                // visible (qmllint can't resolve profileCombo.displayText
+                // statically, but it is valid at runtime).
+                contentItem: Text {
+                    text: profileCombo.displayText
+                    elide: Text.ElideRight
+                    verticalAlignment: Text.AlignVCenter
+                    color: appTheme.colors["C_TEXT"]
+                }
             }
             Label {
                 objectName: "qmlVersionPill"
@@ -56,7 +68,6 @@ ApplicationWindow {
                 font.pointSize: 8
                 color: appTheme.colors["C_TEXT_DIM"]
                 ToolTip.text: "Declared client version for this profile"
-                ToolTip.visible: hovered
             }
             ToolButton {
                 objectName: "qmlGearButton"
@@ -64,7 +75,7 @@ ApplicationWindow {
                 Accessible.name: "Open settings"
                 ToolTip.text: "Settings"
                 ToolTip.visible: hovered
-                onClicked: settingsDialog.open()
+                onClicked: settingsDialog.showSettings()
             }
         }
     }
@@ -138,15 +149,6 @@ ApplicationWindow {
         }
     }
 
-    Connections {
-        target: settingsModel
-        function onLogsRequested() {
-            if (logDialog.visible)
-                logDialog.close();
-            else
-                logDialog.open();
-        }
-    }
 
     ColumnLayout {
         anchors.fill: parent

@@ -109,7 +109,7 @@ ColumnLayout {
 
     Rectangle {
         Layout.fillWidth: true
-        height: 1
+        Layout.preferredHeight: 1
         color: appTheme.colors["C_DIVIDER"]
     }
 
@@ -227,7 +227,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: 6
                 Layout.bottomMargin: 6
-                height: 1
+                Layout.preferredHeight: 1
                 color: appTheme.colors["C_DIVIDER"]
             }
         }
@@ -265,12 +265,12 @@ ColumnLayout {
             ColumnLayout {
                 width: parent.width
                 spacing: 2
-                property string sectionTitle: modelData.title
+                property string sectionTitle: (modelData && modelData.title) || ""
                 Label {
                     Layout.fillWidth: true
                     Layout.leftMargin: 16
                     Layout.topMargin: 10
-                    text: modelData.title
+                    text: (modelData && modelData.title) || ""
                     font.bold: true
                     color: modelData.color === "err" ? appTheme.colors["C_ERR"] : (modelData.color === "gold" ? appTheme.colors["C_GOLD"] : appTheme.colors["C_TEXT_DIM"])
                 }
@@ -283,7 +283,7 @@ ColumnLayout {
                         spacing: 8
                         Label {
                             Layout.fillWidth: true
-                            text: modelData.name + (modelData.meta !== "" ? "  ·  " + modelData.meta : "")
+                            text: (modelData && modelData.name || "") + ((modelData && modelData.meta) ? "  ·  " + modelData.meta : "")
                             font.pointSize: 9
                             color: modelData.action !== "" ? appTheme.colors["C_ERR"] : appTheme.colors["C_TEXT"]
                             elide: Text.ElideMiddle
@@ -302,7 +302,7 @@ ColumnLayout {
 
     Rectangle {
         Layout.fillWidth: true
-        height: 1
+        Layout.preferredHeight: 1
         color: appTheme.colors["C_DIVIDER"]
     }
 

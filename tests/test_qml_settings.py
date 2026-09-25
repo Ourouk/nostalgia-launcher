@@ -238,15 +238,30 @@ def test_settings_dialog_loads(engine):
         assert dialog.findChild(QObject, name) is not None, name
 
 
-def test_gear_opens_settings(engine):
+def test_gear_opens_settings(engine, qapp):
+    """Settings is an independent modeless window: hidden at startup,
+    shown (not modal) via showSettings(), single instance."""
+    from PySide6.QtGui import QWindow
+
     eng, _settings = engine
     root = eng.rootObjects()[0]
-    gear = root.findChild(QObject, "qmlGearButton")
+    assert root.findChild(QObject, "qmlGearButton") is not None
     dialog = root.findChild(QObject, "qmlSettingsDialog")
     assert dialog.property("visible") is False
-    gear.setProperty("visible", True)
-    dialog.setProperty("visible", True)
+    assert isinstance(dialog, QWindow)
+    assert dialog.isModal() is False
+    dialog.showSettings()
+    for _ in range(6):
+        qapp.processEvents()
     assert dialog.property("visible") is True
+    assert dialog.isModal() is False
+    # Single instance: second call raises instead of duplicating.
+    before = root.findChildren(QObject, "qmlSettingsDialog")
+    dialog.showSettings()
+    after = root.findChildren(QObject, "qmlSettingsDialog")
+    assert len(before) == len(after) == 1
+    close_btn = dialog.findChild(QObject, "qmlSettingsClose")
+    assert close_btn is not None
 
 
 def test_logs_button_label_follows_state(engine):

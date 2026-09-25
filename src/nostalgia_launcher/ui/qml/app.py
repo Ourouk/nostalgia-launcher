@@ -430,6 +430,7 @@ class QmlNostalgiaLauncherApp:
                     recommended=ctrl.recommended,
                     expected=expected_interface(launcher.client_version()),
                     needle=model.current_filter(),
+                    pending=state.pending,
                 ),
                 "updates_count": state.updates_count,
                 "apply_visible": bool(state.pending),
@@ -779,7 +780,7 @@ class QmlNostalgiaLauncherApp:
             dialog.setProperty("visible", False)
         else:
             self._log_model.refresh()
-            dialog.setProperty("visible", True)
+            dialog.showLog()
 
     def open_session_log(self):
         """CLI --show-log: bring the session log up immediately."""
@@ -789,7 +790,7 @@ class QmlNostalgiaLauncherApp:
         dialog = roots[0].findChild(QObject, "qmlLogDialog")
         if dialog is not None:
             self._log_model.refresh()
-            dialog.setProperty("visible", True)
+            dialog.showLog()
 
     @property
     def engine(self) -> QQmlApplicationEngine:

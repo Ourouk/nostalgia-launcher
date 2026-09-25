@@ -9,14 +9,18 @@ import QtQuick.Controls.Material
 import QtQuick.Dialogs
 import QtQuick.Layouts
 
-Dialog {
+ApplicationWindow {
     id: root
     objectName: "qmlSettingsDialog"
     title: "Settings"
-    modal: true
-    width: 600
-    height: 660
-    anchors.centerIn: parent
+    visible: false
+    width: 680
+    height: 700
+    minimumWidth: 560
+    minimumHeight: 480
+    color: appTheme.colors["C_BG"]
+    Material.theme: Material.Dark
+    Material.accent: appTheme.colors["C_GOLD"]
 
     header: ToolBar {
         background: Rectangle {
@@ -31,6 +35,15 @@ Dialog {
             font.pointSize: 13
             color: appTheme.colors["C_GOLD_LT"]
         }
+    }
+
+    // Single-instance raise: the gear button calls showSettings(),
+    // which shows a hidden window or raises the visible one.
+    function showSettings() {
+        if (!visible)
+            show();
+        requestActivate();
+        raise();
     }
 
     ColumnLayout {
@@ -55,8 +68,14 @@ Dialog {
             // ── Game ────────────────────────────────────────────
             ScrollView {
                 clip: true
+                contentWidth: availableWidth
                 ColumnLayout {
-                    width: parent.width
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+                    anchors.topMargin: 12
+                    anchors.bottomMargin: 12
                     spacing: 8
                     Label {
                         text: "GAME FOLDER"
@@ -64,16 +83,18 @@ Dialog {
                         font.pointSize: 10
                         color: appTheme.colors["C_GOLD"]
                     }
+                    TextField {
+                        objectName: "qmlSettingsPath"
+                        Layout.fillWidth: true
+                        text: settingsModel.gamePath
+                        readOnly: true
+                        selectByMouse: true
+                        placeholderText: text === "" ? (settingsModel.gameSuggestion !== "" ? settingsModel.gameSuggestion : "Select the game folder containing WoW.exe") : ""
+                        placeholderTextColor: appTheme.colors["C_TEXT_DIM"]
+                        font.family: "monospace"
+                    }
                     RowLayout {
                         Layout.fillWidth: true
-                        TextField {
-                            objectName: "qmlSettingsPath"
-                            Layout.fillWidth: true
-                            text: settingsModel.gamePath
-                            readOnly: true
-                            placeholderText: settingsModel.gameSuggestion !== "" ? settingsModel.gameSuggestion : "Select the game folder containing WoW.exe"
-                            font.family: "monospace"
-                        }
                         Button {
                             objectName: "qmlSettingsChange"
                             text: "Change"
@@ -84,6 +105,7 @@ Dialog {
                             flat: true
                             onClicked: settingsModel.openClientFolder()
                         }
+                        Item { Layout.fillWidth: true }
                     }
                     Label {
                         text: "GENERAL"
@@ -96,20 +118,20 @@ Dialog {
                         text: "Clear WDB on game launch"
                         visible: settingsModel.canLaunch
                         checked: settingsModel.clearWdb
-                        onCheckedChanged: settingsModel.setClearWdb(checked)
+                        onToggled: settingsModel.setClearWdb(checked)
                     }
                     CheckBox {
                         objectName: "qmlSettingsCloseOnLaunch"
                         text: "Close Nostalgia Launcher on game launch"
                         visible: settingsModel.canLaunch
                         checked: settingsModel.closeOnLaunch
-                        onCheckedChanged: settingsModel.setCloseOnLaunch(checked)
+                        onToggled: settingsModel.setCloseOnLaunch(checked)
                     }
                     CheckBox {
                         objectName: "qmlSettingsClientUpdate"
                         text: "Enable client updates"
                         checked: settingsModel.clientUpdates
-                        onCheckedChanged: settingsModel.setClientUpdates(checked)
+                        onToggled: settingsModel.setClientUpdates(checked)
                     }
                     Button {
                         objectName: "qmlSettingsLinuxButton"
@@ -125,8 +147,14 @@ Dialog {
             // ── Sources ─────────────────────────────────────────
             ScrollView {
                 clip: true
+                contentWidth: availableWidth
                 ColumnLayout {
-                    width: parent.width
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+                    anchors.topMargin: 12
+                    anchors.bottomMargin: 12
                     spacing: 8
                     Label {
                         text: "DOWNLOAD SOURCE"
@@ -171,13 +199,13 @@ Dialog {
                         text: "Use community default addons catalog"
                         enabled: settingsModel.addonsDefaultAvail
                         checked: settingsModel.addonsDefault && settingsModel.addonsDefaultAvail
-                        onCheckedChanged: settingsModel.setAddonsDefault(checked)
+                        onToggled: settingsModel.setAddonsDefault(checked)
                     }
                     CheckBox {
                         text: "Use community default mods catalog"
                         enabled: settingsModel.modsDefaultAvail
                         checked: settingsModel.modsDefault && settingsModel.modsDefaultAvail
-                        onCheckedChanged: settingsModel.setModsDefault(checked)
+                        onToggled: settingsModel.setModsDefault(checked)
                     }
                     RegistryRow {
                         label: "ADDONS"
@@ -213,8 +241,14 @@ Dialog {
             // ── Profiles ────────────────────────────────────────
             ScrollView {
                 clip: true
+                contentWidth: availableWidth
                 ColumnLayout {
-                    width: parent.width
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+                    anchors.topMargin: 12
+                    anchors.bottomMargin: 12
                     spacing: 8
                     Label {
                         text: "PROFILES"
@@ -235,8 +269,17 @@ Dialog {
                             id: profilesCombo
                             objectName: "qmlProfilesCombo"
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 120
                             model: settingsModel.profiles
                             currentIndex: Math.max(0, settingsModel.profiles.indexOf(settingsModel.activeProfile))
+                            // Elide long server names so Import/Delete stay
+                            // visible (same pattern as the header combo).
+                            contentItem: Text {
+                                text: profilesCombo.displayText
+                                elide: Text.ElideRight
+                                verticalAlignment: Text.AlignVCenter
+                                color: appTheme.colors["C_TEXT"]
+                            }
                         }
                         Button {
                             objectName: "qmlProfilesImport"
@@ -268,8 +311,14 @@ Dialog {
             // ── Troubleshooting ─────────────────────────────────
             ScrollView {
                 clip: true
+                contentWidth: availableWidth
                 ColumnLayout {
-                    width: parent.width
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
+                    anchors.topMargin: 12
+                    anchors.bottomMargin: 12
                     spacing: 8
                     Label {
                         text: "TROUBLESHOOTING"
@@ -302,15 +351,35 @@ Dialog {
         }
     }
 
-    footer: DialogButtonBox {
-        standardButtons: DialogButtonBox.Close
+    footer: ToolBar {
+        background: Rectangle {
+            color: appTheme.colors["C_HDR"]
+        }
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
+            Item { Layout.fillWidth: true }
+            Button {
+                objectName: "qmlSettingsClose"
+                text: "Close"
+                onClicked: root.close()
+            }
+        }
     }
 
     FileDialog {
         id: folderPicker
         objectName: "qmlSettingsFolderPicker"
         title: "Select game client folder"
-        fileMode: FileDialog.OpenDirectory
+        // NOTE: FileDialog.OpenDirectory is undefined on some backends
+        // (offscreen probe: OpenFile=0, OpenDirectory=undefined) — the
+        // folder mode is the dialog default, so only set fileMode when
+        // the enum exists.
+        Component.onCompleted: {
+            if (FileDialog.OpenDirectory !== undefined)
+                fileMode = FileDialog.OpenDirectory
+        }
         onAccepted: settingsModel.setGameFolder(currentFolder.toString().replace(/^file:\/\//, ""))
     }
 
@@ -333,52 +402,49 @@ Dialog {
         signal clearCustom()
         Layout.fillWidth: true
         spacing: 2
+        Label {
+            text: label
+            font.bold: true
+            font.pointSize: 9
+            color: appTheme.colors["C_TEXT"]
+        }
+        TextField {
+            id: urlField
+            Layout.fillWidth: true
+            text: url
+            selectByMouse: true
+            font.family: "monospace"
+        }
         RowLayout {
             Layout.fillWidth: true
-            Label {
-                text: parent.label
-                font.bold: true
-                font.pointSize: 9
-                color: appTheme.colors["C_TEXT"]
-                Layout.preferredWidth: 64
-            }
-            TextField {
-                id: urlField
-                Layout.fillWidth: true
-                text: parent.url
-                font.family: "monospace"
-            }
+            spacing: 8
             Button {
                 text: "Apply"
-                onClicked: parent.apply(urlField.text)
+                onClicked: apply(urlField.text)
             }
             Button {
                 text: "Reset"
                 flat: true
                 ToolTip.text: "Use the default server catalog"
                 ToolTip.visible: hovered
-                onClicked: parent.reset()
+                onClicked: reset()
             }
             Button {
                 text: "Reload"
                 flat: true
                 ToolTip.text: "Fetch the catalog now and refresh the tab"
                 ToolTip.visible: hovered
-                onClicked: parent.reload()
+                onClicked: reload()
             }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            Item { Layout.preferredWidth: 64 }
             Button {
                 text: "Open custom file"
                 flat: true
-                onClicked: parent.openCustom()
+                onClicked: openCustom()
             }
             Button {
                 text: "Clear custom entries"
                 flat: true
-                onClicked: parent.clearCustom()
+                onClicked: clearCustom()
             }
         }
     }

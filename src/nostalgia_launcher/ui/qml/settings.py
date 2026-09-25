@@ -373,7 +373,11 @@ class LogModel(QObject):
     def refresh(self):
         """Reload the retained session log (old rotation first)."""
         try:
-            self._lines = [line.rstrip("\n") for line in read_lines(2000)]
+            self._lines = [
+                line.rstrip("\n")[:300]
+                + ("…" if len(line.rstrip("\n")) > 300 else "")
+                for line in read_lines(2000)
+            ]
         except Exception:
             self._lines = []
         self.changed.emit()
@@ -381,6 +385,11 @@ class LogModel(QObject):
     @Slot(str, str)
     def appendLine(self, text: str, _tag: str):
         """Live tail while the viewer is open (`bridge.logMessage`)."""
+        # The ListView delegate is a fixed-width Label: overlong lines
+        # (URLs, shas) would paint past the scrollbar, so cap the length.
+        text = str(text)
+        if len(text) > 300:
+            text = text[:300] + "…"
         self._lines.append(text)
         if len(self._lines) > 2000:
             del self._lines[: len(self._lines) - 2000]

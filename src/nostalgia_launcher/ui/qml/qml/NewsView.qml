@@ -42,7 +42,7 @@ ColumnLayout {
 
     Rectangle {
         Layout.fillWidth: true
-        height: 1
+        Layout.preferredHeight: 1
         color: appTheme.colors["C_DIVIDER"]
     }
 
@@ -130,7 +130,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Layout.topMargin: 6
                 Layout.bottomMargin: 6
-                height: 1
+                Layout.preferredHeight: 1
                 color: appTheme.colors["C_DIVIDER"]
             }
         }

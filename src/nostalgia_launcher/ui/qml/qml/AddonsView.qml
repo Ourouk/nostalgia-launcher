@@ -61,7 +61,7 @@ ColumnLayout {
 
     Rectangle {
         Layout.fillWidth: true
-        height: 1
+        Layout.preferredHeight: 1
         color: appTheme.colors["C_DIVIDER"]
     }
 
@@ -90,154 +90,152 @@ ColumnLayout {
         Layout.fillHeight: true
         clip: true
         model: addonsModel
-        delegate: Loader {
+        delegate: ColumnLayout {
             width: addonList.width
-            sourceComponent: model.kind === "section" ? sectionComp : rowComp
-            property string itemTitle: model.sectionTitle || ""
-            property int itemCount: model.sectionCount || 0
-            property bool itemOpen: model.sectionOpen || false
-            property string itemEmpty: model.sectionEmpty || ""
-            property string itemFolder: model.folder || ""
-            property string itemRowTitle: model.rowTitle || ""
-            property bool itemChecked: model.checked || false
-            property bool itemRecommended: model.recommended || false
-            property string itemStatusKind: model.statusKind || ""
-            property string itemStatusText: model.statusText || ""
-            property string itemRepoUrl: model.repoUrl || ""
-            property string itemDescription: model.description || ""
-            property string itemError: model.error || ""
-        }
-    }
-
-    Component {
-        id: sectionComp
-        ColumnLayout {
             spacing: 0
+            visible: (model.kind === "section" && (model.sectionOpen
+                || (model.sectionEmpty || "") !== ""))
+                || (model.kind === "row")
+                     && (model.folder || "") !== ""
+                     && (model.rowTitle !== undefined)
+            // Section header (visible for section items only).
             RowLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.topMargin: 10
                 spacing: 4
+                visible: model.kind === "section"
                 ToolButton {
-                    text: itemOpen ? "▾" : "▸"
-                    Accessible.name: itemTitle + " section"
+                    text: model.sectionOpen ? "▾" : "▸"
+                    Accessible.name: model.sectionTitle + " section"
                     flat: true
-                    onClicked: addonsModel.toggleSection(itemTitle)
+                    onClicked: addonsModel.toggleSection(
+                        model.sectionTitle || "")
                 }
                 Label {
-                    text: itemTitle
+                    text: model.sectionTitle || ""
                     font.bold: true
                     font.pointSize: 11
                     color: appTheme.colors["C_GOLD"]
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: addonsModel.toggleSection(itemTitle)
+                        onClicked: addonsModel.toggleSection(
+                            model.sectionTitle || "")
                     }
                 }
                 Label {
-                    text: "  " + itemCount
+                    text: "  " + (model.sectionCount || 0)
                     color: appTheme.colors["C_TEXT_DIM"]
                 }
             }
             Label {
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
-                text: itemEmpty
+                text: model.sectionEmpty || ""
                 color: appTheme.colors["C_TEXT_DIM"]
-                visible: itemEmpty !== ""
+                visible: model.kind === "section"
+                    && (model.sectionEmpty || "") !== ""
             }
-        }
-    }
-
-    Component {
-        id: rowComp
-        ColumnLayout {
-            spacing: 2
+            // Addon row (visible for row items only).
             RowLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 12
                 spacing: 6
+                visible: model.kind === "row"
                 CheckBox {
-                    Accessible.name: "Install or remove " + itemFolder
-                    checked: itemChecked
-                    onCheckedChanged: addonsModel.toggleEntry(itemFolder, checked)
+                    Accessible.name: "Install or remove " + model.folder
+                    checked: model.checked || false
+                    onCheckedChanged: addonsModel.toggleEntry(
+                        model.folder, checked)
                 }
                 Label {
                     text: "★"
                     font.pointSize: 11
                     color: appTheme.colors["C_GOLD"]
-                    visible: itemRecommended
+                    visible: model.recommended || false
                 }
                 Label {
-                    objectName: "qmlAddonName_" + itemFolder
+                    // NOTE: role-derived objectNames are not registered
+                    // for findChild (QTBUG) — tests read titles via the
+                    // ListView delegates instead.
+                    objectName: "qmlAddonName_" + model.folder
+                    Accessible.name: "Addon " + model.folder
                     Layout.fillWidth: true
-                    text: itemRowTitle
+                    text: model.rowTitle || ""
                     font.bold: true
                     font.pointSize: 11
                     color: appTheme.colors["C_TEXT"]
                     elide: Text.ElideRight
                 }
                 Button {
-                    text: itemStatusText
-                    visible: itemStatusKind === "retry" || itemStatusKind === "update"
+                    text: model.statusText || ""
+                    visible: model.statusKind === "retry"
+                        || model.statusKind === "update"
                     flat: true
-                    font.bold: itemStatusKind === "update"
+                    font.bold: model.statusKind === "update"
                     onClicked: {
-                        if (itemStatusKind === "retry")
+                        if (model.statusKind === "retry")
                             addonsModel.checkForUpdates();
                         else
-                            addonsModel.updateOne(itemFolder);
+                            addonsModel.updateOne(model.folder);
                     }
                 }
                 Label {
-                    text: itemStatusText
-                    visible: itemStatusKind !== "retry" && itemStatusKind !== "update" && itemStatusKind !== "none"
+                    text: model.statusText || ""
+                    visible: model.statusKind !== "retry"
+                        && model.statusKind !== "update"
+                        && model.statusKind !== "none"
                     font.pointSize: 10
-                    color: itemStatusKind === "error" ? appTheme.colors["C_ERR"] : (itemStatusKind === "warning" ? appTheme.colors["C_WARN"] : appTheme.colors["C_TEXT_DIM"])
+                    color: model.statusKind === "error"
+                        ? appTheme.colors["C_ERR"]
+                        : (model.statusKind === "warning"
+                            ? appTheme.colors["C_WARN"]
+                            : appTheme.colors["C_TEXT_DIM"])
                 }
                 Button {
                     text: "⧉"
-                    Accessible.name: "Open repository for " + itemFolder
-                    visible: itemRepoUrl !== ""
+                    Accessible.name: "Open repository for " + model.folder
+                    visible: (model.repoUrl || "") !== ""
                     flat: true
-                    onClicked: Qt.openUrlExternally(itemRepoUrl)
+                    onClicked: Qt.openUrlExternally(model.repoUrl)
                 }
             }
             Label {
                 Layout.fillWidth: true
                 Layout.leftMargin: 48
                 Layout.rightMargin: 12
-                text: itemDescription
+                text: model.description || ""
                 font.pointSize: 10
                 color: appTheme.colors["C_TEXT_DIM"]
                 wrapMode: Text.WordWrap
-                visible: itemDescription !== ""
+                visible: model.kind === "row" && (model.description || "") !== ""
             }
             Label {
                 Layout.fillWidth: true
                 Layout.leftMargin: 48
                 Layout.rightMargin: 12
-                text: itemError
+                text: model.error || ""
                 font.pointSize: 9
                 color: appTheme.colors["C_ERR"]
                 wrapMode: Text.WordWrap
-                visible: itemError !== ""
+                visible: model.kind === "row" && (model.error || "") !== ""
             }
             Rectangle {
                 Layout.fillWidth: true
                 Layout.topMargin: 6
                 Layout.bottomMargin: 6
-                height: 1
+                Layout.preferredHeight: 1
                 color: appTheme.colors["C_DIVIDER"]
+                visible: model.kind === "row"
             }
         }
     }
 
     Rectangle {
         Layout.fillWidth: true
-        height: 1
+        Layout.preferredHeight: 1
         color: appTheme.colors["C_DIVIDER"]
     }
 

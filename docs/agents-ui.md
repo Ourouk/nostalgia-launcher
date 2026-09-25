@@ -19,8 +19,11 @@ beside them) plus the toolkit glue in `ui/` (`bridge.py`, `theme.py`,
 ## Theming
 
 - QtQuick.Controls **Material**, Dark + brand-gold accent, pinned in
-  `create_qml_app()` (`QQuickStyle.setStyle("Material")`); `main.qml`
-  sets `Material.theme: Dark`, `Material.accent: appTheme.colors["C_GOLD"]`.
+  `create_qml_app()` (`QQuickStyle.setStyle("Material")`. Every top-level
+  window sets its own `Material.theme: Dark` + `Material.accent:
+  appTheme.colors["C_GOLD"]` — the attached property does NOT inherit
+  across windows (a bare `ApplicationWindow` falls back to the light
+  theme, as the Settings window did).
 - Colors come from the `appTheme` context property (`ThemeBridge` over
   `ui/theme.py:Palette`); never hardcode hex in QML. Never add palette
   slots for one-off needs. Section titles use gold, page titles gold_lt.
@@ -28,6 +31,19 @@ beside them) plus the toolkit glue in `ui/` (`bridge.py`, `theme.py`,
   overridden theme, native (system-derived palette).
 
 ## QML conventions
+
+- Top-level secondary windows (Settings, Session log) are modeless
+  single-instance `ApplicationWindow`s with `showSettings()`/`showLog()`
+  (show + `requestActivate()` + `raise()`); short confirmations stay modal
+  `Dialog`s. One signal owner per toggle action — a QML `Connections`
+  handler duplicating a Python slot double-fires (the `logsRequested`
+  open→close race).
+- ScrollView tab pages pin `contentWidth: availableWidth` so `fillWidth`
+  children span the viewport, not the widest child; long path/URL fields
+  sit on their own full-width row with buttons below.
+- ListView only instantiates visible delegates — assert per-row UI state
+  through the model (`checked: model.checked` binds directly), not via
+  childItems walks or role-derived `objectName` (findChild-invisible).
 
 - Button language is all-caps for primary/global actions (`UPDATE`/`PLAY`,
   nav tabs) and Title Case for panel actions ("Apply", "Retry") — machine
@@ -50,7 +66,12 @@ beside them) plus the toolkit glue in `ui/` (`bridge.py`, `theme.py`,
 - QML tests set `QT_QPA_PLATFORM=offscreen` + `QT_QUICK_BACKEND=software`
   before importing PySide6, pin `QQuickStyle.setStyle("Material")`, load
   `main.qml` (or `WizardWindow.qml`) with stub models, and assert view
-  state follows the models. Model unit tests need no engine.
+  state follows the models. Model unit tests need no engine. Verify visual
+  sizing via offscreen `grabWindow()` screenshots with long content, not
+  by reading `width` properties alone.
+- `tests/test_qml_lint.py` runs `qmllint` over `ui/qml/qml/*.qml` and
+  skips when the binary is absent (Qt binary via distro
+  `qt6-declarative`, not PyPI) — so it passes on CI by skipping.
 - Engine stderr `TypeError: Cannot read property … of null` lines at load
   are a known Qt/offscreen artifact — bindings resolve correctly; tests
   assert post-load values.

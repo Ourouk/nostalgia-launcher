@@ -47,11 +47,11 @@ Dialog {
             Field { caption: "REPO URL (optional https link)"; onEdit: (t) => customAssetModel.setField("repoUrl", t) }
             CheckBox {
                 text: "Essential (auto-install)"
-                onCheckedChanged: customAssetModel.setFlag("essential", checked)
+                onToggled: customAssetModel.setFlag("essential", checked)
             }
             CheckBox {
                 text: "Probe the remote file for updates (drift detection)"
-                onCheckedChanged: customAssetModel.setFlag("probe", checked)
+                onToggled: customAssetModel.setFlag("probe", checked)
             }
             Label {
                 Layout.fillWidth: true

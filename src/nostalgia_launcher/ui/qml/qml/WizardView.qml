@@ -179,7 +179,7 @@ Dialog {
                 }
                 Rectangle {
                     Layout.fillWidth: true
-                    height: 1
+                    Layout.preferredHeight: 1
                     color: appTheme.colors["C_DIVIDER"]
                 }
                 Label {
@@ -198,7 +198,7 @@ Dialog {
                 }
                 Rectangle {
                     Layout.fillWidth: true
-                    height: 1
+                    Layout.preferredHeight: 1
                     color: appTheme.colors["C_DIVIDER"]
                 }
                 Label {
@@ -218,7 +218,7 @@ Dialog {
                 }
                 Rectangle {
                     Layout.fillWidth: true
-                    height: 1
+                    Layout.preferredHeight: 1
                     color: appTheme.colors["C_DIVIDER"]
                 }
                 Label {
@@ -281,7 +281,14 @@ Dialog {
     FileDialog {
         id: folderPicker
         title: "Select game client folder"
-        fileMode: FileDialog.OpenDirectory
+        // NOTE: FileDialog.OpenDirectory is undefined on some backends
+        // (offscreen probe: OpenFile=0, OpenDirectory=undefined) — the
+        // folder mode is the dialog default, so only set fileMode when
+        // the enum exists.
+        Component.onCompleted: {
+            if (FileDialog.OpenDirectory !== undefined)
+                fileMode = FileDialog.OpenDirectory
+        }
         onAccepted: wizard.setFolder(currentFolder.toString().replace(/^file:\/\//, ""))
     }
 }

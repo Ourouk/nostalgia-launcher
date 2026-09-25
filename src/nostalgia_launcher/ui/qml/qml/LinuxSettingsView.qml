@@ -90,13 +90,13 @@ Dialog {
             CheckBox {
                 text: "Client-folder DXVK (skip Proton's built-in)"
                 checked: linuxModel.dxvk
-                onCheckedChanged: linuxModel.setDxvk(checked)
+                onToggled: linuxModel.setDxvk(checked)
             }
             CheckBox {
                 text: "GameMode"
                 enabled: linuxModel.gamemodeAvail
                 checked: linuxModel.gamemode && linuxModel.gamemodeAvail
-                onCheckedChanged: linuxModel.setGamemode(checked)
+                onToggled: linuxModel.setGamemode(checked)
             }
             Label {
                 Layout.fillWidth: true
@@ -110,7 +110,7 @@ Dialog {
                 text: "Wayland backend"
                 enabled: linuxModel.waylandAvail
                 checked: linuxModel.wayland && linuxModel.waylandAvail
-                onCheckedChanged: linuxModel.setWayland(checked)
+                onToggled: linuxModel.setWayland(checked)
             }
             Label {
                 Layout.fillWidth: true
