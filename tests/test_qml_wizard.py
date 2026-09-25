@@ -186,7 +186,9 @@ def test_trust_accept_selection(model, config_file):
     sel = model.takeSelection()
     assert sel["kind"] == "file"
     assert sel["path"] == config_file
-    assert sel["install_dir"] == "/games/wizard"
+    # normpath is platform-specific (backslashes on Windows) — compare
+    # against the normalized expectation, not the literal input.
+    assert sel["install_dir"] == os.path.normpath("/games/wizard")
     assert sel["server_name"] == "Wizard Server"
 
 
