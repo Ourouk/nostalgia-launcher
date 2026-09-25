@@ -88,7 +88,7 @@ def test_main_constructs_backend_with_open_log_true(
 ):
     seen = {}
 
-    class FakeQtApp:
+    class FakeApp:
         def __init__(self, open_log=False):
             seen["open_log"] = open_log
 
@@ -98,8 +98,8 @@ def test_main_constructs_backend_with_open_log_true(
         def run(self):
             return 0
 
-    monkeypatch.setenv("NOSTALGIA_UI_BACKEND", "qt")
-    monkeypatch.setattr(cli, "resolve_backend", lambda name: FakeQtApp)
+    monkeypatch.setenv("NOSTALGIA_UI_BACKEND", "qml")
+    monkeypatch.setattr(cli, "resolve_backend", lambda name: FakeApp)
     assert cli.main(["--launcher-config", launcher_file, "--show-log"]) == 0
     assert seen["open_log"] is True
 
@@ -109,7 +109,7 @@ def test_main_constructs_backend_with_open_log_false(
 ):
     seen = {}
 
-    class FakeQtApp:
+    class FakeApp:
         def __init__(self, open_log=False):
             seen["open_log"] = open_log
 
@@ -119,7 +119,7 @@ def test_main_constructs_backend_with_open_log_false(
         def run(self):
             return 0
 
-    monkeypatch.setenv("NOSTALGIA_UI_BACKEND", "qt")
-    monkeypatch.setattr(cli, "resolve_backend", lambda name: FakeQtApp)
+    monkeypatch.setenv("NOSTALGIA_UI_BACKEND", "qml")
+    monkeypatch.setattr(cli, "resolve_backend", lambda name: FakeApp)
     assert cli.main(["--launcher-config", launcher_file]) == 0
     assert seen["open_log"] is False

@@ -13,7 +13,7 @@ src/nostalgia_launcher/
   services/       # catalog, addons, mods, assets, news, realm/Config.wtf seeding, self_update, umu, logo, mpq, config_import, update_backend/, sources/
   controllers/    # update, news, mods, assets, addons, settings (toolkit-agnostic)
   state/          # models.py (state dataclasses), events.py (dispatcher)
-  ui/qt/          # app, main_window, bridge, theme, panels, dialogs
+  ui/             # bridge, theme, metrics, relaunch, app_lock_qt + qml/ (app, view-models, qml/)
 ```
 
 - Config discovery: `launcher.discover_path()` looks next to the exe when
@@ -31,7 +31,7 @@ src/nostalgia_launcher/
   repo root, or `--launcher-config`). Every endpoint is a direct, fully-qualified
   HTTPS URL — there is no base-URL derivation and no mirrors. Missing/invalid
   config with no `--launcher-config`
-  opens a **modal first-launch wizard** (`ui/qt/launcher_config_dialog.py`,
+  opens a **modal first-launch wizard** (`ui/qml/wizard.py` + `qml/WizardWindow.qml`,
   driven by `cli._pick_launcher_config()`); an explicit `--launcher-config`
   that is missing/invalid is a hard `cli.main()` error (no wizard). The wizard
   validates via `launcher.validate_path()` (no global-state side effect) and
@@ -39,7 +39,7 @@ src/nostalgia_launcher/
   Games/<ServerName>-pre-filled folder stage, and the accepted folder is
   recorded as the active profile's confirmed game folder by
   `config_store.apply_confirmed_out_dir(prof.state_path(), …)` in
-  `cli._first_launch` (Settings → PROFILES → New… writes the fresh profile's
+  `cli._first_launch` (Settings → PROFILES → Import… writes the fresh profile's
   own store the same way). The config selection itself is persisted to
   `launcher.user_config_path()` (the per-user config dir) via
   `launcher.persist()`, taking precedence over auto-discovery on later runs.
@@ -69,21 +69,21 @@ src/nostalgia_launcher/
 ## Profiles & single-instance guard
 
 **Profiles** (`core/profiles.py`, pure stdlib) give each server/community
-fully isolated state. Every profile — including the reserved `default` —
-is a real directory under `<config_dir>/profiles/<name>/`; the `default`
-profile resolves to `<config_dir>/profiles/default/`. There is no legacy
-top-level layout and no migration: a fresh install simply starts with an
-empty `profiles/default/`. Non-default profiles live under the same
-scheme at `<config_dir>/profiles/<name>/`:
+fully isolated state. Every profile is a real directory under
+`<config_dir>/profiles/<name>/`, and the name always derives from its
+server (`profiles.profile_name_for` — slugified `server.name`, else the
+config host, else `"Server"` — plus `profiles.unique_name`, so a second
+import of the same server lands on `<Server> 2`). There is no reserved
+default profile and no top-level layout: a fresh install has no profiles
+at all, and the import wizard (`cli._first_launch`, or Settings →
+PROFILES → Import…) creates the first one. Upgrades adopt a legacy
+`profiles/default/` once (`profiles.adopt_legacy_default`, at `cli.main`
+startup): a configured one is renamed after its server, an empty one is
+dropped, anything else is left alone as an ordinary profile:
 
 ```
 <config_dir>/
   profiles.json                        {"active": str, "order": [str]}
-  profiles/default/
-    launcher.json  state.json  hash_cache.json
-    local_<kind>_repo.json             mods/addons/assets content repos
-                                        ({"server", "custom"})
-    torrents/<info_hash>.torrent|.resume   launcher_logo.img
   profiles/<name>/
     launcher.json  state.json  hash_cache.json
     local_<kind>_repo.json             mods/addons/assets content repos
@@ -91,11 +91,14 @@ scheme at `<config_dir>/profiles/<name>/`:
 ```
 
 Resolution order: explicit `--profile NAME` > `profiles.json.active` >
-`default`. An unknown `--profile` is a hard CLI error (stderr, exit 2);
-a missing/corrupt index or ghost pointer rebuilds silently from a
-directory scan — startup never crashes over the registry. One profile is
-active per process, pinned once via `profiles.activate(resolve(...))` in
-`cli.main()`; everything downstream routes through `profiles.active()`:
+first known profile; an empty registry resolves to None and the caller
+opens the import wizard. An unknown `--profile` is a hard CLI error
+(stderr, exit 2) — except when zero profiles exist, which also lands on
+the wizard. A missing/corrupt index or ghost pointer rebuilds silently
+from a directory scan — startup never crashes over the registry. One
+profile is active per process, pinned once via
+`profiles.activate(resolve(...))` in `cli.main()`; everything downstream
+routes through `profiles.active()`:
 `config_store.configure(state/cache)` in `_run_backend`,
 `launcher.local_repo_path()` (the import-time content repos),
 `logo.logo_cache_path()`,
@@ -106,7 +109,7 @@ profile keeps its own client install folder. `controllers/settings`
 checks `first_run` against
 `config_store.config_file` (NOT the constants) so a fresh profile gets
 its own wizard flow. Name grammar `[A-Za-z0-9][A-Za-z0-9 _.-]{0,31}` with
-no trailing dot/space; `"default"` is reserved. UI: the main-window
+no trailing dot/space. UI: the main-window
 header carries a profile **combo box** (`profileCombo`) — picking
 another entry confirms ("The launcher will restart using profile …"),
 persists the pointer and relaunches detached (`profiles_ui.
@@ -114,9 +117,10 @@ switch_profile`; `relaunch_with_profile` strips BOTH `--profile X` and
 `--profile=X`, child env gets `NOSTALGIA_RELAUNCH=1`) and quits;
 declining or a failed relaunch reverts the selection (a failed relaunch
 still leaves the pointer persisted, so a manual start lands on it).
-Settings → PROFILES is the **editor** only: New…/Duplicate/Rename…/
-Delete acting on its combo selection — deleting the ACTIVE profile
-resets the pointer to default and offers an immediate restart.
+Settings → PROFILES is the **editor** only: Import…/Delete acting
+on its combo selection — deleting the ACTIVE profile falls back to the
+first remaining profile (or nothing, so the next launch wizards) and
+offers an immediate restart when a profile is left to run.
 Concurrency model: one
 active profile, restart on switch, NO parallel instances of the SAME
 profile — different profiles MAY run side by side.
@@ -128,7 +132,7 @@ profile — different profiles MAY run side by side.
 **Single-instance guard**: `cli._run_backend` derives the key from the
 active profile's state path (`core/app_lock.state_key` =
 `"nostalgia-launcher-" + sha1(state_path)[:12]`) and serves a Qt
-`QLocalServer` (`ui/qt/app_lock_qt.py`; Qt imports stay inside
+`QLocalServer` (`ui/app_lock_qt.py`; Qt imports stay inside
 functions so core stays PySide6-free). A second launch of the SAME
 profile connects, forwards `{"op": "raise"}`, prints "Already running
 (profile X) — focusing existing window." and exits 0; the running window
@@ -204,7 +208,7 @@ the QLocalServer guard remains authoritative there.
   launch prefers the first on-disk executable from
   `mods.external_launcher_executables()` — active external launchers only:
   required ones always, opt-ins only when enabled in state, and only when the
-  exe exists — else `WoW.exe` (`core/filesystem.pick_game_executable`). There
+  exe exists — else the configured client exe (`server.client_executable`, default `"WoW.exe"`) via `core/filesystem.pick_game_executable`. There
   is NO hardcoded loader preference.
 - **Custom entries are first-class**: MODS and ASSETS panels have an
   "+ Add custom …" banner button (`custom_mod_dialog.py` covers every
@@ -227,7 +231,7 @@ the QLocalServer guard remains authoritative there.
   republish silently instead of failing with "Mod catalog URL is not
   configured."
 - **Assets are the third content vertical** (`services/assets.py`,
-  `controllers/assets.py`, `ui/qt/assets_panel.py`, state in
+  `controllers/assets.py`, `ui/qml/qml/ContentView.qml`, state in
   `AssetsState`) — single-file server content patches such as MPQs, kept
   strictly separate from mods (DLLs) and addons (Lua/XML folders). The list
   comes from the launcher config's top-level `"assets": […]` entries plus
@@ -258,7 +262,8 @@ the QLocalServer guard remains authoritative there.
   **custom_foreign** (untracked). Read-only except
   `remove_custom_mpq`, which refuses anything outside `Data/`;
   `Data/Cache` is skipped. Surfaced inside the ASSETS tab
-  (`ui/qt/assets_panel.py`): the panel re-scans on every render (init,
+  (`ui/qml/qml/ContentView.qml` extras block): the model re-scans on every
+  refresh (init,
   AssetsLoaded, apply completion) for the version picked in its header
   combo, and offers confirmed per-row removal of foreign files.
 - **realmlist.wtf**: `services/tweaks.write_realmlist_wtf(client_dir)`
@@ -282,8 +287,8 @@ the QLocalServer guard remains authoritative there.
 
 - Controllers are toolkit-agnostic: they post dataclass *events* to a shared
   `EventDispatcher` (`state/events.py`) from worker threads; they never touch
-  widgets. The Qt side (`ui/qt/bridge.py`) converts events to Qt signals on the
-  main thread.
+  UI code. The QML side (`ui/bridge.py`) converts events to Qt signals on the
+  main thread, exposed to QML as properties by view-models.
 - Client updates are **torrent-only for incremental**
   + single-zip HTTP fallback for first install: the active
   download source is `server.download.torrent` (`torrent_url`
@@ -385,7 +390,7 @@ the QLocalServer guard remains authoritative there.
   `umu_renderer` (`auto`/`dxvk-d3d8`/`wined3d-opengl`), `umu_gamemode`,
   `umu_wayland`, `umu_binary_path`, `umu_game_id`, `umu_skip_builtin_dxvk`.
   They render in a **dedicated
-  `LinuxSettingsDialog`** (`ui/qt/linux_settings_dialog.py`) opened by the
+  `LinuxSettingsView`** (`ui/qml/qml/LinuxSettingsView.qml`) opened by the
   "Linux (UMU) Settings…" button in the main Settings dialog — *not* a section of
   it. Renderer maps to `PROTON_DXVK_D3D8`/`PROTON_USE_WINED3D` env vars and the
   `Config.wtf` `gxApi`; GameMode wraps launch in `gamemoderun` (only if

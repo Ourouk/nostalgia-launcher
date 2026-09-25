@@ -138,6 +138,9 @@ class LauncherConfig:
     theme: dict | None = None
     addon_git_hosts: list[str] = field(default_factory=list)
     torrent_root_marker: str = "WoW.exe"
+    # Pinned game executable filename (no path) for servers whose launch
+    # binary is not WoW.exe. Declarative only — no exe sniffing.
+    client_executable: str = "WoW.exe"
     # Pinned client version for this server profile (subset of mpq.SUPPORTED_VERSIONS).
     client_version: str = "1.12.1"
     embedded_mods: list[dict] = field(default_factory=list)
@@ -414,7 +417,13 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
     )
 
     addon_git_hosts = _parse_git_hosts(data.get("addon_git_hosts"))
-    torrent_root_marker = _parse_root_marker(server.get("torrent_root_marker"))
+    client_executable = _parse_root_marker(server.get("client_executable"))
+    if server.get("torrent_root_marker") is not None:
+        torrent_root_marker = _parse_root_marker(
+            server.get("torrent_root_marker")
+        )
+    else:
+        torrent_root_marker = client_executable
     client_version = _parse_client_version(server.get("client_version"))
 
     # ── server.download block ──
@@ -473,6 +482,7 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
         theme=theme,
         addon_git_hosts=addon_git_hosts,
         torrent_root_marker=torrent_root_marker,
+        client_executable=client_executable,
         embedded_mods=embedded_mods,
         embedded_addons=embedded_addons,
         embedded_assets=embedded_assets,
@@ -922,6 +932,17 @@ def client_version() -> str:
     """
     c = config()
     return c.client_version if c else ""
+
+
+def client_executable() -> str:
+    """The configured game executable filename (no path).
+
+    Returns ``""`` when no launcher config is loaded (wizard case); the
+    configured default ``"WoW.exe"`` is already materialized in
+    ``LauncherConfig.client_executable`` when a config exists.
+    """
+    c = config()
+    return c.client_executable if c else ""
 
 
 def torrent_update_allowed() -> bool:
