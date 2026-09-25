@@ -96,6 +96,7 @@ def test_shell_chrome_objects_exist(engine):
     for name in (
         "qmlHeader",
         "qmlWordmark",
+        "qmlLogo",
         "qmlNavBar",
         "qmlFooter",
         "qmlStatusLabel",
@@ -103,6 +104,39 @@ def test_shell_chrome_objects_exist(engine):
         "qmlPrimaryButton",
     ):
         assert root.findChild(QObject, name) is not None, name
+
+
+def test_wordmark_shows_server_name_text(engine):
+    """Header shows the server name (text), logo hidden until fetched."""
+    eng, _state, _theme = engine
+    root = eng.rootObjects()[0]
+    label = root.findChild(QObject, "qmlWordmark")
+    logo = root.findChild(QObject, "qmlLogo")
+    # Fixture LauncherState() has no server name: fallback wordmark text.
+    assert label.property("text") == "NOSTALGIA LAUNCHER"
+    assert label.property("visible") is True
+    assert logo.property("visible") is False
+
+
+def test_header_logo_replaces_wordmark_when_set(engine):
+    """A fetched logo URL hides the text and shows the image."""
+    eng, state, _theme = engine
+    root = eng.rootObjects()[0]
+    label = root.findChild(QObject, "qmlWordmark")
+    logo = root.findChild(QObject, "qmlLogo")
+    state.setServerName("Test Server")
+    assert label.property("text") == "Test Server"
+    state.setLogoSource("file:///tmp/launcher_logo.img")
+    assert logo.property("visible") is True
+    assert label.property("visible") is False
+
+
+def test_header_state_defaults(qapp):
+    state = LauncherState(server_name="My Server")
+    assert state.property("serverName") == "My Server"
+    assert state.property("logoSource") == ""
+    state.setLogoSource("file:///tmp/logo.img")
+    assert state.property("logoSource") == "file:///tmp/logo.img"
 
 
 def test_status_binding_follows_view_model(engine):

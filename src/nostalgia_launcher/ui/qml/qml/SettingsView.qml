@@ -278,6 +278,8 @@ ApplicationWindow {
                                 text: profilesCombo.displayText
                                 elide: Text.ElideRight
                                 verticalAlignment: Text.AlignVCenter
+                                leftPadding: 8
+                                rightPadding: 28
                                 color: appTheme.colors["C_TEXT"]
                             }
                         }

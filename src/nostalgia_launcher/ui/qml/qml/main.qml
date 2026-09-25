@@ -34,10 +34,25 @@ ApplicationWindow {
             anchors.rightMargin: 16
             Label {
                 objectName: "qmlWordmark"
-                text: "NOSTALGIA LAUNCHER"
+                visible: launcherState.logoSource === ""
+                text: launcherState.serverName !== "" ? launcherState.serverName : "NOSTALGIA LAUNCHER"
                 font.bold: true
                 font.pointSize: 13
                 color: appTheme.colors["C_GOLD_LT"]
+            }
+            Image {
+                objectName: "qmlLogo"
+                visible: launcherState.logoSource !== ""
+                source: launcherState.logoSource
+                // Widget-shell parity: fit within 28px tall, 320px wide.
+                // Height drives the scale (aspect kept); maximumWidth
+                // caps very wide logos. No sourceSize.width: upscaling a
+                // narrow logo would stretch it to the cap.
+                sourceSize.height: 28
+                fillMode: Image.PreserveAspectFit
+                Layout.preferredHeight: 28
+                Layout.maximumWidth: 320
+                Accessible.name: "Server logo"
             }
             Item { Layout.fillWidth: true }
             ComboBox {
@@ -58,6 +73,8 @@ ApplicationWindow {
                     text: profileCombo.displayText
                     elide: Text.ElideRight
                     verticalAlignment: Text.AlignVCenter
+                    leftPadding: 8
+                    rightPadding: 28
                     color: appTheme.colors["C_TEXT"]
                 }
             }

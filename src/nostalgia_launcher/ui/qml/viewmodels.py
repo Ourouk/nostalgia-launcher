@@ -34,17 +34,31 @@ from ...state.events import (
 
 
 class LauncherState(QObject):
-    """Scalar launcher state for QML bindings (status + progress)."""
+    """Scalar launcher state for QML bindings (status + progress).
+
+    Also owns the header wordmark: `serverName` (server-name text shown
+    until a logo arrives) and `logoSource` (local `file://` URL of the
+    fetched server logo, "" until/unless the fetch succeeds — the text
+    stays on failure, matching the old widget shell).
+    """
 
     statusTextChanged = Signal()
     progressValueChanged = Signal()
     progressLabelChanged = Signal()
+    serverNameChanged = Signal()
+    logoSourceChanged = Signal()
+    logoFetched = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, server_name="", logo_source=""):
         super().__init__(parent)
         self._status_text = "Ready to update"
         self._progress_value = 0.0
         self._progress_label = ""
+        self._server_name = str(server_name or "")
+        self._logo_source = str(logo_source or "")
+        self.logoFetched.connect(
+            self.applyLogoSource, type=Qt.ConnectionType.QueuedConnection
+        )
 
     # ── properties ────────────────────────────────────────────────────
 
@@ -90,7 +104,48 @@ class LauncherState(QObject):
         notify=progressLabelChanged,
     )
 
+    def _get_server_name(self) -> str:
+        return self._server_name
+
+    def _set_server_name(self, value: str):
+        value = str(value or "")
+        if value != self._server_name:
+            self._server_name = value
+            self.serverNameChanged.emit()
+
+    serverName = Property(
+        str, _get_server_name, _set_server_name, notify=serverNameChanged
+    )
+
+    def _get_logo_source(self) -> str:
+        return self._logo_source
+
+    def _set_logo_source(self, value: str):
+        value = str(value or "")
+        if value != self._logo_source:
+            self._logo_source = value
+            self.logoSourceChanged.emit()
+
+    logoSource = Property(
+        str, _get_logo_source, _set_logo_source, notify=logoSourceChanged
+    )
+
     # ── event intake ──────────────────────────────────────────────────
+
+    @Slot(str)
+    def setServerName(self, text: str):
+        """Header wordmark text (main-thread slot for async updates)."""
+        self._set_server_name(text)
+
+    @Slot(str)
+    def setLogoSource(self, source: str):
+        """Header logo `file://` URL (main-thread direct setter)."""
+        self._set_logo_source(source)
+
+    @Slot(str)
+    def applyLogoSource(self, source: str):
+        """Queued logo setter — the worker thread emits `logoFetched`."""
+        self._set_logo_source(source)
 
     @Slot(str)
     def setStatusText(self, text: str):

@@ -11,6 +11,7 @@ in frozen builds (bundled via the PyInstaller specs' `datas`).
 
 import os
 import sys
+import threading
 
 from PySide6.QtCore import QObject, QTimer, QUrl
 from PySide6.QtGui import QFontDatabase, QGuiApplication, QIcon
@@ -21,10 +22,11 @@ from PySide6.QtWidgets import QApplication
 from ...core import launcher, platform_support, profiles
 from ...core.helpers import relative_age
 from ...services import addons as addons_service
+from ...services import logo as logo_service
 from ...state.events import LogMessage
 from ..bridge import ControllerHub
 from ..relaunch import switch_profile
-from ..theme import palette_for_config
+from ..theme import logo_for_config, palette_for_config
 from .addons import AddonsModel, build_items, expected_interface
 from .content import ContentListModel, build_rows, essential_pending
 from .custom import CustomAddonModel, CustomAssetModel, CustomModModel
@@ -107,6 +109,13 @@ def create_qml_app():
     return app
 
 
+def _file_url(path: str | None) -> str:
+    """Local path → QML `Image.source` URL ("" when no file)."""
+    if not path:
+        return ""
+    return QUrl.fromLocalFile(path).toString()
+
+
 class QmlNostalgiaLauncherApp:
     """QML application shell — hub + view-models + QQmlApplicationEngine."""
 
@@ -114,7 +123,13 @@ class QmlNostalgiaLauncherApp:
         self._open_log = bool(open_log)
         self._app = create_qml_app()
         self._hub = ControllerHub()
-        self._state = LauncherState()
+        self._state = LauncherState(
+            server_name=launcher.server_name()
+            or profiles.active().name
+            or "Nostalgia Launcher",
+            logo_source=_file_url(logo_service.cached_logo()),
+        )
+        self._start_logo_fetch()
         self._state.attach(self._hub.bridge)
         palette = palette_for_config(launcher.config())
         self._theme = ThemeBridge(palette)
@@ -206,6 +221,31 @@ class QmlNostalgiaLauncherApp:
         QTimer.singleShot(1500, self._hub.addons.verify)
         if self._open_log:
             self.open_session_log()
+
+    def _start_logo_fetch(self):
+        """Background logo download (widget-shell parity, never blocks).
+
+        The server-name text shows until the fetch lands; a failure (or
+        no configured logo) keeps the text — `fetch_logo` already falls
+        back to the cached file, and the queued `logoFetched` signal
+        hops the result onto the GUI thread.
+        """
+        try:
+            url = logo_for_config(launcher.config())
+        except Exception:
+            return
+        if not url:
+            return
+
+        def _run():
+            try:
+                path = logo_service.fetch_logo(url)
+            except Exception:
+                return
+            if path:
+                self._state.logoFetched.emit(_file_url(path))
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _on_operation_finished(self, kind: str, ok: bool, message: str):
         self._update.on_finished(kind, ok, message)
