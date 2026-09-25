@@ -223,12 +223,13 @@ class QmlNostalgiaLauncherApp:
             self.open_session_log()
 
     def _start_logo_fetch(self):
-        """Background logo download (widget-shell parity, never blocks).
+        """Background logo refresh (widget-shell parity, never blocks).
 
-        The server-name text shows until the fetch lands; a failure (or
-        no configured logo) keeps the text — `fetch_logo` already falls
-        back to the cached file, and the queued `logoFetched` signal
-        hops the result onto the GUI thread.
+        The header already shows the cached logo (or the server-name text
+        with no cache); the fetch only revalidates a stale/missing cache —
+        `fetch_logo` serves a fresh cache without any network, so normal
+        launches never contact the logo host. The queued `logoFetched`
+        signal hops the result onto the GUI thread.
         """
         try:
             url = logo_for_config(launcher.config())
