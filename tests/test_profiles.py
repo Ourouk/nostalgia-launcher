@@ -109,6 +109,7 @@ def test_unknown_override_raises(prof_home):
         "x" * 33,
         "trail.",
         "trail ",
+        "_underscore",
     ],
 )
 def test_invalid_names(name):
@@ -116,7 +117,18 @@ def test_invalid_names(name):
 
 
 @pytest.mark.parametrize(
-    "name", ["A", "z9", "My Server", "p.t-1_x", "x" * 32, "default"]
+    "name",
+    [
+        "A",
+        "z9",
+        "My Server",
+        "p.t-1_x",
+        "x" * 32,
+        "default",
+        "Élysée",
+        "魔兽世界",
+        "München",
+    ],
 )
 def test_valid_names(name, prof_home):
     assert profiles.validate_name(name) == ""
@@ -141,6 +153,10 @@ def test_valid_names(name, prof_home):
         ("...", ""),
         (None, ""),
         (123, ""),
+        ("Élysée WoW", "Élysée WoW"),
+        ("魔兽世界", "魔兽世界"),
+        ("魔兽世界!!!", "魔兽世界"),
+        ("_ leading", "leading"),
     ],
 )
 def test_slugify(raw, expected):
@@ -158,6 +174,7 @@ def test_slugify(raw, expected):
         ("   ", "h.test", "h.test"),
         ("", "", "Server"),
         ("../evil", "", "evil"),
+        ("魔兽世界", "", "魔兽世界"),
     ],
 )
 def test_profile_name_for(server_name, host, expected):

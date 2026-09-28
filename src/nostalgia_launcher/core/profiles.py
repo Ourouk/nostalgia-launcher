@@ -34,7 +34,7 @@ DEFAULT_PROFILE = "default"
 
 # 1–32 chars: start alphanumeric, then letters/digits/space/._- . Trailing
 # dot or space is rejected separately (Windows path-hostile).
-_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.-]{0,31}\Z")
+_NAME_RE = re.compile(r"[^\W_][\w .-]{0,31}\Z")
 
 _INDEX_LOCK = threading.RLock()
 
@@ -114,10 +114,10 @@ def slugify(raw: object) -> str:
     if not isinstance(raw, str):
         return ""
     s = re.sub(r"\s+", " ", raw).strip()
-    s = "".join(c for c in s if c.isascii() and (c.isalnum() or c in " _.-"))
+    s = "".join(c for c in s if c.isalnum() or c in " _.-")
     s = s.strip().lstrip(".").strip()
     # Must start alphanumeric: drop leading separators left over.
-    s = re.sub(r"^[^A-Za-z0-9]+", "", s)
+    s = re.sub(r"^[\W_]+", "", s)
     s = s[:32].rstrip(". ")
     if not s or not _NAME_RE.match(s):
         return ""
