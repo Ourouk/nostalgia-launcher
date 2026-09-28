@@ -25,6 +25,7 @@ from ..state.events import (
     StatusChanged,
 )
 from ..state.models import AssetPending, AssetsState, AssetState
+from .apply_shared import action_label, resolve_enabled, sync_skipped
 
 
 class AssetsController:
@@ -340,15 +341,11 @@ class AssetsController:
                     continue
                 state = assets_cfg.get(aid, {})
 
-                pend = pending.get(aid)
-                enabled = (
-                    pend.enabled
-                    if pend is not None and pend.enabled is not None
-                    else state.get("enabled", False)
+                # A targeted single-asset install/update always means
+                # "do it".
+                enabled = resolve_enabled(
+                    pending.get(aid), state, only_asset_id is not None
                 )
-                # A targeted single-asset install/update always means "do it".
-                if only_asset_id is not None and aid == only_asset_id:
-                    enabled = True
 
                 installed_files = state.get("installed_files") or []
                 is_installed = bool(installed_files) and self._files_present(
@@ -365,19 +362,10 @@ class AssetsController:
                 needs_update = enabled and is_installed and stale
 
                 if not (needs_install or needs_uninstall or needs_update):
-                    if aid in pending:
-                        assets_cfg.setdefault(aid, {})["enabled"] = enabled
-                    if not enabled and state.get("error"):
-                        assets_cfg.setdefault(aid, {})["error"] = None
+                    sync_skipped(assets_cfg, aid, pending, enabled, state)
                     continue
 
-                action = (
-                    "Installing"
-                    if needs_install
-                    else "Updating"
-                    if needs_update
-                    else "Removing"
-                )
+                action = action_label(needs_install, needs_update)
                 self._dispatcher.post(
                     StatusChanged(f"{action} {asset['name']}…")
                 )

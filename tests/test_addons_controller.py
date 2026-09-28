@@ -66,7 +66,7 @@ def backends(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(ac.addons, "addon_repo_names", lambda *a, **k: [])
     monkeypatch.setattr(
-        ac.addons, "patch_pfui_default_profile", lambda client: None
+        ac.pfui, "patch_pfui_default_profile", lambda client: None
     )
     monkeypatch.setattr(
         ac.addons, "read_toc_file", lambda path: {"Title": "X"}
@@ -840,7 +840,7 @@ def test_apply_marks_pfui_for_profile_patch(
     cfg["addons"] = {}
     patched = []
     monkeypatch.setattr(
-        ac.addons,
+        ac.pfui,
         "patch_pfui_default_profile",
         lambda client: patched.append(client),
     )

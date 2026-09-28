@@ -775,6 +775,8 @@ class UpdateController:
         its own flag so the button stays disabled while addons download,
         exactly like the mods flow.
         """
+        # ponytail: priority chain — each guard outranks the ones below.
+        # New states add one guard in rank order, not table rows.
         if self.state.game_running:
             return Readiness(
                 "terminate",
@@ -790,36 +792,7 @@ class UpdateController:
             }.get(self._op or "", "Checking…")
             return Readiness("busy", label, self.state.status)
         if not self._client_updates_enabled():
-            if not self._playable_client_present():
-                # Updates are off but the client folder holds nothing
-                # playable yet — offer a first-time BitTorrent acquisition.
-                out = (self._get_out_dir() or "").strip()
-                if not out:
-                    return Readiness(
-                        "disabled", "DOWNLOAD", "Set the game folder first"
-                    )
-                if torrent_recovery_available():
-                    return Readiness(
-                        "download",
-                        "DOWNLOAD",
-                        "Download client via BitTorrent",
-                    )
-                if not can_launch_client():
-                    return Readiness(
-                        "disabled",
-                        "DOWNLOAD",
-                        "No BitTorrent source — enable client updates",
-                    )
-                return Readiness(
-                    "busy",
-                    "DOWNLOAD",
-                    "No BitTorrent source — enable client updates",
-                )
-            if self._mods_have_errors():
-                return Readiness("busy", "PLAY", "Mod errors — check MODS tab")
-            if not can_launch_client():
-                return Readiness("busy", "READY", "Client updates disabled")
-            return Readiness("play", "PLAY", "Client updates disabled")
+            return self._readiness_updates_disabled()
         # Torrent-only readiness (no manifest/diff).
         # Disabled till verification (cache makes this instant via
         # TORRENT_VALIDATION_CACHE_KEY). Magnet-only with
@@ -899,35 +872,76 @@ class UpdateController:
                     "Torrent unavailable — playing unverified client",
                 )
             return Readiness("update", "UPDATE", "Download via BitTorrent")
-        # Fallback zip for first-install when torrent unavailable
         if not self.state.client_ready:
-            from ..core import launcher as _launcher_f
-
-            _cfg_f = _launcher_f.config()
-            _fallback = _cfg_f.download_fallback_url if _cfg_f else None
-            if _fallback and not self._playable_client_present():
-                return Readiness(
-                    "update", "UPDATE", "Download via HTTP fallback"
-                )
-            if not can_launch_client():
-                reason = (
-                    "umu-run not found"
-                    if is_linux()
-                    else "launching unsupported on this platform"
-                )
-                return Readiness(
-                    "disabled", "UPDATE", f"Torrent unavailable — {reason}"
-                )
-            if self._playable_client_present():
-                return Readiness(
-                    "play", "PLAY", "Torrent unavailable — playing client"
-                )
-            return Readiness("play", "PLAY", "Torrent unavailable")
+            return self._readiness_no_client()
         if self._mods_have_errors():
             return Readiness("busy", "PLAY", "Mod errors — check MODS tab")
         if not can_launch_client():
             return Readiness("busy", "READY", "Everything up to date!")
         return Readiness("play", "PLAY", "Everything up to date!")
+
+    def _readiness_updates_disabled(self) -> Readiness:
+        """Readiness when the user turned client updates off.
+
+        Nothing playable yet means first-time acquisition (BitTorrent
+        when present); otherwise PLAY or a disabled button with the
+        reason."""
+        if not self._playable_client_present():
+            # Updates are off but the client folder holds nothing
+            # playable yet — offer a first-time BitTorrent acquisition.
+            out = (self._get_out_dir() or "").strip()
+            if not out:
+                return Readiness(
+                    "disabled", "DOWNLOAD", "Set the game folder first"
+                )
+            if torrent_recovery_available():
+                return Readiness(
+                    "download",
+                    "DOWNLOAD",
+                    "Download client via BitTorrent",
+                )
+            if not can_launch_client():
+                return Readiness(
+                    "disabled",
+                    "DOWNLOAD",
+                    "No BitTorrent source — enable client updates",
+                )
+            return Readiness(
+                "busy",
+                "DOWNLOAD",
+                "No BitTorrent source — enable client updates",
+            )
+        if self._mods_have_errors():
+            return Readiness("busy", "PLAY", "Mod errors — check MODS tab")
+        if not can_launch_client():
+            return Readiness("busy", "READY", "Client updates disabled")
+        return Readiness("play", "PLAY", "Client updates disabled")
+
+    def _readiness_no_client(self) -> Readiness:
+        """Readiness when no verified client exists and torrent is out.
+
+        HTTP fallback first, then the launch blocker, then an
+        unverified-but-playable client, else plain unavailable."""
+        from ..core import launcher as _launcher_f
+
+        _cfg_f = _launcher_f.config()
+        _fallback = _cfg_f.download_fallback_url if _cfg_f else None
+        if _fallback and not self._playable_client_present():
+            return Readiness("update", "UPDATE", "Download via HTTP fallback")
+        if not can_launch_client():
+            reason = (
+                "umu-run not found"
+                if is_linux()
+                else "launching unsupported on this platform"
+            )
+            return Readiness(
+                "disabled", "UPDATE", f"Torrent unavailable — {reason}"
+            )
+        if self._playable_client_present():
+            return Readiness(
+                "play", "PLAY", "Torrent unavailable — playing client"
+            )
+        return Readiness("play", "PLAY", "Torrent unavailable")
 
     # ── internals ───────────────────────────────────────────────────────────
 

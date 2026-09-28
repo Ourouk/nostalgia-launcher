@@ -25,6 +25,7 @@ from ..state.events import (
     StatusChanged,
 )
 from ..state.models import ModPending, ModsState, ModState
+from .apply_shared import action_label, resolve_enabled, sync_skipped
 
 
 class ModsController:
@@ -372,19 +373,14 @@ class ModsController:
                 # to saved config. No registry-default fallback here: a mod is
                 # only ever "enabled" because the user (or the one-time
                 # default-mods seed) explicitly said so.
-                pend = pending.get(mid)
-                enabled = (
-                    pend.enabled
-                    if pend is not None and pend.enabled is not None
-                    else state.get("enabled", False)
+                # A targeted single-mod update/retry always means
+                # "install this mod". Without this, retrying a failed
+                # install is a no-op: the error handler recorded
+                # enabled=False, so needs_install stays False and the mod
+                # is skipped (only its error gets cleared).
+                enabled = resolve_enabled(
+                    pending.get(mid), state, only_mod_id is not None
                 )
-
-                # A targeted single-mod update/retry always means "install this
-                # mod". Without this, retrying a failed install is a no-op: the
-                # error handler recorded enabled=False, so needs_install stays
-                # False and the mod is skipped (only its error gets cleared).
-                if only_mod_id is not None and mid == only_mod_id:
-                    enabled = True
 
                 installed_ver = state.get("installed_version")
                 is_installed = mods.mod_installed_files_present(
@@ -421,26 +417,10 @@ class ModsController:
                 needs_update = enabled and update_avail
 
                 if not (needs_install or needs_uninstall or needs_update):
-                    if mid in pending:
-                        mods_cfg.setdefault(mid, {}).update(
-                            {
-                                "enabled": enabled,
-                            }
-                        )
-                    # A previously failed mod that the user leaves disabled on
-                    # a later Apply counts as dismissed — clear the error so it
-                    # stops blocking the PLAY button.
-                    if not enabled and state.get("error"):
-                        mods_cfg.setdefault(mid, {})["error"] = None
+                    sync_skipped(mods_cfg, mid, pending, enabled, state)
                     continue
 
-                action = (
-                    "Installing"
-                    if needs_install
-                    else "Updating"
-                    if needs_update
-                    else "Removing"
-                )
+                action = action_label(needs_install, needs_update)
                 self._dispatcher.post(
                     StatusChanged(f"{action} {mod['name']}…")
                 )
