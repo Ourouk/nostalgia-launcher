@@ -18,6 +18,7 @@ tests/tmp/*
 build/
 dist/
 *.AppImage
+tmp/
 
 # Generated macOS icons (packaging/macos/build-icons.sh)
 packaging/macos/NostalgiaLauncher.icns

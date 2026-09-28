@@ -5,9 +5,9 @@ Commands live in `AGENTS.md`; read it first.
 
 ## Running tests
 
-- Qt widget tests set `QT_QPA_PLATFORM=offscreen` themselves; no display needed.
-- Real-display checks are opt-in and skipped by default:
-  `QT_QPA_PLATFORM=xcb RUN_QT_DISPLAY_TESTS=1 uv run pytest tests/test_qt_display.py -k display`
+- QML tests set `QT_QPA_PLATFORM=offscreen` + `QT_QUICK_BACKEND=software`
+  themselves; no display needed. (Note: `uv run pytest` resolves a shim that
+  collects nothing here — use `.venv/bin/python -m pytest`.)
 - **E2E tests** (`tests/test_torrent_update_e2e.py`, marked `e2e`) exercise the
   *real* libtorrent against `context/client` + `context/wow-client.torrent`.
   They skip unless `RUN_E2E=1` and both artifacts exist; CI runs
@@ -22,30 +22,31 @@ Commands live in `AGENTS.md`; read it first.
 ## Fixture & seam quirks
 
 - Tests get a launcher config from the autouse `_launcher_env` fixture in
-  `tests/conftest.py` (server `https://launcher.test` + a "Backup" mirror) —
+  `tests/conftest.py` (server `https://launcher.test`) —
   never rely on real network in tests. Launcher state is **process-global**:
   `_launcher_env` calls `launcher.reset()` + `launcher.configure_from_dict(...)`
   before and after each test, so override `launcher.*` the same way.
 - Tests monkeypatch by dotted path with the FULL package name (e.g.
-  `"nostalgia_launcher.ui.qt.addons_panel.QMessageBox.question"`), not the
+  `"nostalgia_launcher.services.umu.launch"`), not the
   bare module name. Same for services, e.g.
   `"nostalgia_launcher.services.umu.launch"` (the update controller imports
   the umu module lazily inside its launch method).
-- Download-source probing lives in `update_backend/sources.py`. Faking the
-  network for *mirror probing* requires patching
+- Download-source resolution lives in `update_backend/sources.py` — there is
+  **no mirror failover**, it picks the single `server.download` source. Faking
+  the network there means patching
   `nostalgia_launcher.services.update_backend.sources.secure_urlopen`;
   patching `http_update.secure_urlopen` only covers fallback-zip fetches.
 - libtorrent is faked via `sys.modules["libtorrent"]`; the real library is
   never needed to run the suite (only the e2e tests use it).
 - Tests redirect config to `tmp_path` via `config_store.configure(...)`.
-  The default profile is a real directory resolved through
-  `profiles.active()` (`<config_dir>/profiles/default/`), so using the
+  Every profile is a real directory resolved through
+  `profiles.active()` (`<config_dir>/profiles/<name>/`), so using the
   `fake_home` / `hermetic_cli` conftest fixtures (which redirect the
   per-user config dir via HOME / USERPROFILE / APPDATA / LOCALAPPDATA) keeps
   every profile path off the real HOME — use `hermetic_cli` for any test
   that drives `cli.main()`.
-- Qt tests share one `QApplication` via `create_qt_app()` (a second instance
-  aborts Qt); widget assertions use `objectName`s set in the widgets.
+- QML tests share one `QApplication` per module (a second instance
+  aborts Qt); view assertions use `objectName`s set in the QML.
 
 ## Known flaky
 

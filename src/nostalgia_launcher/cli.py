@@ -12,6 +12,7 @@ instead of failing hard.
 import argparse
 import os
 import sys
+from urllib.parse import urlsplit
 
 from .core import (
     app_lock,
@@ -59,7 +60,8 @@ def _parse_args(argv=None) -> argparse.Namespace:
         metavar="NAME",
         help="Run within the named launcher profile (isolated server "
         "config, state, cache, catalogs and torrent metadata under "
-        "<config dir>/profiles/NAME). Unknown names are a hard error.",
+        "<config dir>/profiles/NAME). Unknown names are a hard error "
+        "(with zero profiles the import wizard runs instead).",
     )
     parser.add_argument(
         "--print-log",
@@ -81,25 +83,25 @@ def _parse_args(argv=None) -> argparse.Namespace:
 
 
 def resolve_backend(name=None) -> type | None:
-    """Return the Qt app class for the selected GUI backend.
+    """Return the QML app class for the selected GUI backend.
 
-    Reads the NOSTALGIA_UI_BACKEND environment variable when ``name`` is None
-    (``qt`` is the default; ``pyside6`` is accepted as an alias). Raises
-    ImportError when the Qt module cannot be imported; returns None for an
-    unknown backend name.
+    Reads the NOSTALGIA_UI_BACKEND environment variable when ``name`` is
+    None (``qml`` is the only backend since the widget shell was removed).
+    Raises ImportError when the Qt module cannot be imported; returns None
+    for an unknown backend name.
     """
     if name is None:
-        name = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")
-    if name in ("qt", "pyside6"):
-        from .ui.qt.app import QtNostalgiaLauncherApp
+        name = os.environ.get("NOSTALGIA_UI_BACKEND", "qml")
+    if name == "qml":
+        from .ui.qml.app import QmlNostalgiaLauncherApp
 
-        return QtNostalgiaLauncherApp
+        return QmlNostalgiaLauncherApp
     return None
 
 
 def backend_error_message(name, exc) -> str:
     """Map a failed backend import to a user-facing stderr message."""
-    if name in ("qt", "pyside6"):
+    if name == "qml":
         return _QT_UNAVAILABLE
     return f"Failed to import the Nostalgia Launcher GUI: {exc}\n"
 
@@ -114,17 +116,34 @@ def main(argv=None) -> int:
     from .services import umu
 
     platform_support.set_umu_probe(umu.umu_available)
+    profiles.adopt_legacy_default()
+    explicit = bool(args.launcher_config)
     try:
         prof = profiles.resolve(args.profile)
     except ProfileError as e:
-        sys.stderr.write(f"{e}\n")
-        return 2
-    profiles.activate(prof)
-    if not args.launcher_config and not os.path.exists(prof.launcher_path()):
-        # First launch for this profile: no launcher config in its scope —
-        # the wizard below persists into the profile's own launcher.json.
+        if args.profile and not profiles.list_profiles():
+            # An override with nothing to match against (zero
+            # profiles): fall through to the import wizard, which
+            # creates the first profile under its server's name. The
+            # override itself is not reused — profile names always
+            # derive from the server.
+            prof = None
+        else:
+            sys.stderr.write(f"{e}\n")
+            return 2
+    if prof is None:
+        # No profiles at all yet: the import wizard creates the first
+        # one (named after its server). An explicit --launcher-config
+        # seeds it directly so headless runs never need the wizard.
+        if explicit:
+            return _first_launch_from_file(args.launcher_config, args.show_log)
         return _first_launch(args.show_log)
-    explicit = bool(args.launcher_config)
+    profiles.activate(prof)
+    if not explicit and not os.path.exists(prof.launcher_path()):
+        # A profile with no server config (a reset, or a hand-deleted
+        # launcher.json): import a config, which creates the profile
+        # under its server's name.
+        return _first_launch(args.show_log)
     _cfg, err = launcher.configure(args.launcher_config)
     if err:
         if explicit:
@@ -148,18 +167,74 @@ def _print_log(tail) -> int:
     return 0
 
 
+def _config_host(server_url: str) -> str:
+    """Best-effort hostname for profile naming (bare hosts stay as-is)."""
+    url = (server_url or "").strip()
+    if not url:
+        return ""
+    if "://" in url:
+        try:
+            return urlsplit(url).hostname or ""
+        except ValueError:
+            return ""
+    return url.split("/")[0].strip()
+
+
+def _create_named_profile(server_name: str, host: str):
+    """Create + activate the profile for an imported config, named after
+    its server (suffixed on collision). Returns (profile, error)."""
+    name = profiles.unique_name(profiles.profile_name_for(server_name, host))
+    prof, err = profiles.create(name)
+    if err:
+        return None, err
+    profiles.activate(prof)
+    profiles.set_active(name)
+    return prof, ""
+
+
+def _first_launch_from_file(path: str, show_log: bool = False) -> int:
+    """Zero profiles + explicit --launcher-config: seed the first profile
+    from the file (named after its server) without the wizard. The
+    profile stays unconfirmed (no install folder) until Settings."""
+    cfg, verr = launcher.validate_path(path)
+    if cfg is None:
+        sys.stderr.write(f"Invalid launcher configuration ({path}): {verr}\n")
+        return 1
+    _prof, err = _create_named_profile(
+        cfg.server_name, _config_host(cfg.server_url)
+    )
+    if err:
+        sys.stderr.write(f"{err}\n")
+        return 1
+    _cfg, err = launcher.configure(path)
+    if err:
+        sys.stderr.write(f"{err}\n")
+        return 1
+    dest, err = launcher.persist(path)
+    if err:
+        sys.stderr.write(f"{err}\n")
+        return 1
+    if os.path.normpath(dest) != os.path.normpath(path):
+        _cfg, err = launcher.configure(dest)
+        if err:
+            sys.stderr.write(f"{err}\n")
+            return 1
+    return _run_backend(show_log)
+
+
 def _first_launch(show_log: bool = False) -> int:
-    """No launcher config and no --launcher-config: ask the user to import
-    one (a local file or an https URL they supply), then persist it so
-    future launches reuse it. The wizard also REQUIRES an install folder;
-    it is recorded as the active profile's confirmed game folder
-    (``out_dir`` in its own state store) so each profile installs its own
-    client. No folder is ever assumed without that explicit wizard step —
-    profiles configured otherwise stay unconfirmed until Settings."""
+    """No usable profile: ask the user to import a config (a local file
+    or an https URL they supply), create its server-named profile, then
+    persist it so future launches reuse it. The wizard also REQUIRES an
+    install folder; it is recorded as the new profile's confirmed game
+    folder (``out_dir`` in its own state store) so each profile installs
+    its own client. No folder is ever assumed without that explicit
+    wizard step."""
     try:
         chosen = _pick_launcher_config()
     except ImportError as e:
-        sys.stderr.write(backend_error_message("qt", e))
+        backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qml")
+        sys.stderr.write(backend_error_message(backend, e))
         return 1
     if chosen is None:
         sys.stderr.write(
@@ -169,6 +244,12 @@ def _first_launch(show_log: bool = False) -> int:
         return 1
     if chosen["kind"] == "file":
         _cfg, err = launcher.configure(chosen["path"])
+        if _cfg is None or err:
+            sys.stderr.write(f"{err}\n")
+            return 1
+        _prof, err = _create_named_profile(
+            _cfg.server_name, _config_host(_cfg.server_url)
+        )
         if err:
             sys.stderr.write(f"{err}\n")
             return 1
@@ -204,6 +285,12 @@ def _first_launch(show_log: bool = False) -> int:
                 f"Invalid launcher configuration: {launcher.config_error()}\n"
             )
             return 1
+        _prof, err = _create_named_profile(
+            _cfg.server_name, _config_host(_cfg.server_url)
+        )
+        if err:
+            sys.stderr.write(f"{err}\n")
+            return 1
         dest, err = launcher.persist_text(raw)
         if err:
             sys.stderr.write(f"{err}\n")
@@ -212,9 +299,8 @@ def _first_launch(show_log: bool = False) -> int:
         if err:
             sys.stderr.write(f"{err}\n")
             return 1
-    # The wizard's required install folder becomes THIS profile's
-    # confirmed game folder (its own state store; legacy top-level file
-    # for the default profile).
+    # The wizard's required install folder becomes the NEW profile's
+    # confirmed game folder (its own state store).
     install_dir = (chosen.get("install_dir") or "").strip()
     if install_dir:
         config_store.apply_confirmed_out_dir(
@@ -225,18 +311,15 @@ def _first_launch(show_log: bool = False) -> int:
 
 def _pick_launcher_config() -> dict | None:
     """Modal first-launch config import; returns the chosen selection dict
-    (``{"kind": "file", "path", "raw"}`` or ``{"kind": "url",
-    "config_url", "raw"}``) or None on cancel."""
-    from PySide6.QtWidgets import QDialog
-
-    from .ui.qt.app import create_qt_app
-    from .ui.qt.launcher_config_dialog import LauncherConfigDialog
-
-    create_qt_app()
-    dlg = LauncherConfigDialog(initial_path=launcher.discover_path())
-    if dlg.exec() != QDialog.DialogCode.Accepted:
+    (``{"kind": "file", "path", "raw", "install_dir", "server_name"}`` or
+    ``{"kind": "url", "config_url", "raw", "install_dir",
+    "server_name"}``) or None on cancel."""
+    backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qml")
+    if backend != "qml":
         return None
-    return dlg.selection()
+    from .ui.qml.wizard import run_import_wizard_qml
+
+    return run_import_wizard_qml(initial_path=launcher.discover_path())
 
 
 def _guard_enter(key, prof):
@@ -250,7 +333,7 @@ def _guard_enter(key, prof):
     in which case the store lock alone still guards the profile.
     """
     try:
-        from .ui.qt import app_lock_qt
+        from .ui import app_lock_qt
     except ImportError:
         return None  # no Qt at all: lock-only protection
     global _GUARD_SERVER_KEY
@@ -312,7 +395,7 @@ def _run_backend(show_log: bool = False) -> int:
             f"── Nostalgia Launcher {UPDATER_VERSION} · session start ──",
             "dim",
         )
-        backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qt")
+        backend = os.environ.get("NOSTALGIA_UI_BACKEND", "qml")
         try:
             app_cls = resolve_backend(backend)
         except ImportError as e:
@@ -349,7 +432,7 @@ def _guard_shutdown():
         return
     _GUARD_SERVER_KEY = None
     try:
-        from .ui.qt import app_lock_qt
+        from .ui import app_lock_qt
 
         app_lock_qt.stop_server(key)
     except ImportError:

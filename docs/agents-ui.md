@@ -1,74 +1,77 @@
-# Agent guide: Qt UI conventions
+# Agent guide: QML UI conventions
 
-Scope: `src/nostalgia_launcher/ui/qt/` — styling, dialogs, widgets.
+Scope: `src/nostalgia_launcher/ui/qml/` (views in `qml/`, view-models
+beside them) plus the toolkit glue in `ui/` (`bridge.py`, `theme.py`,
+`relaunch.py`, `app_lock_qt.py`).
 
-## Theming modes
+## Layering (hard rule)
 
-Two modes, decided once at startup by `palette_for_config(launcher.config())`
-(never re-evaluated live):
+- `controllers/` stay toolkit-agnostic: they post dataclass events to
+  `EventDispatcher` and never touch UI code. QML never drives workers
+  directly — view-models (`QObject`s with `Property` + `notify`) subscribe
+  to `ControllerBridge` signals (or take plain `on_event` dataclasses).
+- Controller calls from UI go through injected callbacks
+  (`set_*_handler` / `set_handlers`), never imports — keeps models
+  unit-testable without controllers.
+- Formatting (sizes, speeds, ages) happens in Python (`core/helpers`),
+  never in QML expressions.
 
-- **Themed** — the launcher config carries a valid `theme` dict
-  (`core/themes.has_valid_theme`): the global QSS (`theme_qss`) is applied
-  through `apply_theme(widget, palette, extra_qss)`. Dialogs append their own
-  background rule as `extra_qss`.
-- **Native** — no theme, or an invalid one: `system_palette()` derives slots
-  from the system `QPalette`; **no stylesheet is applied at all**
-  (`apply_theme` sets `""`). Button variants and QSS-only styling vanish;
-  per-widget inline styles built from palette attributes keep working, so
-  content colors must stay readable on light *and* dark systems — semantic
-  slots (`ok`, `err`, `pink`, `warn`, greens, parchment) deliberately do not
-  follow the system palette.
+## Theming
 
-Rules for both modes: never add palette slots for one-off needs (map to the
-existing ones); the `purple` slot is the wordmark only; section titles use
-`gold`, page/dialog titles use `gold_lt`. Test any visual change in all
-three render checks: default themed, overridden theme, native.
+- QtQuick.Controls **Material**, Dark + brand-gold accent, pinned in
+  `create_qml_app()` (`QQuickStyle.setStyle("Material")`. Every top-level
+  window sets its own `Material.theme: Dark` + `Material.accent:
+  appTheme.colors["C_GOLD"]` — the attached property does NOT inherit
+  across windows (a bare `ApplicationWindow` falls back to the light
+  theme, as the Settings window did).
+- Colors come from the `appTheme` context property (`ThemeBridge` over
+  `ui/theme.py:Palette`); never hardcode hex in QML. Never add palette
+  slots for one-off needs. Section titles use gold, page titles gold_lt.
+- Test any visual change in all three render checks: default themed,
+  overridden theme, native (system-derived palette).
 
-## QSS f-string braces (breaks the suite)
+## QML conventions
 
-The QSS in `ui/qt/main_window.py` is built from **f-strings that mix CSS
-braces with `{p.*.name()}` interpolations**: an opening `{` must be `{{` and
-a literal closing `}` must be `}}`. A single unescaped `}` is a hard
-`SyntaxError` at import time that takes down every Qt test — it survives
-`ruff format` too (which aborts on the unparseable file).
-
-## Dialog close buttons
-
-Qt settings dialogs are plain `QDialog`s (no frameless flag), so they
-already get a native title-bar close button. Do NOT add a custom `✕` close
-`QPushButton`/`QToolButton` — it renders a second close button beside the
-native one. Close via the native title bar or `dialog.close()`; tests close
-via `dialog.close()` (see `test_qt_settings_dialog.py` /
-`test_qt_smoke.py`). The main `SettingsDialog` and `LinuxSettingsDialog`
-follow this.
-
-## Widget conventions
+- Top-level secondary windows (Settings, Session log) are modeless
+  single-instance `ApplicationWindow`s with `showSettings()`/`showLog()`
+  (show + `requestActivate()` + `raise()`); short confirmations stay modal
+  `Dialog`s. One signal owner per toggle action — a QML `Connections`
+  handler duplicating a Python slot double-fires (the `logsRequested`
+  open→close race).
+- ScrollView tab pages pin `contentWidth: availableWidth` so `fillWidth`
+  children span the viewport, not the widest child; long path/URL fields
+  sit on their own full-width row with buttons below.
+- ListView only instantiates visible delegates — assert per-row UI state
+  through the model (`checked: model.checked` binds directly), not via
+  childItems walks or role-derived `objectName` (findChild-invisible).
 
 - Button language is all-caps for primary/global actions (`UPDATE`/`PLAY`,
-  nav tabs) and Title Case for panel actions ("Apply", "Retry") — map
-  controller machine strings to labels in the UI layer, never render raw
-  `"retry"`/`"update"`.
-- Recurring button looks come from QSS variants —
-  `setProperty("variant", "primary"|"positive"|"outline"|"compact")` styled
-  by `theme_qss` — not per-widget stylesheets.
-- Dividers are `list_panel.make_hairline()`; section titles set
-  `role="sectionTitle"`.
-- Point sizes and paddings use the tokens in `ui/qt/metrics.py`
-  (PT_*/PAD_*) — no ad hoc sizes. All palette colors (incl. pink/warn/
-  btn_text) are themable slots in `core/themes.py`; never hardcode hex in
-  widgets.
-- Icon-only controls get a tooltip + `setAccessibleName`.
-- The LinuxSettingsDialog uses the `linuxSettings*` objectName prefix (tests
-  assert it). Footer pseudo-actions are real `QToolButton`s, not clickable
-  labels.
+  nav tabs) and Title Case for panel actions ("Apply", "Retry") — machine
+  strings (`"retry"`/`"update"`) stay in models, labels in QML.
+- Every interactive element that carries an `objectName` keeps it stable:
+  engine tests find nodes via `findChild(QObject, "…")`.
+- Icon-only controls get `ToolTip.text` + `Accessible.name`.
+- Context properties are engine-global: `launcherState`, `appTheme`,
+  `newsModel`, `updateState`, `modsModel`, `assetsModel`, `addonsModel`,
+  `settingsModel`, `logModel`, `wizard`, `customModModel`,
+  `customAddonModel`, `customAssetModel`, `linuxModel`. Do NOT name a
+  context property `theme` — it collides with a QtQuick.Controls internal
+  and binds null (use `appTheme`).
+- Destructive actions confirm via `MessageDialog`; checkbox echo
+  (`onCheckedChanged` re-firing on programmatic refresh) is dropped
+  model-side by comparing against current state.
 
-## Session-log window
+## Tests
 
-`LogWindow` is a **top-level** widget (no parent): it gets its own taskbar
-entry and outlives main-window stacking. `MainWindow` owns its lifecycle —
-creation is lazy, `WA_DeleteOnClose` destroys it on close, and `destroyed`
-resets `_logWindow`. The Settings "Show logs" row (`settingsLogs`) is a
-*toggle*: `logsToggleRequested` asks MainWindow to open or close it, and
-MainWindow pushes visibility back via `SettingsDialog.set_logs_open`, which
-flips the row label between "Show logs"/"Hide logs". Keep that one-way data
-flow (dialog emits intent, window owns state) when touching either side.
+- QML tests set `QT_QPA_PLATFORM=offscreen` + `QT_QUICK_BACKEND=software`
+  before importing PySide6, pin `QQuickStyle.setStyle("Material")`, load
+  `main.qml` (or `WizardWindow.qml`) with stub models, and assert view
+  state follows the models. Model unit tests need no engine. Verify visual
+  sizing via offscreen `grabWindow()` screenshots with long content, not
+  by reading `width` properties alone.
+- `tests/test_qml_lint.py` runs `qmllint` over `ui/qml/qml/*.qml` and
+  skips when the binary is absent (Qt binary via distro
+  `qt6-declarative`, not PyPI) — so it passes on CI by skipping.
+- Engine stderr `TypeError: Cannot read property … of null` lines at load
+  are a known Qt/offscreen artifact — bindings resolve correctly; tests
+  assert post-load values.

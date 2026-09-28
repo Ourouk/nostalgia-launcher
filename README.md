@@ -31,7 +31,7 @@ That's it — next time, just open the launcher and press Play.
 - **Play** — starts your game. The button turns into Terminate while the game runs.
 - **Mods / Addons tabs** — what you see here comes from your community's setup file.
 - **News tab** — empty means your community did not share a news feed.
-- **Profiles** — switch communities from the menu at the top. You can also create, rename, or delete profiles in Settings → Profiles. Opening the same profile twice just brings the open window forward.
+- **Profiles** — switch communities from the menu at the top. Each community you add gets its own profile, named after the server — manage them (add more, delete) in Settings → Profiles. Opening the same profile twice just brings the open window forward.
 - **Linux note** — on Linux you need `umu-run` installed for the Play button to appear.
 
 ## Need help?

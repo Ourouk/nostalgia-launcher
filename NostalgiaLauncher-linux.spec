@@ -20,6 +20,7 @@ lt_datas, lt_binaries, lt_hiddenimports = collect_all("libtorrent")
 datas = pyside_datas + shiboken_datas + lt_datas + [
     ("packaging/fonts/STIXTwoMath-Regular.otf", "fonts"),
     ("packaging/icons/NostalgiaLauncher.png", "icons"),
+    ("src/nostalgia_launcher/ui/qml/qml", "qml"),
 ]
 binaries = pyside_binaries + shiboken_binaries + lt_binaries
 hiddenimports = pyside_hiddenimports + shiboken_hiddenimports + lt_hiddenimports
