@@ -28,10 +28,6 @@ PT_LINK_ICON = 15  # row website-link glyphs (⧉)
 PT_BADGE = 8  # tab count badges
 
 
-def clamp(v, lo, hi):
-    return max(lo, min(hi, v))
-
-
 def initial_window_size(
     sw: int, sh: int, factor: float = 1.0
 ) -> tuple[int, int]:

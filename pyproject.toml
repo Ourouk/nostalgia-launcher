@@ -18,8 +18,6 @@ dependencies = [
     "platformdirs>=4.2",
     "filelock>=3.15",
     "httpx>=0.28",
-    "tenacity>=9.0",
-    "packaging>=24.0",
     # libtorrent only ships wheels for CPython 3.10-3.13; on newer
     # interpreters the client update path degrades to single-zip HTTP
     # fallback (services/update_backend/torrent_update.available()).

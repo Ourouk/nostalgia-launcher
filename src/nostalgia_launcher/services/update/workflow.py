@@ -9,7 +9,6 @@ client archive when no game exe is present and torrent is unavailable.
 from __future__ import annotations
 
 import os
-import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -40,16 +39,40 @@ from ..update_backend.sources import (
     DownloadSource,  # noqa: F401 (re-export)
     _download_source,
 )
+from ..update_backend.torrent_update import available as _torrent_lib_available
+from ..update_backend.worker_base import WorkerBase
 from .http import download_file
-from .torrent import TORRENT_VALIDATION_CACHE_KEY
-from .torrent import is_available as _torrent_available
-from .torrent import (
-    recovery_available as torrent_recovery_available,  # noqa: F401 (re-export)
-)
-from .torrent import safe_identity as _safe_identity
+
+TORRENT_VALIDATION_CACHE_KEY = "__torrent_validation__"
 
 
-class VerifyWorker:
+def _torrent_available() -> bool:
+    """Whether the BitTorrent backend can run (libtorrent installed)."""
+    try:
+        return _torrent_lib_available()
+    except Exception:
+        return False
+
+
+def torrent_recovery_available() -> bool:  # noqa: F401 (re-export)
+    """Whether a manifest-less full re-download via BitTorrent is possible."""
+    from ...core import launcher
+
+    cfg = launcher.config()
+    return bool(cfg and cfg.has_torrent() and _torrent_available())
+
+
+def _safe_identity(snapshot) -> dict | None:
+    try:
+        return {
+            "content_hash": snapshot.content_hash,
+            "info_hash": snapshot.info_hash or "",
+        }
+    except Exception:
+        return None
+
+
+class VerifyWorker(WorkerBase):
     """Verify local files against the BitTorrent snapshot only."""
 
     def __init__(
@@ -59,36 +82,10 @@ class VerifyWorker:
         overwrite_config: bool = False,
         source=None,
     ) -> None:
-        from ..update_backend.worker_base import WorkerBase as _WB
-
-        self.out_dir: str = out_dir
-        self._dispatcher: EventDispatcher = dispatcher
-        self._cancel_event = threading.Event()
+        super().__init__(out_dir, dispatcher)
         self._cache: dict[str, object] = load_cache()
         self.overwrite_config: bool = overwrite_config
         self._source = source
-        _wb = _WB(out_dir, dispatcher)
-        _wb._cache = self._cache
-        self.log = _wb.log  # type: ignore
-        self.progress = _wb.progress  # type: ignore
-        self._raise_cancelled = _wb._raise_cancelled  # type: ignore
-        self._wb = _wb
-
-    @property
-    def _cancel(self) -> bool:
-        return self._cancel_event.is_set() or self._wb._cancel
-
-    @_cancel.setter
-    def _cancel(self, value: bool) -> None:
-        if value:
-            self._cancel_event.set()
-            self._wb._cancel = True
-        else:
-            self._cancel_event.clear()
-            self._wb._cancel = False
-
-    def cancel(self) -> None:
-        self._cancel = True
 
     def run(self) -> None:
         try:
@@ -444,7 +441,7 @@ class VerifyWorker:
         return True
 
 
-class UpdateWorker:
+class UpdateWorker(WorkerBase):
     """Torrent-primary updater with single-zip HTTP fallback.
 
     Incremental updates are torrent-only. HTTP fallback (single zip/rar
@@ -456,42 +453,12 @@ class UpdateWorker:
     def __init__(
         self, out_dir: str, dispatcher: EventDispatcher, source=None
     ) -> None:
-        from ..update_backend.worker_base import WorkerBase as _WB
-
-        self.out_dir: str = out_dir
-        self._dispatcher: EventDispatcher = dispatcher
-        self._cancel_event = threading.Event()
+        super().__init__(out_dir, dispatcher)
         self._cache: dict[str, object] = load_cache()
         self._source = source
         self._total: int = 0
         self._downloaded: int = 0
         self._counted: dict[str, int] = {}
-        _wb = _WB(out_dir, dispatcher)
-        _wb._cache = self._cache
-        self.log = _wb.log  # type: ignore
-        self.progress = _wb.progress  # type: ignore
-        self._raise_cancelled = _wb._raise_cancelled  # type: ignore
-        self._wb = _wb
-
-    @property
-    def _cancel(self) -> bool:
-        return self._cancel_event.is_set() or self._wb._cancel
-
-    @_cancel.setter
-    def _cancel(self, value: bool) -> None:
-        if value:
-            self._cancel_event.set()
-            self._wb._cancel = True
-        else:
-            self._cancel_event.clear()
-            self._wb._cancel = False
-
-    def cancel(self) -> None:
-        self._cancel = True
-
-    def _sync_cache(self) -> None:
-        self._cache = self._wb._cache
-        self._wb._cache = self._cache
 
     def download(
         self, url: str, dest: str, size: object, name: str = ""
@@ -513,7 +480,6 @@ class UpdateWorker:
         )
         self._total = total_ref["total"]
         self._downloaded = total_ref["downloaded"]
-        self._sync_cache()
         return result
 
     def _cancelled_abort(self) -> bool:

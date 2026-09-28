@@ -148,9 +148,6 @@ class AddonsController:
         Grows as the catalog flags addons as recommended during a verify."""
         return self._recommended
 
-    def is_allowed_git_url(self, url: str) -> bool:
-        return addons.is_allowed_git_url(url)
-
     @property
     def updates_count(self) -> int:
         return self.state.updates_count

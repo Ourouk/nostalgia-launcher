@@ -54,33 +54,35 @@ class WorkerBase:
     ) -> None:
         from ...state.events import ProgressChanged
 
-        def _str(key: str) -> str:
+        def _s(key: str) -> str:
             v = details.get(key, "")
             return v if isinstance(v, str) else ""
 
-        def _int(key: str) -> int:
+        def _n(key: str) -> int:
             v = details.get(key, 0)
             return v if isinstance(v, int) and not isinstance(v, bool) else 0
 
-        def _float(key: str) -> float:
+        def _f(key: str) -> float:
             v = details.get(key, 0.0)
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
-                return float(v)
-            return 0.0
+            return (
+                float(v)
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+                else 0.0
+            )
 
         self._dispatcher.post(
             ProgressChanged(
                 value,
                 label,
-                phase=_str("phase"),
-                transport=_str("transport"),
-                current_file=_str("current_file"),
-                downloaded=_int("downloaded"),
-                total=_int("total"),
-                speed=_float("speed"),
-                peers=_int("peers"),
-                verified_pieces=_int("verified_pieces"),
-                total_pieces=_int("total_pieces"),
+                phase=_s("phase"),
+                transport=_s("transport"),
+                current_file=_s("current_file"),
+                downloaded=_n("downloaded"),
+                total=_n("total"),
+                speed=_f("speed"),
+                peers=_n("peers"),
+                verified_pieces=_n("verified_pieces"),
+                total_pieces=_n("total_pieces"),
             )
         )
 

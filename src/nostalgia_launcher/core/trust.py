@@ -23,13 +23,9 @@ def _theme_logo_host(config) -> str:
     logo = theme.get("logo")
     if not isinstance(logo, str) or not logo.strip():
         return ""
-    try:
-        parts = urlsplit(logo.strip())
-    except ValueError:
+    if urlsplit(logo.strip()).scheme != "https":
         return ""
-    if parts.scheme != "https":
-        return ""
-    return parts.hostname or ""
+    return _host(logo.strip())
 
 
 def _embedded_hosts(config) -> list[str]:
