@@ -14,7 +14,6 @@ dependencies = [
     # certifi supplies a current CA bundle so TLS verification works even on
     # platforms with a stale/incomplete system root store (e.g. Windows).
     "certifi>=2024.0",
-    "pydantic>=2.8",
     "platformdirs>=4.2",
     "filelock>=3.15",
     "httpx>=0.28",

@@ -289,13 +289,12 @@ def _https_url(value: object) -> str | None:
     if not v:
         return None
     try:
-        from pydantic import TypeAdapter
-        from pydantic.networks import HttpUrl
-
-        p = TypeAdapter(HttpUrl).validate_python(v)
-        return v if p.scheme == "https" and p.host else None
-    except Exception:
+        parts = urlsplit(v)
+    except ValueError:
         return None
+    if parts.scheme != "https" or not parts.hostname:
+        return None
+    return v
 
 
 def _magnet_uri(value: object) -> str | None:
@@ -307,26 +306,6 @@ def _magnet_uri(value: object) -> str | None:
     uri = value.strip()
     if not uri:
         return None
-    # Use pydantic for scheme validation, then manual xt check
-    try:
-        from pydantic import BaseModel
-        from pydantic.networks import AnyUrl
-
-        class _MagnetModel(BaseModel):
-            url: AnyUrl
-
-        # AnyUrl will accept magnet:?xt=... without host; validate scheme
-        m = _MagnetModel(url=uri)  # type: ignore[arg-type]
-        if m.url.scheme != "magnet":
-            return None
-    except Exception:
-        # Fallback manual
-        try:
-            parts = urlsplit(uri)
-        except ValueError:
-            return None
-        if parts.scheme != "magnet" or not parts.query:
-            return None
     try:
         parts = urlsplit(uri)
     except ValueError:
