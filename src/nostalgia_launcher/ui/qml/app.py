@@ -257,10 +257,11 @@ class QmlNostalgiaLauncherApp:
         self._refresh_primary()
 
     def _refresh_primary(self, *_args):
-        """Footer button state from the updater readiness decision."""
+        """Footer button + status from the updater readiness decision."""
         ready = self._hub.updater.compute_readiness(
             addons_installing=self._hub.addons.installing
         )
+        self._state.setStatusText(ready.status)
         if ready.mode in ("play", "update", "download", "terminate"):
             self._update.update_primary(ready.label, True)
         else:

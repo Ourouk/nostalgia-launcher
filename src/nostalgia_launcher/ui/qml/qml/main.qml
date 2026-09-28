@@ -176,7 +176,15 @@ ApplicationWindow {
             objectName: "qmlNavBar"
             Layout.fillWidth: true
             TabButton { text: "NEWS" }
-            TabButton { text: "UPDATE" }
+            TabButton {
+                objectName: "qmlUpdateTab"
+                text: "UPDATE"
+                enabled: settingsModel.clientUpdates
+                onEnabledChanged: {
+                    if (!enabled && navBar.currentIndex === 1)
+                        navBar.currentIndex = 0
+                }
+            }
             TabButton {
                 text: addonsModel.updatesCount > 0 ? "ADDONS (" + addonsModel.updatesCount + ")" : "ADDONS"
             }
