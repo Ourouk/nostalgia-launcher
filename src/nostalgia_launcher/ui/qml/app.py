@@ -147,8 +147,8 @@ class QmlNostalgiaLauncherApp:
         bridge.statusChanged.connect(self._update.on_status)
         bridge.operationFinished.connect(self._on_operation_finished)
         bridge.operationFailed.connect(self._on_operation_failed)
-        bridge.gameLaunched.connect(self._refresh_primary)
-        bridge.gameExited.connect(self._refresh_primary)
+        bridge.gameLaunched.connect(self._refresh_footer)
+        bridge.gameExited.connect(self._refresh_footer)
         self._mods = ContentListModel(_MODS_EMPTY)
         self._assets = ContentListModel(_ASSETS_EMPTY)
         self._wire_content(
@@ -211,7 +211,7 @@ class QmlNostalgiaLauncherApp:
         # Same background fetch the widget shell schedules: cached news
         # stays visible, TTL decides the refetch (threads, never blocks).
         self._hub.news.load()
-        self._refresh_primary()
+        self._refresh_footer()
         # Content startup loads (widget schedule parity, staggered so the
         # shell paints first): latest mod versions, asset verdicts, and an
         # unconditional addons verify so first-launch users see the catalog
@@ -250,13 +250,13 @@ class QmlNostalgiaLauncherApp:
 
     def _on_operation_finished(self, kind: str, ok: bool, message: str):
         self._update.on_finished(kind, ok, message)
-        self._refresh_primary()
+        self._refresh_footer()
 
     def _on_operation_failed(self, kind: str, message: str):
         self._update.on_failed(kind, message)
-        self._refresh_primary()
+        self._refresh_footer()
 
-    def _refresh_primary(self, *_args):
+    def _refresh_footer(self, *_args):
         """Footer button + status from the updater readiness decision."""
         ready = self._hub.updater.compute_readiness(
             addons_installing=self._hub.addons.installing
@@ -296,7 +296,7 @@ class QmlNostalgiaLauncherApp:
             updater.start_client_download()
         elif ready.mode == "terminate":
             updater.terminate_game()
-        self._refresh_primary()
+        self._refresh_footer()
 
     def _launch_with_realm_check(self):
         """Play with the realm-mismatch prompt (QML MessageDialog)."""
@@ -319,7 +319,7 @@ class QmlNostalgiaLauncherApp:
         if self._need_game_folder():
             return
         self._hub.settings.verify_files()
-        self._refresh_primary()
+        self._refresh_footer()
 
     # ── content tabs (shared MODS/ASSETS core) ────────────────────────
 
@@ -725,7 +725,7 @@ class QmlNostalgiaLauncherApp:
         if inject and client_dir:
             updater.inject_realm(client_dir)
         updater.launch_game()
-        self._refresh_primary()
+        self._refresh_footer()
 
     # ── custom entries + linux settings + realm prompt ────────────────
 

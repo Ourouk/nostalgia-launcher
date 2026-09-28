@@ -169,3 +169,51 @@ def test_backend_selector_routes_qml():
     assert cli.resolve_backend("qml") is QmlNostalgiaLauncherApp
     assert cli.resolve_backend("bogus") is None
     assert "PySide6" in cli.backend_error_message("qml", ImportError("x"))
+
+
+def test_update_tab_follows_client_updates_setting(engine, qapp):
+    """UPDATE tab disables when client updates turn off, and a disabled
+    tab in use falls back to NEWS."""
+    eng, _state, _theme = engine
+    root = eng.rootObjects()[0]
+    # The fixture sets context models as temporaries (no Python ref), so
+    # install a live SettingsModel; the function-scoped engine rebinds.
+    settings = SettingsModel()
+    eng.rootContext().setContextProperty("settingsModel", settings)
+    qapp.processEvents()
+    nav = root.findChild(QObject, "qmlNavBar")
+    tab = root.findChild(QObject, "qmlUpdateTab")
+    assert tab is not None
+    assert tab.property("enabled") is True
+    nav.setProperty("currentIndex", 1)
+    settings.set_snapshot_provider(lambda: {"client_updates": False})
+    settings.refresh()
+    for _ in range(50):
+        qapp.processEvents()
+        if tab.property("enabled") is False:
+            break
+    assert settings.property("clientUpdates") is False
+    assert tab.property("enabled") is False
+    assert nav.property("currentIndex") == 0
+    settings.set_snapshot_provider(lambda: {"client_updates": True})
+    settings.refresh()
+    for _ in range(50):
+        qapp.processEvents()
+        if tab.property("enabled") is True:
+            break
+    assert tab.property("enabled") is True
+
+
+def test_refresh_footer_syncs_button_and_status(qapp):
+    """Footer button and status text both follow compute_readiness."""
+    from nostalgia_launcher.ui.bridge import ControllerHub
+
+    hub = ControllerHub()
+    shell = QmlNostalgiaLauncherApp.__new__(QmlNostalgiaLauncherApp)
+    shell._hub = hub
+    shell._state = LauncherState()
+    shell._update = UpdateState()
+    shell._refresh_footer()
+    ready = hub.updater.compute_readiness()
+    assert shell._state.property("statusText") == ready.status
+    assert shell._update.property("primaryLabel") == ready.label
