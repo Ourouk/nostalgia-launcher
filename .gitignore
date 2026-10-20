@@ -43,3 +43,6 @@ packaging/vendor/
 opencode.json
 opencode.jsonc
 .opencode/
+
+# Pix Agent
+.pi/
