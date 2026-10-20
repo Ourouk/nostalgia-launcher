@@ -38,7 +38,7 @@ ColumnLayout {
                 Label {
                     objectName: "qmlContentTitle"
                     Layout.fillWidth: true
-                    text: root.tabTitle
+                    text: "INSTALLED " + root.tabTitle
                     font.bold: true
                     font.pointSize: 12
                     color: appTheme.colors["C_GOLD"]
@@ -75,6 +75,11 @@ ColumnLayout {
                     placeholderText: "⌕  Filter"
                     Accessible.name: "Filter entries"
                     onTextChanged: root.contentModel.setFilterText(text)
+                }
+                Button {
+                    objectName: "qmlContentBrowseMore"
+                    text: "Add " + root.tabTitle.toLowerCase()
+                    onClicked: root.contentModel.requestBrowse()
                 }
                 Button {
                     objectName: "qmlContentUpdatesOnly"

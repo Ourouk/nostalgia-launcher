@@ -250,6 +250,7 @@ def test_updates_only_toggle(engine, qapp):
     eng, _state, _theme = engine
     root = eng.rootObjects()[0]
     assert root.findChild(QObject, "qmlContentUpdatesOnly") is not None
+    assert root.findChild(QObject, "qmlContentBrowseMore") is not None
     assert root.findChild(QObject, "qmlAddonsUpdatesOnly") is not None
     assert root.findChild(QObject, "qmlAddonsUpdatesOnly") is not None
 
