@@ -157,6 +157,13 @@ ApplicationWindow {
         browseModel: browseAssetsModel
     }
 
+    BrowseView {
+        id: browseAddonsDialog
+        objectName: "qmlBrowseAddonsDialog"
+        title: "BROWSE ADDONS"
+        browseModel: browseAddonsModel
+    }
+
     LinuxSettingsView {
         id: linuxDialog
         objectName: "qmlLinuxSettingsDialog"

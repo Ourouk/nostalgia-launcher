@@ -28,7 +28,11 @@ from ..bridge import ControllerHub
 from ..relaunch import switch_profile
 from ..theme import logo_for_config, palette_for_config
 from .addons import AddonsModel, build_items, expected_interface
-from .browse import BrowseModel, content_browse_entries
+from .browse import (
+    BrowseModel,
+    addon_browse_entries,
+    content_browse_entries,
+)
 from .content import ContentListModel, build_rows, essential_pending
 from .custom import CustomAddonModel, CustomAssetModel, CustomModModel
 from .linux import LinuxModel, renderer_label, renderer_labels
@@ -154,7 +158,7 @@ class QmlNostalgiaLauncherApp:
         self._assets = ContentListModel(_ASSETS_EMPTY)
         self._browse_mods = BrowseModel("No mods available.")
         self._browse_assets = BrowseModel("No assets available.")
-        self._assets = ContentListModel(_ASSETS_EMPTY)
+        self._browse_addons = BrowseModel("No addons available.")
         self._wire_content(
             self._mods, self._hub.mods, "mods", bridge.modsLoaded
         )
@@ -193,6 +197,9 @@ class QmlNostalgiaLauncherApp:
         )
         self._engine.rootContext().setContextProperty(
             "browseAssetsModel", self._browse_assets
+        )
+        self._engine.rootContext().setContextProperty(
+            "browseAddonsModel", self._browse_addons
         )
         self._engine.rootContext().setContextProperty(
             "settingsModel", self._settings
@@ -591,6 +598,44 @@ class QmlNostalgiaLauncherApp:
         )
         bridge.operationFailed.connect(lambda k, m: self._after_addons_op(k))
         model.refresh()
+
+        # Browse dialog: not-installed catalog, one-click install.
+        browse = self._browse_addons
+
+        def _browse_install(folder):
+            rec = next(
+                (r for r in ctrl.state.available if r.folder == folder),
+                None,
+            )
+            if rec is None:
+                return False
+            return ctrl.apply([rec.to_dict()])
+
+        browse.set_install_handler(_browse_install)
+
+        def _refresh_browse():
+            from ...core.helpers import strip_wow_colors
+
+            rows = []
+            for rec in addon_browse_entries(ctrl.state):
+                toc = rec.toc or {}
+                rows.append(
+                    {
+                        "id": rec.folder,
+                        "name": strip_wow_colors(
+                            toc.get("Title") or rec.folder
+                        ),
+                        "version": "",
+                        "description": strip_wow_colors(
+                            toc.get("Notes") or rec.description or ""
+                        ),
+                        "repo_url": rec.git or "",
+                    }
+                )
+            browse.set_entries(rows)
+
+        bridge.addonsLoaded.connect(lambda _e: _refresh_browse())
+        _refresh_browse()
 
     def _after_addons_op(self, kind: str):
         if kind == "addons":

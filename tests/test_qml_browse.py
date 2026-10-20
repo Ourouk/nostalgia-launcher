@@ -70,6 +70,8 @@ def engine(qapp):
     )
     eng.rootContext().setContextProperty("linuxModel", LinuxModel())
     eng.rootContext().setContextProperty("browseModsModel", BrowseModel())
+    eng.rootContext().setContextProperty("browseAssetsModel", BrowseModel())
+    eng.rootContext().setContextProperty("browseAddonsModel", BrowseModel())
     eng.load(QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml")))
     yield eng, mods, assets
 
@@ -195,7 +197,6 @@ def test_browse_mods_dialog_loads(engine):
     eng, _mods, _assets = engine
     root = eng.rootObjects()[0]
     assert root.findChild(QObject, "qmlBrowseModsDialog") is not None
-    assert root.findChild(QObject, "qmlBrowseModsDialog") is not None
 
 
 def test_browse_assets_dialog_loads(engine):
@@ -204,3 +205,12 @@ def test_browse_assets_dialog_loads(engine):
     eng, _mods, _assets = engine
     root = eng.rootObjects()[0]
     assert root.findChild(QObject, "qmlBrowseAssetsDialog") is not None
+    assert root.findChild(QObject, "qmlBrowseAssetsDialog") is not None
+
+
+def test_browse_addons_dialog_loads(engine):
+    from PySide6.QtCore import QObject
+
+    eng, _mods, _assets = engine
+    root = eng.rootObjects()[0]
+    assert root.findChild(QObject, "qmlBrowseAddonsDialog") is not None
