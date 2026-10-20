@@ -170,6 +170,7 @@ class LauncherConfig:
             or self.server_url
             or self.download_fallback_url
             or self.download_torrent_url
+            or self.download_torrent_magnet
             or self.news_url
             or self.mods_registry_url
         )
@@ -230,6 +231,26 @@ def _parse_git_hosts(value) -> list[str]:
         if all(c.isalnum() or c in ".-" for c in h):
             out.append(h)
     return out
+
+
+def _parse_flag(value: object, default: bool, key: str) -> bool:
+    """Strict bool for update kill-switches: real bools win; the strings
+    "true"/"false" (any case) are accepted for hand-written configs;
+    anything else is a hard error — ``bool("false") is True`` silently
+    inverted the old coercion."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v == "true":
+            return True
+        if v == "false":
+            return False
+    raise ValueError(
+        f"launcher config {key!r} must be a boolean (got {value!r})"
+    )
 
 
 def _parse_root_marker(value: object) -> str:
@@ -395,7 +416,11 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
         else []
     )
 
-    addon_git_hosts = _parse_git_hosts(data.get("addon_git_hosts"))
+    # Canonical key is server.addon_git_hosts (docs + migration guide); the
+    # legacy top-level key still works as a fallback.
+    addon_git_hosts = _parse_git_hosts(
+        server.get("addon_git_hosts")
+    ) or _parse_git_hosts(data.get("addon_git_hosts"))
     client_executable = _parse_root_marker(server.get("client_executable"))
     if server.get("torrent_root_marker") is not None:
         torrent_root_marker = _parse_root_marker(
@@ -408,7 +433,9 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
     # ── server.download block ──
     dl = server.get("download")
     dl = dl if isinstance(dl, dict) else {}
-    download_update = bool(dl.get("update", True))
+    download_update = _parse_flag(
+        dl.get("update", True), True, "server.download.update"
+    )
     torrent = dl.get("torrent")
     torrent = torrent if isinstance(torrent, dict) else {}
     http = dl.get("http")
@@ -416,12 +443,19 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
     content = dl.get("content")
     content = content if isinstance(content, dict) else {}
     content_type = content.get("type")
-    if content_type not in ("zip", "rar", "folder"):
+    if content_type is None:
         content_type = "folder"
+    elif content_type not in ("zip", "rar", "folder"):
+        raise ValueError(
+            "launcher config 'server.download.content.type' must be one of "
+            f"'zip', 'rar', 'folder' (got {content_type!r})"
+        )
     download_torrent_url = _https_url(torrent.get("torrent_url"))
     download_torrent_magnet = _magnet_uri(torrent.get("magnet"))
     if "update" in torrent:
-        download_torrent_update: bool | None = bool(torrent.get("update"))
+        download_torrent_update: bool | None = _parse_flag(
+            torrent.get("update"), True, "server.download.torrent.update"
+        )
     else:
         download_torrent_update = None
     if "manifest" in http or "client" in http:

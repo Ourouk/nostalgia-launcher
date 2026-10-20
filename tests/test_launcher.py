@@ -307,16 +307,128 @@ def test_download_defaults_when_block_absent():
     assert cfg.download_fallback_url is None
 
 
-def test_download_content_type_falls_back_to_folder():
+def test_download_content_type_rejects_unknown():
+    assert (
+        _config(
+            {
+                "server": {
+                    "url": "https://srv.example",
+                    "download": {"content": {"type": "bogus"}},
+                }
+            }
+        )
+        is None
+    )
+    assert "content.type" in launcher.config_error()
+
+
+@pytest.mark.parametrize("value", ["false", "False", "TRUE", True, False])
+def test_download_update_flag_parsing(value):
     cfg = _config(
         {
             "server": {
                 "url": "https://srv.example",
-                "download": {"content": {"type": "bogus"}},
+                "download": {"update": value},
             }
         }
     )
-    assert cfg.download_content_type == "folder"
+    assert cfg is not None
+    assert cfg.download_update is (
+        value is True or str(value).lower() == "true"
+    )
+
+
+@pytest.mark.parametrize("value", ["nope", "0", 0, 1, [], {}])
+def test_download_update_flag_rejects_non_bool(value):
+    assert (
+        _config(
+            {
+                "server": {
+                    "url": "https://srv.example",
+                    "download": {"update": value},
+                }
+            }
+        )
+        is None
+    )
+    assert "server.download.update" in launcher.config_error()
+
+
+@pytest.mark.parametrize("value", ["false", True, False])
+def test_torrent_update_flag_parsing(value):
+    cfg = _config(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "download": {
+                    "torrent": {
+                        "torrent_url": "https://cdn.example/c.torrent",
+                        "update": value,
+                    }
+                },
+            }
+        }
+    )
+    assert cfg is not None
+    assert cfg.download_torrent_update is (
+        value is True or str(value).lower() == "true"
+    )
+
+
+def test_torrent_update_flag_rejects_non_bool():
+    assert (
+        _config(
+            {
+                "server": {
+                    "url": "https://srv.example",
+                    "download": {"torrent": {"update": "nope"}},
+                }
+            }
+        )
+        is None
+    )
+    assert "server.download.torrent.update" in launcher.config_error()
+
+
+def test_addon_git_hosts_read_from_server_key():
+    """Canonical key is server.addon_git_hosts (docs + migration guide)."""
+    cfg = _config(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "addon_git_hosts": ["git.example.org"],
+            }
+        }
+    )
+    assert cfg is not None
+    assert cfg.addon_git_hosts == ["git.example.org"]
+
+
+def test_addon_git_hosts_top_level_kept_as_fallback():
+    """Legacy top-level key still works for existing configs."""
+    cfg = _config(
+        {
+            "server": {"url": "https://srv.example"},
+            "addon_git_hosts": ["git.example.org"],
+        }
+    )
+    assert cfg is not None
+    assert cfg.addon_git_hosts == ["git.example.org"]
+
+
+def test_magnet_only_config_is_configured():
+    cfg = _config(
+        {
+            "server": {
+                "url": "",
+                "download": {
+                    "torrent": {"magnet": "magnet:?xt=urn:btih:" + "ab" * 20}
+                },
+            }
+        }
+    )
+    assert cfg is not None
+    assert cfg.configured is True
 
 
 def test_effective_client_updates_enabled_merge(tmp_path, monkeypatch):
