@@ -12,8 +12,9 @@ Dialog {
     objectName: "qmlBrowseDialog"
     title: "BROWSE"
     modal: true
-    width: 640
-    height: 480
+    // Scale with the window (was fixed 640x480 — cramped on big screens).
+    width: Math.round(Math.min(parent.width * 0.85, 900))
+    height: Math.round(Math.min(parent.height * 0.85, 700))
     anchors.centerIn: parent
     standardButtons: Dialog.Close
 
