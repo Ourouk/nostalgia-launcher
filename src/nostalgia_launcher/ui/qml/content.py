@@ -165,6 +165,7 @@ class ContentListModel(QAbstractListModel):
 
     changed = Signal()
     chromeChanged = Signal()
+    browseRequested = Signal()
 
     def __init__(self, empty_text="", extras_on_top=False, parent=None):
         super().__init__(parent)
@@ -492,6 +493,11 @@ class ContentListModel(QAbstractListModel):
     def reloadCatalog(self):
         if self._on_reload is not None:
             self._on_reload()
+
+    @Slot()
+    def requestBrowse(self):
+        """Empty-state Browse button (app.py opens the dialog)."""
+        self.browseRequested.emit()
 
     @Slot(str)
     def setScanVersion(self, version: str):

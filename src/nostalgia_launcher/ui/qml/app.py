@@ -297,6 +297,16 @@ class QmlNostalgiaLauncherApp:
         )
         return True
 
+    def _open_browse_dialog(self, object_name: str) -> None:
+        """Open a Browse dialog by objectName (tab empty-state entry)."""
+        try:
+            root = self._engine.rootObjects()[0]
+            dlg = root.findChild(QObject, object_name)
+            if dlg is not None:
+                dlg.open()
+        except Exception:
+            pass
+
     def _primary_action(self):
         """Footer click — mirrors MainWindow._on_update_button_clicked."""
         updater = self._hub.updater
@@ -517,6 +527,15 @@ class QmlNostalgiaLauncherApp:
 
             loaded_signal.connect(lambda _e: _refresh_browse())
             _refresh_browse()
+            browse_dialog = (
+                "qmlBrowseModsDialog"
+                if kind == "mods"
+                else "qmlBrowseAssetsDialog"
+            )
+            model.browseRequested.connect(
+                lambda _b=browse_dialog: self._open_browse_dialog(_b)
+            )
+            _refresh_browse()
 
     def _after_content_op(self, model, kind: str, op_kind: str):
         """Drop the busy chrome when this tab's operation settles."""
@@ -638,6 +657,9 @@ class QmlNostalgiaLauncherApp:
 
         bridge.addonsLoaded.connect(lambda _e: _refresh_browse())
         _refresh_browse()
+        model.browseRequested.connect(
+            lambda: self._open_browse_dialog("qmlBrowseAddonsDialog")
+        )
 
     def _after_addons_op(self, kind: str):
         if kind == "addons":

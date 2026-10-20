@@ -217,3 +217,28 @@ def test_refresh_footer_syncs_button_and_status(qapp):
     ready = hub.updater.compute_readiness()
     assert shell._state.property("statusText") == ready.status
     assert shell._update.property("primaryLabel") == ready.label
+
+
+def test_tabs_open_browse_dialog(engine, qapp):
+    """Empty-state Browse buttons reach the Browse dialogs."""
+    eng, _state, _theme = engine
+    root = eng.rootObjects()[0]
+    browse = root.findChild(QObject, "qmlBrowseModsDialog")
+    assert browse is not None
+    assert browse.property("visible") is False
+    assert root.findChild(QObject, "qmlContentBrowse") is not None
+    assert root.findChild(QObject, "qmlAddonsBrowse") is not None
+    # Fixture context models are temporaries (may be GC'd): rebind a held
+    # model so the view resolves a live object, mirroring app.py.
+    from nostalgia_launcher.ui.qml.content import ContentListModel
+
+    mods = ContentListModel("mods empty")
+    eng.rootContext().setContextProperty("modsModel", mods)
+    qapp.processEvents()
+    views = root.findChildren(QObject, "qmlContentView")
+    assert views[0].property("contentModel") is mods
+    opened = []
+    mods.browseRequested.connect(lambda: opened.append(True))
+    mods.requestBrowse()
+    qapp.processEvents()
+    assert opened == [True]

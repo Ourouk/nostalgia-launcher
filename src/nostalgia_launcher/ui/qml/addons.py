@@ -258,6 +258,7 @@ class AddonsModel(QAbstractListModel):
 
     changed = Signal()
     chromeChanged = Signal()
+    browseRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -510,6 +511,11 @@ class AddonsModel(QAbstractListModel):
     @Slot()
     def checkForUpdates(self):
         self._call("check")
+
+    @Slot()
+    def requestBrowse(self):
+        """Empty-state Browse button (app.py opens the dialog)."""
+        self.browseRequested.emit()
 
     def _call(self, name, *args):
         handler = self._handlers.get(name)

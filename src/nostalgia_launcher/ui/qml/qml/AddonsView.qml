@@ -113,6 +113,27 @@ ColumnLayout {
             font.pointSize: 10
             color: appTheme.colors["C_TEXT_DIM"]
         }
+        }
+    ColumnLayout {
+        Layout.fillWidth: true
+        Layout.leftMargin: 16
+        Layout.rightMargin: 16
+        Layout.topMargin: 12
+        spacing: 8
+        visible: !addonsModel.loading && addonList.count === 0
+        Label {
+            Layout.fillWidth: true
+            text: "No add-ons installed yet."
+            font.pointSize: 10
+            color: appTheme.colors["C_TEXT_DIM"]
+            wrapMode: Text.WordWrap
+        }
+        Button {
+            objectName: "qmlAddonsBrowse"
+            text: "Browse add-ons"
+            highlighted: true
+            onClicked: addonsModel.requestBrowse()
+        }
     }
 
     ListView {
@@ -310,12 +331,6 @@ ColumnLayout {
             onClicked: addonsModel.installRecommended()
         }
         Item { Layout.fillWidth: true }
-        Button {
-            objectName: "qmlAddonsCustom"
-            text: "+  Add custom git addon"
-            flat: true
-            onClicked: customAddonDialog.open()
-        }
         Button {
             objectName: "qmlAddonsApply"
             text: addonsModel.busy ? "Applying…" : (addonsModel.pendingCount > 0 ? "Apply (" + addonsModel.pendingCount + ")" : "Apply")

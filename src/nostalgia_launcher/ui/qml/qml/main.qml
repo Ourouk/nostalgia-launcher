@@ -241,9 +241,7 @@ ApplicationWindow {
                 tabTitle: "MODS"
                 legendText: "★ required · ☐ off = disabled · ● = unapplied (Apply to confirm)"
                 essentialText: "★  Install Required"
-                customLabel: "+  Add custom mod"
                 loadingText: "Loading mods…"
-                onCustomRequested: customModDialog.open()
             }
             ContentView {
                 Layout.fillWidth: true
@@ -252,9 +250,7 @@ ApplicationWindow {
                 tabTitle: "ASSETS"
                 legendText: "☐ off = disabled · ● = unapplied (Apply to confirm)"
                 essentialText: "★  Install Essential"
-                customLabel: "+  Add custom asset"
                 loadingText: "Loading assets…"
-                onCustomRequested: customAssetDialog.open()
             }
         }
     }

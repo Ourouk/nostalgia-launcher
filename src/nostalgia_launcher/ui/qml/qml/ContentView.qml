@@ -49,12 +49,6 @@ ColumnLayout {
                     color: appTheme.colors["C_TEXT_DIM"]
                     visible: root.legendText !== ""
                 }
-                Button {
-                    text: root.customLabel
-                    visible: root.customLabel !== ""
-                    flat: true
-                    onClicked: root.customRequested()
-                }
                 ComboBox {
                     objectName: "qmlContentScanVersion"
                     visible: root.contentModel.scanVersions.length > 0
@@ -113,19 +107,28 @@ ColumnLayout {
         color: appTheme.colors["C_DIVIDER"]
     }
 
-    Label {
-        objectName: "qmlContentEmpty"
+    ColumnLayout {
         Layout.fillWidth: true
         Layout.leftMargin: 16
         Layout.rightMargin: 16
         Layout.topMargin: 12
+        spacing: 8
         visible: root.contentModel.emptyVisible && !root.contentModel.loading
-        text: root.contentModel.emptyText
-        font.pointSize: 10
-        color: appTheme.colors["C_TEXT_DIM"]
-        wrapMode: Text.WordWrap
+        Label {
+            objectName: "qmlContentEmpty"
+            Layout.fillWidth: true
+            text: root.contentModel.emptyText
+            font.pointSize: 10
+            color: appTheme.colors["C_TEXT_DIM"]
+            wrapMode: Text.WordWrap
+        }
+        Button {
+            objectName: "qmlContentBrowse"
+            text: "Browse " + root.tabTitle.toLowerCase()
+            highlighted: true
+            onClicked: root.contentModel.requestBrowse()
+        }
     }
-
     ColumnLayout {
         objectName: "qmlContentWaiting"
         Layout.fillWidth: true
