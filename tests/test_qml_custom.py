@@ -291,3 +291,19 @@ def test_dialog_key_objects(engine):
     linux = root.findChild(QObject, "qmlLinuxSettingsDialog")
     for name in ("qmlLinuxProton", "qmlLinuxRenderer", "qmlLinuxUmuHint"):
         assert linux.findChild(QObject, name) is not None, name
+        assert linux.findChild(QObject, name) is not None, name
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["CustomModForm.qml", "CustomAssetForm.qml", "CustomAddonForm.qml"],
+)
+def test_custom_form_component_loads(qapp, name):
+    """Extracted custom forms compile standalone (dialog + Browse reuse)."""
+    from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+
+    eng = QQmlApplicationEngine()
+    comp = QQmlComponent(
+        eng, QUrl.fromLocalFile(os.path.join(qml_dir(), name))
+    )
+    assert comp.isReady(), comp.errorString()

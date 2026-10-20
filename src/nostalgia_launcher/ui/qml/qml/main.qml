@@ -148,6 +148,7 @@ ApplicationWindow {
         objectName: "qmlBrowseModsDialog"
         title: "BROWSE MODS"
         browseModel: browseModsModel
+        formSource: "CustomModForm.qml"
     }
 
     BrowseView {
@@ -155,6 +156,7 @@ ApplicationWindow {
         objectName: "qmlBrowseAssetsDialog"
         title: "BROWSE ASSETS"
         browseModel: browseAssetsModel
+        formSource: "CustomAssetForm.qml"
     }
 
     BrowseView {
@@ -162,6 +164,7 @@ ApplicationWindow {
         objectName: "qmlBrowseAddonsDialog"
         title: "BROWSE ADDONS"
         browseModel: browseAddonsModel
+        formSource: "CustomAddonForm.qml"
     }
 
     LinuxSettingsView {
