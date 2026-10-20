@@ -308,6 +308,36 @@ def test_start_update_when_busy_reports_and_returns_false(
     assert not worker_cls.instances
 
 
+def test_start_verify_refuses_during_in_flight_update(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
+    """A verify must not spawn beside a running update: two workers would
+    share dispatcher/cache (last-save-wins hash loss, interleaved events)."""
+    controller.state.running = True
+    controller._op = "update"
+
+    controller.start_verify()
+
+    events = controller._dispatcher.drain()
+    assert any(
+        isinstance(event, LogMessage) and "already in progress" in event.text
+        for event in events
+    )
+    assert not worker_cls.instances
+
+
+def test_start_verify_replaces_in_flight_verify(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
+    """Verify-on-verify still cancels and restarts (re-verify UX)."""
+    controller.state.running = True
+    controller._op = "verify"
+
+    controller.start_verify()
+
+    assert len(worker_cls.instances) == 1
+
+
 # ── queue draining / progress / hashes ──────────────────────────────────
 
 
@@ -832,6 +862,79 @@ def test_launch_game_linux_close_on_launch_redirects_output(
     assert controller.state.game_running is True
 
 
+def test_watch_game_waits_for_tree_after_wrapper_exit(
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
+):
+    """Wrapper wait() returns but the Proton tree is alive → TERMINATE
+    holds until the tree dies, then GameExited posts."""
+    import time as _time
+    import types as _types
+
+    proc = _FakeProc()
+    proc.exit_event.set()  # wrapper wait() returns immediately
+    alive = {"n": True}
+    monkeypatch.setattr(
+        controller,
+        "_game_tree_alive",
+        lambda pid, pgid: alive["n"],
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.controllers.update.time",
+        _types.SimpleNamespace(
+            monotonic=_time.monotonic, sleep=lambda s: None
+        ),
+        raising=False,
+    )
+    controller.state.game_running = True
+    controller.state.game_pid = 1234
+    controller.state.game_pgid = 9999
+
+    thread = threading.Thread(
+        target=controller._watch_game, args=(proc, 1234), daemon=True
+    )
+    thread.start()
+    # Wrapper exited but tree alive → still TERMINATE, no exit event.
+    _time.sleep(0.3)
+    assert controller.state.game_running is True
+    assert not any(
+        isinstance(e, GameExited) for e in controller._dispatcher.drain()
+    )
+    alive["n"] = False
+    thread.join(timeout=10.0)
+    assert not thread.is_alive()
+    events = controller._dispatcher.drain()
+    assert GameExited(1234, 0) in events
+    assert controller.state.game_running is False
+
+
+def test_watch_game_exits_when_tree_dead_despite_hung_wait(
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
+):
+    """Tree dead → GameExited even when the wrapper wait() never returns
+    (lingering supervisor / wedged wait)."""
+
+    class _HungWaitProc(_FakeProc):
+        def wait(self):
+            threading.Event().wait(30)
+            return 0
+
+    proc = _HungWaitProc()
+    monkeypatch.setattr(controller, "_game_tree_alive", lambda p, g: False)
+    controller.state.game_running = True
+    controller.state.game_pid = 1234
+    controller.state.game_pgid = 9999
+
+    thread = threading.Thread(
+        target=controller._watch_game, args=(proc, 1234), daemon=True
+    )
+    thread.start()
+    thread.join(timeout=10.0)
+    assert not thread.is_alive()
+    events = controller._dispatcher.drain()
+    assert GameExited(1234, None) in events
+    assert controller.state.game_running is False
+
+
 def test_launch_game_linux_passes_skip_builtin_dxvk(
     controller,
     worker_cls,
@@ -1176,6 +1279,42 @@ def test_watch_game_logs_child_output(controller, worker_cls, monkeypatch):
     assert GameExited(1234, 0) in events
 
 
+def test_watch_game_posts_exited_without_pipe_eof(
+    controller, worker_cls, monkeypatch, wait_for_event
+):
+    """GameExited must not wait for stdout EOF: Proton grandchildren inherit
+    the pipe, so EOF may never arrive after the game itself exits (footer
+    stuck on TERMINATE)."""
+
+    class _HangingPipeProc:
+        """wait() returns (game exited) but readline blocks forever
+        (grandchild holds the pipe open)."""
+
+        def __init__(self):
+            self.stdout = self
+            self._block = threading.Event()
+
+        def readline(self, *a):
+            self._block.wait(30)
+            return b""
+
+        def wait(self):
+            return 0
+
+    proc = _HangingPipeProc()
+    monkeypatch.setattr(uc, "log", lambda msg, tag="": None)
+
+    thread = threading.Thread(
+        target=controller._watch_game, args=(proc, 1234), daemon=True
+    )
+    thread.start()
+    thread.join(timeout=10.0)
+
+    assert not thread.is_alive()
+    events = controller._dispatcher.drain()
+    assert GameExited(1234, 0) in events
+
+
 def test_child_output_cap_suppresses_flood(controller, monkeypatch):
     """A chatty Wine session is capped; one suppression notice is logged."""
     lines = b"".join(b"wine fixme %d\n" % i for i in range(900))
@@ -1397,6 +1536,36 @@ def test_torrent_verify_diff_then_update_lifecycle(
     assert controller.state.torrent_stale is None
     assert controller.state.client_ready is True
     assert OperationFinished("update", True) in controller._dispatcher.drain()
+
+
+def test_no_torrent_verify_on_existing_install_posts_single_terminal(
+    controller, worker_cls, controller_cfg, wait_for_event, tmp_path
+):
+    """No-torrent verify with an exe posts TorrentUnavailable then
+    VerificationUpToDate — the controller lands on verify-ok ONCE
+    (no Finished(False) → Finished(True) flash)."""
+    game = tmp_path / "game"
+    game.mkdir(exist_ok=True)
+    (game / "WoW.exe").write_text("")
+    controller_cfg["out_dir"] = str(game)
+    worker_cls.script = [
+        TorrentUnavailable(message="No BitTorrent source configured."),
+        VerificationUpToDate(),
+    ]
+    controller.start_verify()
+    # Preamble (StatusChanged/ProgressChanged) — keep the worker's scripted
+    # events queued; only drop the two synchronous posts.
+    queued = controller._dispatcher.drain()
+    assert StatusChanged("Verifying…") in queued
+    wait_for_event.drain_worker(controller, worker_cls.done)
+    finished = [
+        e
+        for e in controller._dispatcher.drain()
+        if isinstance(e, OperationFinished)
+    ]
+    assert finished == [OperationFinished("verify", True)]
+    assert controller.state.client_ready is True
+    assert controller.state.running is False
 
 
 def test_torrent_up_to_date_after_verify(

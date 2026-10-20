@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 
 from ...core.config_store import load_cache, save_cache
 from ...core.filesystem import get_client_version, remove_wdb
-from ...core.security_http import secure_urlopen
 from ...state.events import (
     ClientVersionReady,
     Event,
@@ -476,7 +475,6 @@ class UpdateWorker(WorkerBase):
             progress=self.progress,
             total_ref=total_ref,
             counted=self._counted,
-            urlopen=secure_urlopen,
         )
         self._total = total_ref["total"]
         self._downloaded = total_ref["downloaded"]

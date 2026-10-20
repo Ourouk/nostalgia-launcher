@@ -6,7 +6,6 @@ from _torrent_fakes import (
     CancelledVerifier,
     FakeVerifier,
     failing_urlopen,
-    fake_urlopen,
     make_download_config,
     make_verifier_class,
 )
@@ -30,6 +29,38 @@ from nostalgia_launcher.state.events import (
     TorrentVerifyFailed,
     UpdateFailed,
 )
+
+
+class _FakeHttpxStream:
+    """Minimal httpx stream-response double for update.http.download_file."""
+
+    def __init__(self, payload: bytes):
+        self._payload = payload
+        self.history = []
+        self.url = "https://launcher.test/client/latest/data.bin"
+        self.status_code = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def iter_bytes(self, n=65536):
+        yield self._payload
+
+
+class _FakeHttpxClient:
+    """Minimal httpx.Client double: stream() yields the payload once."""
+
+    def __init__(self, payload: bytes):
+        self._payload = payload
+
+    def stream(self, *a, **k):
+        return _FakeHttpxStream(self._payload)
+
+    def close(self):
+        pass
 
 
 @pytest.fixture(autouse=True)
@@ -86,7 +117,9 @@ def test_verify_worker_detects_stale_file(tmp_path, monkeypatch):
 def test_verify_worker_manifest_failure_marks_unavailable(
     tmp_path, monkeypatch
 ):
-    """No torrent source → unavailable (fallback path)."""
+    """No torrent source, fresh folder → TorrentUnavailable (fallback path).
+    With an exe present the worker additionally posts VerificationUpToDate
+    (single-terminal at the controller: the echo is ignored)."""
 
     client = _mk_client(tmp_path)
     monkeypatch.setattr(
@@ -128,17 +161,21 @@ def test_verify_worker_seeds_wtf_even_when_manifest_fails(
     vw.run()
     assert (client / "WTF" / "Config.wtf").exists()
     events = dispatcher.drain()
+    # Fresh folder, no torrent: fallback path (no TorrentUnavailable posted
+    # for existing installs only; here there is no exe either way).
     assert any(isinstance(e, TorrentUnavailable) for e in events)
 
 
 def test_update_worker_downloads_and_verifies(tmp_path, monkeypatch):
+    import nostalgia_launcher.services.update.http as http_mod
+
     client = _mk_client(tmp_path)
     payload = b"hello world"
 
     monkeypatch.setattr(
-        client_update,
-        "secure_urlopen",
-        fake_urlopen(payload, assert_suffix="/data.bin"),
+        http_mod,
+        "make_secure_client",
+        lambda **kw: _FakeHttpxClient(payload),
     )
 
     dispatcher = EventDispatcher()
@@ -152,6 +189,62 @@ def test_update_worker_downloads_and_verifies(tmp_path, monkeypatch):
     )
     assert digest == hashlib.sha1(payload).hexdigest().upper()
     assert (client / "data.bin").read_bytes() == payload
+
+
+def test_download_file_uses_hardened_client(tmp_path, monkeypatch):
+    """Production path builds the canonical secure client (trust_env=False,
+    HTTPS hook, shared UA) — no ad-hoc httpx.Client with weaker policy."""
+    import httpx
+
+    import nostalgia_launcher.core.security_http as sec
+    import nostalgia_launcher.services.update.http as http_mod
+
+    seen = {}
+    real_make = sec.make_secure_client
+
+    def _spy(**kw):
+        seen.update(kw)
+        return real_make(**kw)
+
+    monkeypatch.setattr(http_mod, "make_secure_client", _spy)
+    dest = str(tmp_path / "client" / "f.bin")
+    payload = b"x" * 16
+    monkeypatch.setattr(
+        httpx.Client,
+        "stream",
+        lambda self, *a, **k: _FakeHttpxStream(payload),
+    )
+    digest = http_mod.download_file(
+        "https://launcher.test/f.bin", dest, len(payload), "f.bin"
+    )
+    import hashlib
+
+    assert digest == hashlib.sha1(payload).hexdigest().upper()
+    assert seen.get("follow_redirects") is True
+    client = real_make()
+    try:
+        assert client.trust_env is False
+        hooks = (client._event_hooks or {}).get("request", [])
+        assert any(
+            getattr(h, "__name__", "") == "_enforce_https_request"
+            for h in hooks
+        )
+    finally:
+        client.close()
+
+
+def test_download_backoff_is_cancellable(tmp_path):
+    """Cancel during retry backoff returns promptly (no 10 s hang)."""
+    import time
+
+    import nostalgia_launcher.services.update.http as http_mod
+
+    t0 = time.monotonic()
+    http_mod._sleep_cancellable(10.0, lambda: True)
+    assert time.monotonic() - t0 < 1.0
+    t0 = time.monotonic()
+    http_mod._sleep_cancellable(0.2, lambda: False)
+    assert time.monotonic() - t0 >= 0.15
 
 
 def test_verify_worker_cancelled_torrent_posts_error_not_failure_marker(
@@ -170,7 +263,7 @@ def test_verify_worker_cancelled_torrent_posts_error_not_failure_marker(
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -196,7 +289,7 @@ def test_update_worker_uses_verified_torrent_paths_without_manifest(
     monkeypatch.setattr(client_update, "_download_source", lambda: source)
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         lambda *args, **kwargs: pytest.fail("manifest must not be fetched"),
     )
@@ -301,9 +394,9 @@ def test_verify_uses_selected_manifest_url(monkeypatch, tmp_path):
         fetched.append(req.full_url)
         return BodyResp(b"{}")
 
-    monkeypatch.setattr(client_update, "secure_urlopen", _record)
+    monkeypatch.setattr(td, "secure_urlopen", _record)
     monkeypatch.setattr(client_update, "load_cache", lambda: {})
-    monkeypatch.setattr(client_update, "save_cache", lambda c: None)
+    monkeypatch.setattr(client_update, "save_cache", lambda: None)
     monkeypatch.setattr(client_update, "write_config_wtf", lambda d: None)
 
     client = tmp_path / "client"

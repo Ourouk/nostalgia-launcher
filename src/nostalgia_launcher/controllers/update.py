@@ -161,6 +161,11 @@ class UpdateController:
     def start_verify(self, overwrite_config: bool = False):
         if not self._client_updates_enabled():
             return
+        if self.state.running and self._op == "update":
+            self._dispatcher.post(
+                LogMessage("An update is already in progress.\n", "dim")
+            )
+            return
         out = (self._get_out_dir() or "").strip()
         if not out:
             return
@@ -278,7 +283,8 @@ class UpdateController:
             self._dispatcher.post(
                 LogMessage(
                     "✗  This server has no BitTorrent source configured — "
-                    "enable client updates to download via HTTP.\n",
+                    "ask the server operator to add "
+                    "server.download.torrent.torrent_url or magnet.\n",
                     "err",
                 )
             )
@@ -612,14 +618,37 @@ class UpdateController:
             return False, False
 
     def _watch_game(self, proc, pid: int, source: str = "umu"):
-        """Background watcher: drains the game's output into the session log
-        until EOF (the process exited), then clears the running state and
-        publishes GameExited."""
-        self._drain_child_output(proc, source)
-        try:
-            code = proc.wait()
-        except Exception:
-            code = None
+        """Background watcher: clears the running state and publishes
+        GameExited once the game is actually gone.
+
+        Output draining runs on its own daemon thread: Proton grandchildren
+        inherit the stdout pipe, so EOF may never arrive after the game
+        itself exits — draining first would stall GameExited forever
+        (footer stuck on TERMINATE). The drain instead ends at EOF on its
+        own; a pipe held open by grandchildren lingers harmlessly as a
+        daemon until the launcher exits.
+
+        On Linux the watched handle is the umu-run wrapper, not WoW.exe —
+        and neither side alone is truth: the wrapper may linger (supervisor)
+        after the game dies, or exit while Proton children outlive it. So
+        ``wait()`` runs on its own thread and the watcher polls the real
+        game tree; whichever reports death *while the tree is dead* wins.
+        A live tree always keeps TERMINATE, so a lingering wrapper can
+        never flip to PLAY early — and a dead tree flips even when the
+        wrapper (or a wedged wait) never returns."""
+        threading.Thread(
+            target=self._drain_child_output,
+            args=(proc, source),
+            daemon=True,
+        ).start()
+        pgid = self.state.game_pgid
+        if pgid is not None and source == "umu":
+            code = self._wait_umu_exit(proc, pid, pgid)
+        else:
+            try:
+                code = proc.wait()
+            except Exception:
+                code = None
         self.state.game_running = False
         self.state.game_pid = None
         self.state.game_pgid = None
@@ -628,6 +657,38 @@ class UpdateController:
             self._dispatcher.post(StatusChanged("Game exited."))
         else:
             self._dispatcher.post(StatusChanged(f"Game exited (code {code})."))
+
+    def _game_tree_alive(self, pid: int, pgid: int) -> bool:
+        """Whether the umu game tree is still running (Linux only)."""
+        try:
+            from ..services import umu
+
+            return umu.game_process_alive(pid, pgid)
+        except Exception:
+            return True
+
+    def _wait_umu_exit(self, proc, pid: int, pgid: int) -> int | None:
+        """Wrapper exit code once the umu game tree is dead (poll 0.5 s,
+        cap 5 min). ``wait()`` runs on its own thread: the wrapper may
+        linger after the game dies or exit while Proton children outlive
+        it — tree death alone flips TERMINATE."""
+        import time
+
+        code_holder: list[int | None] = []
+
+        def _wait_proc() -> None:
+            try:
+                code_holder.append(proc.wait())
+            except Exception:
+                code_holder.append(None)
+
+        threading.Thread(target=_wait_proc, daemon=True).start()
+        deadline = time.monotonic() + 300.0
+        while time.monotonic() < deadline:
+            if not self._game_tree_alive(pid, pgid):
+                break
+            time.sleep(0.5)
+        return code_holder[0] if code_holder else None
 
     def _drain_child_output(self, proc, source: str = "umu"):
         """Log a child process's merged stdout/stderr into the session log.
@@ -984,6 +1045,10 @@ class UpdateController:
         self._dispatcher.post(OperationFailed(op, event.message))
 
     def _on_up_to_date(self, event: VerificationUpToDate):
+        if self._op is None:
+            # Echo after a terminal event already landed (no-torrent
+            # verify posts TorrentUnavailable + VerificationUpToDate).
+            return
         self.state.running = False
         self.state.client_ready = True
         self._op = None
@@ -1002,6 +1067,19 @@ class UpdateController:
         self.state.torrent_error = None
 
     def _on_torrent_unreachable(self, event: TorrentUnavailable):
+        if self._playable_client_present():
+            # No incremental source on an existing install: up-to-date
+            # w.r.t. torrent (HTTP diff is forbidden). The worker's
+            # follow-up VerificationUpToDate is then a no-op echo —
+            # _on_up_to_date ignores it once _op cleared.
+            self.state.running = False
+            self.state.client_ready = True
+            self.state.torrent_reachable = False
+            self.state.torrent_error = event.message or None
+            self._op = None
+            self._dispatcher.post(ProgressChanged(0.0, ""))
+            self._dispatcher.post(OperationFinished("verify", True))
+            return
         self._torrent_failure(event.message, reachable=False)
 
     def _on_torrent_corrupt(self, event: TorrentCorrupt):
@@ -1021,7 +1099,9 @@ class UpdateController:
 
     def _torrent_failure(self, message: str, *, reachable: bool):
         """Common landing for failed torrent verifications."""
-
+        if self._op is None:
+            # Terminal event already landed — ignore the echo.
+            return
         self.state.running = False
         self.state.client_ready = False
         self.state.torrent_reachable = reachable

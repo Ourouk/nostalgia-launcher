@@ -332,6 +332,58 @@ def launch(
     return proc.pid, pgid, proc
 
 
+def _pid_alive(pid: int) -> bool:
+    """Whether ``pid`` names a live process that is not a zombie.
+
+    ``os.kill(pid, 0)`` reports zombies as alive (they hold their PID until
+    reaped); umu-run reparents to init, so a zombie wrapper would read as
+    "game running" forever. State ``Z`` in ``/proc/<pid>/stat`` means
+    reaped-or-reparented dead — treat as not alive."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+            parts = f.read().rsplit(")", 1)
+            state = parts[1].split()[0] if len(parts) == 2 else ""
+            if state == "Z":
+                return False
+    except (OSError, IndexError):
+        pass
+    return True
+
+
+def game_process_alive(pid: int, pgid: int) -> bool:
+    """Whether the launched game tree is still running.
+
+    The umu-run wrapper (``pid``) is tracked via wait(); the game itself
+    (Proton children in ``pgid``) may outlive or pre-decease it. Either
+    side alive means the game session is live — check the wrapper first,
+    then scan the process group for survivors."""
+    if _pid_alive(pid):
+        return True
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            other = int(entry)
+            if other == pid or other == os.getpid():
+                continue
+            try:
+                if os.getpgid(other) != pgid:
+                    continue
+            except (OSError, PermissionError):
+                continue
+            if _pid_alive(other):
+                return True
+    except OSError:
+        pass
+    return False
+
+
 def kill_game(pid: int, pgid: int, grace: float = 2.0) -> None:
     """Terminate the game and its umu-run wrapper.
 

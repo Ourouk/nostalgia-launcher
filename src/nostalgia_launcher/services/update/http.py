@@ -7,14 +7,23 @@ import os
 import shutil
 import time
 
-import httpx
-
 from ...core.constants import DOWNLOAD_RETRY, DOWNLOAD_TIMEOUT, UA
 from ...core.helpers import fmt_size, fmt_speed, redact_url
-from ...core.security_http import SSL_CTX, _check_url
-from ...core.security_http import secure_urlopen as _secure_urlopen_default
+from ...core.security_http import _check_url, make_secure_client
 
 _MAX_NODE_SIZE = 64 * 1024 * 1024 * 1024
+
+
+def _sleep_cancellable(wait: float, is_cancelled=None) -> None:
+    """Sleep ``wait`` seconds in 0.1 s slices so cancel wakes promptly."""
+    deadline = time.monotonic() + wait
+    while True:
+        if is_cancelled and is_cancelled():
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(0.1, remaining))
 
 
 def checked_node_size(size: object) -> int:
@@ -116,20 +125,20 @@ def download_file(
                 _log(f"  Downloading ({total_str})…")
             downloaded, hasher = got, hashlib.sha1() if not got else None
             t0, bytes_at_t0, speed_str = time.monotonic(), got, ""
-            sec = urlopen if urlopen is not None else _secure_urlopen_default
+            sec = urlopen
             client = None
-            if sec is not _secure_urlopen_default:
+            # urlopen is a test seam only (urllib-style request → context
+            # manager); production always uses the hardened httpx client
+            # (trust_env=False, HTTPS request hook, shared UA).
+            if sec is not None:
                 import urllib.request
 
                 req = urllib.request.Request(url, headers=headers)
-                ctx = sec(req, timeout=DOWNLOAD_TIMEOUT)
-                resp_obj, is_httpx = ctx, False
+                resp_obj, is_httpx = sec(req, timeout=DOWNLOAD_TIMEOUT), False
             else:
                 _check_url(url)
-                client = httpx.Client(
-                    verify=SSL_CTX,
-                    timeout=httpx.Timeout(DOWNLOAD_TIMEOUT),
-                    follow_redirects=True,
+                client = make_secure_client(
+                    timeout=DOWNLOAD_TIMEOUT, follow_redirects=True
                 )
                 resp_obj, is_httpx = (
                     client.stream("GET", url, headers=headers),
@@ -254,7 +263,7 @@ def download_file(
                 # wait_exponential(multiplier=2, max=10). Good enough.
                 wait = min(10.0, 2.0**attempt_no)
                 _log(f"  Retrying in {wait:.1f} s…", "dim")
-                time.sleep(wait)
+                _sleep_cancellable(wait, is_cancelled)
                 continue
             raise
     raise RuntimeError(

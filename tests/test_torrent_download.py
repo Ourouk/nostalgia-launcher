@@ -888,7 +888,7 @@ def test_run_recovers_full_torrent_when_manifest_down(tmp_path, monkeypatch):
     monkeypatch.setattr(td.TorrentDownloader, "download", fake_download)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -960,7 +960,7 @@ def test_run_errors_when_manifest_down_without_torrent(tmp_path, monkeypatch):
     calls = _recording_downloader(monkeypatch)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -994,7 +994,7 @@ def test_run_errors_when_manifest_down_without_libtorrent(
     calls = _recording_downloader(monkeypatch)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1088,7 +1088,7 @@ def test_verify_worker_uses_torrent_when_manifest_down(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1151,7 +1151,7 @@ def test_verify_worker_identity_crash_degrades_to_verify_failed(
     )
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1210,7 +1210,7 @@ def test_verify_worker_resume_data_failure_does_not_abort(
     monkeypatch.setattr(td, "TorrentVerifier", FakeVerifier)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1240,7 +1240,7 @@ def test_verify_worker_torrent_up_to_date(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1299,7 +1299,7 @@ def test_verify_worker_uses_server_magnet(tmp_path, monkeypatch):
     monkeypatch.setattr(td, "_fetch_torrent", fake_fetch)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1338,7 +1338,7 @@ def test_verify_worker_skips_rescan_when_torrent_unchanged(
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1411,7 +1411,7 @@ def test_verify_worker_skips_when_metadata_changes_but_identity_same(
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1475,7 +1475,7 @@ def test_verify_worker_skips_when_url_rotates_same_snapshot(
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1536,7 +1536,7 @@ def test_verify_worker_logs_full_rescan_reason_without_record(
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1584,7 +1584,7 @@ def test_verify_worker_runs_recheck_when_snapshot_changed(
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1651,7 +1651,7 @@ def test_verify_worker_torrent_failure_falls_back(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1689,7 +1689,7 @@ def test_verify_worker_torrent_unreachable_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1728,7 +1728,7 @@ def test_verify_worker_torrent_reachable_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -1986,7 +1986,7 @@ def test_verify_worker_torrent_corrupt_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -2022,7 +2022,7 @@ def test_verify_worker_torrent_stalled_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -2057,7 +2057,7 @@ def test_verify_worker_torrent_session_error_posts_marker(
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -2090,7 +2090,7 @@ def test_verify_worker_torrent_disk_error_posts_marker(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
@@ -2125,7 +2125,7 @@ def test_verify_worker_error_detail_in_tag(tmp_path, monkeypatch):
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
 
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("manifest down")),
     )
