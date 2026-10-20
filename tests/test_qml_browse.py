@@ -54,3 +54,38 @@ def test_install_calls_handler(model):
     assert model.property("busy") is True
     model.set_running(False)
     assert model.property("busy") is False
+    assert model.property("busy") is False
+
+
+def test_content_browse_entries_excludes_installed():
+    from types import SimpleNamespace
+
+    from nostalgia_launcher.ui.qml.browse import content_browse_entries
+
+    entries = [{"id": "a", "name": "Alpha"}, {"id": "b", "name": "Beta"}]
+    rec_a = SimpleNamespace(present=True)
+    state = SimpleNamespace(records={"a": rec_a}, pending={})
+    out = content_browse_entries(entries, state)
+    assert [e["id"] for e in out] == ["b"]
+
+
+def test_content_browse_entries_keeps_failed_records():
+    from types import SimpleNamespace
+
+    from nostalgia_launcher.ui.qml.browse import content_browse_entries
+
+    entries = [{"id": "a", "name": "Alpha"}]
+    state = SimpleNamespace(
+        records={"a": SimpleNamespace(present=False)}, pending={}
+    )
+    assert [e["id"] for e in content_browse_entries(entries, state)] == ["a"]
+
+
+def test_addon_browse_entries_passthrough():
+    from types import SimpleNamespace
+
+    from nostalgia_launcher.ui.qml.browse import addon_browse_entries
+
+    available = [{"folder": "New"}]
+    state = SimpleNamespace(available=available)
+    assert addon_browse_entries(state) == available

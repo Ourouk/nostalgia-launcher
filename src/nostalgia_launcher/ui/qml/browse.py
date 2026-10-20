@@ -117,3 +117,27 @@ class BrowseModel(QAbstractListModel):
         return self._empty_text
 
     emptyText = Property(str, _get_empty_text, constant=True)
+    emptyText = Property(str, _get_empty_text, constant=True)
+
+
+def content_browse_entries(entries, state) -> list:
+    """Registry entries not yet installed (mods/assets Browse page).
+
+    Installed = present on disk. Records that exist but are not present
+    (failed installs) stay visible so a failed entry can never strand
+    itself out of sight.
+    """
+    recs = getattr(state, "records", {}) or {}
+    present = {
+        eid for eid, rec in recs.items() if getattr(rec, "present", False)
+    }
+    return [e for e in entries or [] if e["id"] not in present]
+
+
+def addon_browse_entries(state) -> list:
+    """Not-installed addon catalog (ADDONS Browse page).
+
+    `state.available` is already shadow-suppressed against installed
+    gits by the controller, so it passes through untouched.
+    """
+    return list(getattr(state, "available", []) or [])
