@@ -78,10 +78,18 @@ def row_status(rec, installed: bool, warning: str):
     return ("note", "Not versioned")
 
 
-def build_items(state, *, recommended, expected, needle="", pending=None):
+def build_items(
+    state, *, recommended, expected, needle="", pending=None, mode="all"
+):
     """Flat section/row items for the ListView (widget `_render` parity).
 
     ``pending`` maps folder → bool for staged checkbox changes not yet
+    applied: it overrides the rendered ``checked`` state (mods parity)
+    so staging is visible instead of snapping back on refresh. Row
+    status/warning text still reflects on-disk truth.
+    ``mode`` is one of "all" / "installed" / "updates": "installed"
+    drops the AVAILABLE section, "updates" keeps NEED UPDATE plus rows
+    needing attention (retry/update) so errors survive filtering.
     applied: it overrides the rendered ``checked`` state (mods parity)
     so staging is visible instead of snapping back on refresh. Row
     status/warning text still reflects on-disk truth.
@@ -180,8 +188,41 @@ def build_items(state, *, recommended, expected, needle="", pending=None):
                     "error": (
                         "" if rec.status == "unknown" else (rec.error or "")
                     ),
+                    "staged": staged is not None,
                 }
             )
+    if mode != "all":
+        # Drop whole sections / rows the chip filter excludes. A section
+        # header survives with kept rows — or alone when folded, so the
+        # expand arrow never disappears under a filter.
+        kept: list = []
+        buf: list = []
+        cur = ""
+        cur_open = True
+
+        def _flush() -> None:
+            if len(buf) > 1 or (buf and not cur_open):
+                kept.extend(buf)
+
+        for it in items:
+            if it.get("kind") == "section":
+                _flush()
+                buf = [it]
+                cur = it.get("title", "")
+                cur_open = bool(it.get("open", True))
+                cur = it.get("title", "")
+            elif mode == "installed" and cur in (
+                "INSTALLED",
+                "NEED UPDATE",
+            ):
+                buf.append(it)
+            elif mode == "updates" and (
+                cur == "NEED UPDATE"
+                or it.get("statusKind") in ("retry", "update")
+            ):
+                buf.append(it)
+        _flush()
+        items = kept
     return items
 
 
@@ -202,6 +243,7 @@ class AddonsModel(QAbstractListModel):
     RepoUrlRole = Qt.ItemDataRole.UserRole + 12
     DescriptionRole = Qt.ItemDataRole.UserRole + 13
     ErrorRole = Qt.ItemDataRole.UserRole + 14
+    StagedRole = Qt.ItemDataRole.UserRole + 15
 
     changed = Signal()
     chromeChanged = Signal()
@@ -210,9 +252,11 @@ class AddonsModel(QAbstractListModel):
         super().__init__(parent)
         self._items: list = []
         self._filter = ""
+        self._filter_mode = "all"
         self._loading = True
         self._updates_count = 0
         self._apply_visible = False
+        self._pending_count = 0
         self._recommended_pending = False
         self._busy = False
         self._footer_text = ""
@@ -245,6 +289,7 @@ class AddonsModel(QAbstractListModel):
             AddonsModel.RepoUrlRole: b"repoUrl",
             AddonsModel.DescriptionRole: b"description",
             AddonsModel.ErrorRole: b"error",
+            AddonsModel.StagedRole: b"staged",
         }
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -266,6 +311,7 @@ class AddonsModel(QAbstractListModel):
             AddonsModel.RepoUrlRole: "repoUrl",
             AddonsModel.DescriptionRole: "description",
             AddonsModel.ErrorRole: "error",
+            AddonsModel.StagedRole: "staged",
         }
         attr = _roles.get(int(role))
         return item.get(attr) if attr else None
@@ -291,6 +337,7 @@ class AddonsModel(QAbstractListModel):
                 self._loading = False
             self._updates_count = int(snap.get("updates_count", 0))
             self._apply_visible = bool(snap.get("apply_visible", False))
+            self._pending_count = int(snap.get("pending_count", 0))
             self._recommended_pending = bool(
                 snap.get("recommended_enabled", False)
             )
@@ -320,6 +367,16 @@ class AddonsModel(QAbstractListModel):
         return self._apply_visible
 
     applyVisible = Property(bool, _get_apply_visible, notify=chromeChanged)
+
+    def _get_pending_count(self) -> int:
+        return self._pending_count
+
+    pendingCount = Property(int, _get_pending_count, notify=chromeChanged)
+
+    def _get_filter_mode(self) -> str:
+        return self._filter_mode
+
+    filterMode = Property(str, _get_filter_mode, notify=changed)
 
     def _get_recommended_enabled(self) -> bool:
         return self._recommended_pending and not self._busy
@@ -385,6 +442,21 @@ class AddonsModel(QAbstractListModel):
             self.refresh()
 
     def current_filter(self) -> str:
+        """Active search text (read by the snapshot provider)."""
+        return self._filter
+
+    @Slot(str)
+    def setFilterMode(self, mode: str):
+        if (
+            mode in ("all", "installed", "updates")
+            and mode != self._filter_mode
+        ):
+            self._filter_mode = mode
+            self.refresh()
+
+    def current_filter_mode(self) -> str:
+        """Active section filter (read by the snapshot provider)."""
+        return self._filter_mode
         """Active search text (read by the snapshot provider)."""
         return self._filter
 

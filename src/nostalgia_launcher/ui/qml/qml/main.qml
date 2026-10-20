@@ -218,7 +218,7 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 contentModel: modsModel
                 tabTitle: "MODS"
-                legendText: "★ required"
+                legendText: "★ required · ☐ off = disabled · ● = unapplied (Apply to confirm)"
                 essentialText: "★  Install Required"
                 customLabel: "+  Add custom mod"
                 loadingText: "Loading mods…"
@@ -229,7 +229,7 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 contentModel: assetsModel
                 tabTitle: "ASSETS"
-                legendText: ""
+                legendText: "☐ off = disabled · ● = unapplied (Apply to confirm)"
                 essentialText: "★  Install Essential"
                 customLabel: "+  Add custom asset"
                 loadingText: "Loading assets…"

@@ -690,3 +690,49 @@ def test_waiting_screen_visibility(engine):
     waiting = root.findChild(QObject, "qmlAddonsWaiting")
     assert waiting is not None
     assert waiting.property("visible") is True
+    assert waiting.property("visible") is True
+
+
+def test_build_folded_section_keeps_header():
+    """Folding must hide rows, never the section itself: the header
+    (with its expand arrow) survives in every chip-filter mode."""
+    state = _state(addons={"A": _rec("A"), "B": _rec("B")})
+    state.sections_open = {"INSTALLED": False}
+    kw = {"recommended": set(), "expected": "11200"}
+    for mode in ("all", "installed", "updates"):
+        items = build_items(state, **kw, mode=mode)
+        headers = {i["title"]: i for i in items if i["kind"] == "section"}
+        assert headers["INSTALLED"]["open"] is False
+        assert headers["INSTALLED"]["count"] == 2
+    rows = [i for i in items if i["kind"] == "row"]
+    assert rows == []
+
+
+def test_folded_section_header_renders(engine, qapp):
+    """Engine roundtrip for the reported bug: a folded non-empty section
+    still renders its header (expand arrow), so folders can be unfolded."""
+    eng, addons = engine
+    root = eng.rootObjects()[0]
+    root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 2)
+    qapp.processEvents()
+
+    def snapshot():
+        return {
+            "items": [
+                {
+                    "kind": "section",
+                    "title": "INSTALLED",
+                    "count": 2,
+                    "open": False,
+                    "empty": "",
+                }
+            ]
+        }
+
+    addons.set_snapshot_provider(snapshot)
+    addons.set_handlers(toggle=lambda f, c: None, section=lambda t: None)
+    addons.refresh()
+    for _ in range(10):
+        qapp.processEvents()
+    lst = root.findChild(QObject, "qmlAddonsList")
+    assert "INSTALLED" in set(_delegate_texts(lst))

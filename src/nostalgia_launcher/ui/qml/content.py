@@ -48,6 +48,7 @@ def build_rows(entries, state, *, required_of, version_of, action_for):
                 "required": bool(required_of(entry)),
                 "action": action_for(eid) or "",
                 "error": (rec.error if rec is not None else None) or "",
+                "staged": pend is not None,
             }
         )
     return rows
@@ -160,6 +161,7 @@ class ContentListModel(QAbstractListModel):
     ActionRole = Qt.ItemDataRole.UserRole + 8
     ErrorRole = Qt.ItemDataRole.UserRole + 9
     RepoUrlRole = Qt.ItemDataRole.UserRole + 10
+    StagedRole = Qt.ItemDataRole.UserRole + 11
 
     changed = Signal()
     chromeChanged = Signal()
@@ -172,6 +174,7 @@ class ContentListModel(QAbstractListModel):
         self._filter_mode = "all"
         self._updates_count = 0
         self._apply_visible = False
+        self._pending_count = 0
         self._essential_pending = False
         self._busy = False
         self._loading = True
@@ -210,6 +213,7 @@ class ContentListModel(QAbstractListModel):
             ContentListModel.ActionRole: b"action",
             ContentListModel.ErrorRole: b"error",
             ContentListModel.RepoUrlRole: b"repoUrl",
+            ContentListModel.StagedRole: b"staged",
         }
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -227,6 +231,7 @@ class ContentListModel(QAbstractListModel):
             ContentListModel.ActionRole: "action",
             ContentListModel.ErrorRole: "error",
             ContentListModel.RepoUrlRole: "repoUrl",
+            ContentListModel.StagedRole: "staged",
         }
         attr = _roles.get(int(role))
         return row.get(attr) if attr else None
@@ -237,7 +242,8 @@ class ContentListModel(QAbstractListModel):
         mode = self._filter_mode
         if mode == "installed" and not row["installed"]:
             return False
-        if mode == "updates" and row["action"] != "update":
+        if mode == "updates" and row["action"] not in ("update", "retry"):
+            return False
             return False
         needle = self._filter_text.strip().lower()
         if needle and needle not in (
@@ -287,6 +293,7 @@ class ContentListModel(QAbstractListModel):
             extras,
             headline,
             scan_versions,
+            pending_count,
         ) = self._snapshot_provider()
         self.set_snapshot(
             rows,
@@ -297,6 +304,7 @@ class ContentListModel(QAbstractListModel):
             extras=extras,
             headline=headline,
             scan_versions=scan_versions,
+            pending_count=pending_count,
         )
 
     def set_snapshot(
@@ -309,6 +317,7 @@ class ContentListModel(QAbstractListModel):
         extras=None,
         headline="",
         scan_versions=None,
+        pending_count=0,
     ):
         self._rows = list(rows or [])
         self._updates_count = int(updates_count or 0)
@@ -343,6 +352,11 @@ class ContentListModel(QAbstractListModel):
         return self._apply_visible
 
     applyVisible = Property(bool, _get_apply_visible, notify=chromeChanged)
+
+    def _get_pending_count(self) -> int:
+        return self._pending_count
+
+    pendingCount = Property(int, _get_pending_count, notify=chromeChanged)
 
     def _get_essential_enabled(self) -> bool:
         return self._essential_pending and not self._busy

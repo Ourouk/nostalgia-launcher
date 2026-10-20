@@ -78,7 +78,7 @@ ColumnLayout {
                 TextField {
                     objectName: "qmlContentSearch"
                     Layout.fillWidth: true
-                    placeholderText: "Filter…"
+                    placeholderText: "⌕  Filter"
                     Accessible.name: "Filter entries"
                     onTextChanged: root.contentModel.setFilterText(text)
                 }
@@ -175,6 +175,13 @@ ColumnLayout {
                     onCheckedChanged: root.contentModel.toggleEntry(model.eid, checked)
                 }
                 Label {
+                    text: "●"
+                    font.pointSize: 8
+                    color: appTheme.colors["C_GOLD"]
+                    visible: model.staged || false
+                    Accessible.name: "Unapplied change for " + model.name
+                }
+                Label {
                     text: "★"
                     font.pointSize: 11
                     color: appTheme.colors["C_GOLD"]
@@ -190,7 +197,7 @@ ColumnLayout {
                 }
                 Button {
                     text: model.action === "retry" ? "Retry" : "Update"
-                    visible: model.action !== ""
+                    visible: model.action !== "" && model.error === ""
                     enabled: !root.contentModel.busy
                     flat: true
                     onClicked: root.contentModel.actOn(model.eid)
@@ -213,15 +220,26 @@ ColumnLayout {
                 wrapMode: Text.WordWrap
                 visible: model.description !== ""
             }
-            Label {
+            RowLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 48
                 Layout.rightMargin: 12
-                text: model.error
-                font.pointSize: 9
-                color: appTheme.colors["C_ERR"]
-                wrapMode: Text.WordWrap
+                spacing: 8
                 visible: model.error !== ""
+                Label {
+                    Layout.fillWidth: true
+                    text: model.error
+                    font.pointSize: 9
+                    color: appTheme.colors["C_ERR"]
+                    wrapMode: Text.WordWrap
+                }
+                Button {
+                    text: model.action === "retry" ? "Retry" : "Update"
+                    visible: model.action !== ""
+                    enabled: !root.contentModel.busy
+                    flat: true
+                    onClicked: root.contentModel.actOn(model.eid)
+                }
             }
             Rectangle {
                 Layout.fillWidth: true
@@ -321,9 +339,8 @@ ColumnLayout {
         }
         Button {
             objectName: "qmlContentApply"
-            text: root.contentModel.busy ? "Applying…" : "Apply"
-            visible: root.contentModel.applyVisible
-            enabled: !root.contentModel.busy
+            text: root.contentModel.busy ? "Applying…" : (root.contentModel.pendingCount > 0 ? "Apply (" + root.contentModel.pendingCount + ")" : "Apply")
+            enabled: !root.contentModel.busy && root.contentModel.applyVisible
             highlighted: true
             onClicked: root.contentModel.applyAll()
         }

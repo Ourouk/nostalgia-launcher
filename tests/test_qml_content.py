@@ -247,7 +247,9 @@ def test_filter_modes(model):
     model.setFilterMode("installed")
     assert model.rowCount() == 1
     model.setFilterMode("updates")
-    assert model.rowCount() == 1
+    # "update" + "retry" rows: error rows survive the Updates filter
+    # so a failed entry is never stranded out of sight.
+    assert model.rowCount() == 2
     model.setFilterMode("all")
     assert model.rowCount() == 3
     model.setFilterMode("bogus")
@@ -321,7 +323,7 @@ def test_action_apply_essential_reload(model):
 def test_refresh_uses_provider(model):
     _snapshot(model, updates_count=0)
     model.set_snapshot_provider(
-        lambda: ([], 0, False, False, False, [], "", [])
+        lambda: ([], 0, False, False, False, [], "", [], 0)
     )
     model.refresh()
     assert model.rowCount() == 0
@@ -490,7 +492,7 @@ def test_scan_version_slot(model):
     model.set_snapshot([], scan_versions=["1.12.1", "2.4.3"])
     assert model.property("scanVersions") == ["1.12.1", "2.4.3"]
     model.set_snapshot_provider(
-        lambda: ([], 0, False, False, False, [], "", [])
+        lambda: ([], 0, False, False, False, [], "", [], 0)
     )
     model.setScanVersion("2.4.3")
     assert model.current_scan_version() == "2.4.3"

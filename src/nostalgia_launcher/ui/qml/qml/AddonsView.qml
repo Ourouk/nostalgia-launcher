@@ -49,12 +49,44 @@ ColumnLayout {
                     onClicked: addonsModel.checkForUpdates()
                 }
             }
-            TextField {
-                objectName: "qmlAddonsSearch"
+            RowLayout {
                 Layout.fillWidth: true
-                placeholderText: "⌕  Search addons"
-                Accessible.name: "Search addons"
-                onTextChanged: addonsModel.setFilterText(text)
+                spacing: 4
+                TextField {
+                    objectName: "qmlAddonsSearch"
+                    Layout.fillWidth: true
+                    placeholderText: "⌕  Search addons"
+                    Accessible.name: "Search addons"
+                    onTextChanged: addonsModel.setFilterText(text)
+                }
+                Button {
+                    text: "All"
+                    checkable: true
+                    checked: addonsModel.filterMode === "all"
+                    flat: true
+                    onClicked: addonsModel.setFilterMode("all")
+                }
+                Button {
+                    text: "Installed"
+                    checkable: true
+                    checked: addonsModel.filterMode === "installed"
+                    flat: true
+                    onClicked: addonsModel.setFilterMode("installed")
+                }
+                Button {
+                    text: "Updates"
+                    checkable: true
+                    checked: addonsModel.filterMode === "updates"
+                    flat: true
+                    onClicked: addonsModel.setFilterMode("updates")
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                text: "☐ on = install · off = remove on Apply · ● = unapplied change"
+                font.pointSize: 9
+                color: appTheme.colors["C_TEXT_DIM"]
+                elide: Text.ElideRight
             }
         }
     }
@@ -94,6 +126,7 @@ ColumnLayout {
             width: addonList.width
             spacing: 0
             visible: (model.kind === "section" && (model.sectionOpen
+                || (model.sectionCount || 0) > 0
                 || (model.sectionEmpty || "") !== ""))
                 || (model.kind === "row")
                      && (model.folder || "") !== ""
@@ -151,6 +184,13 @@ ColumnLayout {
                         model.folder, checked)
                 }
                 Label {
+                    text: "●"
+                    font.pointSize: 8
+                    color: appTheme.colors["C_GOLD"]
+                    visible: model.staged || false
+                    Accessible.name: "Unapplied change for " + model.folder
+                }
+                Label {
                     text: "★"
                     font.pointSize: 11
                     color: appTheme.colors["C_GOLD"]
@@ -171,7 +211,9 @@ ColumnLayout {
                 }
                 Button {
                     text: model.statusText || ""
-                    visible: model.statusKind === "retry"
+                    visible: (model.statusKind === "retry"
+                        || model.statusKind === "update")
+                        && (model.error || "") === ""
                         || model.statusKind === "update"
                     flat: true
                     font.bold: model.statusKind === "update"
@@ -212,15 +254,30 @@ ColumnLayout {
                 wrapMode: Text.WordWrap
                 visible: model.kind === "row" && (model.description || "") !== ""
             }
-            Label {
+            RowLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 48
                 Layout.rightMargin: 12
-                text: model.error || ""
-                font.pointSize: 9
-                color: appTheme.colors["C_ERR"]
-                wrapMode: Text.WordWrap
+                spacing: 8
                 visible: model.kind === "row" && (model.error || "") !== ""
+                Label {
+                    Layout.fillWidth: true
+                    text: model.error || ""
+                    font.pointSize: 9
+                    color: appTheme.colors["C_ERR"]
+                    wrapMode: Text.WordWrap
+                }
+                Button {
+                    text: model.statusKind === "retry" ? "Retry" : "Update"
+                    visible: model.statusKind === "retry" || model.statusKind === "update"
+                    flat: true
+                    onClicked: {
+                        if (model.statusKind === "retry")
+                            addonsModel.checkForUpdates();
+                        else
+                            addonsModel.updateOne(model.folder);
+                    }
+                }
             }
             Rectangle {
                 Layout.fillWidth: true
@@ -261,9 +318,8 @@ ColumnLayout {
         }
         Button {
             objectName: "qmlAddonsApply"
-            text: addonsModel.busy ? "Applying…" : "Apply"
-            visible: addonsModel.applyVisible
-            enabled: !addonsModel.busy
+            text: addonsModel.busy ? "Applying…" : (addonsModel.pendingCount > 0 ? "Apply (" + addonsModel.pendingCount + ")" : "Apply")
+            enabled: !addonsModel.busy && addonsModel.applyVisible
             highlighted: true
             onClicked: addonsModel.applyAll()
         }

@@ -446,6 +446,7 @@ class QmlNostalgiaLauncherApp:
                 extras,
                 headline,
                 scan_versions,
+                len(getattr(state, "pending", {}) or {}),
             )
 
         def on_toggle(eid, checked):
@@ -496,9 +497,11 @@ class QmlNostalgiaLauncherApp:
                     expected=expected_interface(launcher.client_version()),
                     needle=model.current_filter(),
                     pending=state.pending,
+                    mode=model.current_filter_mode(),
                 ),
                 "updates_count": state.updates_count,
                 "apply_visible": bool(state.pending),
+                "pending_count": len(state.pending),
                 "recommended_enabled": bool(
                     set(ctrl.recommended) - set(state.addons)
                 )
