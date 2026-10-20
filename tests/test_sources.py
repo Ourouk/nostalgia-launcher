@@ -494,6 +494,46 @@ def test_extract_7z_map_happy_path_and_glob(monkeypatch, tmp_path):
     assert (client / "nested.dll").read_bytes() == b"N"
 
 
+def test_extract_7z_map_skips_dir_symlink_escape(monkeypatch, tmp_path):
+    """A 7z shipping a dir symlink (a -> /outside) must not leak host files
+    into the install: symlinked dirs are pruned from the walk."""
+    import os
+    import subprocess
+
+    client = tmp_path / "client"
+    client.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "passwd").write_bytes(b"secret")
+    monkeypatch.setattr(deploy, "find_seven_z", lambda: "/usr/bin/7z")
+
+    def _run(args, **kwargs):
+        outdir = next(
+            a[2:] for a in args if isinstance(a, str) and a.startswith("-o")
+        )
+        os.makedirs(os.path.join(outdir, "real"), exist_ok=True)
+        with open(os.path.join(outdir, "real", "ok.dll"), "wb") as f:
+            f.write(b"OK")
+        os.symlink(str(outside), os.path.join(outdir, "a"))
+
+        class _Proc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Proc()
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    written = deploy.extract_7z_map(
+        str(client),
+        b"fake-7z",
+        {"real/ok.dll": "ok.dll", "a/passwd": "pwned.dll"},
+    )
+    assert written == ["ok.dll"]
+    assert (client / "ok.dll").read_bytes() == b"OK"
+    assert not (client / "pwned.dll").exists()
+
+
 def test_extract_7z_map_failed_process(monkeypatch, tmp_path):
     import subprocess
 

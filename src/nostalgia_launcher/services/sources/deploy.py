@@ -25,7 +25,7 @@ import zipfile
 from ...core.filesystem import rmtree_force
 from ...core.log_sink import log
 from ...core.process_env import clean_system_env
-from ...core.safety import safe_relative_path
+from ...core.safety import safe_destination, safe_relative_path
 
 # Per-member uncompressed ceiling: far above any legitimate game file,
 # far below disk-filling territory.
@@ -102,13 +102,31 @@ def checked_rel(dest_rel) -> str:
     return dest_rel
 
 
+def _resolve_inside(base: str, dest_rel: str) -> str:
+    """Join + makedirs ``dest_rel`` under ``base``, refusing symlink-parent
+    escape (realpath containment; parent == base allowed)."""
+    dest = os.path.join(base, dest_rel)
+    if not safe_destination(dest, base):
+        raise RuntimeError(f"Refusing unsafe install path: {dest_rel!r}")
+    parent = os.path.dirname(dest)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+        parent_real = os.path.realpath(parent)
+        if parent_real != os.path.realpath(base) and not safe_destination(
+            parent_real, base
+        ):
+            raise RuntimeError(
+                f"Refusing unsafe install path (symlink parent): {dest_rel!r}"
+            )
+    return dest
+
+
 def install_plain(client_dir: str, data: bytes, dest_rel: str) -> str:
     """Write one file into the client dir. The destination is re-validated
     here (defence in depth) before it is ever joined onto client_dir.
     Returns the written relative path."""
     dest_rel = checked_rel(dest_rel)
-    dest = os.path.join(client_dir, dest_rel)
-    os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
+    dest = _resolve_inside(client_dir, dest_rel)
     with open(dest, "wb") as f:
         f.write(data)
     log(f"  Installed {dest_rel}")
@@ -121,8 +139,7 @@ def move_into_place(staged_path: str, client_dir: str, dest_rel: str) -> str:
     arrange it (same volume → atomic rename); shutil.move falls back to a
     copy otherwise. Returns the written relative path."""
     dest_rel = checked_rel(dest_rel)
-    dest = os.path.join(client_dir, dest_rel)
-    os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
+    dest = _resolve_inside(client_dir, dest_rel)
     shutil.move(staged_path, dest)
     return dest_rel
 
@@ -247,10 +264,22 @@ def extract_7z_map(
             suffix = f": {detail}" if detail else ""
             raise RuntimeError(f"7z extraction failed{suffix}")
         members: dict[str, str] = {}
-        for root, _dirs, files in os.walk(outdir):
+        outdir_real = os.path.realpath(outdir) + os.sep
+        for root, dirs, files in os.walk(outdir):
+            # A hostile 7z may contain a dir symlink (a -> /etc): os.walk
+            # lists its "children" although they live outside outdir, and
+            # the files themselves are not links — so prune symlinked dirs
+            # and re-check realpath containment on every member.
+            dirs[:] = [
+                d for d in dirs if not os.path.islink(os.path.join(root, d))
+            ]
             for name in files:
                 full = os.path.join(root, name)
                 if os.path.islink(full):
+                    continue
+                if not (os.path.realpath(full) + os.sep).startswith(
+                    outdir_real
+                ):
                     continue
                 rel = os.path.relpath(full, outdir).replace("\\", "/")
                 members.setdefault(rel, full)
@@ -324,7 +353,6 @@ def unpack_prefix(data: bytes, prefix: str, dest_root: str) -> None:
     if ".." in wanted:
         raise RuntimeError(f"Refusing unsafe unpack prefix: {prefix!r}")
     tmp_root = dest_root + ".tmp_install"
-    tmp_abs = os.path.abspath(tmp_root)
     if os.path.isdir(tmp_root):
         rmtree_force(tmp_root)
     try:
@@ -351,10 +379,11 @@ def unpack_prefix(data: bytes, prefix: str, dest_root: str) -> None:
                     len(parts) <= len(wanted) or parts[: len(wanted)] != wanted
                 ):
                     continue
-                target = os.path.join(tmp_root, *parts[len(wanted) :])
-                if not os.path.abspath(target).startswith(tmp_abs + os.sep):
+                rel = os.path.join(*parts[len(wanted) :])
+                try:
+                    target = _resolve_inside(tmp_root, rel)
+                except RuntimeError:
                     continue
-                os.makedirs(os.path.dirname(target), exist_ok=True)
                 with zf.open(info) as src, open(target, "wb") as dst:
                     shutil.copyfileobj(src, dst)
         if os.path.isdir(dest_root):

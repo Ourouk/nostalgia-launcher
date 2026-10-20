@@ -630,6 +630,8 @@ def install_addon_files(
     into ``folder`` applies.
     """
     log(f"  Downloading {folder} @ {sha[:10]}…")
+    if not git_url or not is_allowed_git_url(git_url):
+        raise RuntimeError("Addon URL is not from an allowed git host")
     data = _GIT_BACKEND.fetch_archive(git_url, sha)
     try:
         discovered = discover_repo_addons(data, launcher.client_version())

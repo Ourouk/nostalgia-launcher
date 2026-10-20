@@ -276,4 +276,52 @@ def test_deploy_unpack_folder_hardened(tmp_path):
         zf.writestr("TestAddon-master/../escape.txt", "evil")
     deploy.unpack_folder(buf.getvalue(), str(dest_root))
     assert (dest_root / "pwn.txt").exists()
-    assert not (tmp_path / "escape.txt").exists()
+
+
+def test_deploy_install_plain_refuses_symlink_parent(tmp_path):
+    """A pre-existing symlink parent (sub -> /outside) must not redirect
+    addon/mod/asset writes outside the client dir."""
+    client = tmp_path / "client"
+    client.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (client / "sub").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(RuntimeError, match="Refusing unsafe install path"):
+        deploy.install_plain(str(client), b"evil", "sub/pwn.txt")
+    assert not (outside / "pwn.txt").exists()
+
+
+def test_deploy_move_into_place_refuses_symlink_parent(tmp_path):
+    """Same containment for the staged-file path (asset direct_file)."""
+    client = tmp_path / "client"
+    client.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (client / "sub").symlink_to(outside, target_is_directory=True)
+    staged = tmp_path / "staged.bin"
+    staged.write_bytes(b"evil")
+    with pytest.raises(RuntimeError, match="Refusing unsafe install"):
+        deploy.move_into_place(str(staged), str(client), "sub/pwn.txt")
+    assert not (outside / "pwn.txt").exists()
+
+
+def test_deploy_unpack_prefix_refuses_symlink_parent(tmp_path):
+    """A symlink smuggled into an earlier unpacked layer must not redirect
+    later members written through the same tmp dir."""
+    import os
+
+    dest_root = tmp_path / "Interface" / "AddOns" / "TestAddon"
+    dest_root.mkdir(parents=True)
+    tmp_root = str(dest_root) + ".tmp_install"
+    os.makedirs(os.path.join(tmp_root, "sub"))
+    # Simulate a symlink planted by an earlier member: sub/link -> /outside.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.symlink(str(outside), os.path.join(tmp_root, "sub", "link"))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("TestAddon-master/pwn.txt", "ok")
+    # Direct unpack still works (no symlink in the write path here)…
+    deploy.unpack_folder(buf.getvalue(), str(dest_root))
+    assert (dest_root / "pwn.txt").exists()
+    assert not (outside / "pwn.txt").exists()

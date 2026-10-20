@@ -22,6 +22,7 @@ from ...core.constants import GITHUB_API, UA
 from ...core.errors import describe_net_error
 from ...core.log_sink import log
 from ...core.process_env import clean_system_env
+from ...core.safety import validate_sha1
 from ...core.security_http import read_capped, secure_urlopen
 from .base import FetchResult, SourceBackend, register
 
@@ -128,14 +129,16 @@ class GitArchiveBackend(SourceBackend):
     def validate(self, source: dict) -> dict | None:
         git = source.get("git")
         git = git.strip() if isinstance(git, str) else ""
+        if not git or not is_allowed_git_url(git):
+            return None
         branch = source.get("branch")
         ref = source.get("ref")
-        cleaned: dict = {"kind": self.KIND, "git": git or None}
+        cleaned: dict = {"kind": self.KIND, "git": git}
         if isinstance(branch, str) and branch.strip():
             cleaned["branch"] = branch.strip()
         if isinstance(ref, str) and ref.strip():
             cleaned["ref"] = ref.strip()
-        return cleaned if cleaned["git"] else None
+        return cleaned
 
     def resolve_version(
         self, entry: dict, *, force: bool = False
@@ -163,12 +166,14 @@ class GitArchiveBackend(SourceBackend):
         git_url = src.get("git")
         if not isinstance(git_url, str) or not git_url:
             raise RuntimeError("git_archive requires a git URL")
+        if not is_allowed_git_url(git_url):
+            raise RuntimeError("Addon URL is not from an allowed git host")
         sha = src.get("sha1") or src.get("sha")
-        if not isinstance(sha, str) or not sha:
+        if not isinstance(sha, str):
             raise RuntimeError(
-                "git_archive requires a pinned commit sha to fetch"
+                "git_archive requires a pinned 40-hex commit sha to fetch"
             )
-        data = self.fetch_archive(git_url, sha)
+        data = self.fetch_archive(git_url, sha)  # 40-hex enforced
         return FetchResult(data=data, version=sha[:10], name=entry.get("id"))
 
     # ── dedicated API (addons vertical) ───────────────────────────────────
@@ -297,6 +302,12 @@ class GitArchiveBackend(SourceBackend):
 
     def fetch_archive(self, git_url: str, sha: str) -> bytes:
         """The repo archive zip at ``sha`` through the hardened transport."""
+        if not is_allowed_git_url(git_url):
+            raise RuntimeError("Addon URL is not from an allowed git host")
+        if not isinstance(sha, str) or not validate_sha1(sha):
+            raise RuntimeError(
+                "git_archive requires a pinned 40-hex commit sha to fetch"
+            )
         url = self.zip_url(git_url, sha)
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with secure_urlopen(req, timeout=120) as r:

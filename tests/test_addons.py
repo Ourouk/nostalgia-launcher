@@ -26,9 +26,8 @@ def test_is_allowed_git_url():
 
 def test_addon_git_host_config_extra(tmp_path, monkeypatch):
     """A community git host added via the launcher config is allowed, an
-    unknown host is rejected by the git-host gate, and install_addon_files
-    fetches archives over plain HTTPS (no download-host gate) — a fetch
-    is attempted before any failure."""
+    unknown host is rejected by the git-host gate at the service layer —
+    install_addon_files refuses before any fetch is attempted."""
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
@@ -56,11 +55,44 @@ def test_addon_git_host_config_extra(tmp_path, monkeypatch):
             or (_ for _ in ()).throw(RuntimeError("fetch attempted"))
         ),
     )
-    with pytest.raises(RuntimeError, match="fetch attempted"):
+    with pytest.raises(RuntimeError, match="allowed git host"):
         addons.install_addon_files(
-            str(client), "x", "https://evil.example/a/x", "abc123"
+            str(client), "x", "https://evil.example/a/x", "abcd" * 10
         )
-    assert calls == ["https://evil.example/a/x"]
+    assert calls == []
+
+
+def test_git_archive_validate_rejects_non_allowlisted_host():
+    """validate() refuses non-allowlisted git URLs so poisoned catalog
+    entries never become fetchable sources."""
+    from nostalgia_launcher.services.sources import git_archive
+
+    backend = git_archive.GitArchiveBackend()
+    assert backend.validate({"git": "https://evil.example/a/b"}) is None
+    assert (
+        backend.validate({"git": "https://github.com/a/b"})["git"]
+        == "https://github.com/a/b"
+    )
+
+
+def test_git_archive_fetch_rejects_bad_host_and_sha():
+    """fetch()/fetch_archive() enforce the allowlist and a 40-hex sha even
+    when called directly, bypassing controller gates."""
+    from nostalgia_launcher.services.sources import git_archive
+
+    backend = git_archive.GitArchiveBackend()
+    with pytest.raises(RuntimeError, match="allowed git host"):
+        backend.fetch_archive("https://evil.example/a/b", "a" * 40)
+    with pytest.raises(RuntimeError, match="40-hex"):
+        backend.fetch_archive("https://github.com/a/b", "abc123")
+    with pytest.raises(RuntimeError, match="allowed git host"):
+        backend.fetch(
+            {
+                "id": "x",
+                "source": {"git": "https://evil.example/a/b"},
+                "sha1": "a" * 40,
+            }
+        )
 
 
 def test_git_parts_community_gitea():
