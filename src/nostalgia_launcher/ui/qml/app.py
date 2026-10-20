@@ -28,6 +28,7 @@ from ..bridge import ControllerHub
 from ..relaunch import switch_profile
 from ..theme import logo_for_config, palette_for_config
 from .addons import AddonsModel, build_items, expected_interface
+from .browse import BrowseModel, content_browse_entries
 from .content import ContentListModel, build_rows, essential_pending
 from .custom import CustomAddonModel, CustomAssetModel, CustomModModel
 from .linux import LinuxModel, renderer_label, renderer_labels
@@ -151,6 +152,9 @@ class QmlNostalgiaLauncherApp:
         bridge.gameExited.connect(self._refresh_footer)
         self._mods = ContentListModel(_MODS_EMPTY)
         self._assets = ContentListModel(_ASSETS_EMPTY)
+        self._browse_mods = BrowseModel("No mods available.")
+        self._browse_assets = BrowseModel("No assets available.")
+        self._assets = ContentListModel(_ASSETS_EMPTY)
         self._wire_content(
             self._mods, self._hub.mods, "mods", bridge.modsLoaded
         )
@@ -183,6 +187,12 @@ class QmlNostalgiaLauncherApp:
         )
         self._engine.rootContext().setContextProperty(
             "addonsModel", self._addons_qml
+        )
+        self._engine.rootContext().setContextProperty(
+            "browseModsModel", self._browse_mods
+        )
+        self._engine.rootContext().setContextProperty(
+            "browseAssetsModel", self._browse_assets
         )
         self._engine.rootContext().setContextProperty(
             "settingsModel", self._settings
@@ -472,6 +482,33 @@ class QmlNostalgiaLauncherApp:
             lambda k, m: self._after_content_op(model, k, op_kind)
         )
         model.refresh()
+
+        if kind in ("mods", "assets"):
+            # Browse dialog: not-installed catalog, one-click install.
+            browse = (
+                self._browse_mods if kind == "mods" else self._browse_assets
+            )
+            browse.set_install_handler(lambda eid: apply_one(eid))
+
+            def _refresh_browse():
+                latest = getattr(ctrl.state, "latest_versions", {}) or {}
+                browse.set_entries(
+                    [
+                        {
+                            "id": e["id"],
+                            "name": e.get("name", e["id"]),
+                            "version": latest.get(e["id"], ""),
+                            "description": e.get("description", ""),
+                            "repo_url": e.get("repo_url", ""),
+                        }
+                        for e in content_browse_entries(
+                            ctrl.registry, ctrl.state
+                        )
+                    ]
+                )
+
+            loaded_signal.connect(lambda _e: _refresh_browse())
+            _refresh_browse()
 
     def _after_content_op(self, model, kind: str, op_kind: str):
         """Drop the busy chrome when this tab's operation settles."""

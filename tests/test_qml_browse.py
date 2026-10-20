@@ -25,6 +25,56 @@ def qapp():
 
 
 @pytest.fixture()
+def engine(qapp):
+    from PySide6.QtCore import QUrl
+    from PySide6.QtQml import QQmlApplicationEngine
+
+    from nostalgia_launcher.ui.qml.addons import AddonsModel
+    from nostalgia_launcher.ui.qml.app import qml_dir
+    from nostalgia_launcher.ui.qml.content import ContentListModel
+    from nostalgia_launcher.ui.qml.custom import (
+        CustomAddonModel,
+        CustomAssetModel,
+        CustomModModel,
+    )
+    from nostalgia_launcher.ui.qml.linux import LinuxModel
+    from nostalgia_launcher.ui.qml.settings import LogModel, SettingsModel
+    from nostalgia_launcher.ui.qml.viewmodels import (
+        LauncherState,
+        NewsFeedModel,
+        ThemeBridge,
+        UpdateState,
+    )
+    from nostalgia_launcher.ui.qml.wizard import WizardModel
+    from nostalgia_launcher.ui.theme import Palette
+
+    eng = QQmlApplicationEngine()
+    eng.rootContext().setContextProperty("launcherState", LauncherState())
+    eng.rootContext().setContextProperty("appTheme", ThemeBridge(Palette()))
+    eng.rootContext().setContextProperty("newsModel", NewsFeedModel())
+    eng.rootContext().setContextProperty("updateState", UpdateState())
+    mods = ContentListModel("mods empty")
+    assets = ContentListModel("assets empty")
+    eng.rootContext().setContextProperty("modsModel", mods)
+    eng.rootContext().setContextProperty("assetsModel", assets)
+    eng.rootContext().setContextProperty("addonsModel", AddonsModel())
+    eng.rootContext().setContextProperty("settingsModel", SettingsModel())
+    eng.rootContext().setContextProperty("logModel", LogModel())
+    eng.rootContext().setContextProperty("wizard", WizardModel())
+    eng.rootContext().setContextProperty("customModModel", CustomModModel())
+    eng.rootContext().setContextProperty(
+        "customAddonModel", CustomAddonModel()
+    )
+    eng.rootContext().setContextProperty(
+        "customAssetModel", CustomAssetModel()
+    )
+    eng.rootContext().setContextProperty("linuxModel", LinuxModel())
+    eng.rootContext().setContextProperty("browseModsModel", BrowseModel())
+    eng.load(QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml")))
+    yield eng, mods, assets
+
+
+@pytest.fixture()
 def model():
     return BrowseModel()
 
@@ -136,3 +186,12 @@ def test_browse_view_loads(qapp):
     assert dlg is not None
     dlg.setProperty("browseModel", model)
     assert dlg.property("objectName") == "qmlBrowseDialog"
+    assert dlg.property("objectName") == "qmlBrowseDialog"
+
+
+def test_browse_mods_dialog_loads(engine):
+    from PySide6.QtCore import QObject
+
+    eng, _mods, _assets = engine
+    root = eng.rootObjects()[0]
+    assert root.findChild(QObject, "qmlBrowseModsDialog") is not None

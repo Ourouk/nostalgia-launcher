@@ -143,6 +143,20 @@ ApplicationWindow {
         objectName: "qmlCustomAssetDialog"
     }
 
+    BrowseView {
+        id: browseModsDialog
+        objectName: "qmlBrowseModsDialog"
+        title: "BROWSE MODS"
+        browseModel: browseModsModel
+    }
+
+    BrowseView {
+        id: browseAssetsDialog
+        objectName: "qmlBrowseAssetsDialog"
+        title: "BROWSE ASSETS"
+        browseModel: browseAssetsModel
+    }
+
     LinuxSettingsView {
         id: linuxDialog
         objectName: "qmlLinuxSettingsDialog"
