@@ -179,7 +179,7 @@ ApplicationWindow {
             TabButton {
                 objectName: "qmlUpdateTab"
                 text: "UPDATE"
-                enabled: settingsModel.clientUpdates
+                enabled: settingsModel.clientUpdates && updateState.updateTabEnabled
                 onEnabledChanged: {
                     if (!enabled && navBar.currentIndex === 1)
                         navBar.currentIndex = 0

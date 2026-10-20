@@ -1027,6 +1027,19 @@ class UpdateController:
 
         return launcher.effective_client_updates_enabled()
 
+    def update_tab_enabled(self) -> bool:
+        """Whether the UPDATE tab has anything to offer.
+
+        Incremental torrent updates allowed, or no playable client
+        yet (first acquisition still downloads through the tab).
+        Frozen updates on an existing install hide the tab; the
+        footer already falls through to PLAY there."""
+        from ..core import launcher
+
+        if launcher.torrent_update_allowed():
+            return True
+        return not self._playable_client_present()
+
     def _on_done(self, event: UpdateCompleted):
         if event.version:
             self.state.client_version = event.version
@@ -1037,6 +1050,10 @@ class UpdateController:
         self._dispatcher.post(OperationFinished("update", True))
 
     def _on_error(self, event: UpdateFailed):
+        if self._op is None:
+            # Echo after a terminal event already landed (torrent
+            # download failure posts Torrent* + UpdateFailed).
+            return
         op = event.op or self._op or "update"
         self.state.running = False
         self.state.client_ready = False

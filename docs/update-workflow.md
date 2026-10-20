@@ -145,7 +145,14 @@ button; bypasses the `torrent.update` flag).
 - `torrent_url` + `update:false` freezes incremental pushes while keeping
   first-install (full recovery bypasses the flag) — a server-side kill-switch
   with no client release.
-- Note: verify currently ignores the flag (still reports diff); update
+- Note: verify ignores the flag (still reports diff), but neither the
+  footer nor the tab can reach the dead end: readiness falls through to
+  PLAY on an existing install, and the UPDATE tab hides once a playable
+  client exists (`update_tab_enabled`). First acquisition still uses the
+  tab + footer DOWNLOAD (full recovery bypasses the flag).
+- A failed torrent download posts `Torrent*` + `UpdateFailed`; the
+  controller lands one terminal — the `UpdateFailed` echo is ignored
+  once `_op` cleared, keeping the specific torrent error.
   enforces it. So `update:false` surfaces as UPDATE → `UpdateFailed` on
   existing installs.
 

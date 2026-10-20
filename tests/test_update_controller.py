@@ -1568,6 +1568,47 @@ def test_no_torrent_verify_on_existing_install_posts_single_terminal(
     assert controller.state.running is False
 
 
+def test_torrent_download_failure_posts_single_terminal(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
+    """A failed torrent download posts TorrentStalled then UpdateFailed
+    (the worker's fall-through echo) — the controller lands ONE terminal
+    (Finished(False) keeps the specific torrent error; the generic echo
+    must not clobber it with a second OperationFailed)."""
+    worker_cls.script = [
+        TorrentStalled(message="stalled"),
+        UpdateFailed(message="BitTorrent update failed", op="update"),
+    ]
+    controller.start_update()
+    wait_for_event.drain_worker(controller, worker_cls.done)
+    events = controller._dispatcher.drain()
+    finished = [e for e in events if isinstance(e, OperationFinished)]
+    failed = [e for e in events if isinstance(e, OperationFailed)]
+    assert finished == [OperationFinished("update", False)]
+    assert failed == []
+    assert controller.state.running is False
+
+
+def test_update_tab_enabled_respects_frozen_flag(
+    controller, controller_cfg, monkeypatch, tmp_path
+):
+    """UPDATE tab hides only when updates are frozen AND a playable
+    client exists — first acquisition still needs the tab."""
+    from nostalgia_launcher.core import launcher
+
+    monkeypatch.setattr(launcher, "torrent_update_allowed", lambda: True)
+    assert controller.update_tab_enabled() is True
+
+    monkeypatch.setattr(launcher, "torrent_update_allowed", lambda: False)
+    assert controller.update_tab_enabled() is True  # no exe yet
+
+    game = tmp_path / "game"
+    game.mkdir(exist_ok=True)
+    (game / "WoW.exe").write_text("")
+    controller_cfg["out_dir"] = str(game)
+    assert controller.update_tab_enabled() is False
+
+
 def test_torrent_up_to_date_after_verify(
     controller, worker_cls, controller_cfg, wait_for_event
 ):

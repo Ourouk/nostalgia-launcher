@@ -262,6 +262,9 @@ class QmlNostalgiaLauncherApp:
             addons_installing=self._hub.addons.installing
         )
         self._state.setStatusText(ready.status)
+        self._update.set_update_tab_enabled(
+            self._hub.updater.update_tab_enabled()
+        )
         if ready.mode in ("play", "update", "download", "terminate"):
             self._update.update_primary(ready.label, True)
         else:

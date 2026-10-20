@@ -416,6 +416,7 @@ class UpdateState(QObject):
     fileTextChanged = Signal()
     statsChanged = Signal()
     primaryChanged = Signal()
+    updateTabChanged = Signal()
     filesChanged = Signal()
     realmChanged = Signal()
 
@@ -431,6 +432,7 @@ class UpdateState(QObject):
         self._peers = "-"
         self._primary_label = "UPDATE"
         self._primary_enabled = True
+        self._update_tab_enabled = True
         self._files = UpdateFilesModel(self)
         self._on_primary = None
         self._on_recheck = None
@@ -551,6 +553,20 @@ class UpdateState(QObject):
             self._primary_label = label
             self._primary_enabled = bool(enabled)
             self.primaryChanged.emit()
+
+    def _get_update_tab_enabled(self) -> bool:
+        return self._update_tab_enabled
+
+    updateTabEnabled = Property(
+        bool, _get_update_tab_enabled, notify=updateTabChanged
+    )
+
+    def set_update_tab_enabled(self, enabled: bool):
+        """UPDATE-tab visibility from the controller (frozen torrent
+        updates hide the tab once a playable client exists)."""
+        if bool(enabled) != self._update_tab_enabled:
+            self._update_tab_enabled = bool(enabled)
+            self.updateTabChanged.emit()
 
     # ── event intake (mirrors UpdatePanel) ──────────────────────────
 
