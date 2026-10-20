@@ -195,3 +195,12 @@ def test_browse_mods_dialog_loads(engine):
     eng, _mods, _assets = engine
     root = eng.rootObjects()[0]
     assert root.findChild(QObject, "qmlBrowseModsDialog") is not None
+    assert root.findChild(QObject, "qmlBrowseModsDialog") is not None
+
+
+def test_browse_assets_dialog_loads(engine):
+    from PySide6.QtCore import QObject
+
+    eng, _mods, _assets = engine
+    root = eng.rootObjects()[0]
+    assert root.findChild(QObject, "qmlBrowseAssetsDialog") is not None
