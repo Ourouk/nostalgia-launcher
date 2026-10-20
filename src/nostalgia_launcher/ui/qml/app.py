@@ -32,6 +32,7 @@ from .browse import (
     BrowseModel,
     addon_browse_entries,
     content_browse_entries,
+    tab_rows,
 )
 from .content import ContentListModel, build_rows, essential_pending
 from .custom import CustomAddonModel, CustomAssetModel, CustomModModel
@@ -442,7 +443,7 @@ class QmlNostalgiaLauncherApp:
 
             state = ctrl.state
             rows = build_rows(
-                ctrl.registry,
+                tab_rows(ctrl.registry, state),
                 state,
                 required_of=required_of,
                 version_of=version_of,
@@ -542,6 +543,7 @@ class QmlNostalgiaLauncherApp:
                     needle=model.current_filter(),
                     pending=state.pending,
                     mode=model.current_filter_mode(),
+                    available=[],
                 ),
                 "updates_count": state.updates_count,
                 "apply_visible": bool(state.pending),

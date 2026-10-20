@@ -736,3 +736,13 @@ def test_folded_section_header_renders(engine, qapp):
         qapp.processEvents()
     lst = root.findChild(QObject, "qmlAddonsList")
     assert "INSTALLED" in set(_delegate_texts(lst))
+    assert "INSTALLED" in set(_delegate_texts(lst))
+
+
+def test_build_without_available_section():
+    items = build_items(
+        _sample_state(), recommended=set(), expected="11200", available=[]
+    )
+    assert "AVAILABLE" not in [
+        i.get("title") for i in items if i["kind"] == "section"
+    ]

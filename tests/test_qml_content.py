@@ -560,3 +560,25 @@ def test_waiting_screen_visibility(engine):
     assert all(e.property("visible") is False for e in empties)
     _snapshot(mods)
     assert all(w.property("visible") is False for w in waitings)
+    assert all(w.property("visible") is False for w in waitings)
+
+
+def test_tab_rows_excludes_not_installed():
+    from nostalgia_launcher.ui.qml.browse import tab_rows
+
+    entries = [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}]
+    state = SimpleNamespace(
+        records={"a": SimpleNamespace(present=True)}, pending={}
+    )
+    assert [r["id"] for r in tab_rows(entries, state)] == ["a"]
+
+
+def test_tab_rows_keeps_errored_and_staged():
+    from nostalgia_launcher.ui.qml.browse import tab_rows
+
+    entries = [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}]
+    state = SimpleNamespace(
+        records={"a": SimpleNamespace(present=False)},
+        pending={"b": SimpleNamespace(enabled=True)},
+    )
+    assert [r["id"] for r in tab_rows(entries, state)] == ["a", "b"]

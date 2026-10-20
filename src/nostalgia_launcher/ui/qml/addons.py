@@ -79,7 +79,14 @@ def row_status(rec, installed: bool, warning: str):
 
 
 def build_items(
-    state, *, recommended, expected, needle="", pending=None, mode="all"
+    state,
+    *,
+    recommended,
+    expected,
+    needle="",
+    pending=None,
+    mode="all",
+    available=None,
 ):
     """Flat section/row items for the ListView (widget `_render` parity).
 
@@ -90,12 +97,15 @@ def build_items(
     ``mode`` is one of "all" / "installed" / "updates": "installed"
     drops the AVAILABLE section, "updates" keeps NEED UPDATE plus rows
     needing attention (retry/update) so errors survive filtering.
-    applied: it overrides the rendered ``checked`` state (mods parity)
-    so staging is visible instead of snapping back on refresh. Row
-    status/warning text still reflects on-disk truth.
+    ``available`` overrides the catalog when given (the manage-tab passes
+    ``[]``: installed-only, discovery lives in the Browse dialog).
     """
     addons = getattr(state, "addons", {}) or {}
-    available = getattr(state, "available", []) or []
+    available = (
+        list(available)
+        if available is not None
+        else (getattr(state, "available", []) or [])
+    )
     installed_names = set(addons)
     pending = pending or {}
     installed_gits = {}
@@ -138,7 +148,8 @@ def build_items(
     sections = [("INSTALLED", up_to_date)]
     if need_update:
         sections.insert(0, ("NEED UPDATE", need_update))
-    sections.append(("AVAILABLE", avail))
+    if avail:
+        sections.append(("AVAILABLE", avail))
 
     sections_open = getattr(state, "sections_open", {}) or {}
     items = []

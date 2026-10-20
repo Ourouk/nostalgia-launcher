@@ -141,3 +141,13 @@ def addon_browse_entries(state) -> list:
     gits by the controller, so it passes through untouched.
     """
     return list(getattr(state, "available", []) or [])
+    return list(getattr(state, "available", []) or [])
+
+
+def tab_rows(entries, state) -> list:
+    """Registry entries the manage-tab may show: anything with a record
+    (installed, failed, or staged) — never pure catalog entries."""
+    recs = getattr(state, "records", {}) or {}
+    pending = getattr(state, "pending", {}) or {}
+    known = set(recs) | set(pending)
+    return [e for e in entries or [] if e["id"] in known]
