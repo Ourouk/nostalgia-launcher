@@ -327,6 +327,7 @@ class AssetsController:
         self.state.updates_count = count
 
     def _apply_worker(self, client_dir: str, only_asset_id: str | None = None):
+        failed: list[str] = []
         try:
             self._dispatcher.post(ProgressChanged(0.0, ""))
             self._dispatcher.post(StatusChanged("Downloading assets…"))
@@ -419,6 +420,7 @@ class AssetsController:
                     self._dispatcher.post(
                         LogMessage(f"  ✗ {asset['name']}: {err}")
                     )
+                    failed.append(aid)
                     keep = [] if not is_installed else installed_files
                     assets_cfg[aid] = {
                         "enabled": False,
@@ -443,7 +445,15 @@ class AssetsController:
             self._dispatcher.post(ProgressChanged(1.0, ""))
             self._dispatcher.post(AssetsLoaded(self.state))
             self._busy = False
-            self._dispatcher.post(OperationFinished("assets", True, ""))
+            self._dispatcher.post(
+                OperationFinished(
+                    "assets",
+                    not failed,
+                    ""
+                    if not failed
+                    else f"Failed assets: {', '.join(failed)}",
+                )
+            )
 
         except Exception as e:
             self._busy = False

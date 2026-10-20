@@ -312,7 +312,27 @@ class QmlNostalgiaLauncherApp:
                 )
                 self._update.prompt_realm(actual, status.expected)
                 return
-        updater.launch_game()
+        self._launch_and_maybe_close()
+
+    def _launch_and_maybe_close(self):
+        """Launch the game; honor "Close on launch" (widget parity).
+
+        The widget shell closed the window ~1 s after spawning when the
+        setting was on. ``launch_game`` reports the sidecar path on the
+        Linux close-on-launch path; anything else keeps the launcher open
+        (Windows, or Linux with the watcher tracking the game)."""
+        from ...core import config_store
+
+        ok, _ = self._hub.updater.launch_game()
+        self._refresh_footer()
+        if not ok:
+            return
+        try:
+            close = bool(config_store.load_config().get("close_on_launch"))
+        except Exception:
+            close = False
+        if close:
+            self._app.quit()
 
     def _force_recheck(self):
         """UPDATE-tab Force recheck (mirrors _on_force_recheck)."""
@@ -724,8 +744,7 @@ class QmlNostalgiaLauncherApp:
         client_dir = (self._hub.settings.state.path or "").strip()
         if inject and client_dir:
             updater.inject_realm(client_dir)
-        updater.launch_game()
-        self._refresh_footer()
+        self._launch_and_maybe_close()
 
     # ── custom entries + linux settings + realm prompt ────────────────
 

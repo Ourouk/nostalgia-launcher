@@ -346,6 +346,7 @@ class ModsController:
         self.state.updates_count = count
 
     def _apply_worker(self, client_dir: str, only_mod_id: str | None = None):
+        failed: list[str] = []
         try:
             self._dispatcher.post(ProgressChanged(0.0, ""))
             self._dispatcher.post(StatusChanged("Downloading mods…"))
@@ -501,10 +502,22 @@ class ModsController:
                     self._dispatcher.post(
                         LogMessage(f"  \u2717 {mod['name']}: {err}")
                     )
+                    failed.append(mid)
+                    # A failed update already deleted the old files, but the
+                    # record keeps pointing at them: the filesystem-truth
+                    # check reports not-installed, so retry reinstalls
+                    # instead of silently dropping the mod.
+                    keep = (
+                        state.get("installed_files") or []
+                        if is_installed
+                        else []
+                    )
                     mods_cfg[mid] = {
                         "enabled": False,
-                        "installed_version": None,
-                        "installed_files": [],
+                        "installed_version": (
+                            state.get("installed_version") if keep else None
+                        ),
+                        "installed_files": keep,
                         "error": err,
                     }
 
@@ -531,7 +544,13 @@ class ModsController:
             self._dispatcher.post(ProgressChanged(1.0, ""))
             self._dispatcher.post(ModsLoaded(self.state))
             self._busy = False
-            self._dispatcher.post(OperationFinished("mods", True, ""))
+            self._dispatcher.post(
+                OperationFinished(
+                    "mods",
+                    not failed,
+                    "" if not failed else f"Failed mods: {', '.join(failed)}",
+                )
+            )
 
         except Exception as e:
             self._busy = False

@@ -367,13 +367,74 @@ def test_apply_records_per_mod_error_on_failure(
     collected = wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )
-    assert OperationFinished("mods", True, "") in collected
+    op = next(e for e in collected if isinstance(e, OperationFinished))
+    assert op.ok is False
+    assert "AlphaMod" in op.message
     rec = cfg["mods"]["AlphaMod"]
     assert rec["enabled"] is False
-    assert rec["installed_version"] is None
-    assert rec["installed_files"] == []
+    assert rec["installed_version"] == "0.5"
+    assert rec["installed_files"] == ["old.dll"]
     assert rec["error"] == "download blocked"
     assert controller.state.has_errors
+
+
+def test_apply_failed_update_keeps_old_record_for_retry(
+    controller, cfg, monkeypatch, apply_backends, wait_for_event
+):
+    """A failed update keeps the old record so the next apply retries the
+    install instead of dropping the mod (uninstall already deleted old.dll
+    from disk, so the filesystem check reports stale and reinstalls)."""
+    calls = []
+
+    def first_install_fails_then_succeeds(mod, cd, release=None):
+        calls.append(mod["id"])
+        if len(calls) == 1:
+            raise RuntimeError("download blocked")
+        return ["new.dll"]
+
+    monkeypatch.setattr(
+        mc.mods, "install_mod", first_install_fails_then_succeeds
+    )
+    # Old files exist on disk before the update attempt.
+    monkeypatch.setattr(
+        mc.mods, "mod_installed_files_present", lambda m, cd: True
+    )
+    cfg["mods"] = {
+        "AlphaMod": {
+            "enabled": True,
+            "installed_version": "0.5",
+            "installed_files": ["old.dll"],
+        },
+    }
+    controller.state.records, controller.state.unknown = (
+        controller._load_records()
+    )
+    controller.state.pending["AlphaMod"] = ModPending(enabled=True)
+
+    controller.apply()
+
+    collected = wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, OperationFinished)
+    )
+    op = next(e for e in collected if isinstance(e, OperationFinished))
+    assert op.ok is False
+    rec = cfg["mods"]["AlphaMod"]
+    # Failed update: old record survives for retry, error recorded.
+    assert rec["installed_version"] == "0.5"
+    assert rec["installed_files"] == ["old.dll"]
+    assert rec["error"] == "download blocked"
+    assert controller.action_for("AlphaMod") == "retry"
+
+    controller.apply(only_mod_id="AlphaMod")
+
+    collected = wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, OperationFinished)
+    )
+    assert OperationFinished("mods", True, "") in collected
+    rec = cfg["mods"]["AlphaMod"]
+    assert rec["installed_version"] == "2.0"
+    assert rec["installed_files"] == ["new.dll"]
+    assert rec["error"] is None
 
 
 def test_apply_skips_mods_without_changes(

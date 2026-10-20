@@ -225,10 +225,10 @@ def test_reset_clears_pending(env):
 
 def test_operation_finished_kind_is_assets(env, monkeypatch):
     _, client, monkeypatch = env
-    import nostalgia_launcher.services.sources.direct_file as df
+    import nostalgia_launcher.services.assets as assets_svc
 
     monkeypatch.setattr(
-        df,
+        assets_svc,
         "secure_urlopen",
         lambda req, **k: (_ for _ in ()).throw(OSError("down")),
     )
@@ -245,3 +245,4 @@ def test_operation_finished_kind_is_assets(env, monkeypatch):
     ctl._dispatcher.dispatch_all()
     ops = [e for e in seen if isinstance(e, OperationFinished)]
     assert ops and ops[-1].kind == "assets"
+    assert ops[-1].ok is False
