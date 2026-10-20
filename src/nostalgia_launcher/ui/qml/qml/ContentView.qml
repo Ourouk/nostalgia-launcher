@@ -77,25 +77,12 @@ ColumnLayout {
                     onTextChanged: root.contentModel.setFilterText(text)
                 }
                 Button {
-                    text: "All"
-                    checkable: true
-                    checked: root.contentModel.filterMode === "all"
-                    flat: true
-                    onClicked: root.contentModel.setFilterMode("all")
-                }
-                Button {
-                    text: "Installed"
-                    checkable: true
-                    checked: root.contentModel.filterMode === "installed"
-                    flat: true
-                    onClicked: root.contentModel.setFilterMode("installed")
-                }
-                Button {
-                    text: "Updates"
+                    objectName: "qmlContentUpdatesOnly"
+                    text: "Updates only"
                     checkable: true
                     checked: root.contentModel.filterMode === "updates"
                     flat: true
-                    onClicked: root.contentModel.setFilterMode("updates")
+                    onClicked: root.contentModel.setFilterMode(checked ? "updates" : "all")
                 }
             }
         }

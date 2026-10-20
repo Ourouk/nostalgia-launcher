@@ -60,30 +60,17 @@ ColumnLayout {
                     onTextChanged: addonsModel.setFilterText(text)
                 }
                 Button {
-                    text: "All"
-                    checkable: true
-                    checked: addonsModel.filterMode === "all"
-                    flat: true
-                    onClicked: addonsModel.setFilterMode("all")
-                }
-                Button {
-                    text: "Installed"
-                    checkable: true
-                    checked: addonsModel.filterMode === "installed"
-                    flat: true
-                    onClicked: addonsModel.setFilterMode("installed")
-                }
-                Button {
-                    text: "Updates"
+                    objectName: "qmlAddonsUpdatesOnly"
+                    text: "Updates only"
                     checkable: true
                     checked: addonsModel.filterMode === "updates"
                     flat: true
-                    onClicked: addonsModel.setFilterMode("updates")
+                    onClicked: addonsModel.setFilterMode(checked ? "updates" : "all")
                 }
             }
             Label {
                 Layout.fillWidth: true
-                text: "☐ on = install · off = remove on Apply · ● = unapplied change"
+                text: "☐ off = remove on Apply · ● = unapplied change"
                 font.pointSize: 9
                 color: appTheme.colors["C_TEXT_DIM"]
                 elide: Text.ElideRight
