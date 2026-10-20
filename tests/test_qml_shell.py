@@ -251,3 +251,112 @@ def test_updates_only_toggle(engine, qapp):
     root = eng.rootObjects()[0]
     assert root.findChild(QObject, "qmlContentUpdatesOnly") is not None
     assert root.findChild(QObject, "qmlAddonsUpdatesOnly") is not None
+    assert root.findChild(QObject, "qmlAddonsUpdatesOnly") is not None
+
+
+def _browse_shell(qapp):
+    """Bare app shell with hub + browse models (no engine)."""
+    from nostalgia_launcher.ui.bridge import ControllerHub
+    from nostalgia_launcher.ui.qml.browse import BrowseModel
+
+    hub = ControllerHub()
+    shell = QmlNostalgiaLauncherApp.__new__(QmlNostalgiaLauncherApp)
+    shell._hub = hub
+    shell._browse_mods = BrowseModel()
+    shell._browse_assets = BrowseModel()
+    shell._browse_addons = BrowseModel()
+    shell._browse_on_settle = {}
+    return hub, shell
+
+
+def test_browse_mods_resets_when_operation_settles(qapp):
+    """Second install from Browse must work: settle clears busy and the
+    installed entry leaves the Browse list."""
+    from types import SimpleNamespace
+
+    hub, shell = _browse_shell(qapp)
+    registry = [
+        {"id": "a", "name": "Alpha", "description": "", "repo_url": ""},
+        {"id": "b", "name": "Beta", "description": "", "repo_url": ""},
+    ]
+    state = SimpleNamespace(
+        records={},
+        pending={},
+        latest_versions={},
+        unknown=None,
+        updates_count=0,
+        has_pending_changes=False,
+        has_errors=False,
+    )
+    applied = []
+    ctrl = SimpleNamespace(
+        registry=registry,
+        state=state,
+        apply=lambda only_mod_id=None: applied.append(only_mod_id) or True,
+        reload_catalog=lambda: None,
+        remove_unknown=lambda s, n: None,
+        action_for=lambda eid: "",
+        toggle=lambda eid, checked: None,
+    )
+    model = ContentListModel("x")
+    shell._wire_content(model, ctrl, "mods", hub.bridge.modsLoaded)
+    browse = shell._browse_mods
+    assert browse.rowCount() == 2
+    browse.install("b")
+    assert applied == ["b"]
+    assert browse.property("busy") is True
+    state.records["b"] = SimpleNamespace(
+        present=True, enabled=True, installed_version="1.0", error=None
+    )
+    shell._after_content_op(model, "mods", "mods")
+    assert browse.property("busy") is False
+    assert browse.rowCount() == 1
+
+
+def test_browse_addons_resets_when_operation_settles(qapp):
+    """Same settle contract for ADDONS: busy clears, installed leaves."""
+    from types import SimpleNamespace
+
+    from nostalgia_launcher.ui.qml.addons import AddonsModel
+
+    hub, shell = _browse_shell(qapp)
+    shell._addons_qml = AddonsModel()
+    rec = SimpleNamespace(
+        folder="New",
+        status="upToDate",
+        git="https://example.test/new.git",
+        toc={},
+        description="fresh",
+        error=None,
+        to_dict=lambda: {"folder": "New"},
+    )
+    state = SimpleNamespace(
+        addons={},
+        available=[rec],
+        pending={},
+        sections_open={},
+        updates_count=0,
+        busy=False,
+    )
+    applied = []
+    ctrl = SimpleNamespace(
+        state=state,
+        recommended=set(),
+        footer_state=lambda: ("", "", ""),
+        apply=lambda recs: applied.extend(r["folder"] for r in recs) or True,
+        verify=lambda force=False: True,
+        apply_pending=lambda: False,
+        apply_recommended_addons=lambda: False,
+    )
+    hub.addons = ctrl
+    shell._wire_addons()
+    browse = shell._browse_addons
+    assert browse.rowCount() == 1
+    browse.install("New")
+    assert applied == ["New"]
+    assert browse.property("busy") is True
+    state.addons["New"] = rec
+    state.available = []
+    shell._after_addons_op("addons")
+    assert browse.property("busy") is False
+    assert browse.rowCount() == 0

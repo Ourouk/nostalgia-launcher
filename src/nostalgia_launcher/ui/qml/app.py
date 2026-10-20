@@ -160,6 +160,10 @@ class QmlNostalgiaLauncherApp:
         self._browse_mods = BrowseModel("No mods available.")
         self._browse_assets = BrowseModel("No assets available.")
         self._browse_addons = BrowseModel("No addons available.")
+        # Browse settle hooks: (model, refresh) per tab, run when the
+        # tab's operation lands so a Browse install can be followed by
+        # another (busy clears, installed entries leave the list).
+        self._browse_on_settle = {}
         self._wire_content(
             self._mods, self._hub.mods, "mods", bridge.modsLoaded
         )
@@ -535,11 +539,18 @@ class QmlNostalgiaLauncherApp:
             model.browseRequested.connect(
                 lambda _b=browse_dialog: self._open_browse_dialog(_b)
             )
-            _refresh_browse()
+            self._browse_on_settle[op_kind] = (browse, _refresh_browse)
 
     def _after_content_op(self, model, kind: str, op_kind: str):
         """Drop the busy chrome when this tab's operation settles."""
         if kind == op_kind:
+            model.set_running(False)
+            model.refresh()
+            hook = self._browse_on_settle.get(op_kind)
+            if hook is not None:
+                browse, refresh_browse = hook
+                browse.set_running(False)
+                refresh_browse()
             model.set_running(False)
             model.refresh()
 
@@ -660,9 +671,17 @@ class QmlNostalgiaLauncherApp:
         model.browseRequested.connect(
             lambda: self._open_browse_dialog("qmlBrowseAddonsDialog")
         )
+        self._browse_on_settle["addons"] = (browse, _refresh_browse)
 
     def _after_addons_op(self, kind: str):
         if kind == "addons":
+            self._addons_qml.set_running(False)
+            self._addons_qml.refresh()
+            hook = self._browse_on_settle.get("addons")
+            if hook is not None:
+                browse, refresh_browse = hook
+                browse.set_running(False)
+                refresh_browse()
             self._addons_qml.set_running(False)
             self._addons_qml.refresh()
 
