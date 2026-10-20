@@ -28,7 +28,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Label {
                     Layout.fillWidth: true
-                    text: "ADDONS   ★ recommended"
+                    text: "INSTALLED ADDONS   ★ recommended"
                     font.bold: true
                     font.pointSize: 12
                     color: appTheme.colors["C_GOLD"]
@@ -58,6 +58,11 @@ ColumnLayout {
                     placeholderText: "⌕  Search addons"
                     Accessible.name: "Search addons"
                     onTextChanged: addonsModel.setFilterText(text)
+                }
+                Button {
+                    objectName: "qmlAddonsBrowseMore"
+                    text: "Add add-ons"
+                    onClicked: addonsModel.requestBrowse()
                 }
                 Button {
                     objectName: "qmlAddonsUpdatesOnly"
@@ -133,58 +138,13 @@ ColumnLayout {
         delegate: ColumnLayout {
             width: addonList.width
             spacing: 0
-            visible: (model.kind === "section" && (model.sectionOpen
-                || (model.sectionCount || 0) > 0
-                || (model.sectionEmpty || "") !== ""))
-                || (model.kind === "row")
-                     && (model.folder || "") !== ""
-                     && (model.rowTitle !== undefined)
-            // Section header (visible for section items only).
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.leftMargin: 16
-                Layout.topMargin: 10
-                spacing: 4
-                visible: model.kind === "section"
-                ToolButton {
-                    text: model.sectionOpen ? "▾" : "▸"
-                    Accessible.name: model.sectionTitle + " section"
-                    flat: true
-                    onClicked: addonsModel.toggleSection(
-                        model.sectionTitle || "")
-                }
-                Label {
-                    text: model.sectionTitle || ""
-                    font.bold: true
-                    font.pointSize: 11
-                    color: appTheme.colors["C_GOLD"]
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: addonsModel.toggleSection(
-                            model.sectionTitle || "")
-                    }
-                }
-                Label {
-                    text: "  " + (model.sectionCount || 0)
-                    color: appTheme.colors["C_TEXT_DIM"]
-                }
-            }
-            Label {
-                Layout.fillWidth: true
-                Layout.leftMargin: 16
-                text: model.sectionEmpty || ""
-                color: appTheme.colors["C_TEXT_DIM"]
-                visible: model.kind === "section"
-                    && (model.sectionEmpty || "") !== ""
-            }
-            // Addon row (visible for row items only).
+            visible: (model.folder || "") !== ""
+            // Addon row.
             RowLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 12
                 spacing: 6
-                visible: model.kind === "row"
                 CheckBox {
                     Accessible.name: "Install or remove " + model.folder
                     checked: model.checked || false

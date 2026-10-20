@@ -164,13 +164,16 @@ def _sample_state():
     return _state(addons=installed, available=available, updates_count=1)
 
 
-def test_build_sections_order():
+def test_build_rows_updates_first():
     items = build_items(_sample_state(), recommended={"New"}, expected="11200")
-    kinds = [(i["kind"], i.get("title", i.get("folder"))) for i in items]
-    assert kinds[0] == ("section", "NEED UPDATE")
-    assert ("section", "INSTALLED") in kinds
-    assert ("section", "AVAILABLE") in kinds
+    assert all(i["kind"] == "row" for i in items)
+    folders = [i.get("folder") for i in items]
+    # Out-of-date rows lead so updates are visible without filtering.
+    assert folders[0] == "Old"
     # Same-spelling same-repo AVAILABLE row suppressed (shadow of Old).
+    assert folders.count("Old") == 1
+    assert "New" in folders
+    # Flat list: no section headers — rows only, updates first.
     folders = [i.get("folder") for i in items if i["kind"] == "row"]
     assert folders.count("Old") == 1
     assert "New" in folders
@@ -224,25 +227,13 @@ def test_build_pending_overrides_checked():
     assert by_folder["B"]["checked"] is False
 
 
-def test_build_search_and_collapse():
+def test_build_search():
     state = _sample_state()
     items = build_items(
         state, recommended=set(), expected="11200", needle="good"
     )
     folders = [i.get("folder") for i in items if i["kind"] == "row"]
     assert folders == ["Good"]
-    state.sections_open = {"INSTALLED": False}
-    items = build_items(state, recommended=set(), expected="11200")
-    titles = [i["title"] for i in items if i["kind"] == "section"]
-    assert "INSTALLED" in titles
-    assert "Good" not in [i.get("folder") for i in items if i["kind"] == "row"]
-
-
-def test_build_empty_section_message():
-    state = _state(state="verifying")
-    items = build_items(state, recommended=set(), expected="11200")
-    empties = [i["empty"] for i in items if i["kind"] == "section"]
-    assert all(e == "Verifying…" for e in empties)
 
 
 # ── model ─────────────────────────────────────────────────────────────
@@ -251,13 +242,6 @@ def test_build_empty_section_message():
 def _snapshot(**kw):
     snap = {
         "items": [
-            {
-                "kind": "section",
-                "title": "INSTALLED",
-                "count": 1,
-                "open": True,
-                "empty": "",
-            },
             {
                 "kind": "row",
                 "folder": "A",
@@ -285,7 +269,7 @@ def _snapshot(**kw):
 
 def test_snapshot_chrome(model):
     model.set_snapshot(_snapshot())
-    assert model.rowCount() == 2
+    assert model.rowCount() == 1
     assert model.property("updatesCount") == 2
     assert model.property("applyVisible") is True
     assert model.property("recommendedEnabled") is True
@@ -310,7 +294,7 @@ def test_action_seams(model):
     )
     model.set_snapshot(_snapshot())
     model.toggleEntry("A", False)
-    model.toggleSection("INSTALLED")
+    model.toggleEntry("A", False)
     model.updateOne("A")
     assert model.property("busy") is True
     model.set_running(False)
@@ -321,7 +305,6 @@ def test_action_seams(model):
     model.set_running(False)
     model.checkForUpdates()
     assert ("toggle", "A", False) in calls
-    assert ("section", "INSTALLED") in calls
     assert ("check",) in calls
 
 
@@ -347,6 +330,7 @@ def test_addons_view_loads(engine):
         "qmlAddonsSearch",
         "qmlAddonsList",
         "qmlAddonsRecommended",
+        "qmlAddonsBrowseMore",
         "qmlAddonsApply",
         "qmlAddonsFooter",
     ):
@@ -359,7 +343,7 @@ def test_addons_list_follows_model(engine):
     root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 2)
     addons.set_snapshot(_snapshot())
     lst = root.findChild(QObject, "qmlAddonsList")
-    assert lst.property("count") == 2
+    assert lst.property("count") == 1  # flat: the single row, no section
     footer = root.findChild(QObject, "qmlAddonsFooter")
     assert footer.property("text") == "Update all"
     assert footer.property("enabled") is True
@@ -415,13 +399,6 @@ def test_toggleEntry_echo_dropped():
         {
             "items": [
                 {
-                    "kind": "section",
-                    "title": "INSTALLED",
-                    "count": 2,
-                    "open": True,
-                    "empty": "",
-                },
-                {
                     "kind": "row",
                     "folder": "A",
                     "title": "A",
@@ -475,15 +452,7 @@ def test_all_installed_rows_render(engine, qapp):
         addons.refresh()
 
     def snapshot():
-        items = [
-            {
-                "kind": "section",
-                "title": "INSTALLED",
-                "count": 3,
-                "open": True,
-                "empty": "",
-            }
-        ]
+        items = []
         for folder in ("Alpha", "Beta", "Gamma"):
             items.append(
                 {
@@ -509,7 +478,7 @@ def test_all_installed_rows_render(engine, qapp):
 
     assert toggles == []
     lst = root.findChild(QObject, "qmlAddonsList")
-    assert lst.property("count") == 4
+    assert lst.property("count") == 3
     titles = sorted(set(_delegate_texts(lst)) & {"Alpha", "Beta", "Gamma"})
     assert titles == ["Alpha", "Beta", "Gamma"]
 
@@ -519,13 +488,6 @@ def _pending_snapshot(pending):
 
     def provider():
         items = [
-            {
-                "kind": "section",
-                "title": "INSTALLED",
-                "count": 1,
-                "open": True,
-                "empty": "",
-            },
             {
                 "kind": "row",
                 "folder": "Alpha",
@@ -537,13 +499,6 @@ def _pending_snapshot(pending):
                 "repoUrl": "",
                 "description": "d",
                 "error": "",
-            },
-            {
-                "kind": "section",
-                "title": "AVAILABLE",
-                "count": 1,
-                "open": True,
-                "empty": "",
             },
             {
                 "kind": "row",
@@ -690,53 +645,6 @@ def test_waiting_screen_visibility(engine):
     waiting = root.findChild(QObject, "qmlAddonsWaiting")
     assert waiting is not None
     assert waiting.property("visible") is True
-    assert waiting.property("visible") is True
-
-
-def test_build_folded_section_keeps_header():
-    """Folding must hide rows, never the section itself: the header
-    (with its expand arrow) survives in every chip-filter mode."""
-    state = _state(addons={"A": _rec("A"), "B": _rec("B")})
-    state.sections_open = {"INSTALLED": False}
-    kw = {"recommended": set(), "expected": "11200"}
-    for mode in ("all", "installed", "updates"):
-        items = build_items(state, **kw, mode=mode)
-        headers = {i["title"]: i for i in items if i["kind"] == "section"}
-        assert headers["INSTALLED"]["open"] is False
-        assert headers["INSTALLED"]["count"] == 2
-    rows = [i for i in items if i["kind"] == "row"]
-    assert rows == []
-
-
-def test_folded_section_header_renders(engine, qapp):
-    """Engine roundtrip for the reported bug: a folded non-empty section
-    still renders its header (expand arrow), so folders can be unfolded."""
-    eng, addons = engine
-    root = eng.rootObjects()[0]
-    root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 2)
-    qapp.processEvents()
-
-    def snapshot():
-        return {
-            "items": [
-                {
-                    "kind": "section",
-                    "title": "INSTALLED",
-                    "count": 2,
-                    "open": False,
-                    "empty": "",
-                }
-            ]
-        }
-
-    addons.set_snapshot_provider(snapshot)
-    addons.set_handlers(toggle=lambda f, c: None, section=lambda t: None)
-    addons.refresh()
-    for _ in range(10):
-        qapp.processEvents()
-    lst = root.findChild(QObject, "qmlAddonsList")
-    assert "INSTALLED" in set(_delegate_texts(lst))
-    assert "INSTALLED" in set(_delegate_texts(lst))
 
 
 def test_build_without_available_section():

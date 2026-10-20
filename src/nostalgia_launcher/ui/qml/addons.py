@@ -88,15 +88,15 @@ def build_items(
     mode="all",
     available=None,
 ):
-    """Flat section/row items for the ListView (widget `_render` parity).
+    """Flat row items for the ListView (widget `_render` parity).
 
     ``pending`` maps folder → bool for staged checkbox changes not yet
     applied: it overrides the rendered ``checked`` state (mods parity)
     so staging is visible instead of snapping back on refresh. Row
     status/warning text still reflects on-disk truth.
-    ``mode`` is one of "all" / "installed" / "updates": "installed"
-    drops the AVAILABLE section, "updates" keeps NEED UPDATE plus rows
-    needing attention (retry/update) so errors survive filtering.
+    Out-of-date rows lead so updates are visible without filtering.
+    ``mode`` is "all" or "updates": "updates" keeps only rows needing
+    attention (retry/update) so errors survive filtering.
     ``available`` overrides the catalog when given (the manage-tab passes
     ``[]``: installed-only, discovery lives in the Browse dialog).
     """
@@ -143,97 +143,43 @@ def build_items(
     ]
     avail.sort(key=lambda a: (a.folder not in recommended, a.folder.lower()))
 
+    if mode == "installed":
+        avail = []
     need_update = [r for r in installed if r.status == "outOfDate"]
     up_to_date = [r for r in installed if r.status != "outOfDate"]
-    sections = [("INSTALLED", up_to_date)]
-    if need_update:
-        sections.insert(0, ("NEED UPDATE", need_update))
-    if avail:
-        sections.append(("AVAILABLE", avail))
-
-    sections_open = getattr(state, "sections_open", {}) or {}
+    ordered = need_update + up_to_date + avail
     items = []
-    for title, rows in sections:
-        is_open = sections_open.get(title, True)
-        count = len(rows)
-        if is_open and not rows:
-            empty = (
-                "Verifying…"
-                if getattr(state, "state", "") == "verifying"
-                else "Nothing here."
-            )
-        else:
-            empty = ""
+    for rec in ordered:
+        is_installed = rec.folder in installed_names
+        staged = pending.get(rec.folder)
+        checked = bool(staged) if staged is not None else is_installed
+        warning = row_warning(rec, is_installed, installed_names, expected)
+        kind, text = row_status(rec, is_installed, warning)
+        toc = rec.toc or {}
+        git = rec.git or ""
         items.append(
             {
-                "kind": "section",
-                "title": title,
-                "count": count,
-                "open": is_open,
-                "empty": empty,
+                "kind": "row",
+                "folder": rec.folder,
+                "title": strip_wow_colors(toc.get("Title") or rec.folder),
+                "checked": checked,
+                "recommended": rec.folder in recommended,
+                "statusKind": kind,
+                "statusText": text,
+                "repoUrl": (git[:-4] if git.endswith(".git") else git),
+                "description": strip_wow_colors(
+                    toc.get("Notes") or rec.description or ""
+                ),
+                "error": (
+                    "" if rec.status == "unknown" else (rec.error or "")
+                ),
+                "staged": staged is not None,
             }
         )
-        if not is_open:
-            continue
-        for rec in rows:
-            installed = rec.folder in installed_names
-            staged = pending.get(rec.folder)
-            checked = bool(staged) if staged is not None else installed
-            warning = row_warning(rec, installed, installed_names, expected)
-            kind, text = row_status(rec, installed, warning)
-            toc = rec.toc or {}
-            git = rec.git or ""
-            items.append(
-                {
-                    "kind": "row",
-                    "folder": rec.folder,
-                    "title": strip_wow_colors(toc.get("Title") or rec.folder),
-                    "checked": checked,
-                    "recommended": rec.folder in recommended,
-                    "statusKind": kind,
-                    "statusText": text,
-                    "repoUrl": (git[:-4] if git.endswith(".git") else git),
-                    "description": strip_wow_colors(
-                        toc.get("Notes") or rec.description or ""
-                    ),
-                    "error": (
-                        "" if rec.status == "unknown" else (rec.error or "")
-                    ),
-                    "staged": staged is not None,
-                }
-            )
-    if mode != "all":
-        # Drop whole sections / rows the chip filter excludes. A section
-        # header survives with kept rows — or alone when folded, so the
-        # expand arrow never disappears under a filter.
-        kept: list = []
-        buf: list = []
-        cur = ""
-        cur_open = True
-
-        def _flush() -> None:
-            if len(buf) > 1 or (buf and not cur_open):
-                kept.extend(buf)
-
-        for it in items:
-            if it.get("kind") == "section":
-                _flush()
-                buf = [it]
-                cur = it.get("title", "")
-                cur_open = bool(it.get("open", True))
-                cur = it.get("title", "")
-            elif mode == "installed" and cur in (
-                "INSTALLED",
-                "NEED UPDATE",
-            ):
-                buf.append(it)
-            elif mode == "updates" and (
-                cur == "NEED UPDATE"
-                or it.get("statusKind") in ("retry", "update")
-            ):
-                buf.append(it)
-        _flush()
-        items = kept
+    if mode == "updates":
+        items = [
+            i for i in items if i.get("statusKind") in ("retry", "update")
+        ]
     return items
 
 
@@ -440,12 +386,6 @@ class AddonsModel(QAbstractListModel):
 
     def set_handlers(self, **handlers):
         self._handlers = dict(handlers)
-
-    @Slot(str)
-    def toggleSection(self, title: str):
-        handler = self._handlers.get("section")
-        if handler is not None:
-            handler(title)
 
     @Slot(str)
     def setFilterText(self, text: str):

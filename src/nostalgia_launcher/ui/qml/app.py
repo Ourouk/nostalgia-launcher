@@ -598,11 +598,6 @@ class QmlNostalgiaLauncherApp:
                 ctrl.toggle(folder, checked)
             model.refresh()
 
-        def on_section(title):
-            sections = ctrl.state.sections_open
-            sections[title] = not sections.get(title, True)
-            model.refresh()
-
         def on_update_one(folder):
             rec = ctrl.state.addons.get(folder)
             if rec is None:
@@ -615,7 +610,6 @@ class QmlNostalgiaLauncherApp:
         model.set_snapshot_provider(snapshot)
         model.set_handlers(
             toggle=on_toggle,
-            section=on_section,
             update_one=on_update_one,
             update_all=on_update_all,
             apply=ctrl.apply_pending,
