@@ -139,7 +139,22 @@ def test_status_matrix(model):
     model.set_snapshot([])
     assert model.property("statusText") == "No announcements."
     model.set_snapshot(ITEMS)
+    model.set_snapshot(ITEMS)
     assert model.property("statusText") == ""
+
+
+def test_failed_flags_unloadable(model):
+    assert model.property("failed") is False  # still loading
+    model.set_snapshot(None, loading=True)
+    assert model.property("failed") is False
+    model.set_snapshot(None, error="Couldn't reach the news feed.")
+    assert model.property("failed") is True
+    model.set_snapshot(None, configured=False)
+    assert model.property("failed") is True
+    model.set_snapshot([])
+    assert model.property("failed") is True  # empty feed gets the fallback
+    model.set_snapshot(ITEMS)
+    assert model.property("failed") is False
 
 
 def test_on_event_items(model):
@@ -196,6 +211,7 @@ def test_news_view_loads_with_model(engine):
     assert root.findChild(QObject, "qmlNewsList") is not None
     assert root.findChild(QObject, "qmlNewsStatus") is not None
     assert root.findChild(QObject, "qmlNewsRefresh") is not None
+    assert root.findChild(QObject, "qmlNewsPlay") is not None
 
 
 def test_news_list_follows_model(engine):
@@ -210,3 +226,18 @@ def test_news_list_follows_model(engine):
     news.set_snapshot(None, error="Couldn't reach the news feed.")
     assert news_list.property("count") == 0
     assert status.property("text") == "Couldn't reach the news feed."
+
+
+def test_failed_snapshot_shows_play_fallback(engine, qapp):
+    eng, news = engine
+    root = eng.rootObjects()[0]
+    play = root.findChild(QObject, "qmlNewsPlay")
+    news_list = root.findChild(QObject, "qmlNewsList")
+    news.set_snapshot(None, error="Couldn't reach the news feed.")
+    qapp.processEvents()
+    assert play.property("visible") is True
+    assert news_list.property("visible") is False
+    news.set_snapshot(ITEMS)
+    qapp.processEvents()
+    assert play.property("visible") is False
+    assert news_list.property("visible") is True

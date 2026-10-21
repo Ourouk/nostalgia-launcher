@@ -209,11 +209,13 @@ class NewsFeedModel(QAbstractListModel):
 
     statusTextChanged = Signal()
     featuredChanged = Signal()
+    failedChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._items: list = []
         self._loading = True
+        self._failed = False
         self._error = ""
         self._configured = True
         self._status = "Loading\u2026"
@@ -265,6 +267,11 @@ class NewsFeedModel(QAbstractListModel):
         return self._featured_url
 
     featuredUrl = Property(str, _get_featured_url, notify=featuredChanged)
+
+    def _get_failed(self) -> bool:
+        return self._failed
+
+    failed = Property(bool, _get_failed, notify=failedChanged)
 
     # ── intake ──────────────────────────────────────────────────────
 
@@ -325,6 +332,11 @@ class NewsFeedModel(QAbstractListModel):
         if status != self._status:
             self._status = status
             self.statusTextChanged.emit()
+        # Settled with nothing to show: error, unconfigured, or empty.
+        failed = not self._loading and not self._items
+        if failed != self._failed:
+            self._failed = failed
+            self.failedChanged.emit()
 
 
 class UpdateFilesModel(QAbstractListModel):
