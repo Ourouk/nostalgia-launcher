@@ -11,16 +11,20 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import QtQuick.Window
 
 ApplicationWindow {
     id: root
     objectName: "qmlMainWindow"
     visible: false
-    width: 1000
-    height: 700
+    // ponytail: mirrors metrics.initial_window_size (92% cap, 560x420 floor).
+    width: Math.min(1000, Screen.desktopAvailableWidth * 0.92)
+    height: Math.min(700, Screen.desktopAvailableHeight * 0.92)
+    minimumWidth: 560
+    minimumHeight: 420
     title: "Nostalgia Launcher"
     color: appTheme.colors["C_BG"]
-    Material.theme: Material.Dark
+    Material.theme: appTheme.themed ? Material.Dark : Material.System
     Material.accent: appTheme.colors["C_GOLD"]
 
     header: ToolBar {
@@ -85,6 +89,7 @@ ApplicationWindow {
                 font.pointSize: 8
                 color: appTheme.colors["C_TEXT_DIM"]
                 ToolTip.text: "Declared client version for this profile"
+                ToolTip.visible: hovered
             }
             ToolButton {
                 objectName: "qmlGearButton"
@@ -115,7 +120,11 @@ ApplicationWindow {
         buttons: MessageDialog.Yes | MessageDialog.No
         visible: settingsModel.switchPrompt !== ""
         onAccepted: settingsModel.resolveSwitch(true)
-        onRejected: settingsModel.resolveSwitch(false)
+        onRejected: {
+            settingsModel.resolveSwitch(false)
+            profileCombo.currentIndex = Math.max(0, settingsModel.profiles.indexOf(settingsModel.activeProfile))
+            settingsDialog.profilesComboIndex = Math.max(0, settingsModel.profiles.indexOf(settingsModel.activeProfile))
+        }
     }
 
     MessageDialog {

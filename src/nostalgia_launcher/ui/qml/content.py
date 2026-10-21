@@ -323,6 +323,7 @@ class ContentListModel(QAbstractListModel):
         self._rows = list(rows or [])
         self._updates_count = int(updates_count or 0)
         self._apply_visible = bool(has_pending or has_errors)
+        self._pending_count = int(pending_count or 0)
         self._essential_pending = bool(essential_pending)
         if self._rows:
             # Data on screen: nothing left to wait for, even before the

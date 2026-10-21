@@ -20,6 +20,7 @@ ColumnLayout {
         color: appTheme.colors["C_GOLD"]
     }
     TextField {
+        Accessible.name: "REPOSITORY URL"
         objectName: "qmlCustomAddonUrl"
         Layout.fillWidth: true
         font.family: "monospace"

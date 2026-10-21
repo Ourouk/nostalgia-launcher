@@ -12,8 +12,8 @@ Dialog {
     objectName: "qmlCustomAssetDialog"
     title: "ADD CUSTOM ASSET"
     modal: true
-    width: 600
-    height: 640
+    width: Math.min(600, parent.width * 0.9)
+    height: Math.min(640, parent.height * 0.9)
     anchors.centerIn: parent
 
     header: ToolBar {
@@ -26,7 +26,7 @@ Dialog {
             verticalAlignment: Text.AlignVCenter
             text: "ADD CUSTOM ASSET"
             font.bold: true
-            font.pointSize: 12
+            font.pointSize: appTheme.fonts["dialog"]
             color: appTheme.colors["C_GOLD_LT"]
         }
     }

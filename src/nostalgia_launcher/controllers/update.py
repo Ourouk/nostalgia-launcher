@@ -354,6 +354,12 @@ class UpdateController:
                 tag = None
             self.updater_latest_tag = tag
             self.updater_update_available = bool(updater_update_available(tag))
+            if self.updater_update_available:
+                self._dispatcher.post(
+                    LogMessage(
+                        "Launcher update " + str(tag) + " available.", "ok"
+                    )
+                )
 
         threading.Thread(target=worker, daemon=True).start()
 

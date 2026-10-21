@@ -12,6 +12,7 @@ ScrollView {
     id: root
     objectName: "qmlUpdateView"
     clip: true
+    contentWidth: availableWidth
 
     ColumnLayout {
         width: root.width

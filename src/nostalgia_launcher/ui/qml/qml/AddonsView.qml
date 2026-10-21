@@ -168,7 +168,9 @@ ColumnLayout {
                     // NOTE: role-derived objectNames are not registered
                     // for findChild (QTBUG) — tests read titles via the
                     // ListView delegates instead.
-                    objectName: "qmlAddonName_" + model.folder
+                    // NOTE: objectName stays static: role-derived names
+                    // are invisible to findChild (QTBUG).
+                    objectName: "qmlAddonName"
                     Accessible.name: "Addon " + model.folder
                     Layout.fillWidth: true
                     text: model.rowTitle || ""
@@ -206,7 +208,10 @@ ColumnLayout {
                 }
                 Button {
                     text: "⧉"
+                    font.pointSize: 15
                     Accessible.name: "Open repository for " + model.folder
+                    ToolTip.text: "Open repository in browser"
+                    ToolTip.visible: hovered
                     visible: (model.repoUrl || "") !== ""
                     flat: true
                     onClicked: Qt.openUrlExternally(model.repoUrl)
@@ -288,6 +293,7 @@ ColumnLayout {
         Button {
             objectName: "qmlAddonsFooter"
             text: addonsModel.footerText
+            Material.foreground: addonsModel.footerColor !== "" ? addonsModel.footerColor : appTheme.colors["C_TEXT_DIM"]
             enabled: addonsModel.footerClickable
             flat: true
             onClicked: addonsModel.updateAll()

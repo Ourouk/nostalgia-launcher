@@ -17,7 +17,7 @@ ApplicationWindow {
     minimumWidth: 480
     minimumHeight: 300
     color: appTheme.colors["C_BG"]
-    Material.theme: Material.Dark
+    Material.theme: appTheme.themed ? Material.Dark : Material.System
     Material.accent: appTheme.colors["C_GOLD"]
 
     onVisibleChanged: logDialogVisible(visible)

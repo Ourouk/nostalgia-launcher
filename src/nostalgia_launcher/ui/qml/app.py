@@ -241,6 +241,7 @@ class QmlNostalgiaLauncherApp:
         QTimer.singleShot(900, self._hub.mods.load_latest_versions)
         QTimer.singleShot(1100, self._hub.assets.refresh_verdicts)
         QTimer.singleShot(1500, self._hub.addons.verify)
+        QTimer.singleShot(2000, self._hub.updater.check_updater_update)
         if self._open_log:
             self.open_session_log()
 
@@ -358,8 +359,12 @@ class QmlNostalgiaLauncherApp:
         (Windows, or Linux with the watcher tracking the game)."""
         from ...core import config_store
 
-        ok, _ = self._hub.updater.launch_game()
+        ok, dxvk_notice = self._hub.updater.launch_game()
         self._refresh_footer()
+        if dxvk_notice:
+            self._hub.dispatcher.post(
+                LogMessage("DXVK reinstalled; shader cache cleared.", "dim")
+            )
         if not ok:
             return
         try:
@@ -551,8 +556,6 @@ class QmlNostalgiaLauncherApp:
                 browse, refresh_browse = hook
                 browse.set_running(False)
                 refresh_browse()
-            model.set_running(False)
-            model.refresh()
 
     # ── addons tab (git flows, own model) ─────────────────────────────
 
@@ -897,6 +900,7 @@ class QmlNostalgiaLauncherApp:
                 "close_on_launch": bool(cfg.get("close_on_launch", False)),
                 "client_updates": settings.client_update_enabled,
                 "can_launch": platform_support.can_launch_client(),
+                "is_linux": platform_support.is_linux(),
                 "can_antivirus": (platform_support.can_manage_antivirus()),
                 "addons_url": settings.addons_registry_url(),
                 "mods_url": settings.mods_registry_url(),

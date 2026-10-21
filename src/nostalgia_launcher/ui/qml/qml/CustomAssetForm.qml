@@ -17,6 +17,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
         clip: true
+        contentWidth: availableWidth
         ColumnLayout {
             width: parent.width
             spacing: 4
@@ -84,6 +85,7 @@ ColumnLayout {
             color: appTheme.colors["C_GOLD"]
         }
         TextField {
+            Accessible.name: cap.text
             Layout.fillWidth: true
             font.family: "monospace"
             placeholderText: parent.hint

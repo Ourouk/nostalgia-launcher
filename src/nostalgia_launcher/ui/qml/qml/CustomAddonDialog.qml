@@ -25,7 +25,7 @@ Dialog {
             verticalAlignment: Text.AlignVCenter
             text: "ADD CUSTOM GIT ADDON"
             font.bold: true
-            font.pointSize: 12
+            font.pointSize: appTheme.fonts["dialog"]
             color: appTheme.colors["C_GOLD_LT"]
         }
     }

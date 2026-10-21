@@ -7,7 +7,7 @@ snapshot provider and action callbacks in `ui.qml.app` own the controller
 wiring. Transient statuses (registry/profiles) are model-owned.
 """
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 from ...core.log_sink import read_lines
 
@@ -363,6 +363,7 @@ class LogModel(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._lines: list = []
+        self._flush_queued = False
 
     def _get_lines(self) -> list:
         return list(self._lines)
@@ -393,4 +394,16 @@ class LogModel(QObject):
         self._lines.append(text)
         if len(self._lines) > 2000:
             del self._lines[: len(self._lines) - 2000]
+        if len(self._lines) > 2000:
+            del self._lines[: len(self._lines) - 2000]
+        # ponytail: one emit per burst, not per line — the QStringList
+        # copy in `_get_lines` is O(n) and update floods would redo it
+        # hundreds of times a second. Drop the timer if QML ever pulls.
+        if self._flush_queued:
+            return
+        self._flush_queued = True
+        QTimer.singleShot(200, self._flush)
+
+    def _flush(self):
+        self._flush_queued = False
         self.changed.emit()

@@ -69,6 +69,17 @@ Item {
             Layout.topMargin: 6
             visible: newsModel.featuredTitle !== ""
             text: "★ " + newsModel.featuredTitle
+            Accessible.name: "Featured announcement: " + newsModel.featuredTitle
+            ToolTip.text: newsModel.featuredUrl !== "" ? "Open announcement in browser" : ""
+            ToolTip.visible: featuredHover.hovered && newsModel.featuredUrl !== ""
+            MouseArea {
+                id: featuredHover
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                enabled: newsModel.featuredUrl !== ""
+                onClicked: Qt.openUrlExternally(newsModel.featuredUrl)
+            }
             font.bold: true
             font.pointSize: 11
             color: appTheme.colors["C_GOLD"]

@@ -17,6 +17,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
         clip: true
+        contentWidth: availableWidth
         ColumnLayout {
             width: parent.width
             spacing: 4
@@ -31,6 +32,7 @@ ColumnLayout {
                 color: appTheme.colors["C_GOLD"]
             }
             ComboBox {
+                Accessible.name: "TYPE"
                 id: typeCombo
                 objectName: "qmlCustomModType"
                 Layout.fillWidth: true
@@ -44,6 +46,7 @@ ColumnLayout {
                 color: appTheme.colors["C_GOLD"]
             }
             ComboBox {
+                Accessible.name: "INSTALLATION"
                 Layout.fillWidth: true
                 model: customModModel.installations
                 onCurrentTextChanged: customModModel.setField("installation", currentText)
@@ -61,6 +64,7 @@ ColumnLayout {
                 color: appTheme.colors["C_GOLD"]
             }
             ComboBox {
+                Accessible.name: "SOURCE KIND"
                 id: kindCombo
                 objectName: "qmlCustomModKind"
                 Layout.fillWidth: true
@@ -90,6 +94,7 @@ ColumnLayout {
                 Layout.preferredHeight: 64
                 visible: !(kindCombo.currentText === "github_release" || kindCombo.currentText === "codeberg_release")
                 TextArea {
+                    Accessible.name: "Extract map"
                     objectName: "qmlCustomModExtractMap"
                     placeholderText: "ExampleMod.dll = ExampleMod.dll"
                     font.family: "monospace"
@@ -145,6 +150,7 @@ ColumnLayout {
             color: appTheme.colors["C_GOLD"]
         }
         TextField {
+            Accessible.name: cap.text
             Layout.fillWidth: true
             font.family: "monospace"
             onTextChanged: parent.edit(text)

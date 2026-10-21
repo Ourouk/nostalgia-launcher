@@ -173,7 +173,20 @@ class LauncherState(QObject):
 
 
 class ThemeBridge(QObject):
-    """Palette slots for QML (`appTheme.colors["C_GOLD"]`, `appTheme.themed`)."""
+    """Palette slots for QML (`appTheme.colors["C_GOLD"]`, `appTheme.themed`).
+
+    `appTheme.fonts` mirrors `ui.metrics` PT_* tokens so QML point sizes
+    stay on one ladder instead of drifting as ad hoc literals."""
+
+    FONTS = {
+        "title": 17,
+        "page": 16,
+        "link_icon": 15,
+        "icon": 14,
+        "dialog": 13,
+        "section": 12,
+        "badge": 8,
+    }
 
     def __init__(self, palette, parent=None):
         super().__init__(parent)
@@ -191,6 +204,11 @@ class ThemeBridge(QObject):
         return self._themed
 
     themed = Property(bool, _get_themed, constant=True)
+
+    def _get_fonts(self) -> dict:
+        return dict(self.FONTS)
+
+    fonts = Property("QVariantMap", _get_fonts, constant=True)
 
     @Slot(str, result=str)
     def color(self, name: str) -> str:

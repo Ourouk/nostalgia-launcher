@@ -71,6 +71,7 @@ Dialog {
                             }
                             Button {
                                 text: "Install"
+                                Accessible.name: "Install " + model.entryName
                                 enabled: !root.browseModel.busy
                                 highlighted: true
                                 onClicked: root.browseModel.install(model.entryId)
@@ -88,9 +89,15 @@ Dialog {
                 }
             }
             Loader {
+                id: formLoader
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 source: root.formSource
+            }
+            Connections {
+                target: formLoader.item
+                function onAccepted() { browseTabs.currentIndex = 0; }
+                function onRejected() { browseTabs.currentIndex = 0; }
             }
         }
     }

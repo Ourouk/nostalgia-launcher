@@ -11,6 +11,7 @@ import QtQuick.Layouts
 
 ApplicationWindow {
     id: root
+    property alias profilesComboIndex: profilesCombo.currentIndex
     objectName: "qmlSettingsDialog"
     title: "Settings"
     visible: false
@@ -19,7 +20,7 @@ ApplicationWindow {
     minimumWidth: 560
     minimumHeight: 480
     color: appTheme.colors["C_BG"]
-    Material.theme: Material.Dark
+    Material.theme: appTheme.themed ? Material.Dark : Material.System
     Material.accent: appTheme.colors["C_GOLD"]
 
     header: ToolBar {
@@ -84,6 +85,7 @@ ApplicationWindow {
                         color: appTheme.colors["C_GOLD"]
                     }
                     TextField {
+                        Accessible.name: "GAME FOLDER"
                         objectName: "qmlSettingsPath"
                         Layout.fillWidth: true
                         text: settingsModel.gamePath
@@ -266,6 +268,7 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         ComboBox {
+                            Accessible.name: "Profiles"
                             id: profilesCombo
                             objectName: "qmlProfilesCombo"
                             Layout.fillWidth: true
@@ -411,6 +414,7 @@ ApplicationWindow {
             color: appTheme.colors["C_TEXT"]
         }
         TextField {
+            Accessible.name: label
             id: urlField
             Layout.fillWidth: true
             text: url

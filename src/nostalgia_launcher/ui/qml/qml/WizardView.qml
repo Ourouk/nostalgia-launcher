@@ -32,7 +32,7 @@ Dialog {
                 Layout.fillWidth: true
                 text: wizard.title
                 font.bold: true
-                font.pointSize: 12
+                font.pointSize: 13
                 color: appTheme.colors["C_GOLD_LT"]
             }
             Label {
@@ -87,6 +87,7 @@ Dialog {
                 onClicked: wizard.setSource("file")
             }
             TextField {
+                Accessible.name: "Configuration URL"
                 objectName: "qmlWizardUrl"
                 Layout.fillWidth: true
                 visible: wizard.source === "url"
@@ -99,6 +100,7 @@ Dialog {
                 Layout.fillWidth: true
                 visible: wizard.source === "file"
                 TextField {
+                    Accessible.name: "Configuration file"
                     objectName: "qmlWizardPath"
                     Layout.fillWidth: true
                     text: wizard.configPath
@@ -135,6 +137,7 @@ Dialog {
             RowLayout {
                 Layout.fillWidth: true
                 TextField {
+                    Accessible.name: "INSTALL FOLDER"
                     objectName: "qmlWizardFolder"
                     Layout.fillWidth: true
                     text: wizard.folder
@@ -158,6 +161,7 @@ Dialog {
             Layout.fillHeight: true
             visible: wizard.stage === "trust"
             clip: true
+            contentWidth: availableWidth
             ColumnLayout {
                 width: parent.width
                 spacing: 6

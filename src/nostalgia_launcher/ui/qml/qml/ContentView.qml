@@ -199,7 +199,10 @@ ColumnLayout {
                 }
                 Button {
                     text: "⧉"
+                    font.pointSize: 15
                     Accessible.name: "Open repository for " + model.name
+                    ToolTip.text: "Open repository in browser"
+                    ToolTip.visible: hovered
                     visible: model.repoUrl !== ""
                     flat: true
                     onClicked: Qt.openUrlExternally(model.repoUrl)

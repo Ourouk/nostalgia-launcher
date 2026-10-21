@@ -13,8 +13,8 @@ Dialog {
     objectName: "qmlLinuxSettingsDialog"
     title: "Linux (UMU) Settings"
     modal: true
-    width: 560
-    height: 560
+    width: Math.min(560, parent.width * 0.9)
+    height: Math.min(560, parent.height * 0.9)
     anchors.centerIn: parent
 
     header: ToolBar {
@@ -27,14 +27,15 @@ Dialog {
             verticalAlignment: Text.AlignVCenter
             text: "LINUX (UMU)"
             font.bold: true
-            font.pointSize: 10
-            color: appTheme.colors["C_GOLD"]
+            font.pointSize: 13
+            color: appTheme.colors["C_GOLD_LT"]
         }
     }
 
     ScrollView {
         anchors.fill: parent
         clip: true
+        contentWidth: availableWidth
         ColumnLayout {
             width: parent.width
             spacing: 8
@@ -55,6 +56,7 @@ Dialog {
             RowLayout {
                 Layout.fillWidth: true
                 ComboBox {
+                    Accessible.name: "Proton"
                     id: protonCombo
                     objectName: "qmlLinuxProton"
                     Layout.fillWidth: true
@@ -76,6 +78,7 @@ Dialog {
             RowLayout {
                 Layout.fillWidth: true
                 ComboBox {
+                    Accessible.name: "Renderer"
                     id: rendererCombo
                     objectName: "qmlLinuxRenderer"
                     Layout.fillWidth: true
@@ -129,6 +132,7 @@ Dialog {
             RowLayout {
                 Layout.fillWidth: true
                 TextField {
+                    Accessible.name: "GAMEID"
                     id: gameIdField
                     Layout.fillWidth: true
                     text: linuxModel.gameId
@@ -148,6 +152,7 @@ Dialog {
             RowLayout {
                 Layout.fillWidth: true
                 TextField {
+                    Accessible.name: "umu-run"
                     id: umuPathField
                     Layout.fillWidth: true
                     text: linuxModel.umuPath

@@ -46,3 +46,6 @@ opencode.jsonc
 
 # Pix Agent
 .pi/
+
+# Audit/UI bundle artifacts
+nostalgia-ui.zip
