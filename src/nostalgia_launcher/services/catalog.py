@@ -201,6 +201,7 @@ def _text(v) -> str:
 
 #: Dependency kinds for addon ``depends`` entries (``"<kind>:<ref>"``).
 DEPENDS_KINDS = ("mod", "addon", "file")
+SOURCE_TYPES = ("git", "direct")
 
 
 def parse_depends_dep(dep: str) -> tuple[str, str] | None:
@@ -261,6 +262,40 @@ def _https_url(u) -> str | None:
     return https_url(u)
 
 
+def parse_source_type(v) -> str | None:
+    """One of "git"/"direct", defaulting to git when absent; None when
+    the value is present but not a known kind (fail-closed)."""
+    if v is None:
+        return "git"
+    if isinstance(v, str) and v.strip().lower() in SOURCE_TYPES:
+        return v.strip().lower()
+    return None
+
+
+def _download_url(
+    entry: dict, client_version: str | None = None
+) -> str | None:
+    """The direct-download URL for an entry, if it carries one.
+
+    Prefers the client-version-namespaced key (``<ver>_primary_download``,
+    e.g. ``wotlk_primary_download``) since the payload is website-shared;
+    without a version context any ``*_primary_download`` key qualifies.
+    Falls back to a plain ``download_url``. HTTPS only."""
+    version = (client_version or "").strip()
+    if version:
+        slug = version.replace(".", "").replace(" ", "").lower()
+        url = _https_url(entry.get(f"{slug}_primary_download"))
+        if url:
+            return url
+    else:
+        for key in sorted(entry):
+            if key.endswith("primary_download"):
+                url = _https_url(entry.get(key))
+                if url:
+                    return url
+    return _https_url(entry.get("download_url"))
+
+
 # ── addon entries ────────────────────────────────────────────────────────────
 
 
@@ -294,9 +329,19 @@ def validate_addon(entry: dict) -> dict | None:
         if checked is None:
             return None
         depends = checked
+    source_type = parse_source_type(entry.get("source_type"))
+    if source_type is None:
+        return None
+    download_url = _download_url(entry)
+    if source_type == "direct" and not download_url:
+        # A direct entry without any download URL can never install —
+        # drop it fail-closed like any other unusable entry.
+        return None
     return {
         "name": name,
         "git": git,
+        "source_type": source_type,
+        "download_url": download_url,
         "branch": safe_ref(entry.get("branch")),
         "ref": safe_ref(entry.get("ref")),
         "description": description,
@@ -321,6 +366,9 @@ def merge_addons(remote: list, custom: list) -> list:
             by_folder[folder] = dict(entry)
             continue
         for key in ("git", "branch", "ref", "description"):
+            if entry.get(key) is not None:
+                base[key] = entry[key]
+        for key in ("source_type", "download_url"):
             if entry.get(key) is not None:
                 base[key] = entry[key]
         if entry.get("depends") is not None:
@@ -428,6 +476,11 @@ def validate_mod(entry: dict) -> dict | None:
         ):
             return None
         mod["client_versions"] = list(client_versions)
+    source_type = parse_source_type(entry.get("source_type"))
+    if source_type is None:
+        return None
+    if entry.get("source_type") is not None:
+        mod["source_type"] = source_type
     return mod
 
 

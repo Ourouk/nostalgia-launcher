@@ -477,6 +477,8 @@ class AddonsController:
                 "folder": sibling,
                 "status": "available",
                 "git": entry.get("git"),
+                "source_type": entry.get("source_type") or "git",
+                "download_url": entry.get("download_url"),
                 "branch": entry.get("branch"),
                 "ref": entry.get("ref"),
                 "toc": entry.get("toc") or {},
@@ -496,10 +498,14 @@ class AddonsController:
     ) -> None:
         """Set a scanned folder's source and status (mutates ``rec``).
 
-        Four cases: the curated fork overrides the saved repo, the saved
-        repo migrates to the catalog's repo, a custom entry keeps its
-        saved source, or a first-seen folder is adopted silently with
-        the resolved remote sha as its baseline."""
+        Six cases: the curated fork overrides the saved repo, the saved
+        repo migrates to the catalog's repo, a direct download migrates
+        (URL change ⇒ out-of-date), a custom entry keeps its saved
+        source, or a first-seen folder is adopted silently with the
+        resolved remote sha as its baseline. Direct entries have no
+        commit sha — presence on disk is up-to-date, absence is
+        available."""
+        avail_source = (avail or {}).get("source_type") or "git"
         override = addons.RECOMMENDED_ADDONS.get(name)
         if (
             saved
@@ -511,10 +517,29 @@ class AddonsController:
             # fork — offer an update that migrates to the fork.
             rec.update(
                 git=override,
+                source_type="git",
+                download_url=None,
                 branch=None,
                 ref=None,
                 status="outOfDate",
             )
+        elif saved and avail and avail_source == "direct":
+            rec.update(
+                git=avail.get("git"),
+                source_type="direct",
+                download_url=avail.get("download_url"),
+                branch=avail.get("branch"),
+                ref=avail.get("ref"),
+            )
+            saved_url = saved.get("download_url")
+            if saved.get("source_type") != "direct" or (
+                saved_url and saved_url != avail.get("download_url")
+            ):
+                # Source switch (git→direct or a new direct URL) —
+                # reinstall on next apply.
+                rec["status"] = "outOfDate"
+            else:
+                rec["status"] = "upToDate"
         elif saved and saved.get("git") and avail:
             # The launcher catalog is authoritative for the addon's
             # source. A saved repo that differs means the addon was
@@ -525,6 +550,8 @@ class AddonsController:
             if not same_git_repo(saved["git"], avail["git"]):
                 rec.update(
                     git=avail["git"],
+                    source_type=avail_source,
+                    download_url=avail.get("download_url"),
                     branch=avail["branch"],
                     ref=avail["ref"],
                     status="outOfDate",
@@ -532,6 +559,8 @@ class AddonsController:
             else:
                 rec.update(
                     git=avail["git"],
+                    source_type=avail_source,
+                    download_url=avail.get("download_url"),
                     branch=avail["branch"],
                     ref=avail["ref"],
                 )
@@ -550,9 +579,15 @@ class AddonsController:
             # keep tracking the saved source.
             rec.update(
                 git=saved.get("git"),
+                source_type=saved.get("source_type") or "git",
+                download_url=saved.get("download_url"),
                 branch=saved.get("branch"),
                 ref=saved.get("ref"),
             )
+            if rec.get("source_type") == "direct":
+                # No remote version to check — presence is up-to-date.
+                rec["status"] = "upToDate"
+                return
             remote = self._resolve_remote_sha(
                 rec["git"],
                 rec["branch"],
@@ -572,6 +607,29 @@ class AddonsController:
             # addon from now on — no re-download and no "update"
             # flag on every pre-existing addon. Offline/rate-limited
             # resolution leaves it retryable, never "out of date".
+            # Direct entries have no sha — presence is the baseline.
+            rec.update(
+                git=avail["git"],
+                source_type=avail_source,
+                download_url=avail.get("download_url"),
+                branch=avail["branch"],
+                ref=avail["ref"],
+            )
+            if avail_source == "direct":
+                rec["status"] = "upToDate"
+                config_store.update_config(
+                    lambda c, f=name, a=avail: c.setdefault(
+                        "addons", {}
+                    ).__setitem__(
+                        f,
+                        {
+                            "git": a.get("git"),
+                            "source_type": "direct",
+                            "download_url": a.get("download_url"),
+                        },
+                    )
+                )
+                return
             remote = self._resolve_remote_sha(
                 avail["git"],
                 avail["branch"],
@@ -579,11 +637,6 @@ class AddonsController:
                 force=force,
                 remote_checks=remote_checks,
                 memo=sha_memo,
-            )
-            rec.update(
-                git=avail["git"],
-                branch=avail["branch"],
-                ref=avail["ref"],
             )
             if remote:
                 rec["status"] = "upToDate"
@@ -663,6 +716,8 @@ class AddonsController:
                 "folder": name,
                 "status": "available",
                 "git": a.get("git"),
+                "source_type": a.get("source_type") or "git",
+                "download_url": a.get("download_url"),
                 "branch": a.get("branch"),
                 "ref": a.get("ref"),
                 "toc": a.get("toc") or {},
@@ -958,6 +1013,58 @@ class AddonsController:
         )
         self._dispatcher.post(AddonsLoaded(self.state))
 
+    def _install_direct(
+        self, client: str, url: str, folders: list
+    ) -> list[str]:
+        """Fetch one prebuilt archive and install every requested folder
+        from it. Records each installed folder against its URL and flips
+        its row up-to-date; returns the installed folder names."""
+        installed = addons.install_addon_direct(
+            client, folders[0], url, wanted=list(folders)
+        )
+        if "pfUI" in installed:
+            pfui.patch_pfui_default_profile(client)
+        record = {"source_type": "direct", "download_url": url}
+        for folder in installed:
+            config_store.update_config(
+                lambda c, f=folder, r=record: c.setdefault(
+                    "addons", {}
+                ).__setitem__(f, r)
+            )
+            self.state.errors.pop(folder, None)
+            st_rec = self.state.addons.get(folder)
+            if st_rec is None:
+                st_rec = AddonState.from_dict(
+                    {
+                        "folder": folder,
+                        "status": "upToDate",
+                        "source_type": "direct",
+                        "download_url": url,
+                        "toc": {},
+                        "description": None,
+                        "error": None,
+                    }
+                )
+                self.state.addons[folder] = st_rec
+            else:
+                st_rec.status = "upToDate"
+                st_rec.error = None
+                st_rec.source_type = "direct"
+                st_rec.download_url = url
+            self._dispatcher.post(LogMessage(f"  ✓ Addon {folder} installed."))
+        for folder in folders:
+            if folder not in installed:
+                log(f"  {folder} is not shipped by {url} — left as is.", "dim")
+                st_rec = self.state.addons.get(folder)
+                if st_rec is not None and st_rec.status == "downloading":
+                    st_rec.status = "outOfDate"
+        self.state.updates_count = sum(
+            1
+            for rec in self.state.addons.values()
+            if rec.status == "outOfDate"
+        )
+        return installed
+
     def _install_group(
         self, client: str, git: str, branch, ref, folders: list
     ) -> list[str]:
@@ -1034,12 +1141,22 @@ class AddonsController:
             self.state.errors[folder] = AddonError(err, git)
 
     def _group_recs(self, recs: list) -> list:
-        """Group install records by repo so one archive fetch serves every
-        folder from the same repo (multi-addon repos install once)."""
+        """Group install records so one archive fetch serves every folder
+        from the same source: git repos group by (git, branch, ref),
+        direct downloads group by URL. A shared (git, None, None) key
+        never mixes the two — direct groups carry the source marker."""
         groups: dict = {}
         order: list = []
         for rec in recs:
-            key = (rec.get("git"), rec.get("branch"), rec.get("ref"))
+            if (rec.get("source_type") or "git") == "direct":
+                key = ("direct", rec.get("download_url"), None, None)
+            else:
+                key = (
+                    "git",
+                    rec.get("git"),
+                    rec.get("branch"),
+                    rec.get("ref"),
+                )
             if key not in groups:
                 groups[key] = []
                 order.append(key)
@@ -1048,19 +1165,27 @@ class AddonsController:
 
     def _apply_worker(self, client: str, recs: list):
         failed = []
-        for (git, branch, ref), group in self._group_recs(recs):
+        for key, group in self._group_recs(recs):
+            kind = key[0]
             folders = [rec["folder"] for rec in group]
             self._dispatcher.post(StatusChanged(f"Installing {folders[0]}…"))
             try:
-                if not git or not addons.is_allowed_git_url(git):
-                    raise RuntimeError(
-                        "Addon URL is not from an allowed git host"
-                    )
-                self._install_group(client, git, branch, ref, folders)
+                if kind == "direct":
+                    url = key[1]
+                    if not url:
+                        raise RuntimeError("Addon has no direct download URL")
+                    self._install_direct(client, url, folders)
+                else:
+                    git, branch, ref = key[1], key[2], key[3]
+                    if not git or not addons.is_allowed_git_url(git):
+                        raise RuntimeError(
+                            "Addon URL is not from an allowed git host"
+                        )
+                    self._install_group(client, git, branch, ref, folders)
                 self._dispatcher.post(AddonsLoaded(self.state))
             except Exception as e:
                 err = describe_install_error(e)
-                self._fail_group(folders, git, err)
+                self._fail_group(folders, key[1], err)
                 failed.extend(folders)
 
         self.state.busy = False

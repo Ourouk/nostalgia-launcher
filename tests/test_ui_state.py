@@ -180,6 +180,8 @@ ADDON_REC = {
     "git": "https://github.com/brues-code/pfUI",
     "branch": "master",
     "ref": "abc123",
+    "source_type": "git",
+    "download_url": None,
     "toc": {"Title": "pfUI", "Interface": "11200"},
     "description": "Full interface",
     "error": None,

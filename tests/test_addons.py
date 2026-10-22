@@ -1143,3 +1143,50 @@ def test_unmet_depends_resolution(tmp_path):
     assert addons.unmet_depends(["bogus:Foo"]) == ["bogus:Foo"]
     assert addons.unmet_depends(["file:../evil"]) == ["file:../evil"]
     assert addons.unmet_depends(None) == []
+
+
+def test_install_addon_direct_flat_zip(tmp_path, monkeypatch):
+    """A prebuilt direct zip (members at root, no wrapper dir) installs
+    into Interface/AddOns with multi-addon discovery."""
+    import nostalgia_launcher.services.addons as addons_mod
+
+    client = tmp_path / "client"
+    payload = _zip_bytes(
+        {
+            "MyAddon/MyAddon.toc": "## Title: MyAddon\n",
+            "MyAddon/core.lua": "-- code",
+        }
+    )
+
+    class R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *x):
+            return False
+
+        def read(self, n=-1):
+            nonlocal payload
+            if n is None or n < 0:
+                chunk, payload = payload, b""
+            else:
+                chunk, payload = payload[:n], payload[n:]
+            return chunk
+
+    monkeypatch.setattr(addons_mod, "secure_urlopen", lambda *a, **k: R())
+    out = addons_mod.install_addon_direct(
+        str(client), "MyAddon", "https://example.com/MyAddon.zip"
+    )
+    assert out == ["MyAddon"]
+    assert (
+        client / "Interface" / "AddOns" / "MyAddon" / "MyAddon.toc"
+    ).exists()
+
+
+def test_install_addon_direct_refuses_http(tmp_path):
+    import nostalgia_launcher.services.addons as addons_mod
+
+    with __import__("pytest").raises(RuntimeError):
+        addons_mod.install_addon_direct(
+            str(tmp_path), "X", "http://example.com/x.zip"
+        )

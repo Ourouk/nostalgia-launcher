@@ -18,15 +18,19 @@ ships.
 
 import os
 import time
+import urllib.request
 
 from ..core import config_store as _config_store
 from ..core import launcher
 from ..core.config_store import load_config, update_config
+from ..core.constants import UA
 from ..core.log_sink import log
-from ..core.security_http import secure_urlopen
+from ..core.safety import https_url
+from ..core.security_http import read_capped, secure_urlopen
 from . import catalog
 from .sources import deploy as _sources_deploy
 from .sources.git_archive import (
+    _ARCHIVE_MAX_BYTES,
     GitArchiveBackend,
 )
 
@@ -62,10 +66,13 @@ def is_allowed_git_url(url: str) -> bool:
 
 
 def _custom_validator(entry: dict) -> dict | None:
-    """Validate a custom addon entry and enforce the git-host allowlist."""
+    """Validate a custom addon entry and enforce the git-host allowlist
+    for git-kind entries (direct entries carry a download URL instead)."""
     cleaned = catalog.validate_addon(entry)
     if cleaned is None:
         return None
+    if (cleaned.get("source_type") or "git") == "direct":
+        return cleaned
     if cleaned["git"] and not is_allowed_git_url(cleaned["git"]):
         return None
     return cleaned
@@ -511,6 +518,83 @@ def discover_repo_addons(
     return found
 
 
+def discover_flat_addons(
+    data: bytes, client_version: str | None = None
+) -> list[tuple[str, str]]:
+    """Like discover_repo_addons but for prebuilt zips whose members sit at
+    the archive root (no "<repo>-<sha>/" wrapper). Same matching rules,
+    same return shape."""
+    import zipfile
+    from io import BytesIO
+
+    version = client_version or ""
+    candidates: list[tuple[str, str, int | None]] = []
+    root_stems: list[str] = []
+    with zipfile.ZipFile(BytesIO(data)) as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            rel = "/".join(
+                p
+                for p in info.filename.replace("\\", "/").split("/")
+                if p not in ("", ".")
+            )
+            if not rel or ".." in rel.split("/"):
+                continue
+            parts = rel.split("/")
+            if len(parts) == 1:
+                interface = _toc_interface_flat(zf, info.filename)
+                if interface is False:
+                    continue
+                stem = parts[0].rpartition(".")[0]
+                if interface_allowed(interface, version):
+                    root_stems.append(stem)
+                continue
+            dirname = parts[-2]
+            stem, dot, ext = parts[-1].rpartition(".")
+            if not dot or ext.lower() != "toc":
+                continue
+            if stem != dirname and stem.lower() != dirname.lower():
+                continue
+            interface = _toc_interface_flat(zf, info.filename)
+            if interface is False:  # unreachable (checked above)
+                continue
+            if not interface_allowed(interface, version):
+                continue
+            candidates.append((dirname, "/".join(parts[:-1]), interface))
+    if root_stems:
+        return [(stem, "") for stem in sorted(set(root_stems))]
+    candidates.sort(key=lambda c: c[1].count("/"))
+    claimed: list[str] = []
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for name, prefix, _interface in candidates:
+        if name.lower() in seen:
+            continue
+        if any(prefix == c or prefix.startswith(c + "/") for c in claimed):
+            continue
+        claimed.append(prefix)
+        seen.add(name.lower())
+        found.append((name, prefix))
+    return found
+
+
+def _toc_interface_flat(zf, filename: str) -> int | None | bool:
+    """Interface value of a zip member, False when not a .toc file."""
+    stem, dot, ext = filename.rpartition(".")
+    if not dot or ext.lower() != "toc":
+        return False
+    try:
+        raw = zf.read(filename)
+    except KeyError:
+        return None
+    try:
+        text = raw.decode("utf-8-sig", errors="replace")
+    except Exception:
+        return None
+    return _parse_interface_text(text)
+
+
 def read_toc_file(path: str) -> dict:
     """Parse '## Key: Value' metadata lines from a WoW addon .toc file."""
     toc = {}
@@ -657,6 +741,93 @@ def addon_repo_names(
     return names
 
 
+def install_addon_direct(
+    client_dir: str,
+    folder: str,
+    url: str,
+    wanted: list[str] | None = None,
+) -> list[str]:
+    """Download a prebuilt addon archive and unpack it into
+    Interface/AddOns, like install_addon_files but from a plain HTTPS URL
+    instead of a git-host archive. Same multi-addon discovery applies:
+    every discovered ``<folder>/<folder>.toc`` installs into its own
+    directory; a bare tree unpacks into ``folder``.
+
+    Prebuilt zips have no "<repo>-<sha>/" wrapper directory — discovery
+    and unpack fall back to the unstripped layout when stripping yields
+    nothing. Raises RuntimeError on non-HTTPS URLs, corrupt input, or
+    when the archive ships no addons.
+    """
+    log(f"  Downloading {folder} (direct)…")
+    clean = https_url(url)
+    if not clean:
+        raise RuntimeError("Addon download URL must use https")
+    req = urllib.request.Request(clean, headers={"User-Agent": UA})
+    with secure_urlopen(req, timeout=120) as r:
+        data = read_capped(r, _ARCHIVE_MAX_BYTES)
+    log(f"  Downloaded {len(data)} bytes for {folder}")
+    return _install_archive_bytes(
+        client_dir, folder, data, wanted=wanted, git_style=False
+    )
+
+
+def _install_archive_bytes(
+    client_dir: str,
+    folder: str,
+    data: bytes,
+    wanted: list[str] | None = None,
+    git_style: bool = True,
+) -> list[str]:
+    """Unpack archive bytes into Interface/AddOns with multi-addon
+    discovery. ``git_style`` archives wrap everything under one top-level
+    directory; prebuilt direct zips usually don't — fall back to the
+    unstripped layout so both install."""
+    flat = False
+    try:
+        discovered = discover_repo_addons(data, launcher.client_version())
+    except Exception:
+        discovered = []
+    if not discovered and not git_style:
+        try:
+            discovered = discover_flat_addons(data, launcher.client_version())
+        except Exception:
+            discovered = []
+        flat = bool(discovered)
+    if not discovered:
+        _sources_deploy.unpack_folder(
+            data, os.path.join(addons_path(client_dir), folder)
+        )
+        log(f"  Installed addon {folder}")
+        return [folder]
+    by_name = {name: prefix for name, prefix in discovered}
+    if wanted:
+        selected = [n for n in wanted if n in by_name]
+        names = selected or [name for name, _prefix in discovered]
+    else:
+        names = (
+            [folder]
+            if folder in by_name
+            else [name for name, _prefix in discovered]
+        )
+    installed = []
+    for name in names:
+        if flat:
+            _sources_deploy.unpack_flat_prefix(
+                data,
+                by_name[name],
+                os.path.join(addons_path(client_dir), name),
+            )
+        else:
+            _sources_deploy.unpack_prefix(
+                data,
+                by_name[name],
+                os.path.join(addons_path(client_dir), name),
+            )
+        log(f"  Installed addon {name}")
+        installed.append(name)
+    return installed
+
+
 def install_addon_files(
     client_dir: str,
     folder: str,
@@ -680,31 +851,6 @@ def install_addon_files(
     if not git_url or not is_allowed_git_url(git_url):
         raise RuntimeError("Addon URL is not from an allowed git host")
     data = _GIT_BACKEND.fetch_archive(git_url, sha)
-    try:
-        discovered = discover_repo_addons(data, launcher.client_version())
-    except Exception:
-        discovered = []
-    if not discovered:
-        _sources_deploy.unpack_folder(
-            data, os.path.join(addons_path(client_dir), folder)
-        )
-        log(f"  Installed addon {folder}")
-        return [folder]
-    by_name = {name: prefix for name, prefix in discovered}
-    if wanted:
-        selected = [n for n in wanted if n in by_name]
-        names = selected or [name for name, _prefix in discovered]
-    else:
-        names = (
-            [folder]
-            if folder in by_name
-            else [name for name, _prefix in discovered]
-        )
-    installed = []
-    for name in names:
-        _sources_deploy.unpack_prefix(
-            data, by_name[name], os.path.join(addons_path(client_dir), name)
-        )
-        log(f"  Installed addon {name}")
-        installed.append(name)
-    return installed
+    return _install_archive_bytes(
+        client_dir, folder, data, wanted=wanted, git_style=True
+    )

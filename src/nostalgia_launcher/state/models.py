@@ -185,6 +185,8 @@ class AddonState:
     git: str | None = None
     branch: str | None = None
     ref: str | None = None
+    source_type: str = "git"
+    download_url: str | None = None
     toc: dict[str, object] = field(default_factory=dict)
     description: str | None = None
     error: str | None = None
@@ -212,6 +214,8 @@ class AddonState:
         git = rec.get("git")
         branch = rec.get("branch")
         ref = rec.get("ref")
+        source_type = rec.get("source_type")
+        download_url = rec.get("download_url")
         description = rec.get("description")
         error = rec.get("error")
         return cls(
@@ -221,6 +225,12 @@ class AddonState:
             git=git if isinstance(git, str) else None,
             branch=branch if isinstance(branch, str) else None,
             ref=ref if isinstance(ref, str) else None,
+            source_type=(
+                source_type if source_type in ("git", "direct") else "git"
+            ),
+            download_url=(
+                download_url if isinstance(download_url, str) else None
+            ),
             toc=cast(dict[str, object], toc) if isinstance(toc, dict) else {},
             description=description if isinstance(description, str) else None,
             error=error if isinstance(error, str) else None,

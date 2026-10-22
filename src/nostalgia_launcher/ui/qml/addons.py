@@ -165,6 +165,10 @@ def build_items(
         kind, text = row_status(rec, is_installed, warning)
         toc = rec.toc or {}
         git = rec.git or ""
+        if getattr(rec, "source_type", "git") == "direct":
+            repo_url = getattr(rec, "download_url", None) or ""
+        else:
+            repo_url = git[:-4] if git.endswith(".git") else git
         items.append(
             {
                 "kind": "row",
@@ -174,7 +178,7 @@ def build_items(
                 "recommended": rec.folder in recommended,
                 "statusKind": kind,
                 "statusText": text,
-                "repoUrl": (git[:-4] if git.endswith(".git") else git),
+                "repoUrl": repo_url,
                 "description": strip_wow_colors(
                     toc.get("Notes") or rec.description or ""
                 ),

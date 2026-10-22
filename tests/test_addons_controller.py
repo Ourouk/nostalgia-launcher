@@ -1362,3 +1362,65 @@ def test_suppress_shadowed_git_aware():
     assert [r["folder"] for r in kept] == ["PackExtra", "Other", ""]
     kept = ac._suppress_shadowed(rows, {"packextra": None})
     assert [r["folder"] for r in kept] == ["Other", ""]
+
+
+def test_apply_direct_download_installs_and_records(
+    controller, cfg, backends, tmp_path, monkeypatch, wait_for_event
+):
+    """A direct-kind rec installs via install_addon_direct (no sha) and
+    records the URL against the folder."""
+    monkeypatch.setattr(
+        ac.addons,
+        "install_addon_direct",
+        lambda client, folder, url, wanted=None: [folder],
+    )
+    client = str(tmp_path)
+    _install_folder(client, "Bar")
+    cfg["out_dir"] = client
+    rec = {
+        "folder": "Bar",
+        "status": "available",
+        "git": None,
+        "source_type": "direct",
+        "download_url": "https://example.com/Bar.zip",
+        "branch": None,
+        "ref": None,
+        "toc": {},
+        "description": None,
+        "error": None,
+    }
+    assert controller.apply([rec]) is True
+    collected = wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, OperationFinished)
+    )
+    assert OperationFinished("addons", True, "") in collected
+    assert cfg["addons"]["Bar"] == {
+        "source_type": "direct",
+        "download_url": "https://example.com/Bar.zip",
+    }
+    assert controller.state.addons["Bar"].status == "upToDate"
+
+
+def test_group_recs_splits_direct_by_url(controller):
+    groups = controller._group_recs(
+        [
+            {
+                "folder": "A",
+                "source_type": "direct",
+                "download_url": "https://x/1.zip",
+            },
+            {
+                "folder": "B",
+                "source_type": "direct",
+                "download_url": "https://x/2.zip",
+            },
+            {
+                "folder": "C",
+                "git": "https://github.com/a/c",
+                "branch": None,
+                "ref": None,
+            },
+        ]
+    )
+    assert len(groups) == 3
+    assert [rec["folder"] for _, g in groups for rec in g] == ["A", "B", "C"]

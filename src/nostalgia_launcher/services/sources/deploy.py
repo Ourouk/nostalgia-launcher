@@ -350,6 +350,64 @@ def unpack_folder(data: bytes, dest_root: str) -> None:
     unpack_prefix(data, "", dest_root)
 
 
+def unpack_flat_prefix(data: bytes, prefix: str, dest_root: str) -> None:
+    """Like unpack_prefix but for prebuilt zips whose members sit at the
+    archive root (no "<repo>-<sha>/" wrapper to strip). Same traversal
+    guards + atomic replace."""
+    wanted = [
+        p for p in prefix.replace("\\", "/").split("/") if p not in ("", ".")
+    ]
+    if ".." in wanted:
+        raise RuntimeError(f"Refusing unsafe unpack prefix: {prefix!r}")
+    tmp_root = dest_root + ".tmp_install"
+    if os.path.isdir(tmp_root):
+        rmtree_force(tmp_root)
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            total_written = 0
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                if info.file_size > _MAX_MEMBER_BYTES:
+                    log(
+                        f"  Warning: {info.filename} exceeds the "
+                        "extraction size cap, skipping"
+                    )
+                    continue
+                total_written += info.file_size
+                if total_written > _MAX_MEMBER_BYTES * 4:
+                    raise RuntimeError(
+                        "archive exceeds the total extraction budget"
+                    )
+                parts = _flat_parts(info.filename)
+                if not parts or ".." in parts:
+                    continue
+                if wanted and (
+                    len(parts) <= len(wanted) or parts[: len(wanted)] != wanted
+                ):
+                    continue
+                rel = os.path.join(*parts[len(wanted) :])
+                try:
+                    target = _resolve_inside(tmp_root, rel)
+                except RuntimeError:
+                    continue
+                with zf.open(info) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+        if os.path.isdir(dest_root):
+            rmtree_force(dest_root)
+        os.replace(tmp_root, dest_root)
+    except Exception:
+        rmtree_force(tmp_root)
+        raise
+
+
+def _flat_parts(filename: str) -> list[str]:
+    """A zip member path with separators normalised but no component
+    stripped (prebuilt zips have no "<repo>-<sha>/" wrapper)."""
+    norm = filename.replace("\\", "/")
+    return [p for p in norm.split("/") if p not in ("", ".")]
+
+
 def unpack_prefix(data: bytes, prefix: str, dest_root: str) -> None:
     """Like unpack_folder but installs only the members under one
     stripped-root-relative subdirectory (``prefix`` with "/" separators;
