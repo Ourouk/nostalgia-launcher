@@ -144,7 +144,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 12
-                spacing: 6
+                spacing: 4
                 CheckBox {
                     Accessible.name: "Install or remove " + model.folder
                     checked: model.checked || false
@@ -254,8 +254,8 @@ ColumnLayout {
             }
             Rectangle {
                 Layout.fillWidth: true
-                Layout.topMargin: 6
-                Layout.bottomMargin: 6
+                Layout.topMargin: 3
+                Layout.bottomMargin: 3
                 Layout.preferredHeight: 1
                 color: appTheme.colors["C_DIVIDER"]
                 visible: model.kind === "row"
