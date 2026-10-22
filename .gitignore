@@ -49,3 +49,6 @@ opencode.jsonc
 
 # Audit/UI bundle artifacts
 nostalgia-ui.zip
+
+# User screenshots dropped in the repo root
+Screenshot_*.png
