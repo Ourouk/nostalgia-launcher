@@ -25,14 +25,26 @@ Dialog {
         ColumnLayout {
             anchors.fill: parent
             anchors.leftMargin: 18
-            anchors.rightMargin: 18
-            Label {
-                objectName: "qmlWizardTitle"
+            anchors.rightMargin: 8
+            RowLayout {
                 Layout.fillWidth: true
-                text: wizard.title
-                font.bold: true
-                font.pointSize: 13
-                color: appTheme.colors["C_GOLD_LT"]
+                Label {
+                    objectName: "qmlWizardTitle"
+                    Layout.fillWidth: true
+                    text: wizard.title
+                    font.bold: true
+                    font.pointSize: 13
+                    color: appTheme.colors["C_GOLD_LT"]
+                    elide: Text.ElideRight
+                }
+                ToolButton {
+                    objectName: "qmlWizardClose"
+                    text: "✕"
+                    Accessible.name: "Close"
+                    ToolTip.text: "Close"
+                    ToolTip.visible: hovered
+                    onClicked: root.reject()
+                }
             }
             Label {
                 objectName: "qmlWizardStep"

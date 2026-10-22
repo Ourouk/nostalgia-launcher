@@ -19,14 +19,27 @@ Dialog {
         background: Rectangle {
             color: appTheme.colors["C_HDR"]
         }
-        Label {
+        RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 18
-            verticalAlignment: Text.AlignVCenter
-            text: "ADD CUSTOM GIT ADDON"
-            font.bold: true
-            font.pointSize: appTheme.fonts["dialog"]
-            color: appTheme.colors["C_GOLD_LT"]
+            anchors.rightMargin: 8
+            Label {
+                Layout.fillWidth: true
+                verticalAlignment: Text.AlignVCenter
+                text: "ADD CUSTOM GIT ADDON"
+                font.bold: true
+                font.pointSize: appTheme.fonts["dialog"]
+                color: appTheme.colors["C_GOLD_LT"]
+                elide: Text.ElideRight
+            }
+            ToolButton {
+                objectName: "qmlCustomAddonClose"
+                text: "✕"
+                Accessible.name: "Close"
+                ToolTip.text: "Close"
+                ToolTip.visible: hovered
+                onClicked: root.reject()
+            }
         }
     }
 

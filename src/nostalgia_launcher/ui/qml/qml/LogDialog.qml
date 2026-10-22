@@ -36,14 +36,27 @@ ApplicationWindow {
         background: Rectangle {
             color: appTheme.colors["C_HDR"]
         }
-        Label {
+        RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 18
-            verticalAlignment: Text.AlignVCenter
-            text: "SESSION LOG"
-            font.bold: true
-            font.pointSize: 13
-            color: appTheme.colors["C_GOLD_LT"]
+            anchors.rightMargin: 8
+            Label {
+                Layout.fillWidth: true
+                verticalAlignment: Text.AlignVCenter
+                text: "SESSION LOG"
+                font.bold: true
+                font.pointSize: 13
+                color: appTheme.colors["C_GOLD_LT"]
+                elide: Text.ElideRight
+            }
+            ToolButton {
+                objectName: "qmlLogHeaderClose"
+                text: "✕"
+                Accessible.name: "Close"
+                ToolTip.text: "Close"
+                ToolTip.visible: hovered
+                onClicked: root.close()
+            }
         }
     }
 

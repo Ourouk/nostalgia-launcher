@@ -101,6 +101,14 @@ def test_shell_chrome_objects_exist(engine):
         "qmlStatusLabel",
         "qmlProgressBar",
         "qmlPrimaryButton",
+        # Installer-parity header X buttons (BrowseView already had one).
+        "qmlSettingsClose",
+        "qmlLogHeaderClose",
+        "qmlLinuxClose",
+        "qmlCustomModClose",
+        "qmlCustomAddonClose",
+        "qmlCustomAssetClose",
+        "qmlWizardClose",
     ):
         assert root.findChild(QObject, name) is not None, name
 

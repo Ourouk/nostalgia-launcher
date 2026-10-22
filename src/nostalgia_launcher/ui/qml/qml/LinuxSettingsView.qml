@@ -20,14 +20,27 @@ Dialog {
         background: Rectangle {
             color: appTheme.colors["C_HDR"]
         }
-        Label {
+        RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 18
-            verticalAlignment: Text.AlignVCenter
-            text: "LINUX (UMU)"
-            font.bold: true
-            font.pointSize: 13
-            color: appTheme.colors["C_GOLD_LT"]
+            anchors.rightMargin: 8
+            Label {
+                Layout.fillWidth: true
+                verticalAlignment: Text.AlignVCenter
+                text: "LINUX (UMU)"
+                font.bold: true
+                font.pointSize: 13
+                color: appTheme.colors["C_GOLD_LT"]
+                elide: Text.ElideRight
+            }
+            ToolButton {
+                objectName: "qmlLinuxClose"
+                text: "✕"
+                Accessible.name: "Close"
+                ToolTip.text: "Close"
+                ToolTip.visible: hovered
+                onClicked: root.reject()
+            }
         }
     }
 
