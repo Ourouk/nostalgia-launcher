@@ -161,6 +161,11 @@ class UpdateController:
     def start_verify(self, overwrite_config: bool = False):
         if not self._client_updates_enabled():
             return
+        if self.state.running and self._op == "update":
+            self._dispatcher.post(
+                LogMessage("An update is already in progress.\n", "dim")
+            )
+            return
         out = (self._get_out_dir() or "").strip()
         if not out:
             return
@@ -222,7 +227,29 @@ class UpdateController:
             if self.state.torrent_stale is not None
             else None
         )
-        if torrent_wanted == set():
+        if torrent_wanted is None:
+            # Never verified: a blind update would re-download the whole
+            # client (UpdateWorker treats None as "full"). Verify first.
+            self._dispatcher.post(
+                LogMessage(
+                    "No verify results yet — verifying first...\n", "dim"
+                )
+            )
+            self.start_verify()
+            return False
+        if not torrent_wanted:
+            # A cached empty verdict goes stale the moment local files
+            # change - re-check the game exe before reporting success.
+            if not self._playable_client_present():
+                self._dispatcher.post(
+                    LogMessage(
+                        "Game files changed since the last verify - "
+                        "verifying again...\n",
+                        "err",
+                    )
+                )
+                self.start_verify()
+                return False
             self.state.torrent_stale = None
             self.state.client_ready = True
             self.state.status = "Up to date"
@@ -278,7 +305,8 @@ class UpdateController:
             self._dispatcher.post(
                 LogMessage(
                     "✗  This server has no BitTorrent source configured — "
-                    "enable client updates to download via HTTP.\n",
+                    "ask the server operator to add "
+                    "server.download.torrent.torrent_url or magnet.\n",
                     "err",
                 )
             )
@@ -348,6 +376,12 @@ class UpdateController:
                 tag = None
             self.updater_latest_tag = tag
             self.updater_update_available = bool(updater_update_available(tag))
+            if self.updater_update_available:
+                self._dispatcher.post(
+                    LogMessage(
+                        "Launcher update " + str(tag) + " available.", "ok"
+                    )
+                )
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -449,15 +483,19 @@ class UpdateController:
 
     def _launch_game_windows(self, client_dir: str, cfg: dict) -> tuple:
         """Windows direct launch: prefer an installed external-launcher mod's
-        executable, then WoW.exe, spawned detached from the caller's job
-        object. Its merged output is drained into the session log by a
-        watcher thread that also records the exit (same bookkeeping as the
-        umu path, so the one-game-at-a-time guard holds on Windows too)."""
+        executable, then the configured client exe, spawned detached from
+        the caller's job object. Its merged output is drained into the
+        session log by a watcher thread that also records the exit (same
+        bookkeeping as the umu path, so the one-game-at-a-time guard holds
+        on Windows too)."""
         import subprocess
+
+        from ..core import launcher as _launcher
 
         exe, exe_lbl = pick_game_executable(
             client_dir,
             mods.external_launcher_executables(client_dir),
+            exe_name=_launcher.client_executable() or "WoW.exe",
         )
         if not os.path.exists(exe):
             self._dispatcher.post(
@@ -527,11 +565,13 @@ class UpdateController:
         output goes to a sidecar file and no watcher runs (the launcher exits
         right after spawning, so nothing may depend on our pipes staying
         open)."""
+        from ..core import launcher as _launcher
         from ..services import umu
 
         exe, exe_lbl = pick_game_executable(
             client_dir,
             mods.external_launcher_executables(client_dir),
+            exe_name=_launcher.client_executable() or "WoW.exe",
         )
         if not os.path.exists(exe):
             self._dispatcher.post(
@@ -606,14 +646,37 @@ class UpdateController:
             return False, False
 
     def _watch_game(self, proc, pid: int, source: str = "umu"):
-        """Background watcher: drains the game's output into the session log
-        until EOF (the process exited), then clears the running state and
-        publishes GameExited."""
-        self._drain_child_output(proc, source)
-        try:
-            code = proc.wait()
-        except Exception:
-            code = None
+        """Background watcher: clears the running state and publishes
+        GameExited once the game is actually gone.
+
+        Output draining runs on its own daemon thread: Proton grandchildren
+        inherit the stdout pipe, so EOF may never arrive after the game
+        itself exits — draining first would stall GameExited forever
+        (footer stuck on TERMINATE). The drain instead ends at EOF on its
+        own; a pipe held open by grandchildren lingers harmlessly as a
+        daemon until the launcher exits.
+
+        On Linux the watched handle is the umu-run wrapper, not WoW.exe —
+        and neither side alone is truth: the wrapper may linger (supervisor)
+        after the game dies, or exit while Proton children outlive it. So
+        ``wait()`` runs on its own thread and the watcher polls the real
+        game tree; whichever reports death *while the tree is dead* wins.
+        A live tree always keeps TERMINATE, so a lingering wrapper can
+        never flip to PLAY early — and a dead tree flips even when the
+        wrapper (or a wedged wait) never returns."""
+        threading.Thread(
+            target=self._drain_child_output,
+            args=(proc, source),
+            daemon=True,
+        ).start()
+        pgid = self.state.game_pgid
+        if pgid is not None and source == "umu":
+            code = self._wait_umu_exit(proc, pid, pgid)
+        else:
+            try:
+                code = proc.wait()
+            except Exception:
+                code = None
         self.state.game_running = False
         self.state.game_pid = None
         self.state.game_pgid = None
@@ -622,6 +685,38 @@ class UpdateController:
             self._dispatcher.post(StatusChanged("Game exited."))
         else:
             self._dispatcher.post(StatusChanged(f"Game exited (code {code})."))
+
+    def _game_tree_alive(self, pid: int, pgid: int) -> bool:
+        """Whether the umu game tree is still running (Linux only)."""
+        try:
+            from ..services import umu
+
+            return umu.game_process_alive(pid, pgid)
+        except Exception:
+            return True
+
+    def _wait_umu_exit(self, proc, pid: int, pgid: int) -> int | None:
+        """Wrapper exit code once the umu game tree is dead (poll 0.5 s,
+        cap 5 min). ``wait()`` runs on its own thread: the wrapper may
+        linger after the game dies or exit while Proton children outlive
+        it — tree death alone flips TERMINATE."""
+        import time
+
+        code_holder: list[int | None] = []
+
+        def _wait_proc() -> None:
+            try:
+                code_holder.append(proc.wait())
+            except Exception:
+                code_holder.append(None)
+
+        threading.Thread(target=_wait_proc, daemon=True).start()
+        deadline = time.monotonic() + 300.0
+        while time.monotonic() < deadline:
+            if not self._game_tree_alive(pid, pgid):
+                break
+            time.sleep(0.5)
+        return code_holder[0] if code_holder else None
 
     def _drain_child_output(self, proc, source: str = "umu"):
         """Log a child process's merged stdout/stderr into the session log.
@@ -769,6 +864,8 @@ class UpdateController:
         its own flag so the button stays disabled while addons download,
         exactly like the mods flow.
         """
+        # ponytail: priority chain — each guard outranks the ones below.
+        # New states add one guard in rank order, not table rows.
         if self.state.game_running:
             return Readiness(
                 "terminate",
@@ -784,36 +881,7 @@ class UpdateController:
             }.get(self._op or "", "Checking…")
             return Readiness("busy", label, self.state.status)
         if not self._client_updates_enabled():
-            if not self._playable_client_present():
-                # Updates are off but the client folder holds nothing
-                # playable yet — offer a first-time BitTorrent acquisition.
-                out = (self._get_out_dir() or "").strip()
-                if not out:
-                    return Readiness(
-                        "disabled", "DOWNLOAD", "Set the game folder first"
-                    )
-                if torrent_recovery_available():
-                    return Readiness(
-                        "download",
-                        "DOWNLOAD",
-                        "Download client via BitTorrent",
-                    )
-                if not can_launch_client():
-                    return Readiness(
-                        "disabled",
-                        "DOWNLOAD",
-                        "No BitTorrent source — enable client updates",
-                    )
-                return Readiness(
-                    "busy",
-                    "DOWNLOAD",
-                    "No BitTorrent source — enable client updates",
-                )
-            if self._mods_have_errors():
-                return Readiness("busy", "PLAY", "Mod errors — check MODS tab")
-            if not can_launch_client():
-                return Readiness("busy", "READY", "Client updates disabled")
-            return Readiness("play", "PLAY", "Client updates disabled")
+            return self._readiness_updates_disabled()
         # Torrent-only readiness (no manifest/diff).
         # Disabled till verification (cache makes this instant via
         # TORRENT_VALIDATION_CACHE_KEY). Magnet-only with
@@ -865,6 +933,12 @@ class UpdateController:
                     "UPDATE",
                     f"Torrent unavailable{error_detail}",
                 )
+            if self._playable_client_present():
+                return Readiness(
+                    "play",
+                    "PLAY",
+                    "Torrent unavailable — playing unverified client",
+                )
             return Readiness(
                 "play", "PLAY", f"Torrent unavailable{error_detail}"
             )
@@ -893,35 +967,82 @@ class UpdateController:
                     "Torrent unavailable — playing unverified client",
                 )
             return Readiness("update", "UPDATE", "Download via BitTorrent")
-        # Fallback zip for first-install when torrent unavailable
         if not self.state.client_ready:
-            from ..core import launcher as _launcher_f
-
-            _cfg_f = _launcher_f.config()
-            _fallback = _cfg_f.download_fallback_url if _cfg_f else None
-            if _fallback and not self._playable_client_present():
-                return Readiness(
-                    "update", "UPDATE", "Download via HTTP fallback"
-                )
-            if not can_launch_client():
-                reason = (
-                    "umu-run not found"
-                    if is_linux()
-                    else "launching unsupported on this platform"
-                )
-                return Readiness(
-                    "disabled", "UPDATE", f"Torrent unavailable — {reason}"
-                )
             if self._playable_client_present():
                 return Readiness(
-                    "play", "PLAY", "Torrent unavailable — playing client"
+                    "play",
+                    "PLAY",
+                    "Torrent unavailable — playing unverified client",
                 )
-            return Readiness("play", "PLAY", "Torrent unavailable")
+            return self._readiness_no_client()
         if self._mods_have_errors():
             return Readiness("busy", "PLAY", "Mod errors — check MODS tab")
         if not can_launch_client():
             return Readiness("busy", "READY", "Everything up to date!")
         return Readiness("play", "PLAY", "Everything up to date!")
+
+    def _readiness_updates_disabled(self) -> Readiness:
+        """Readiness when the user turned client updates off.
+
+        Nothing playable yet means first-time acquisition (BitTorrent
+        when present); otherwise PLAY or a disabled button with the
+        reason."""
+        if not self._playable_client_present():
+            # Updates are off but the client folder holds nothing
+            # playable yet — offer a first-time BitTorrent acquisition.
+            out = (self._get_out_dir() or "").strip()
+            if not out:
+                return Readiness(
+                    "disabled", "DOWNLOAD", "Set the game folder first"
+                )
+            if torrent_recovery_available():
+                return Readiness(
+                    "download",
+                    "DOWNLOAD",
+                    "Download client via BitTorrent",
+                )
+            if not can_launch_client():
+                return Readiness(
+                    "disabled",
+                    "DOWNLOAD",
+                    "No BitTorrent source — enable client updates",
+                )
+            return Readiness(
+                "busy",
+                "DOWNLOAD",
+                "No BitTorrent source — enable client updates",
+            )
+        if self._mods_have_errors():
+            return Readiness("busy", "PLAY", "Mod errors — check MODS tab")
+        if not can_launch_client():
+            return Readiness("busy", "PLAY", "")
+        return Readiness("play", "PLAY", "")
+
+    def _readiness_no_client(self) -> Readiness:
+        """Readiness when no verified client exists and torrent is out.
+
+        HTTP fallback first, then the launch blocker, then an
+        unverified-but-playable client, else plain unavailable."""
+        from ..core import launcher as _launcher_f
+
+        _cfg_f = _launcher_f.config()
+        _fallback = _cfg_f.download_fallback_url if _cfg_f else None
+        if _fallback and not self._playable_client_present():
+            return Readiness("update", "UPDATE", "Download via HTTP fallback")
+        if not can_launch_client():
+            reason = (
+                "umu-run not found"
+                if is_linux()
+                else "launching unsupported on this platform"
+            )
+            return Readiness(
+                "disabled", "UPDATE", f"Torrent unavailable — {reason}"
+            )
+        if self._playable_client_present():
+            return Readiness(
+                "play", "PLAY", "Torrent unavailable — playing client"
+            )
+        return Readiness("play", "PLAY", "Torrent unavailable")
 
     # ── internals ───────────────────────────────────────────────────────────
 
@@ -929,12 +1050,15 @@ class UpdateController:
         """Whether the configured game folder holds a launchable executable —
         the same pick ``launch_game`` makes, so a PLAY readiness can trust
         the click to actually start something."""
+        from ..core import launcher as _launcher
+
         client_dir = (self._get_out_dir() or "").strip()
         if not client_dir:
             return False
         exe, _ = pick_game_executable(
             client_dir,
             mods.external_launcher_executables(client_dir),
+            exe_name=_launcher.client_executable() or "WoW.exe",
         )
         return os.path.isfile(exe)
 
@@ -942,6 +1066,19 @@ class UpdateController:
         from ..core import launcher
 
         return launcher.effective_client_updates_enabled()
+
+    def update_tab_enabled(self) -> bool:
+        """Whether the UPDATE tab has anything to offer.
+
+        Incremental torrent updates allowed, or no playable client
+        yet (first acquisition still downloads through the tab).
+        Frozen updates on an existing install hide the tab; the
+        footer already falls through to PLAY there."""
+        from ..core import launcher
+
+        if launcher.torrent_update_allowed():
+            return True
+        return not self._playable_client_present()
 
     def _on_done(self, event: UpdateCompleted):
         if event.version:
@@ -953,6 +1090,10 @@ class UpdateController:
         self._dispatcher.post(OperationFinished("update", True))
 
     def _on_error(self, event: UpdateFailed):
+        if self._op is None:
+            # Echo after a terminal event already landed (torrent
+            # download failure posts Torrent* + UpdateFailed).
+            return
         op = event.op or self._op or "update"
         self.state.running = False
         self.state.client_ready = False
@@ -961,6 +1102,10 @@ class UpdateController:
         self._dispatcher.post(OperationFailed(op, event.message))
 
     def _on_up_to_date(self, event: VerificationUpToDate):
+        if self._op is None:
+            # Echo after a terminal event already landed (no-torrent
+            # verify posts TorrentUnavailable + VerificationUpToDate).
+            return
         self.state.running = False
         self.state.client_ready = True
         self._op = None
@@ -979,6 +1124,22 @@ class UpdateController:
         self.state.torrent_error = None
 
     def _on_torrent_unreachable(self, event: TorrentUnavailable):
+        if self._playable_client_present():
+            # Torrent snapshot unfetchable on an existing install: skip
+            # the rescan (no point re-hashing presumably-good files) and
+            # offer PLAY — but stay unverified (client_ready False), so
+            # the next launch retries verification when the torrent may
+            # be reachable again. The worker's follow-up
+            # VerificationUpToDate is then a no-op echo — _on_up_to_date
+            # ignores it once _op cleared.
+            self.state.running = False
+            self.state.torrent_reachable = False
+            self.state.torrent_error = event.message or None
+            self.state.torrent_stale = None
+            self._op = None
+            self._dispatcher.post(ProgressChanged(0.0, ""))
+            self._dispatcher.post(OperationFinished("verify", True))
+            return
         self._torrent_failure(event.message, reachable=False)
 
     def _on_torrent_corrupt(self, event: TorrentCorrupt):
@@ -998,7 +1159,9 @@ class UpdateController:
 
     def _torrent_failure(self, message: str, *, reachable: bool):
         """Common landing for failed torrent verifications."""
-
+        if self._op is None:
+            # Terminal event already landed — ignore the echo.
+            return
         self.state.running = False
         self.state.client_ready = False
         self.state.torrent_reachable = reachable

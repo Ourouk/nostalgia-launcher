@@ -25,6 +25,7 @@ from ..state.events import (
     StatusChanged,
 )
 from ..state.models import AssetPending, AssetsState, AssetState
+from .apply_shared import action_label, resolve_enabled, sync_skipped
 
 
 class AssetsController:
@@ -48,6 +49,10 @@ class AssetsController:
         # (refresh_verdicts). The render path (action_for) reads these
         # instead of running live HEAD probes on the GUI thread.
         self._verdict_cache: dict[str, bool] = {}
+        # ponytail: GUI-thread snapshots reuse this until Data/ changes;
+        # move the walk itself off-thread if rescan latency ever shows.
+        self._scan_key = None
+        self._scan_cache: dict = {}
         if get_out_dir is None:
 
             def _default_get_out_dir() -> str:
@@ -75,10 +80,32 @@ class AssetsController:
         """Classify every MPQ under the client's Data/ tree for `version`
         (see `services.mpq.scan_custom_mpqs`); registry dests mark the
         launcher-managed customs. Read-only; empty buckets when no game
-        folder is configured."""
-        return mpq.scan_custom_mpqs(
-            self.client_dir(), version, mpq.managed_dests(self.registry)
-        )
+        folder is configured. Results are cached on a single-level Data/
+        marker so repeated snapshots skip the recursive walk."""
+        client_dir = self.client_dir()
+        key = (client_dir, version, self._scan_marker(client_dir))
+        if key != self._scan_key:
+            self._scan_cache = mpq.scan_custom_mpqs(
+                client_dir, version, mpq.managed_dests(self.registry)
+            )
+            self._scan_key = key
+        return self._scan_cache
+
+    @staticmethod
+    def _scan_marker(client_dir: str):
+        """Cheap Data/ fingerprint (one scandir, no recursion)."""
+        try:
+            entries = list(os.scandir(os.path.join(client_dir, "Data")))
+        except OSError:
+            return None
+        marker = []
+        for entry in entries:
+            try:
+                st = entry.stat(follow_symlinks=False)
+                marker.append((entry.name, st.st_mtime_ns, st.st_size))
+            except OSError:
+                marker.append((entry.name, 0, 0))
+        return tuple(sorted(marker))
 
     def remove_foreign_mpq(self, rel_path: str) -> None:
         """Delete one untracked MPQ from Data/ (confirmed in the UI) and
@@ -167,6 +194,7 @@ class AssetsController:
             self._dispatcher.post(AssetsLoaded(self.state))
 
         self._busy = True
+        self._dispatcher.post(AssetsLoaded(self.state))
         threading.Thread(target=worker, daemon=True).start()
         return True
 
@@ -326,6 +354,7 @@ class AssetsController:
         self.state.updates_count = count
 
     def _apply_worker(self, client_dir: str, only_asset_id: str | None = None):
+        failed: list[str] = []
         try:
             self._dispatcher.post(ProgressChanged(0.0, ""))
             self._dispatcher.post(StatusChanged("Downloading assets…"))
@@ -340,15 +369,11 @@ class AssetsController:
                     continue
                 state = assets_cfg.get(aid, {})
 
-                pend = pending.get(aid)
-                enabled = (
-                    pend.enabled
-                    if pend is not None and pend.enabled is not None
-                    else state.get("enabled", False)
+                # A targeted single-asset install/update always means
+                # "do it".
+                enabled = resolve_enabled(
+                    pending.get(aid), state, only_asset_id is not None
                 )
-                # A targeted single-asset install/update always means "do it".
-                if only_asset_id is not None and aid == only_asset_id:
-                    enabled = True
 
                 installed_files = state.get("installed_files") or []
                 is_installed = bool(installed_files) and self._files_present(
@@ -365,19 +390,10 @@ class AssetsController:
                 needs_update = enabled and is_installed and stale
 
                 if not (needs_install or needs_uninstall or needs_update):
-                    if aid in pending:
-                        assets_cfg.setdefault(aid, {})["enabled"] = enabled
-                    if not enabled and state.get("error"):
-                        assets_cfg.setdefault(aid, {})["error"] = None
+                    sync_skipped(assets_cfg, aid, pending, enabled, state)
                     continue
 
-                action = (
-                    "Installing"
-                    if needs_install
-                    else "Updating"
-                    if needs_update
-                    else "Removing"
-                )
+                action = action_label(needs_install, needs_update)
                 self._dispatcher.post(
                     StatusChanged(f"{action} {asset['name']}…")
                 )
@@ -431,6 +447,7 @@ class AssetsController:
                     self._dispatcher.post(
                         LogMessage(f"  ✗ {asset['name']}: {err}")
                     )
+                    failed.append(aid)
                     keep = [] if not is_installed else installed_files
                     assets_cfg[aid] = {
                         "enabled": False,
@@ -455,7 +472,15 @@ class AssetsController:
             self._dispatcher.post(ProgressChanged(1.0, ""))
             self._dispatcher.post(AssetsLoaded(self.state))
             self._busy = False
-            self._dispatcher.post(OperationFinished("assets", True, ""))
+            self._dispatcher.post(
+                OperationFinished(
+                    "assets",
+                    not failed,
+                    ""
+                    if not failed
+                    else f"Failed assets: {', '.join(failed)}",
+                )
+            )
 
         except Exception as e:
             self._busy = False

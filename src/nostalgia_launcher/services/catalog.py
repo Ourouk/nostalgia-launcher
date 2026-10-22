@@ -199,6 +199,51 @@ def _text(v) -> str:
     return v.strip() if isinstance(v, str) else ""
 
 
+#: Dependency kinds for addon ``depends`` entries (``"<kind>:<ref>"``).
+DEPENDS_KINDS = ("mod", "addon", "file")
+SOURCE_TYPES = ("git", "direct")
+
+
+def parse_depends_dep(dep: str) -> tuple[str, str] | None:
+    """Split one ``depends`` entry into ``(kind, ref)``.
+
+    Bare strings without a colon are legacy and resolve as ``addon``.
+    Returns None for non-string input or empty refs."""
+    if not isinstance(dep, str):
+        return None
+    kind, sep, ref = dep.partition(":")
+    if not sep:
+        ref = dep.strip()
+        return ("addon", ref) if ref else None
+    kind, ref = kind.strip(), ref.strip()
+    return (kind, ref) if kind and ref else None
+
+
+def validate_depends(deps) -> list[str] | None:
+    """Cleaned ``depends`` list, or None when the value is malformed.
+
+    Fail-closed like other catalog fields: unknown kinds and empty refs
+    reject the whole value. Bare strings (legacy, no colon) are accepted
+    as ``addon:`` refs."""
+    if not isinstance(deps, list):
+        return None
+    cleaned = []
+    for d in deps:
+        parsed = parse_depends_dep(d)
+        if parsed is None:
+            return None
+        kind, ref = parsed
+        if kind not in DEPENDS_KINDS:
+            return None
+        if kind == "file":
+            from ..core.safety import safe_relpath
+
+            if not safe_relpath(ref):
+                return None
+        cleaned.append(d if isinstance(d, str) else f"{kind}:{ref}")
+    return cleaned
+
+
 def safe_ref(v) -> str | None:
     """A branch/tag/ref string (whitespace-free, no traversal), else None."""
     if v is None or v == "":
@@ -217,42 +262,94 @@ def _https_url(u) -> str | None:
     return https_url(u)
 
 
+def parse_source_type(v) -> str | None:
+    """One of "git"/"direct", defaulting to git when absent; None when
+    the value is present but not a known kind (fail-closed)."""
+    if v is None:
+        return "git"
+    if isinstance(v, str) and v.strip().lower() in SOURCE_TYPES:
+        return v.strip().lower()
+    return None
+
+
+def _download_url(
+    entry: dict, client_version: str | None = None
+) -> str | None:
+    """The direct-download URL for an entry, if it carries one.
+
+    Prefers the client-version-namespaced key (``<ver>_primary_download``,
+    e.g. ``wotlk_primary_download``) since the payload is website-shared;
+    without a version context any ``*_primary_download`` key qualifies.
+    Falls back to a plain ``download_url``. HTTPS only."""
+    version = (client_version or "").strip()
+    if version:
+        slug = version.replace(".", "").replace(" ", "").lower()
+        url = _https_url(entry.get(f"{slug}_primary_download"))
+        if url:
+            return url
+    else:
+        for key in sorted(entry):
+            if key.endswith("primary_download"):
+                url = _https_url(entry.get(key))
+                if url:
+                    return url
+    return _https_url(entry.get("download_url"))
+
+
 # ── addon entries ────────────────────────────────────────────────────────────
 
 
 def validate_addon(entry: dict) -> dict | None:
-    """Sanitize one addon catalog entry; None when unusable.
-
-    Delegates to :class:`catalog_models.AddonModel` (Pydantic v2) which
-    composes ``safe_folder``/``safe_ref`` via ``AfterValidator``.
-    """
-    try:
-        from .catalog_models import AddonModel
-
-        name = _text(entry.get("name") or entry.get("folder"))
-        payload = {
-            "name": name,
-            "git": entry.get("git"),
-            "branch": entry.get("branch"),
-            "ref": entry.get("ref"),
-            "description": entry.get("description"),
-            "toc": entry.get("toc"),
-            "recommended": bool(entry.get("recommended", False)),
-            "blocked": bool(entry.get("blocked", False)),
-        }
-        m = AddonModel.model_validate(payload)
-        return {
-            "name": m.name,
-            "git": m.git,
-            "branch": m.branch,
-            "ref": m.ref,
-            "description": m.description,
-            "toc": m.toc or {},
-            "recommended": bool(m.recommended),
-            "blocked": bool(m.blocked),
-        }
-    except Exception:
+    """Sanitize one addon catalog entry; None when unusable."""
+    if not isinstance(entry, dict):
         return None
+    from ..core.safety import safe_folder
+
+    name = _text(entry.get("name") or entry.get("folder"))
+    if not safe_folder(name):
+        return None
+    git = entry.get("git")
+    git = git.strip() if isinstance(git, str) and git.strip() else None
+    description = entry.get("description")
+    if description is not None:
+        if not isinstance(description, str):
+            return None
+        description = description.strip() or None
+    toc = entry.get("toc")
+    toc = (
+        {k: toc[k] for k in ("Title", "Notes", "Interface") if k in toc}
+        if isinstance(toc, dict)
+        else {}
+    )
+    depends = entry.get("depends")
+    if depends is None:
+        depends = []
+    else:
+        checked = validate_depends(depends)
+        if checked is None:
+            return None
+        depends = checked
+    source_type = parse_source_type(entry.get("source_type"))
+    if source_type is None:
+        return None
+    download_url = _download_url(entry)
+    if source_type == "direct" and not download_url:
+        # A direct entry without any download URL can never install —
+        # drop it fail-closed like any other unusable entry.
+        return None
+    return {
+        "name": name,
+        "git": git,
+        "source_type": source_type,
+        "download_url": download_url,
+        "branch": safe_ref(entry.get("branch")),
+        "ref": safe_ref(entry.get("ref")),
+        "description": description,
+        "toc": toc,
+        "depends": depends,
+        "recommended": bool(entry.get("recommended", False)),
+        "blocked": bool(entry.get("blocked", False)),
+    }
 
 
 def merge_addons(remote: list, custom: list) -> list:
@@ -271,6 +368,11 @@ def merge_addons(remote: list, custom: list) -> list:
         for key in ("git", "branch", "ref", "description"):
             if entry.get(key) is not None:
                 base[key] = entry[key]
+        for key in ("source_type", "download_url"):
+            if entry.get(key) is not None:
+                base[key] = entry[key]
+        if entry.get("depends") is not None:
+            base["depends"] = entry["depends"]
         base["recommended"] = base.get("recommended") or entry.get(
             "recommended", False
         )
@@ -374,6 +476,11 @@ def validate_mod(entry: dict) -> dict | None:
         ):
             return None
         mod["client_versions"] = list(client_versions)
+    source_type = parse_source_type(entry.get("source_type"))
+    if source_type is None:
+        return None
+    if entry.get("source_type") is not None:
+        mod["source_type"] = source_type
     return mod
 
 
@@ -437,45 +544,59 @@ def merge_by_key(remote: list, custom: list, fields) -> list:
 
 
 def validate_asset(entry: dict) -> dict | None:
-    """Sanitize one asset catalog entry; None when unusable.
-
-    Delegates to :class:`catalog_models.AssetModel` (Pydantic v2) which
-    composes ``safe_folder``/``safe_relpath``/``valid_sha1`` via validators.
-    """
+    """Sanitize one asset catalog entry; None when unusable."""
     if not isinstance(entry, dict):
         return None
-    try:
-        from .catalog_models import AssetModel
+    from ..core.safety import safe_folder, safe_relpath, validate_sha1
 
-        payload = {
-            "id": _text(entry.get("id")),
-            "name": _text(entry.get("name") or entry.get("id")),
-            "essential": bool(entry.get("essential", False)),
-            "description": entry.get("description"),
-            "repo_url": entry.get("repo_url"),
-            "url": entry.get("url"),
-            "dest": entry.get("dest"),
-            "version": entry.get("version"),
-            "sha1": entry.get("sha1"),
-            "size": entry.get("size"),
-            "probe": bool(entry.get("probe", False)),
-        }
-        m = AssetModel.model_validate(payload)
-        return {
-            "id": m.id,
-            "name": m.name,
-            "essential": bool(m.essential),
-            "description": m.description or "",
-            "repo_url": m.repo_url,
-            "url": m.url,
-            "dest": m.dest,
-            "version": m.version,
-            "sha1": m.sha1,
-            "size": m.size,
-            "probe": bool(m.probe),
-        }
-    except Exception:
+    aid = _text(entry.get("id"))
+    if not safe_folder(aid):
         return None
+    name = _text(entry.get("name") or entry.get("id"))
+    if not name:
+        return None
+    url = entry.get("url")
+    if not isinstance(url, str) or _https_url(url.strip()) is None:
+        return None
+    dest = _text(entry.get("dest"))
+    if not safe_relpath(dest):
+        return None
+    repo_url = entry.get("repo_url")
+    if repo_url is None or repo_url == "":
+        repo_url = None
+    elif not isinstance(repo_url, str) or _https_url(repo_url.strip()) is None:
+        return None
+    else:
+        repo_url = repo_url.strip()
+    sha1 = entry.get("sha1")
+    if sha1 is not None:
+        sha1 = validate_sha1(sha1)
+        if sha1 is None:
+            return None
+    size = entry.get("size")
+    if size is not None:
+        if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+            return None
+    version = entry.get("version")
+    if isinstance(version, str):
+        version = version.strip() or None
+    else:
+        version = None
+    description = entry.get("description")
+    description = description if isinstance(description, str) else ""
+    return {
+        "id": aid,
+        "name": name,
+        "essential": bool(entry.get("essential", False)),
+        "description": description,
+        "repo_url": repo_url,
+        "url": url.strip(),
+        "dest": dest,
+        "version": version,
+        "sha1": sha1,
+        "size": size,
+        "probe": bool(entry.get("probe", False)),
+    }
 
 
 # ── generic catalog fetch + layered registry ─────────────────────────────────

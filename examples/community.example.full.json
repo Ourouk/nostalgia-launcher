@@ -18,7 +18,7 @@
       "update": true,
       "torrent": {
         "torrent_url": "https://launcher.example.com/client/latest/client.torrent",
-        "magnet": "magnet:?xt=urn:btih:EXAMPLEINFOHASH0123456789abcdef0123456789ab&dn=client&tr=https%3A%2F%2Ftracker.example.com%2Fannounce",
+        "magnet": "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=client&tr=https%3A%2F%2Ftracker.example.com%2Fannounce",
         "update": true
       },
       "http": {

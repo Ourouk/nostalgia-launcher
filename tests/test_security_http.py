@@ -84,6 +84,10 @@ class _FakeClient:
     def __enter__(self):
         return self
 
+    def close(self):
+        pass
+        return self
+
     def __exit__(self, *exc):
         return False
 
@@ -92,11 +96,12 @@ class _FakeClient:
 
         return httpx.Request(method, url, headers=headers or {})
 
-    def send(self, req):
+    def send(self, req, **kw):
+        self.stream_used = kw.get("stream", False)
         return self._resp
 
 
-# redirect checks are now via _check_url / _check_redirect_chain
+# redirect checks are pinned on _validate (the production path).
 def test_redirect_https_downgrade_blocked():
     with pytest.raises(RuntimeError, match="non-HTTPS"):
         security_http._check_url("http://b.example.com/y")
@@ -155,7 +160,7 @@ def test_read_capped_empty_body():
     assert security_http.read_capped(_FakeResponse([]), 1024) == b""
 
 
-def test_check_redirect_chain_blocks_http_downgrade_in_history():
+def test_validate_blocks_http_downgrade_in_history():
     import httpx
 
     req = httpx.Request("GET", "https://a.example.com/x")
@@ -166,10 +171,10 @@ def test_check_redirect_chain_blocks_http_downgrade_in_history():
     final_resp = httpx.Response(200, request=req)
     final_resp.history = [hist_resp]  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError, match="non-HTTPS"):
-        security_http._check_redirect_chain(final_resp)
+        security_http._validate(final_resp)
 
 
-def test_check_redirect_chain_allows_cross_host_https_chain():
+def test_validate_allows_cross_host_https_chain():
     import httpx
 
     req1 = httpx.Request("GET", "https://a.example.com/x")
@@ -179,4 +184,43 @@ def test_check_redirect_chain_allows_cross_host_https_chain():
     req2 = httpx.Request("GET", "https://cdn.example.com/y")
     final = httpx.Response(200, request=req2)
     final.history = [hist]  # type: ignore[attr-defined]
-    security_http._check_redirect_chain(final)  # no raise
+    security_http._validate(final)  # no raise
+
+
+def test_secure_urlopen_streams_body():
+    """The body must stream (send with stream=True) so the callers' size
+    caps bound memory instead of trimming an already-buffered body."""
+
+    class _StreamResp:
+        headers = {}
+        status_code = 200
+        history = []
+        url = "https://example.com/big"
+
+        def __init__(self):
+            self.pulled = 0
+
+        def iter_bytes(self, n=65536):
+            for _ in range(10):
+                self.pulled += 1
+                yield b"x" * n
+
+        def close(self):
+            pass
+
+    client = _FakeClient(_StreamResp())
+
+    import nostalgia_launcher.core.security_http as sh
+
+    orig = sh.make_secure_client
+    sh.make_secure_client = lambda **kw: client
+    try:
+        with sh.secure_urlopen("https://example.com/big", timeout=5) as r:
+            assert client.stream_used is True
+            first = r.read(65536)
+            assert first == b"x" * 65536
+            assert r._resp.pulled == 1
+            rest = r.read()
+            assert len(rest) == 9 * 65536
+    finally:
+        sh.make_secure_client = orig

@@ -53,6 +53,8 @@ def test_worker_progress_emitted_exactly_once(dispatcher):
 
 
 def test_verify_completion_up_to_date(controller, dispatcher):
+    controller.state.running = True
+    controller._op = "verify"
     dispatcher.post(VerificationUpToDate())
     dispatcher.dispatch_all()
     assert controller.state.client_ready is True
@@ -60,6 +62,8 @@ def test_verify_completion_up_to_date(controller, dispatcher):
     # OperationFinished posted for UI; check via fresh controller
     disp2 = EventDispatcher()
     ctrl2 = UpdateController(disp2)
+    ctrl2.state.running = True
+    ctrl2._op = "verify"
     # Re-run via controller's dispatcher
     ctrl2._dispatcher.post(VerificationUpToDate())
     ctrl2._dispatcher.dispatch_all()
@@ -90,6 +94,8 @@ def test_torrent_reachable(controller, dispatcher):
 
 
 def test_torrent_unreachable(controller, dispatcher):
+    controller.state.running = True
+    controller._op = "verify"
     dispatcher.post(TorrentUnavailable(message="timeout"))
     dispatcher.dispatch_all()
     assert controller.state.torrent_reachable is False

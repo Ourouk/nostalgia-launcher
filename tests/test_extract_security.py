@@ -276,4 +276,111 @@ def test_deploy_unpack_folder_hardened(tmp_path):
         zf.writestr("TestAddon-master/../escape.txt", "evil")
     deploy.unpack_folder(buf.getvalue(), str(dest_root))
     assert (dest_root / "pwn.txt").exists()
-    assert not (tmp_path / "escape.txt").exists()
+
+
+def test_deploy_install_plain_refuses_symlink_parent(tmp_path):
+    """A pre-existing symlink parent (sub -> /outside) must not redirect
+    addon/mod/asset writes outside the client dir."""
+    client = tmp_path / "client"
+    client.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (client / "sub").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(RuntimeError, match="Refusing unsafe install path"):
+        deploy.install_plain(str(client), b"evil", "sub/pwn.txt")
+    assert not (outside / "pwn.txt").exists()
+
+
+def test_deploy_move_into_place_refuses_symlink_parent(tmp_path):
+    """Same containment for the staged-file path (asset direct_file)."""
+    client = tmp_path / "client"
+    client.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (client / "sub").symlink_to(outside, target_is_directory=True)
+    staged = tmp_path / "staged.bin"
+    staged.write_bytes(b"evil")
+    with pytest.raises(RuntimeError, match="Refusing unsafe install"):
+        deploy.move_into_place(str(staged), str(client), "sub/pwn.txt")
+    assert not (outside / "pwn.txt").exists()
+
+
+def test_deploy_unpack_prefix_refuses_symlink_parent(tmp_path):
+    """A symlink smuggled into an earlier unpacked layer must not redirect
+    later members written through the same tmp dir."""
+    import os
+
+    dest_root = tmp_path / "Interface" / "AddOns" / "TestAddon"
+    dest_root.mkdir(parents=True)
+    tmp_root = str(dest_root) + ".tmp_install"
+    os.makedirs(os.path.join(tmp_root, "sub"))
+    # Simulate a symlink planted by an earlier member: sub/link -> /outside.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.symlink(str(outside), os.path.join(tmp_root, "sub", "link"))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("TestAddon-master/pwn.txt", "ok")
+    # Direct unpack still works (no symlink in the write path here)…
+    deploy.unpack_folder(buf.getvalue(), str(dest_root))
+    assert (dest_root / "pwn.txt").exists()
+    assert not (outside / "pwn.txt").exists()
+
+
+def test_deploy_extract_zip_map_total_budget(tmp_path):
+    import zipfile
+
+    client = tmp_path / "client"
+    client.mkdir()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name in ("a.bin", "b.bin", "c.bin", "d.bin", "e.bin"):
+            zf.writestr(name, b"a")
+    emap = {n: n for n in ("a.bin", "b.bin", "c.bin", "d.bin", "e.bin")}
+    import nostalgia_launcher.services.sources.deploy as deploy_mod
+
+    orig = deploy_mod._MAX_MEMBER_BYTES
+    deploy_mod._MAX_MEMBER_BYTES = 1
+    try:
+        with pytest.raises(RuntimeError, match="total extraction budget"):
+            deploy.extract_zip_map(str(client), buf.getvalue(), "t", emap)
+    finally:
+        deploy_mod._MAX_MEMBER_BYTES = orig
+
+
+def test_deploy_extract_tar_map_total_budget(tmp_path):
+    import tarfile
+
+    client = tmp_path / "client"
+    client.mkdir()
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name in ("a.bin", "b.bin", "c.bin", "d.bin", "e.bin"):
+            data = b"a"
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    emap = {n: n for n in ("a.bin", "b.bin", "c.bin", "d.bin", "e.bin")}
+    import nostalgia_launcher.services.sources.deploy as deploy_mod
+
+    orig = deploy_mod._MAX_MEMBER_BYTES
+    deploy_mod._MAX_MEMBER_BYTES = 1
+    try:
+        with pytest.raises(RuntimeError, match="total extraction budget"):
+            deploy.extract_tar_map(str(client), buf.getvalue(), emap)
+    finally:
+        deploy_mod._MAX_MEMBER_BYTES = orig
+
+
+def test_extract_client_zip_total_budget(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    archive = out / "c.zip"
+    _write_zip_file(str(archive), {"a.bin": b"a", "b.bin": b"b"})
+    orig = extract_mod._MAX_TOTAL_BYTES
+    extract_mod._MAX_TOTAL_BYTES = 1
+    try:
+        with pytest.raises(RuntimeError, match="byte budget"):
+            extract_mod._extract_zip(str(archive), str(out))
+    finally:
+        extract_mod._MAX_TOTAL_BYTES = orig

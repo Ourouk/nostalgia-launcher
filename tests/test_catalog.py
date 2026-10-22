@@ -69,6 +69,40 @@ def test_validate_addon_normalizes_bad_refs():
     assert cleaned["branch"] is None
 
 
+def test_validate_addon_depends_namespaced():
+    cleaned = catalog.validate_addon(
+        {"name": "pfUI", "depends": ["mod:ClassicAPI"]}
+    )
+    assert cleaned["depends"] == ["mod:ClassicAPI"]
+    # Legacy bare strings stay accepted as addon: refs.
+    cleaned = catalog.validate_addon({"name": "x", "depends": ["SomeLib"]})
+    assert cleaned["depends"] == ["SomeLib"]
+    assert catalog.parse_depends_dep("SomeLib") == ("addon", "SomeLib")
+    assert catalog.parse_depends_dep("mod:ClassicAPI") == (
+        "mod",
+        "ClassicAPI",
+    )
+
+
+def test_validate_addon_depends_fail_closed():
+    assert (
+        catalog.validate_addon({"name": "x", "depends": ["bogus:Foo"]}) is None
+    )
+    assert catalog.validate_addon({"name": "x", "depends": ["mod:"]}) is None
+    assert catalog.validate_addon({"name": "x", "depends": ["mod:../e"]})
+    assert (
+        catalog.validate_addon({"name": "x", "depends": ["file:../evil"]})
+        is None
+    )
+    assert (
+        catalog.validate_addon({"name": "x", "depends": ["file:/abs"]}) is None
+    )
+    assert (
+        catalog.validate_addon({"name": "x", "depends": "mod:ClassicAPI"})
+        is None
+    )
+
+
 # ── mod validation ───────────────────────────────────────────────────────────
 
 
@@ -483,3 +517,62 @@ def test_validate_entries_contains_validator_crash():
         [{"id": "good"}, {"id": "bad"}], boom, "test"
     )
     assert [e["id"] for e in out] == ["good"]
+
+
+# ── source_type ────────────────────────────────────────────────────────────
+
+
+def test_parse_source_type_defaults_and_rejects():
+    assert catalog.parse_source_type(None) == "git"
+    assert catalog.parse_source_type("git") == "git"
+    assert catalog.parse_source_type("direct") == "direct"
+    assert catalog.parse_source_type("GIT") == "git"
+    assert catalog.parse_source_type("zip") is None
+    assert catalog.parse_source_type("") is None
+
+
+def test_validate_addon_source_type_git_and_direct():
+    git = catalog.validate_addon(
+        {"name": "A", "git": "https://github.com/a/a"}
+    )
+    assert git["source_type"] == "git"
+    assert git["download_url"] is None
+    direct = catalog.validate_addon(
+        {
+            "name": "B",
+            "git": "https://github.com/a/a",
+            "source_type": "direct",
+            "wotlk_primary_download": "https://example.com/b.zip",
+        }
+    )
+    assert direct["source_type"] == "direct"
+    assert direct["download_url"] == "https://example.com/b.zip"
+
+
+def test_validate_addon_rejects_unknown_source_type():
+    assert (
+        catalog.validate_addon(
+            {
+                "name": "A",
+                "git": "https://github.com/a/a",
+                "source_type": "zip",
+            }
+        )
+        is None
+    )
+
+
+def test_validate_addon_direct_without_url_is_dropped():
+    assert (
+        catalog.validate_addon({"name": "A", "source_type": "direct"}) is None
+    )
+    assert (
+        catalog.validate_addon(
+            {
+                "name": "A",
+                "source_type": "direct",
+                "wotlk_primary_download": "http://insecure/x.zip",
+            }
+        )
+        is None
+    )

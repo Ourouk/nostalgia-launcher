@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nostalgia-launcher"
-version = "0.0.5"
+version = "0.1.0"
 description = "Standalone updater and mod manager for old-school WoW clients"
 readme = "README.md"
 license = "Apache-2.0"
@@ -14,12 +14,9 @@ dependencies = [
     # certifi supplies a current CA bundle so TLS verification works even on
     # platforms with a stale/incomplete system root store (e.g. Windows).
     "certifi>=2024.0",
-    "pydantic>=2.8",
     "platformdirs>=4.2",
     "filelock>=3.15",
     "httpx>=0.28",
-    "tenacity>=9.0",
-    "packaging>=24.0",
     # libtorrent only ships wheels for CPython 3.10-3.13; on newer
     # interpreters the client update path degrades to single-zip HTTP
     # fallback (services/update_backend/torrent_update.available()).

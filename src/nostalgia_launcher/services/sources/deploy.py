@@ -25,7 +25,7 @@ import zipfile
 from ...core.filesystem import rmtree_force
 from ...core.log_sink import log
 from ...core.process_env import clean_system_env
-from ...core.safety import safe_relative_path
+from ...core.safety import safe_destination, safe_relative_path
 
 # Per-member uncompressed ceiling: far above any legitimate game file,
 # far below disk-filling territory.
@@ -102,13 +102,31 @@ def checked_rel(dest_rel) -> str:
     return dest_rel
 
 
+def _resolve_inside(base: str, dest_rel: str) -> str:
+    """Join + makedirs ``dest_rel`` under ``base``, refusing symlink-parent
+    escape (realpath containment; parent == base allowed)."""
+    dest = os.path.join(base, dest_rel)
+    if not safe_destination(dest, base):
+        raise RuntimeError(f"Refusing unsafe install path: {dest_rel!r}")
+    parent = os.path.dirname(dest)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+        parent_real = os.path.realpath(parent)
+        if parent_real != os.path.realpath(base) and not safe_destination(
+            parent_real, base
+        ):
+            raise RuntimeError(
+                f"Refusing unsafe install path (symlink parent): {dest_rel!r}"
+            )
+    return dest
+
+
 def install_plain(client_dir: str, data: bytes, dest_rel: str) -> str:
     """Write one file into the client dir. The destination is re-validated
     here (defence in depth) before it is ever joined onto client_dir.
     Returns the written relative path."""
     dest_rel = checked_rel(dest_rel)
-    dest = os.path.join(client_dir, dest_rel)
-    os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
+    dest = _resolve_inside(client_dir, dest_rel)
     with open(dest, "wb") as f:
         f.write(data)
     log(f"  Installed {dest_rel}")
@@ -121,8 +139,7 @@ def move_into_place(staged_path: str, client_dir: str, dest_rel: str) -> str:
     arrange it (same volume → atomic rename); shutil.move falls back to a
     copy otherwise. Returns the written relative path."""
     dest_rel = checked_rel(dest_rel)
-    dest = os.path.join(client_dir, dest_rel)
-    os.makedirs(os.path.dirname(dest) or client_dir, exist_ok=True)
+    dest = _resolve_inside(client_dir, dest_rel)
     shutil.move(staged_path, dest)
     return dest_rel
 
@@ -137,6 +154,7 @@ def extract_zip_map(
             f.write(data)
         with zipfile.ZipFile(tmp_path) as zf:
             written = []
+            total = 0
             for zip_path, dest_rel in extract_map.items():
                 try:
                     info = zf.getinfo(zip_path)
@@ -149,6 +167,11 @@ def extract_zip_map(
                         "size cap, skipping"
                     )
                     continue
+                total += info.file_size
+                if total > _MAX_MEMBER_BYTES * 4:
+                    raise RuntimeError(
+                        "archive exceeds the total extraction budget"
+                    )
                 written.append(
                     install_plain(client_dir, zf.read(zip_path), dest_rel)
                 )
@@ -169,6 +192,7 @@ def extract_tar_map(
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
         all_names = tf.getnames()
         written = []
+        total = 0
         for pattern, dest_rel in extract_map.items():
             matched = (
                 pattern
@@ -196,6 +220,11 @@ def extract_tar_map(
                     "cap, skipping"
                 )
                 continue
+            total += member.size
+            if total > _MAX_MEMBER_BYTES * 4:
+                raise RuntimeError(
+                    "archive exceeds the total extraction budget"
+                )
             written.append(install_plain(client_dir, fh.read(), dest_rel))
         return written
 
@@ -247,10 +276,22 @@ def extract_7z_map(
             suffix = f": {detail}" if detail else ""
             raise RuntimeError(f"7z extraction failed{suffix}")
         members: dict[str, str] = {}
-        for root, _dirs, files in os.walk(outdir):
+        outdir_real = os.path.realpath(outdir) + os.sep
+        for root, dirs, files in os.walk(outdir):
+            # A hostile 7z may contain a dir symlink (a -> /etc): os.walk
+            # lists its "children" although they live outside outdir, and
+            # the files themselves are not links — so prune symlinked dirs
+            # and re-check realpath containment on every member.
+            dirs[:] = [
+                d for d in dirs if not os.path.islink(os.path.join(root, d))
+            ]
             for name in files:
                 full = os.path.join(root, name)
                 if os.path.islink(full):
+                    continue
+                if not (os.path.realpath(full) + os.sep).startswith(
+                    outdir_real
+                ):
                     continue
                 rel = os.path.relpath(full, outdir).replace("\\", "/")
                 members.setdefault(rel, full)
@@ -288,12 +329,13 @@ def extract_7z_map(
 
 def _stripped_parts(filename: str) -> list[str]:
     """A zip member path with the archive's top-level "<repo>-<sha>/"
-    component removed and separators normalised ("" / "." dropped)."""
-    return [
-        p
-        for p in filename.replace("\\", "/").split("/")[1:]
-        if p not in ("", ".")
-    ]
+    component removed and separators normalised ("" / "." dropped)."
+    A root-level member has no top-level directory — keep it instead of
+    dropping the file silently."""
+    norm = filename.replace("\\", "/")
+    if "/" not in norm:
+        return [norm] if norm not in ("", ".") else []
+    return [p for p in norm.split("/")[1:] if p not in ("", ".")]
 
 
 def unpack_folder(data: bytes, dest_root: str) -> None:
@@ -306,6 +348,64 @@ def unpack_folder(data: bytes, dest_root: str) -> None:
     leaves a half-written ".tmp_install" behind.
     """
     unpack_prefix(data, "", dest_root)
+
+
+def unpack_flat_prefix(data: bytes, prefix: str, dest_root: str) -> None:
+    """Like unpack_prefix but for prebuilt zips whose members sit at the
+    archive root (no "<repo>-<sha>/" wrapper to strip). Same traversal
+    guards + atomic replace."""
+    wanted = [
+        p for p in prefix.replace("\\", "/").split("/") if p not in ("", ".")
+    ]
+    if ".." in wanted:
+        raise RuntimeError(f"Refusing unsafe unpack prefix: {prefix!r}")
+    tmp_root = dest_root + ".tmp_install"
+    if os.path.isdir(tmp_root):
+        rmtree_force(tmp_root)
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            total_written = 0
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                if info.file_size > _MAX_MEMBER_BYTES:
+                    log(
+                        f"  Warning: {info.filename} exceeds the "
+                        "extraction size cap, skipping"
+                    )
+                    continue
+                total_written += info.file_size
+                if total_written > _MAX_MEMBER_BYTES * 4:
+                    raise RuntimeError(
+                        "archive exceeds the total extraction budget"
+                    )
+                parts = _flat_parts(info.filename)
+                if not parts or ".." in parts:
+                    continue
+                if wanted and (
+                    len(parts) <= len(wanted) or parts[: len(wanted)] != wanted
+                ):
+                    continue
+                rel = os.path.join(*parts[len(wanted) :])
+                try:
+                    target = _resolve_inside(tmp_root, rel)
+                except RuntimeError:
+                    continue
+                with zf.open(info) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+        if os.path.isdir(dest_root):
+            rmtree_force(dest_root)
+        os.replace(tmp_root, dest_root)
+    except Exception:
+        rmtree_force(tmp_root)
+        raise
+
+
+def _flat_parts(filename: str) -> list[str]:
+    """A zip member path with separators normalised but no component
+    stripped (prebuilt zips have no "<repo>-<sha>/" wrapper)."""
+    norm = filename.replace("\\", "/")
+    return [p for p in norm.split("/") if p not in ("", ".")]
 
 
 def unpack_prefix(data: bytes, prefix: str, dest_root: str) -> None:
@@ -324,7 +424,6 @@ def unpack_prefix(data: bytes, prefix: str, dest_root: str) -> None:
     if ".." in wanted:
         raise RuntimeError(f"Refusing unsafe unpack prefix: {prefix!r}")
     tmp_root = dest_root + ".tmp_install"
-    tmp_abs = os.path.abspath(tmp_root)
     if os.path.isdir(tmp_root):
         rmtree_force(tmp_root)
     try:
@@ -351,10 +450,11 @@ def unpack_prefix(data: bytes, prefix: str, dest_root: str) -> None:
                     len(parts) <= len(wanted) or parts[: len(wanted)] != wanted
                 ):
                     continue
-                target = os.path.join(tmp_root, *parts[len(wanted) :])
-                if not os.path.abspath(target).startswith(tmp_abs + os.sep):
+                rel = os.path.join(*parts[len(wanted) :])
+                try:
+                    target = _resolve_inside(tmp_root, rel)
+                except RuntimeError:
                     continue
-                os.makedirs(os.path.dirname(target), exist_ok=True)
                 with zf.open(info) as src, open(target, "wb") as dst:
                     shutil.copyfileobj(src, dst)
         if os.path.isdir(dest_root):

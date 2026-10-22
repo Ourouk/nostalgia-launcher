@@ -138,6 +138,9 @@ class LauncherConfig:
     theme: dict | None = None
     addon_git_hosts: list[str] = field(default_factory=list)
     torrent_root_marker: str = "WoW.exe"
+    # Pinned game executable filename (no path) for servers whose launch
+    # binary is not WoW.exe. Declarative only — no exe sniffing.
+    client_executable: str = "WoW.exe"
     # Pinned client version for this server profile (subset of mpq.SUPPORTED_VERSIONS).
     client_version: str = "1.12.1"
     embedded_mods: list[dict] = field(default_factory=list)
@@ -167,6 +170,7 @@ class LauncherConfig:
             or self.server_url
             or self.download_fallback_url
             or self.download_torrent_url
+            or self.download_torrent_magnet
             or self.news_url
             or self.mods_registry_url
         )
@@ -229,6 +233,26 @@ def _parse_git_hosts(value) -> list[str]:
     return out
 
 
+def _parse_flag(value: object, default: bool, key: str) -> bool:
+    """Strict bool for update kill-switches: real bools win; the strings
+    "true"/"false" (any case) are accepted for hand-written configs;
+    anything else is a hard error — ``bool("false") is True`` silently
+    inverted the old coercion."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v == "true":
+            return True
+        if v == "false":
+            return False
+    raise ValueError(
+        f"launcher config {key!r} must be a boolean (got {value!r})"
+    )
+
+
 def _parse_root_marker(value: object) -> str:
     """Validate `server.torrent_root_marker` — the filename used to detect
     the torrent root. Must be a single unsafe-free name. Defaults to
@@ -286,44 +310,24 @@ def _https_url(value: object) -> str | None:
     if not v:
         return None
     try:
-        from pydantic import TypeAdapter
-        from pydantic.networks import HttpUrl
-
-        p = TypeAdapter(HttpUrl).validate_python(v)
-        return v if p.scheme == "https" and p.host else None
-    except Exception:
+        parts = urlsplit(v)
+    except ValueError:
         return None
+    if parts.scheme != "https" or not parts.hostname:
+        return None
+    return v
 
 
 def _magnet_uri(value: object) -> str | None:
     """Validate a ``magnet:`` URI: the scheme must be magnet and the query
     must carry at least one ``xt`` topic of ``urn:btih:`` (v1) or
-    ``urn:btmh:`` (v2)."""
+    ``urn:btmh:`` (v2) with a plausible hash — a typo'd hash validates
+    here but fails minutes later at Verify time, so fail fast instead."""
     if not isinstance(value, str):
         return None
     uri = value.strip()
     if not uri:
         return None
-    # Use pydantic for scheme validation, then manual xt check
-    try:
-        from pydantic import BaseModel
-        from pydantic.networks import AnyUrl
-
-        class _MagnetModel(BaseModel):
-            url: AnyUrl
-
-        # AnyUrl will accept magnet:?xt=... without host; validate scheme
-        m = _MagnetModel(url=uri)  # type: ignore[arg-type]
-        if m.url.scheme != "magnet":
-            return None
-    except Exception:
-        # Fallback manual
-        try:
-            parts = urlsplit(uri)
-        except ValueError:
-            return None
-        if parts.scheme != "magnet" or not parts.query:
-            return None
     try:
         parts = urlsplit(uri)
     except ValueError:
@@ -331,11 +335,21 @@ def _magnet_uri(value: object) -> str | None:
     if parts.scheme != "magnet" or not parts.query:
         return None
     topics = [t.strip().lower() for t in parse_qs(parts.query).get("xt", [])]
-    if not any(
-        t.startswith("urn:btih:") or t.startswith("urn:btmh:") for t in topics
-    ):
-        return None
-    return uri
+    for t in topics:
+        if t.startswith("urn:btih:"):
+            h = t[len("urn:btih:") :]
+            # v1: 40 hex chars or 32 base32 chars.
+            if len(h) == 40 and all(c in "0123456789abcdef" for c in h):
+                return uri
+            if len(h) == 32 and all(
+                c in "abcdefghijklmnopqrstuvwxyz234567" for c in h
+            ):
+                return uri
+        elif t.startswith("urn:btmh:"):
+            # v2 multihash: encodings vary, so only demand a real hash.
+            if len(t[len("urn:btmh:") :]) >= 32:
+                return uri
+    return None
 
 
 def _host_of(url: object) -> str:
@@ -413,14 +427,26 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
         else []
     )
 
-    addon_git_hosts = _parse_git_hosts(data.get("addon_git_hosts"))
-    torrent_root_marker = _parse_root_marker(server.get("torrent_root_marker"))
+    # Canonical key is server.addon_git_hosts (docs + migration guide); the
+    # legacy top-level key still works as a fallback.
+    addon_git_hosts = _parse_git_hosts(
+        server.get("addon_git_hosts")
+    ) or _parse_git_hosts(data.get("addon_git_hosts"))
+    client_executable = _parse_root_marker(server.get("client_executable"))
+    if server.get("torrent_root_marker") is not None:
+        torrent_root_marker = _parse_root_marker(
+            server.get("torrent_root_marker")
+        )
+    else:
+        torrent_root_marker = client_executable
     client_version = _parse_client_version(server.get("client_version"))
 
     # ── server.download block ──
     dl = server.get("download")
     dl = dl if isinstance(dl, dict) else {}
-    download_update = bool(dl.get("update", True))
+    download_update = _parse_flag(
+        dl.get("update", True), True, "server.download.update"
+    )
     torrent = dl.get("torrent")
     torrent = torrent if isinstance(torrent, dict) else {}
     http = dl.get("http")
@@ -428,12 +454,19 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
     content = dl.get("content")
     content = content if isinstance(content, dict) else {}
     content_type = content.get("type")
-    if content_type not in ("zip", "rar", "folder"):
+    if content_type is None:
         content_type = "folder"
+    elif content_type not in ("zip", "rar", "folder"):
+        raise ValueError(
+            "launcher config 'server.download.content.type' must be one of "
+            f"'zip', 'rar', 'folder' (got {content_type!r})"
+        )
     download_torrent_url = _https_url(torrent.get("torrent_url"))
     download_torrent_magnet = _magnet_uri(torrent.get("magnet"))
     if "update" in torrent:
-        download_torrent_update: bool | None = bool(torrent.get("update"))
+        download_torrent_update: bool | None = _parse_flag(
+            torrent.get("update"), True, "server.download.torrent.update"
+        )
     else:
         download_torrent_update = None
     if "manifest" in http or "client" in http:
@@ -473,6 +506,7 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
         theme=theme,
         addon_git_hosts=addon_git_hosts,
         torrent_root_marker=torrent_root_marker,
+        client_executable=client_executable,
         embedded_mods=embedded_mods,
         embedded_addons=embedded_addons,
         embedded_assets=embedded_assets,
@@ -488,10 +522,12 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
 
 def discover_path() -> str:
     """Locate ``nostalgia_launcher.json``: next to the executable (frozen)
-    or the repo root (source), then the current working directory. On macOS
+    or the repo root (source). On macOS
     the frozen app also searches the folder *containing* the .app bundle, so
     the config can sit next to the bundle (e.g. in the DMG root) rather than
-    buried in Contents/MacOS."""
+    buried in Contents/MacOS. The current working directory is
+    deliberately not searched: trusting a file from wherever the user
+    happened to launch would hand its endpoints full trust."""
     if getattr(sys, "frozen", False):
         roots = [os.path.dirname(os.path.abspath(sys.executable))]
         if is_macos():
@@ -511,7 +547,6 @@ def discover_path() -> str:
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             )
         ]
-    roots.append(os.getcwd())
     for root in roots:
         candidate = os.path.join(root, LAUNCHER_FILE)
         if os.path.exists(candidate):
@@ -922,6 +957,17 @@ def client_version() -> str:
     """
     c = config()
     return c.client_version if c else ""
+
+
+def client_executable() -> str:
+    """The configured game executable filename (no path).
+
+    Returns ``""`` when no launcher config is loaded (wizard case); the
+    configured default ``"WoW.exe"`` is already materialized in
+    ``LauncherConfig.client_executable`` when a config exists.
+    """
+    c = config()
+    return c.client_executable if c else ""
 
 
 def torrent_update_allowed() -> bool:

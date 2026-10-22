@@ -25,6 +25,7 @@ from ..state.events import (
     StatusChanged,
 )
 from ..state.models import ModPending, ModsState, ModState
+from .apply_shared import action_label, resolve_enabled, sync_skipped
 
 
 class ModsController:
@@ -142,6 +143,7 @@ class ModsController:
             self._dispatcher.post(ModsLoaded(self.state))
 
         self._busy = True
+        self._dispatcher.post(ModsLoaded(self.state))
         threading.Thread(target=worker, daemon=True).start()
         return True
 
@@ -345,6 +347,7 @@ class ModsController:
         self.state.updates_count = count
 
     def _apply_worker(self, client_dir: str, only_mod_id: str | None = None):
+        failed: list[str] = []
         try:
             self._dispatcher.post(ProgressChanged(0.0, ""))
             self._dispatcher.post(StatusChanged("Downloading mods…"))
@@ -372,19 +375,14 @@ class ModsController:
                 # to saved config. No registry-default fallback here: a mod is
                 # only ever "enabled" because the user (or the one-time
                 # default-mods seed) explicitly said so.
-                pend = pending.get(mid)
-                enabled = (
-                    pend.enabled
-                    if pend is not None and pend.enabled is not None
-                    else state.get("enabled", False)
+                # A targeted single-mod update/retry always means
+                # "install this mod". Without this, retrying a failed
+                # install is a no-op: the error handler recorded
+                # enabled=False, so needs_install stays False and the mod
+                # is skipped (only its error gets cleared).
+                enabled = resolve_enabled(
+                    pending.get(mid), state, only_mod_id is not None
                 )
-
-                # A targeted single-mod update/retry always means "install this
-                # mod". Without this, retrying a failed install is a no-op: the
-                # error handler recorded enabled=False, so needs_install stays
-                # False and the mod is skipped (only its error gets cleared).
-                if only_mod_id is not None and mid == only_mod_id:
-                    enabled = True
 
                 installed_ver = state.get("installed_version")
                 is_installed = mods.mod_installed_files_present(
@@ -421,26 +419,10 @@ class ModsController:
                 needs_update = enabled and update_avail
 
                 if not (needs_install or needs_uninstall or needs_update):
-                    if mid in pending:
-                        mods_cfg.setdefault(mid, {}).update(
-                            {
-                                "enabled": enabled,
-                            }
-                        )
-                    # A previously failed mod that the user leaves disabled on
-                    # a later Apply counts as dismissed — clear the error so it
-                    # stops blocking the PLAY button.
-                    if not enabled and state.get("error"):
-                        mods_cfg.setdefault(mid, {})["error"] = None
+                    sync_skipped(mods_cfg, mid, pending, enabled, state)
                     continue
 
-                action = (
-                    "Installing"
-                    if needs_install
-                    else "Updating"
-                    if needs_update
-                    else "Removing"
-                )
+                action = action_label(needs_install, needs_update)
                 self._dispatcher.post(
                     StatusChanged(f"{action} {mod['name']}…")
                 )
@@ -521,10 +503,22 @@ class ModsController:
                     self._dispatcher.post(
                         LogMessage(f"  \u2717 {mod['name']}: {err}")
                     )
+                    failed.append(mid)
+                    # A failed update already deleted the old files, but the
+                    # record keeps pointing at them: the filesystem-truth
+                    # check reports not-installed, so retry reinstalls
+                    # instead of silently dropping the mod.
+                    keep = (
+                        state.get("installed_files") or []
+                        if is_installed
+                        else []
+                    )
                     mods_cfg[mid] = {
                         "enabled": False,
-                        "installed_version": None,
-                        "installed_files": [],
+                        "installed_version": (
+                            state.get("installed_version") if keep else None
+                        ),
+                        "installed_files": keep,
                         "error": err,
                     }
 
@@ -551,7 +545,13 @@ class ModsController:
             self._dispatcher.post(ProgressChanged(1.0, ""))
             self._dispatcher.post(ModsLoaded(self.state))
             self._busy = False
-            self._dispatcher.post(OperationFinished("mods", True, ""))
+            self._dispatcher.post(
+                OperationFinished(
+                    "mods",
+                    not failed,
+                    "" if not failed else f"Failed mods: {', '.join(failed)}",
+                )
+            )
 
         except Exception as e:
             self._busy = False

@@ -116,32 +116,59 @@ def _find_case_insensitive(client_dir: str, filename: str) -> str | None:
     return None
 
 
-def game_executable_exists(client_dir: str) -> bool:
-    """Whether the game folder holds a launchable client exe (any WoW.exe
-    spelling: ``WoW.exe`` / ``Wow.exe`` / ``wow.exe``)."""
+def _configured_exe() -> str:
+    """The game executable filename from the active launcher config.
+
+    Lazy launcher import (same pattern as ``get_client_version``) to avoid
+    a module cycle — ``launcher`` imports ``atomic_write_text`` from here.
+    Falls back to ``"WoW.exe"`` when unconfigured or empty.
+    """
+    try:
+        from . import launcher
+
+        return launcher.client_executable() or "WoW.exe"
+    except Exception:
+        return "WoW.exe"
+
+
+def game_executable_exists(
+    client_dir: str, exe_name: str | None = None
+) -> bool:
+    """Whether the game folder holds a launchable client exe (any casing:
+    ``WoW.exe`` / ``Wow.exe`` / ``wow.exe`` — or the configured rename).
+
+    ``exe_name`` overrides the configured ``server.client_executable``;
+    omitted means the active config (``"WoW.exe"`` when unconfigured).
+    """
     if not client_dir:
         return False
-    return _find_case_insensitive(client_dir, "WoW.exe") is not None
+    return (
+        _find_case_insensitive(client_dir, exe_name or _configured_exe())
+        is not None
+    )
 
 
 def pick_game_executable(
-    client_dir: str, external_executables: list[str] | None = None
+    client_dir: str,
+    external_executables: list[str] | None = None,
+    exe_name: str | None = None,
 ) -> tuple[str, str]:
     """Which binary to launch from the game folder.
 
     Prefers the first external-launcher executable (declared by an
     installed catalog mod and passed in by the caller) that exists on disk,
-    falling back to WoW.exe (any casing: ``WoW.exe``/``Wow.exe``). Returns
-    ``(absolute_path, label)`` with the on-disk spelling as label.
+    falling back to the configured exe (any casing: ``WoW.exe``/``Wow.exe``).
+    Returns ``(absolute_path, label)`` with the on-disk spelling as label.
     """
     for name in external_executables or []:
         candidate = os.path.join(client_dir, name)
         if os.path.exists(candidate):
             return candidate, name
-    found = _find_case_insensitive(client_dir, "WoW.exe")
+    wanted = exe_name or _configured_exe()
+    found = _find_case_insensitive(client_dir, wanted)
     if found:
         return found, os.path.basename(found)
-    return os.path.join(client_dir, "WoW.exe"), "WoW.exe"
+    return os.path.join(client_dir, wanted), wanted
 
 
 def rmtree_force(path):

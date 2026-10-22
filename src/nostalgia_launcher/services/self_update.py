@@ -5,8 +5,6 @@ import time
 import urllib.error
 import urllib.request
 
-from packaging.version import InvalidVersion, Version
-
 from ..core.config_store import load_config, update_config
 from ..core.constants import GITHUB_API, UA, UPDATER_VERSION
 from ..core.helpers import parse_version
@@ -118,15 +116,9 @@ def fetch_updater_latest_tag(force: bool = False) -> str | None:
 def updater_update_available(latest_tag: str | None) -> bool:
     if not latest_tag:
         return False
-    # Prefer PEP 440 semantics via packaging.version; fall back to the
-    # lenient tuple parser for non-PEP440 tags (e.g. "rc1", "").
-    try:
-        return Version(latest_tag.lstrip("vV")) > Version(
-            UPDATER_VERSION.lstrip("vV")
-        )
-    except InvalidVersion:
-        a, b = parse_version(latest_tag), parse_version(UPDATER_VERSION)
-        n = max(len(a), len(b))  # zero-pad so 1.1 == 1.1.0
-        a += (0,) * (n - len(a))
-        b += (0,) * (n - len(b))
-        return a > b
+    # Lenient tuple compare (zero-padded so 1.1 == 1.1.0).
+    a, b = parse_version(latest_tag), parse_version(UPDATER_VERSION)
+    n = max(len(a), len(b))
+    a += (0,) * (n - len(a))
+    b += (0,) * (n - len(b))
+    return a > b

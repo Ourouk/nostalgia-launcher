@@ -1,6 +1,6 @@
 """Unit tests for the UI metrics / responsive layout helpers."""
 
-from nostalgia_launcher.ui.qt.metrics import initial_window_size
+from nostalgia_launcher.ui.metrics import initial_window_size
 
 # ── layout math ─────────────────────────────────────────────────────────────
 

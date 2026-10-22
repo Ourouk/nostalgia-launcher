@@ -46,8 +46,9 @@ dependency management via **uv**; tests via **pytest**; lint/format gate via
 - **Toolkit-agnostic controllers** (`controllers/`) own all business logic and
   post dataclass *events* to a thread-safe `EventDispatcher` (`state/events.py`)
   from background worker threads.
-- **Qt/PySide6 UI** (`ui/qt/`) renders events. A `ControllerBridge` drains the
-  dispatcher on a 50 ms `QTimer` and re-emits `Qt` signals on the main thread.
+- **Qt Quick/QML UI** (`ui/qml/`) renders events. A `ControllerBridge` drains the
+  dispatcher on a 50 ms `QTimer` and re-emits `Qt` signals on the main thread,
+  which view-models expose to QML as properties.
 - **Services** (`services/`) hold network + filesystem engines; **core**
   (`core/`) holds shared constants, config store, launcher config, hardened
   HTTP, platform helpers, and logging sink.
@@ -109,18 +110,18 @@ octo-updater/
 │   │                              #   server_index, umu, logo, update_backend/
 │   ├── controllers/               # update, news, mods, addons, settings, tweaks
 │   ├── state/                     # models.py, events.py
-│   └── ui/qt/                     # app, main_window, bridge, theme, panels, dialogs
+│   └── ui/                        # bridge, theme, relaunch, app_lock_qt + qml/
 └── tests/                         # pytest suite (mirrors module layout)
 ```
 
 **Relationships.**
 - `cli.py` is the only importable entry; it configures `core/launcher` and
-  `core/config_store`, then constructs the Qt shell (`ui/qt/app.py`).
-- The Qt shell builds a `ControllerHub` (`ui/qt/bridge.py`) which instantiates
+  `core/config_store`, then constructs the QML shell (`ui/qml/app.py`).
+- The QML shell builds a `ControllerHub` (`ui/bridge.py`) which instantiates
   all six controllers on one shared `EventDispatcher`.
 - Controllers depend on `services/*` (engines) and `state/*` (models + events);
   they never import `ui/`.
-- `ui/qt/*` depends on `controllers` only through the injected hub/bridge and on
+- `ui/*` depends on `controllers` only through the injected hub/bridge and on
   `state/events` + `state/models`; it never calls services directly.
 - `core/` is the shared bedrock: imported by services, controllers, and UI.
 
@@ -197,8 +198,8 @@ dataclasses. No telemetry, no credentials, no secrets stored.
 
 ```mermaid
 graph TD
-    subgraph UI["UI (ui/qt, PySide6)"]
-      MW[main_window.py]
+    subgraph UI["UI (ui/qml, Qt Quick)"]
+      MW[main.qml]
       PN[panels / dialogs]
       BR[bridge.ControllerBridge]
     end
@@ -305,24 +306,20 @@ change to this contract.** **[verified]**
    - `config_store.configure(state, cache)` — sets the active profile's
      global store paths (`profiles.active().state_path()` /
      `cache_path()`).
-   - Resolve backend via `NOSTALGIA_UI_BACKEND` (default `qt`).
-   - Construct `QtNostalgiaLauncherApp` → `app.show()` → `app.run()` (Qt event
+   - Resolve backend via `NOSTALGIA_UI_BACKEND` (`qml` only since the widget
+     shell was removed).
+   - Construct `QmlNostalgiaLauncherApp` → `app.show()` → `app.run()` (Qt event
      loop).
-5. `QtNostalgiaLauncherApp.__init__` (`app.py:92-103`):
-   - `create_qt_app()` (single `QApplication`, fonts loaded, HiDPI policy).
-   - Build `ControllerHub` (all six controllers + bridge) and `MainWindow`.
+5. `QmlNostalgiaLauncherApp.__init__` (`ui/qml/app.py`):
+   - `create_qml_app()` (single `QApplication`, fonts loaded) + Material style pin.
+   - Build `ControllerHub` (all six controllers + bridge) and the QML engine.
    - `_center()` + resize, then `schedule_startup_tasks()` (deferred timers).
-6. `MainWindow.__init__`: builds header/stack/footer, wires signals,
-   starts `_logTimer` (50 ms) + `_pollTimer` (50 ms), and—if
-   `hub.settings.state.first_run`—a single-shot 500 ms timer that opens the
-   Settings dialog.
-7. `schedule_startup_tasks()` (`main_window.py:780-796`) schedules (single-shot
-   `QTimer`s):
-   - +300 ms `start_verify()` (unless first-run verify is pending),
-   - +600 ms `news.load()`,
-   - +900 ms `mods.load_latest_versions()`,
-   - +1500 ms `addons.verify(force=True)`,
-   - +2000 ms `updater.check_updater_update()` (daily self-update check).
+6. `main.qml` shell: header (wordmark, profile switcher, client-version
+   pill, settings gear), tab stack (NEWS/UPDATE/ADDONS/MODS/ASSETS),
+   footer (status + progress + primary button), settings/log/wizard/
+   realm/switch dialogs. View-models bind bridge signals to properties.
+7. At startup the shell runs `hub.news.load()` (cached news stays
+   visible, TTL decides the refetch); verify/update runs on user action.
 8. **Event loop runs**; background workers post events; `ControllerBridge`
    drains and re-emits; panels re-render.
 
@@ -494,24 +491,15 @@ the mirror-probe thread. All daemon threads. **[verified]**
   — see §12.**
 - `tweaks.py` (TweaksController): clamp + apply/reset `Config.wtf`.
 
-### 6.12 `ui/qt/*`
-- `app.py` (`QtNostalgiaLauncherApp`, `create_qt_app`), `main_window.py`
-  (chrome, tabs, footer, timers, startup scheduling, teardown), `bridge.py`
-  (`ControllerBridge` + `ControllerHub`), `theme.py` (palette + QSS),
-  `update_panel.py`, `news_panel.py`, `mods_panel.py`, `addons_panel.py`,
-  `tweaks_panel.py`, `settings_dialog.py`, `linux_settings_dialog.py`,
-  `launcher_config_dialog.py`, `custom_addon_dialog.py`, `log_window.py`,
-  `list_panel.py`, `metrics.py`. **[verified]**
-- **2026-08-21 UI refresh**: recurring button looks are QSS *variants*
-  (`setProperty("variant", ...)` → `theme_qss` rules: `primary`/`positive`/
-  `outline`/`compact`); all palette slots (incl. `pink`/`warn`/`btn_text`) are
-  themable via `core/themes.DEFAULT_COLORS`; shared helpers live in
-  `list_panel.py` (`LinkLabel`, `ClickableLabel`, `clear_layout`,
-  `make_hairline`); typography/spacing use the PT_*/PAD_* tokens in
-  `metrics.py`; the first-launch wizard fetches server configs on a worker
-  thread (poll timer applies results — no GUI-thread network); mods rows gate
-  their action buttons while an apply runs; `_log_buffer` is a 2 000-line
-  ring buffer. Conventions documented in `AGENTS.md`.
+### 6.12 `ui/*` (QML shell; the widget `ui/qt/` tree was removed)
+- `qml/app.py` (`QmlNostalgiaLauncherApp`, `create_qml_app`), `qml/qml/`
+  (`main.qml` shell + per-tab views + dialogs), `qml/` view-models,
+  `bridge.py` (`ControllerBridge` + `ControllerHub`), `theme.py`
+  (palette), `relaunch.py` (detached profile switch), `app_lock_qt.py`
+  (single-instance transport), `metrics.py`. **[verified]**
+- Styling is QtQuick.Controls Material (Dark + brand-gold accent) driven by
+  `ui/theme.py` palette slots; QML tests load views offscreen and assert
+  `objectName`s. Conventions documented in `AGENTS.md`.
 
 ---
 
@@ -529,9 +517,8 @@ the mirror-probe thread. All daemon threads. **[verified]**
 | Logo cache | `<cache_dir>/launcher_logo.img` | binary pixmap | `services/logo` |
 
 **Per-profile note** (`core/profiles.py`): every artifact row above is
-PER-PROFILE. The paths shown are the reserved `default` profile's, resolved
-under `<config_dir>/profiles/default/`; a non-default profile P resolves
-them under `<config_dir>/profiles/P/` as `launcher.json`, `state.json`,
+PER-PROFILE. The paths shown are profile P's, resolved
+under `<config_dir>/profiles/P/` as `launcher.json`, `state.json`,
 `hash_cache.json`, `local_<kind>_repo.json` (content repos),
 `torrents/<hash>.*`,
 `launcher_logo.img`. The registry itself is `<config_dir>/profiles.json`
@@ -539,7 +526,7 @@ them under `<config_dir>/profiles/P/` as `launcher.json`, `state.json`,
 Single-instance machinery adds two more files/artifacts next to the state
 store: the advisory lock `<dir-of-state>/<stem>.lock`
 (`core/app_lock.py`) and a Qt named server keyed on sha1(state_path)
-(`ui/qt/app_lock_qt.py`).
+(`ui/app_lock_qt.py`).
 
 ### 7.2 Important on-disk config keys (`nostalgia_launcher_config.json`)
 `out_dir`, `client_update_enabled`, `mods` (`{id: {enabled, installed_version,
@@ -596,7 +583,7 @@ stateDiagram-v2
 ### 8.2 Environment variables
 | Var | Effect | Verified |
 |-----|--------|----------|
-| `NOSTALGIA_UI_BACKEND` | backend selector (`qt`/`pyside6`, default `qt`) | ✓ |
+| `NOSTALGIA_UI_BACKEND` | backend selector (`qml` default, `qt`/`pyside6` legacy fallback) | ✓ |
 | `NOSTALGIA_DEBUG` | mirror log lines to stdout (non-`0/false/no`) | ✓ (`log_sink.py`) |
 | `QT_QPA_PLATFORM` | Qt platform (`offscreen` for tests) | ✓ (tests) |
 | `XDG_CONFIG_HOME`/`XDG_CACHE_HOME`/`XDG_DATA_HOME` | per-user dir roots (Linux) | ✓ |
@@ -694,9 +681,8 @@ precedence custom > embedded > remote — see `docs/agents-architecture.md`).
 - `uv run pytest -m e2e` (needs real client under `context/` + `RUN_E2E=1`) —
   skipped in CI.
 - `uv run pytest -m "not e2e"` in `ci.yml`.
-- Coverage of controllers, services, state, core, and Qt panels (offscreen).
-- Tests monkeypatch by **full dotted path**
-  (`nostalgia_launcher.ui.qt.addons_panel.QMessageBox.question`); libtorrent is
+- Coverage of controllers, services, state, core, and QML views (offscreen).
+- Tests monkeypatch by **full dotted path**; libtorrent is
   mocked via `sys.modules["libtorrent"]`; launcher state reset per test via
   autouse `_launcher_env` fixture (`tests/conftest.py`).
 - A known-flaky test is explicitly tolerated (`test_addons_controller.py::
@@ -901,7 +887,7 @@ with `WoW.exe`-presence gate before marking ready.
   the final host. Acceptable, but noted for completeness.
 
 ### 12.9 [Informational] News HTML is safely rendered
-- `ui/qt/news_panel.py:171` renders the featured post body as
+- `ui/qml/qml/NewsView.qml` renders the featured post body as
   `setPlainText(strip_html(...))` — remote HTML is reduced to plain text; no
   `setHtml`/`QTextBrowser` rich-text rendering of untrusted content, so no
   HTML/JS injection or remote-image tracking surface. **Verified safe.**
@@ -1095,7 +1081,7 @@ events asserted via monkeypatched `QMessageBox`/signals; `conftest` autouse
   → `launcher.persist_text` → `_run_backend` (game folder stays unset until
   confirmed in Settings).
 - **Files:** `cli.py`, `services/server_index.py`, `core/launcher.py`,
-  `ui/qt/launcher_config_dialog.py`.
+  `ui/qml/wizard.py`.
 - **Risks:** network fetch of `servers.json`; a malformed chosen config is
   validated via `launcher.validate_dict` before persist.
 
@@ -1176,7 +1162,7 @@ events asserted via monkeypatched `QMessageBox`/signals; `conftest` autouse
   `updater_update_available` flag → `MainWindow._poll_updater` shows header
   label. **Notify-only** (no auto-download).
 - **Files:** `services/self_update.py`, `controllers/update.py`,
-  `ui/qt/main_window.py`.
+  `ui/qml/qml/main.qml`.
 
 ---
 
@@ -1199,11 +1185,11 @@ arbitrary code execution from catalog JSON.
 (strip top dir, `..` skip, abspath guard, atomic replace). Enforce
 `is_allowed_git_url` at every call site (including verify).
 
-**Adding a UI panel/tab.** Add a `QWidget` in `ui/qt/`, register it in
-`MainWindow._build_central` (`TABS` list + page construction), and have it
-consume `ControllerHub` controllers/bridge. Do **not** call `services` from UI
-directly. Reuse `theme.Palette`/`theme_qss` for styling (respect the f-string
-brace rules in `theme.py:95` — literal `}` must be `}}`).
+**Adding a UI panel/tab.** Add a view `ui/qml/qml/<Name>View.qml` fed by a
+view-model in `ui/qml/` (one `QObject` with Qt properties over the existing
+bridge signals — never drive workers from QML), register it in `main.qml`
+and expose the model as an engine context property in `ui/qml/app.py`. Do
+**not** call `services` from UI code; read theme colors from `appTheme`.
 
 **Adding a config option.** Add the key to the appropriate `*State`/`LaunchSettings`
 /`TWEAKS_*` and to `config_store` read/write; persist via `update_config`. For
@@ -1259,7 +1245,7 @@ assets. Everything is driven by a single `nostalgia_launcher.json`.
    readiness.
 7. `src/nostalgia_launcher/services/update_backend/{http_update,torrent_update}.py`
    — transfer engines.
-8. `src/nostalgia_launcher/ui/qt/bridge.py` + `main_window.py` — UI wiring.
+8. `src/nostalgia_launcher/ui/bridge.py` + `ui/qml/*` — UI wiring.
 9. `pyproject.toml` + `NostalgiaLauncher*.spec` — build/packaging.
 
 ### Key abstractions
@@ -1300,7 +1286,7 @@ assets. Everything is driven by a single `nostalgia_launcher.json`.
 7. `src/nostalgia_launcher/services/update_backend/http_update.py` +
    `torrent_update.py` (engines)
 8. `src/nostalgia_launcher/services/{mods,addons,catalog,tweaks,umu,news,logo,self_update,server_index}.py`
-9. `src/nostalgia_launcher/ui/qt/{bridge,main_window,theme,panels}*.py`
+9. `src/nostalgia_launcher/ui/{bridge,theme,relaunch,app_lock_qt}*.py`
 10. `tests/` (start with `test_baseline.py`, `test_launcher.py`,
     `test_update_controller.py`, `test_client_update.py`)
 11. `.github/workflows/*` + `packaging/*` (build/deploy)

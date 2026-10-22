@@ -5,8 +5,8 @@ Codeberg, plus any community host a distribution lists in its launcher
 config) by downloading the repo archive pinned to a commit SHA — no git
 client needed. Commit resolution and archive fetching are delegated to the
 shared ``git_archive`` source backend (`services/sources`); this module
-keeps the addon-specific catalog machinery, the folder unpacking call and
-the pfUI "Default" profile patch.
+keeps the addon-specific catalog machinery and the folder unpacking
+call.
 
 There is no hardcoded addon list — the ADDONS tab comes from the addon
 catalog URLs (launcher-configured or user-set), the local addons repo
@@ -16,18 +16,21 @@ config, and the per-user custom file, so a distribution decides what it
 ships.
 """
 
-import json
 import os
 import time
+import urllib.request
 
 from ..core import config_store as _config_store
 from ..core import launcher
 from ..core.config_store import load_config, update_config
+from ..core.constants import UA
 from ..core.log_sink import log
-from ..core.security_http import secure_urlopen
+from ..core.safety import https_url
+from ..core.security_http import read_capped, secure_urlopen
 from . import catalog
 from .sources import deploy as _sources_deploy
 from .sources.git_archive import (
+    _ARCHIVE_MAX_BYTES,
     GitArchiveBackend,
 )
 
@@ -63,10 +66,13 @@ def is_allowed_git_url(url: str) -> bool:
 
 
 def _custom_validator(entry: dict) -> dict | None:
-    """Validate a custom addon entry and enforce the git-host allowlist."""
+    """Validate a custom addon entry and enforce the git-host allowlist
+    for git-kind entries (direct entries carry a download URL instead)."""
     cleaned = catalog.validate_addon(entry)
     if cleaned is None:
         return None
+    if (cleaned.get("source_type") or "git") == "direct":
+        return cleaned
     if cleaned["git"] and not is_allowed_git_url(cleaned["git"]):
         return None
     return cleaned
@@ -214,6 +220,53 @@ def catalog_last_updated() -> float | None:
             if isinstance(ts, (int, float)):
                 stamps.append(float(ts))
     return max(stamps) if stamps else None
+
+
+def unmet_depends(
+    depends: list,
+    *,
+    mods_present: set | None = None,
+    installed_addons: set | None = None,
+    client_dir: str = "",
+) -> list[str]:
+    """Catalog-declared deps from ``depends`` that are not satisfied.
+
+    Resolution per kind: ``mod:`` against the present client mods (ids or
+    DLL names resolved on disk), ``addon:`` against installed addon folders,
+    ``file:`` against the client directory. Unknown kinds and unsafe refs
+    are reported as unmet (fail-closed); entries already carry validated
+    refs from ``catalog.validate_addon``. Never raises — a poisoned value
+    degrades to all-unmet rather than breaking the scan."""
+    missing = []
+    try:
+        mods_present = set(mods_present or ())
+        installed_addons = {a for a in (installed_addons or ()) if a}
+        for dep in depends or []:
+            parsed = catalog.parse_depends_dep(dep)
+            if parsed is None:
+                missing.append(str(dep))
+                continue
+            kind, ref = parsed
+            if kind == "mod":
+                if ref not in mods_present:
+                    missing.append(dep)
+            elif kind == "addon":
+                if ref not in installed_addons:
+                    missing.append(dep)
+            elif kind == "file":
+                from ..core.safety import safe_relpath
+
+                if (
+                    not client_dir
+                    or not safe_relpath(ref)
+                    or not os.path.exists(os.path.join(client_dir, ref))
+                ):
+                    missing.append(dep)
+            else:
+                missing.append(dep)
+    except Exception:
+        return [str(d) for d in (depends or []) if d]
+    return missing
 
 
 def _default_enabled() -> bool:
@@ -465,6 +518,83 @@ def discover_repo_addons(
     return found
 
 
+def discover_flat_addons(
+    data: bytes, client_version: str | None = None
+) -> list[tuple[str, str]]:
+    """Like discover_repo_addons but for prebuilt zips whose members sit at
+    the archive root (no "<repo>-<sha>/" wrapper). Same matching rules,
+    same return shape."""
+    import zipfile
+    from io import BytesIO
+
+    version = client_version or ""
+    candidates: list[tuple[str, str, int | None]] = []
+    root_stems: list[str] = []
+    with zipfile.ZipFile(BytesIO(data)) as zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            rel = "/".join(
+                p
+                for p in info.filename.replace("\\", "/").split("/")
+                if p not in ("", ".")
+            )
+            if not rel or ".." in rel.split("/"):
+                continue
+            parts = rel.split("/")
+            if len(parts) == 1:
+                interface = _toc_interface_flat(zf, info.filename)
+                if interface is False:
+                    continue
+                stem = parts[0].rpartition(".")[0]
+                if interface_allowed(interface, version):
+                    root_stems.append(stem)
+                continue
+            dirname = parts[-2]
+            stem, dot, ext = parts[-1].rpartition(".")
+            if not dot or ext.lower() != "toc":
+                continue
+            if stem != dirname and stem.lower() != dirname.lower():
+                continue
+            interface = _toc_interface_flat(zf, info.filename)
+            if interface is False:  # unreachable (checked above)
+                continue
+            if not interface_allowed(interface, version):
+                continue
+            candidates.append((dirname, "/".join(parts[:-1]), interface))
+    if root_stems:
+        return [(stem, "") for stem in sorted(set(root_stems))]
+    candidates.sort(key=lambda c: c[1].count("/"))
+    claimed: list[str] = []
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for name, prefix, _interface in candidates:
+        if name.lower() in seen:
+            continue
+        if any(prefix == c or prefix.startswith(c + "/") for c in claimed):
+            continue
+        claimed.append(prefix)
+        seen.add(name.lower())
+        found.append((name, prefix))
+    return found
+
+
+def _toc_interface_flat(zf, filename: str) -> int | None | bool:
+    """Interface value of a zip member, False when not a .toc file."""
+    stem, dot, ext = filename.rpartition(".")
+    if not dot or ext.lower() != "toc":
+        return False
+    try:
+        raw = zf.read(filename)
+    except KeyError:
+        return None
+    try:
+        text = raw.decode("utf-8-sig", errors="replace")
+    except Exception:
+        return None
+    return _parse_interface_text(text)
+
+
 def read_toc_file(path: str) -> dict:
     """Parse '## Key: Value' metadata lines from a WoW addon .toc file."""
     toc = {}
@@ -611,6 +741,93 @@ def addon_repo_names(
     return names
 
 
+def install_addon_direct(
+    client_dir: str,
+    folder: str,
+    url: str,
+    wanted: list[str] | None = None,
+) -> list[str]:
+    """Download a prebuilt addon archive and unpack it into
+    Interface/AddOns, like install_addon_files but from a plain HTTPS URL
+    instead of a git-host archive. Same multi-addon discovery applies:
+    every discovered ``<folder>/<folder>.toc`` installs into its own
+    directory; a bare tree unpacks into ``folder``.
+
+    Prebuilt zips have no "<repo>-<sha>/" wrapper directory — discovery
+    and unpack fall back to the unstripped layout when stripping yields
+    nothing. Raises RuntimeError on non-HTTPS URLs, corrupt input, or
+    when the archive ships no addons.
+    """
+    log(f"  Downloading {folder} (direct)…")
+    clean = https_url(url)
+    if not clean:
+        raise RuntimeError("Addon download URL must use https")
+    req = urllib.request.Request(clean, headers={"User-Agent": UA})
+    with secure_urlopen(req, timeout=120) as r:
+        data = read_capped(r, _ARCHIVE_MAX_BYTES)
+    log(f"  Downloaded {len(data)} bytes for {folder}")
+    return _install_archive_bytes(
+        client_dir, folder, data, wanted=wanted, git_style=False
+    )
+
+
+def _install_archive_bytes(
+    client_dir: str,
+    folder: str,
+    data: bytes,
+    wanted: list[str] | None = None,
+    git_style: bool = True,
+) -> list[str]:
+    """Unpack archive bytes into Interface/AddOns with multi-addon
+    discovery. ``git_style`` archives wrap everything under one top-level
+    directory; prebuilt direct zips usually don't — fall back to the
+    unstripped layout so both install."""
+    flat = False
+    try:
+        discovered = discover_repo_addons(data, launcher.client_version())
+    except Exception:
+        discovered = []
+    if not discovered and not git_style:
+        try:
+            discovered = discover_flat_addons(data, launcher.client_version())
+        except Exception:
+            discovered = []
+        flat = bool(discovered)
+    if not discovered:
+        _sources_deploy.unpack_folder(
+            data, os.path.join(addons_path(client_dir), folder)
+        )
+        log(f"  Installed addon {folder}")
+        return [folder]
+    by_name = {name: prefix for name, prefix in discovered}
+    if wanted:
+        selected = [n for n in wanted if n in by_name]
+        names = selected or [name for name, _prefix in discovered]
+    else:
+        names = (
+            [folder]
+            if folder in by_name
+            else [name for name, _prefix in discovered]
+        )
+    installed = []
+    for name in names:
+        if flat:
+            _sources_deploy.unpack_flat_prefix(
+                data,
+                by_name[name],
+                os.path.join(addons_path(client_dir), name),
+            )
+        else:
+            _sources_deploy.unpack_prefix(
+                data,
+                by_name[name],
+                os.path.join(addons_path(client_dir), name),
+            )
+        log(f"  Installed addon {name}")
+        installed.append(name)
+    return installed
+
+
 def install_addon_files(
     client_dir: str,
     folder: str,
@@ -631,193 +848,9 @@ def install_addon_files(
     into ``folder`` applies.
     """
     log(f"  Downloading {folder} @ {sha[:10]}…")
+    if not git_url or not is_allowed_git_url(git_url):
+        raise RuntimeError("Addon URL is not from an allowed git host")
     data = _GIT_BACKEND.fetch_archive(git_url, sha)
-    try:
-        discovered = discover_repo_addons(data, launcher.client_version())
-    except Exception:
-        discovered = []
-    if not discovered:
-        _sources_deploy.unpack_folder(
-            data, os.path.join(addons_path(client_dir), folder)
-        )
-        log(f"  Installed addon {folder}")
-        return [folder]
-    by_name = {name: prefix for name, prefix in discovered}
-    if wanted:
-        selected = [n for n in wanted if n in by_name]
-        names = selected or [name for name, _prefix in discovered]
-    else:
-        names = (
-            [folder]
-            if folder in by_name
-            else [name for name, _prefix in discovered]
-        )
-    installed = []
-    for name in names:
-        _sources_deploy.unpack_prefix(
-            data, by_name[name], os.path.join(addons_path(client_dir), name)
-        )
-        log(f"  Installed addon {name}")
-        installed.append(name)
-    return installed
-
-
-# ── pfUI "Default" profile patch ─────────────────────────────────────────────
-# pfUI ships a set of built-in design profiles. After every pfUI install/update
-# we add a curated "Default" profile and make it the firstrun default. Because
-# an update overwrites pfUI's files, the patch is re-applied each time and is
-# idempotent (marked blocks are replaced, not duplicated).
-
-# The curated profile (JSON captured from a configured pfUI, profile renamed to
-# "Default"). Loaded as a Python dict and emitted as a Lua table at patch time.
-PFUI_DEFAULT_PROFILE = json.loads(r"""
-{"appearance":{"border":{"default":"-1"},"castbar":{"castbarcolor":"1,0.796,0.251,0.8"},"cd":{"debuffs":"1","font":"Interface\\AddOns\\pfUI\\fonts\\Myriad-Pro.ttf","milliseconds":"0"},"infight":{"health":"0"},"minimap":{"arrowscale":"2"}},"buffs":{"hidelist":"","showoverflow":"1","showspillover":"1"},"castbar":{"focus":{"showicon":"1","showtimer":"0"},"player":{"hide_blizz":"0","hide_pfui":"1","showtimer":"0"},"target":{"showicon":"1","showtimer":"0"}},"character":{"inventory":{"durability":"0"},"reputation":{"repRequired":"0"}},"disabled":{"actionbar":"1","addonbuttons":"0","addoncompat":"0","addons":"0","afkcam":"0","autoshift":"0","autovendor":"0","bags":"1","bgscore":"0","bubbles":"1","buff":"1","buffwatch":"0","castbar":"0","chat":"1","chatcopy":"0","combopoints":"0","cooldown":"0","custom":"0","easteregg":"0","energytick":"0","eqcompare":"0","equipmentmanager":"0","farmmode":"0","feigndeath":"0","firstrun":"0","focus":"0","gm":"0","group":"0","gryphons":"0","hdgraphic":"0","hoverbind":"0","hunterbar":"0","infight":"0","innervatecall":"0","itemclick":"0","itemcount":"1","loot":"1","macrotweak":"0","map":"0","mapcolors":"0","mapreveal":"0","marktracking":"0","minimap":"0","mirrortimers":"0","mouseover":"0","nameplates":"0","nampower":"0","panel":"0","pet":"0","pettarget":"0","pixelperfect":"0","player":"0","questitem":"0","raid":"0","roll":"1","screenshot":"0","sellvalue":"0","share":"0","skin":"0","skin_Auctionhouse":"0","skin_Barbershop":"0","skin_Battlefield":"0","skin_Battlefield Minimap":"0","skin_Battlefield Score":"0","skin_Books":"0","skin_Character":"0","skin_Coin Pickup":"0","skin_Color Picker":"0","skin_Dress Up Frame":"0","skin_Everlook Broadcasting":"0","skin_Flightmaster":"1","skin_Friends":"1","skin_GM Survey":"0","skin_Game Menu":"0","skin_Gossip and Quest":"1","skin_Guild Registrar":"0","skin_Guild Tabard":"0","skin_Help":"0","skin_Inspect":"0","skin_KeyBindings":"0","skin_Macro":"0","skin_Mailbox":"1","skin_Merchant":"1","skin_Opacity":"0","skin_Outline":"0","skin_Player":"1","skin_Quest":"1","skin_Quest Tracker":"0","skin_Reputation":"1","skin_Social":"0","skin_TradeSkill":"1","skin_Trainer":"1","skin_Tutorials":"0","skin_Unitframe":"1","timerbar":"0","tooltip":"0","tracker":"0","unitframes":"0"},"equipment":{"durability":"0"},"nameplates":{"clickthrough":"0","hidelist":"","showonlyname":"0"},"panels":{"fpsloc":"Right","hidelist":"","lootannounce":"0","mouseover":"0"},"reputation":{"repRequired":"0"},"skins":{"dark":"1","font":"Interface\\AddOns\\pfUI\\fonts\\Myriad-Pro.ttf","fontscale":"1"},"tooltips":{"hideincombat":"0","hidelist":"","mousefollow":"0"},"unitframes":{"clickthrough":"0","hidelist":"","petbars":"1","showstagger":"0"}}
-""")
-
-
-def _lua_value(v, indent: int = 0) -> str:
-    """Serialize a JSON-derived value to a pfUI-style Lua literal."""
-    if isinstance(v, dict):
-        pad, cpad = " " * (indent + 2), " " * indent
-        items = "".join(
-            f'{pad}["{k}"] = {_lua_value(val, indent + 2)},\n'
-            for k, val in v.items()
-        )
-        return "{\n" + items + cpad + "}"
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return repr(v)
-    s = str(v).replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{s}"'
-
-
-_PFUI_MARK_BEGIN = "-- OCTO_UPDATER_DEFAULT_PROFILE_BEGIN"
-_PFUI_MARK_END = "-- OCTO_UPDATER_DEFAULT_PROFILE_END"
-_PFUI_CHAT_BEGIN = "-- OCTO_UPDATER_CHAT_SKIP_BEGIN"
-_PFUI_CHAT_END = "-- OCTO_UPDATER_CHAT_SKIP_END"
-
-# Strips any Nostalgia Launcher injected block, regardless of which marker pair.
-_PFUI_STRIP_RE = (
-    r"[ \t]*-- OCTO_UPDATER_[A-Z_]+?_BEGIN.*?-- OCTO_UPDATER_[A-Z_]+?_END\n?"
-)
-
-
-def patch_pfui_default_profile(client_dir: str):
-    """Add the curated 'Default' profile to a freshly installed/updated pfUI
-    and make it the firstrun default. Idempotent; degrades gracefully if
-    pfUI's file layout has changed."""
-    import re
-
-    base = os.path.join(addons_path(client_dir), "pfUI")
-    profiles_lua = os.path.join(base, "env", "profiles.lua")
-    firstrun_lua = os.path.join(base, "modules", "firstrun.lua")
-    if not os.path.exists(profiles_lua):
-        return
-
-    # 1) profiles.lua — append (or replace) a marked block defining Default.
-    block = (
-        f"{_PFUI_MARK_BEGIN}\n"
-        f"local octo_default = {_lua_value(PFUI_DEFAULT_PROFILE)}\n"
-        f'pfUI_profiles["Default"] = octo_default\n'
-        f"{_PFUI_MARK_END}\n"
+    return _install_archive_bytes(
+        client_dir, folder, data, wanted=wanted, git_style=True
     )
-    try:
-        with open(profiles_lua, encoding="utf-8", errors="replace") as f:
-            txt = f.read()
-        txt = re.sub(
-            re.escape(_PFUI_MARK_BEGIN)
-            + r".*?"
-            + re.escape(_PFUI_MARK_END)
-            + r"\n?",
-            "",
-            txt,
-            flags=re.S,
-        )
-        with open(profiles_lua, "w", encoding="utf-8") as f:
-            f.write(txt.rstrip() + "\n\n" + block)
-        log("  pfUI: 'Default' profile installed.")
-    except OSError as e:
-        log(f"  pfUI: could not patch profiles.lua ({e})")
-        return
-
-    # 2) pfUI.lua — use 'Default' (not 'Modern') as the fresh-install config,
-    #    so the very first login already lands in the Default profile.
-    pfui_lua = os.path.join(base, "pfUI.lua")
-    if os.path.exists(pfui_lua):
-        try:
-            with open(pfui_lua, encoding="utf-8", errors="replace") as f:
-                pf = f.read()
-            old = 'CopyTable(pfUI_profiles["Modern"]) or {}'
-            if old in pf:
-                pf = pf.replace(
-                    old, 'CopyTable(pfUI_profiles["Default"]) or {}', 1
-                )
-                with open(pfui_lua, "w", encoding="utf-8") as f:
-                    f.write(pf)
-                log("  pfUI: 'Default' set as the fresh-install profile.")
-        except OSError as e:
-            log(f"  pfUI: could not patch pfUI.lua ({e})")
-
-    # 3) firstrun.lua — add a 'Default' button, make it the fallback profile,
-    #    and skip the chat wizard steps whenever the chat module is disabled.
-    if not os.path.exists(firstrun_lua):
-        return
-    try:
-        with open(firstrun_lua, encoding="utf-8", errors="replace") as f:
-            fr = f.read()
-
-        # Remove any previous injections (idempotent re-apply after updates).
-        fr = re.sub(_PFUI_STRIP_RE, "", fr, flags=re.S)
-
-        # When the chat module is disabled (e.g. the "Default" profile), the
-        # chat firstrun steps can't apply anything, so pre-mark them done to
-        # keep them from showing. Injected right after the step table is made.
-        chat_skip = (
-            f"  {_PFUI_CHAT_BEGIN}\n"
-            "  if pfUI_config and pfUI_config.disabled"
-            ' and pfUI_config.disabled.chat == "1" then\n'
-            "    pfUI_init = pfUI_init or {}\n"
-            '    pfUI_init["chat_right"] = true\n'
-            '    pfUI_init["chat_position"] = true\n'
-            '    pfUI_init["chat_channels"] = true\n'
-            "  end\n"
-            f"  {_PFUI_CHAT_END}\n"
-        )
-        chat_anchor = "  pfUI.firstrun.steps = {}\n"
-        if chat_anchor in fr:
-            fr = fr.replace(chat_anchor, chat_anchor + chat_skip, 1)
-
-        # Insert a Default button just before the built-in "Modern" button.
-        button = (
-            f"    {_PFUI_MARK_BEGIN}\n"
-            '    f.Default = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")\n'
-            "    f.Default:SetWidth(250)\n"
-            "    f.Default:SetHeight(20)\n"
-            '    f.Default:SetPoint("BOTTOM", 0, 125)\n'
-            "    f.Default:SetTextColor(1,1,1)\n"
-            '    f.Default:SetText("Default (recommended)")\n'
-            '    f.Default:SetScript("OnClick", function()\n'
-            '      _G["pfUI_config"] = CopyTable(pfUI_profiles["Default"])\n'
-            '      pfUI_init.selected_profile = "Default"\n'
-            "      pfUI:LoadConfig()\n"
-            "      ReloadUI()\n"
-            "    end)\n"
-            "    SkinButton(f.Default)\n"
-            f"    {_PFUI_MARK_END}\n\n"
-        )
-        anchor = '    f.Modern = CreateFrame("Button"'
-        if anchor in fr:
-            fr = fr.replace(anchor, button + anchor, 1)
-
-        # Make Default the profile used when the user doesn't pick one.
-        fr = fr.replace(
-            'pfUI_init.selected_profile or "Modern"',
-            'pfUI_init.selected_profile or "Default"',
-        )
-
-        with open(firstrun_lua, "w", encoding="utf-8") as f:
-            f.write(fr)
-        log("  pfUI: 'Default' added to the firstrun profile picker.")
-    except OSError as e:
-        log(f"  pfUI: could not patch firstrun.lua ({e})")

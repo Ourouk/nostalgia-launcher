@@ -26,9 +26,8 @@ def test_is_allowed_git_url():
 
 def test_addon_git_host_config_extra(tmp_path, monkeypatch):
     """A community git host added via the launcher config is allowed, an
-    unknown host is rejected by the git-host gate, and install_addon_files
-    fetches archives over plain HTTPS (no download-host gate) — a fetch
-    is attempted before any failure."""
+    unknown host is rejected by the git-host gate at the service layer —
+    install_addon_files refuses before any fetch is attempted."""
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")
     )
@@ -56,11 +55,44 @@ def test_addon_git_host_config_extra(tmp_path, monkeypatch):
             or (_ for _ in ()).throw(RuntimeError("fetch attempted"))
         ),
     )
-    with pytest.raises(RuntimeError, match="fetch attempted"):
+    with pytest.raises(RuntimeError, match="allowed git host"):
         addons.install_addon_files(
-            str(client), "x", "https://evil.example/a/x", "abc123"
+            str(client), "x", "https://evil.example/a/x", "abcd" * 10
         )
-    assert calls == ["https://evil.example/a/x"]
+    assert calls == []
+
+
+def test_git_archive_validate_rejects_non_allowlisted_host():
+    """validate() refuses non-allowlisted git URLs so poisoned catalog
+    entries never become fetchable sources."""
+    from nostalgia_launcher.services.sources import git_archive
+
+    backend = git_archive.GitArchiveBackend()
+    assert backend.validate({"git": "https://evil.example/a/b"}) is None
+    assert (
+        backend.validate({"git": "https://github.com/a/b"})["git"]
+        == "https://github.com/a/b"
+    )
+
+
+def test_git_archive_fetch_rejects_bad_host_and_sha():
+    """fetch()/fetch_archive() enforce the allowlist and a 40-hex sha even
+    when called directly, bypassing controller gates."""
+    from nostalgia_launcher.services.sources import git_archive
+
+    backend = git_archive.GitArchiveBackend()
+    with pytest.raises(RuntimeError, match="allowed git host"):
+        backend.fetch_archive("https://evil.example/a/b", "a" * 40)
+    with pytest.raises(RuntimeError, match="40-hex"):
+        backend.fetch_archive("https://github.com/a/b", "abc123")
+    with pytest.raises(RuntimeError, match="allowed git host"):
+        backend.fetch(
+            {
+                "id": "x",
+                "source": {"git": "https://evil.example/a/b"},
+                "sha1": "a" * 40,
+            }
+        )
 
 
 def test_git_parts_community_gitea():
@@ -765,31 +797,6 @@ def test_install_addon_files_path_traversal_safe(tmp_path, monkeypatch):
     assert not (tmp_path / "escape.txt").exists()
 
 
-def test_patch_pfui_installs_profile(tmp_path):
-    client = tmp_path / "client"
-    base = client / "Interface" / "AddOns" / "pfUI"
-    (base / "env").mkdir(parents=True)
-    (base / "modules").mkdir(parents=True)
-    (base / "env" / "profiles.lua").write_text(
-        "pfUI_profiles = {}\n", encoding="utf-8"
-    )
-
-    addons.patch_pfui_default_profile(str(client))
-    content = (base / "env" / "profiles.lua").read_text(encoding="utf-8")
-    assert addons._PFUI_MARK_BEGIN in content
-    assert 'pfUI_profiles["Default"]' in content
-
-    # Idempotent: re-applying must not duplicate the block.
-    addons.patch_pfui_default_profile(str(client))
-    content2 = (base / "env" / "profiles.lua").read_text(encoding="utf-8")
-    assert content2.count(addons._PFUI_MARK_BEGIN) == 1
-
-
-def test_patch_pfui_missing_profile_returns_gracefully(tmp_path):
-    client = tmp_path / "client"
-    addons.patch_pfui_default_profile(str(client))  # no pfUI installed
-
-
 # ── local repo layer ─────────────────────────────────────────────────────────
 
 
@@ -1091,3 +1098,95 @@ def test_snapjaw_cache_repo_urls_reads_git_configs(tmp_path):
 
 def test_snapjaw_cache_repo_urls_missing_cache_is_empty(tmp_path):
     assert addons.snapjaw_cache_repo_urls(str(tmp_path / "AddOns")) == set()
+
+
+def test_ls_remote_sha_refuses_non_allowlisted_host(monkeypatch):
+    """The git fallback must never talk to a host outside the allowlist,
+    even if a future caller forgets to check first."""
+    import subprocess
+
+    def _fail(*a, **k):
+        raise AssertionError("git must not run")
+
+    monkeypatch.setattr(subprocess, "run", _fail)
+    assert (
+        git_archive.ls_remote_sha("https://evil.example.com/a/b", None) is None
+    )
+
+
+def test_unmet_depends_resolution(tmp_path):
+    """mod:/addon:/file: resolve against mods, installed addons, disk."""
+    (tmp_path / "Interface").mkdir()
+    (tmp_path / "Interface" / "SomeFile.lua").write_text("x")
+    deps = ["mod:ClassicAPI", "addon:LibX", "file:Interface/SomeFile.lua"]
+    assert (
+        addons.unmet_depends(
+            deps,
+            mods_present={"ClassicAPI"},
+            installed_addons={"LibX"},
+            client_dir=str(tmp_path),
+        )
+        == []
+    )
+    missing = addons.unmet_depends(
+        deps, mods_present=set(), installed_addons=set(), client_dir=""
+    )
+    assert set(missing) == set(deps)
+    # Legacy bare strings resolve as addon: refs.
+    assert (
+        addons.unmet_depends(["SomeLib"], installed_addons={"SomeLib"}) == []
+    )
+    assert addons.unmet_depends(["SomeLib"], installed_addons=set()) == [
+        "SomeLib"
+    ]
+    # Unknown kinds and unsafe refs are unmet, never crash.
+    assert addons.unmet_depends(["bogus:Foo"]) == ["bogus:Foo"]
+    assert addons.unmet_depends(["file:../evil"]) == ["file:../evil"]
+    assert addons.unmet_depends(None) == []
+
+
+def test_install_addon_direct_flat_zip(tmp_path, monkeypatch):
+    """A prebuilt direct zip (members at root, no wrapper dir) installs
+    into Interface/AddOns with multi-addon discovery."""
+    import nostalgia_launcher.services.addons as addons_mod
+
+    client = tmp_path / "client"
+    payload = _zip_bytes(
+        {
+            "MyAddon/MyAddon.toc": "## Title: MyAddon\n",
+            "MyAddon/core.lua": "-- code",
+        }
+    )
+
+    class R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *x):
+            return False
+
+        def read(self, n=-1):
+            nonlocal payload
+            if n is None or n < 0:
+                chunk, payload = payload, b""
+            else:
+                chunk, payload = payload[:n], payload[n:]
+            return chunk
+
+    monkeypatch.setattr(addons_mod, "secure_urlopen", lambda *a, **k: R())
+    out = addons_mod.install_addon_direct(
+        str(client), "MyAddon", "https://example.com/MyAddon.zip"
+    )
+    assert out == ["MyAddon"]
+    assert (
+        client / "Interface" / "AddOns" / "MyAddon" / "MyAddon.toc"
+    ).exists()
+
+
+def test_install_addon_direct_refuses_http(tmp_path):
+    import nostalgia_launcher.services.addons as addons_mod
+
+    with __import__("pytest").raises(RuntimeError):
+        addons_mod.install_addon_direct(
+            str(tmp_path), "X", "http://example.com/x.zip"
+        )

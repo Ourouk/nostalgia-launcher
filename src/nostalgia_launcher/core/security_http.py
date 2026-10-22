@@ -44,18 +44,6 @@ def _check_url(url: str) -> None:
         raise RuntimeError(f"Refusing non-HTTPS URL: {url}")
 
 
-def _check_redirect_chain(resp: httpx.Response) -> None:
-    for hist in resp.history:
-        _check_url(str(hist.url))
-        loc = str(hist.headers.get("location", ""))
-        if loc and "://" in loc:
-            _check_url(loc)
-        # Handle protocol-relative redirects (//evil.com/path)
-        elif loc.startswith("//"):
-            _check_url(f"https:{loc}")
-    _check_url(str(resp.url))
-
-
 def _validate(resp: httpx.Response) -> None:
     for hist in resp.history:
         _check_url(str(hist.url))
@@ -113,24 +101,6 @@ def read_capped(r, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-def _request(
-    method: str,
-    url: str,
-    *,
-    timeout: float,
-    headers: dict | None = None,
-    content: bytes | None = None,
-) -> httpx.Response:
-    _check_url(url)
-    with make_secure_client(timeout=timeout, follow_redirects=True) as client:
-        req = client.build_request(
-            method, url, headers=headers or {}, content=content
-        )
-        resp = client.send(req)
-        _validate(resp)
-        return resp
-
-
 def secure_urlopen(req, timeout, **_ignored):
     import urllib.request
 
@@ -141,49 +111,82 @@ def secure_urlopen(req, timeout, **_ignored):
         data = getattr(req, "data", None)
     else:
         url, headers, method, data = req, {}, "GET", None
-    resp = _request(
-        method,
-        url,
-        timeout=timeout,
-        headers=headers,
-        content=data,
-    )
-    return _HttpxResponseWrapper(resp)
+    _check_url(url)
+    # Stream the body (send with stream=True) so size caps stop the
+    # transfer early instead of trimming an already-buffered body.
+    client = make_secure_client(timeout=timeout, follow_redirects=True)
+    try:
+        creq = client.build_request(
+            method, url, headers=headers or {}, content=data
+        )
+        resp = client.send(creq, stream=True)
+    except Exception:
+        client.close()
+        raise
+    try:
+        _validate(resp)
+    except Exception:
+        resp.close()
+        client.close()
+        raise
+    return _HttpxResponseWrapper(resp, client)
 
 
 class _HttpxResponseWrapper:
-    def __init__(self, resp: httpx.Response) -> None:
+    """Streaming response wrapper: body bytes are pulled from the live"
+    connection in chunks, so the callers' size caps bound memory too."""
+
+    def __init__(self, resp, client=None) -> None:
         self._resp = resp
+        self._client = client
         self.headers = resp.headers
         self.status = resp.status_code
-        self._content: bytes | None = None
-        self._pos = 0
-        self._consumed = False
+        self._chunks = None
+        self._buf = bytearray()
+        self._eof = False
 
     def getcode(self):
         return self._resp.status_code
 
+    def _fill(self, want: int) -> None:
+        if self._chunks is None:
+            self._chunks = self._resp.iter_bytes(65536)
+        while len(self._buf) < want and not self._eof:
+            try:
+                piece = next(self._chunks)
+            except StopIteration:
+                self._eof = True
+                break
+            if piece:
+                self._buf.extend(piece)
+
     def read(self, amt: int | None = None) -> bytes:
-        if self._content is None:
-            self._content = self._resp.content if not self._consumed else b""
-            self._consumed = True
         if amt is None:
-            data = self._content[self._pos :]
-            self._pos = len(self._content)
-            return data
-        data = self._content[self._pos : self._pos + amt]
-        self._pos += len(data)
+            out = [bytes(self._buf)]
+            self._buf.clear()
+            for piece in self.iter_bytes():
+                out.append(piece)
+            return b"".join(out)
+        self._fill(amt)
+        data = bytes(self._buf[:amt])
+        del self._buf[:amt]
         return data
 
     def iter_bytes(self, chunk_size=65536):
-        if self._content is not None:
-            for i in range(0, len(self._content), chunk_size):
-                yield self._content[i : i + chunk_size]
-            return
-        yield from self._resp.iter_bytes(chunk_size)
+        if self._buf:
+            yield bytes(self._buf)
+            self._buf.clear()
+        if self._chunks is None:
+            self._chunks = self._resp.iter_bytes(chunk_size)
+        yield from self._chunks
+        self._eof = True
 
     def close(self):
-        self._resp.close()
+        try:
+            self._resp.close()
+        finally:
+            if self._client is not None:
+                self._client.close()
 
     def __enter__(self):
         return self

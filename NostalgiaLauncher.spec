@@ -21,6 +21,7 @@ datas = (
     + [
         ("packaging/fonts/STIXTwoMath-Regular.otf", "fonts"),
         ("packaging/icons/NostalgiaLauncher.png", "icons"),
+        ("src/nostalgia_launcher/ui/qml/qml", "qml"),
     ]
 )
 binaries = pyside_binaries + shiboken_binaries + lt_binaries

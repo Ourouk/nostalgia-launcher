@@ -3,13 +3,12 @@
 Orchestrates torrent verification and download, with a single HTTP zip
 fallback for first-time installs only. No manifest/planner — all
 incremental updates go through BitTorrent; HTTP is only for the initial
-client archive when no WoW.exe is present and torrent is unavailable.
+client archive when no game exe is present and torrent is unavailable.
 """
 
 from __future__ import annotations
 
 import os
-import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -17,7 +16,6 @@ if TYPE_CHECKING:
 
 from ...core.config_store import load_cache, save_cache
 from ...core.filesystem import get_client_version, remove_wdb
-from ...core.security_http import secure_urlopen
 from ...state.events import (
     ClientVersionReady,
     Event,
@@ -40,16 +38,40 @@ from ..update_backend.sources import (
     DownloadSource,  # noqa: F401 (re-export)
     _download_source,
 )
+from ..update_backend.torrent_update import available as _torrent_lib_available
+from ..update_backend.worker_base import WorkerBase
 from .http import download_file
-from .torrent import TORRENT_VALIDATION_CACHE_KEY
-from .torrent import is_available as _torrent_available
-from .torrent import (
-    recovery_available as torrent_recovery_available,  # noqa: F401 (re-export)
-)
-from .torrent import safe_identity as _safe_identity
+
+TORRENT_VALIDATION_CACHE_KEY = "__torrent_validation__"
 
 
-class VerifyWorker:
+def _torrent_available() -> bool:
+    """Whether the BitTorrent backend can run (libtorrent installed)."""
+    try:
+        return _torrent_lib_available()
+    except Exception:
+        return False
+
+
+def torrent_recovery_available() -> bool:  # noqa: F401 (re-export)
+    """Whether a manifest-less full re-download via BitTorrent is possible."""
+    from ...core import launcher
+
+    cfg = launcher.config()
+    return bool(cfg and cfg.has_torrent() and _torrent_available())
+
+
+def _safe_identity(snapshot) -> dict | None:
+    try:
+        return {
+            "content_hash": snapshot.content_hash,
+            "info_hash": snapshot.info_hash or "",
+        }
+    except Exception:
+        return None
+
+
+class VerifyWorker(WorkerBase):
     """Verify local files against the BitTorrent snapshot only."""
 
     def __init__(
@@ -59,36 +81,10 @@ class VerifyWorker:
         overwrite_config: bool = False,
         source=None,
     ) -> None:
-        from ..update_backend.worker_base import WorkerBase as _WB
-
-        self.out_dir: str = out_dir
-        self._dispatcher: EventDispatcher = dispatcher
-        self._cancel_event = threading.Event()
+        super().__init__(out_dir, dispatcher)
         self._cache: dict[str, object] = load_cache()
         self.overwrite_config: bool = overwrite_config
         self._source = source
-        _wb = _WB(out_dir, dispatcher)
-        _wb._cache = self._cache
-        self.log = _wb.log  # type: ignore
-        self.progress = _wb.progress  # type: ignore
-        self._raise_cancelled = _wb._raise_cancelled  # type: ignore
-        self._wb = _wb
-
-    @property
-    def _cancel(self) -> bool:
-        return self._cancel_event.is_set() or self._wb._cancel
-
-    @_cancel.setter
-    def _cancel(self, value: bool) -> None:
-        if value:
-            self._cancel_event.set()
-            self._wb._cancel = True
-        else:
-            self._cancel_event.clear()
-            self._wb._cancel = False
-
-    def cancel(self) -> None:
-        self._cancel = True
 
     def run(self) -> None:
         try:
@@ -131,17 +127,20 @@ class VerifyWorker:
     def _handle_no_torrent(self, message: str) -> None:
         """No torrent incremental path — signal fallback-only.
 
-        For an existing install (WoW.exe present) treat as up-to-date
+        For an existing install (game exe present) treat as up-to-date
         w.r.t. incremental updates (HTTP diff is forbidden). For a fresh
-        folder (no WoW.exe) signal TorrentUnavailable so the controller
+        folder (no game exe) signal TorrentUnavailable so the controller
         can offer the single-zip HTTP fallback via UpdateWorker.
         """
         if self._cancel:
             self._cancel_torrent_verify()
             return
+        from ...core import launcher as _launcher0
         from ...core.filesystem import game_executable_exists as _gee0
 
-        has_exe = _gee0(self.out_dir)
+        has_exe = _gee0(
+            self.out_dir, _launcher0.client_executable() or "WoW.exe"
+        )
         self.log(f"{message} — torrent unavailable.", "err")
         self._dispatcher.post(TorrentUnavailable(message=message))
         if has_exe:
@@ -441,54 +440,24 @@ class VerifyWorker:
         return True
 
 
-class UpdateWorker:
+class UpdateWorker(WorkerBase):
     """Torrent-primary updater with single-zip HTTP fallback.
 
     Incremental updates are torrent-only. HTTP fallback (single zip/rar
     via ``server.download.http.fallback``) is only for first-time
-    installs when no WoW.exe is present and torrent is unavailable or
+    installs when no game exe is present and torrent is unavailable or
     failed.
     """
 
     def __init__(
         self, out_dir: str, dispatcher: EventDispatcher, source=None
     ) -> None:
-        from ..update_backend.worker_base import WorkerBase as _WB
-
-        self.out_dir: str = out_dir
-        self._dispatcher: EventDispatcher = dispatcher
-        self._cancel_event = threading.Event()
+        super().__init__(out_dir, dispatcher)
         self._cache: dict[str, object] = load_cache()
         self._source = source
         self._total: int = 0
         self._downloaded: int = 0
         self._counted: dict[str, int] = {}
-        _wb = _WB(out_dir, dispatcher)
-        _wb._cache = self._cache
-        self.log = _wb.log  # type: ignore
-        self.progress = _wb.progress  # type: ignore
-        self._raise_cancelled = _wb._raise_cancelled  # type: ignore
-        self._wb = _wb
-
-    @property
-    def _cancel(self) -> bool:
-        return self._cancel_event.is_set() or self._wb._cancel
-
-    @_cancel.setter
-    def _cancel(self, value: bool) -> None:
-        if value:
-            self._cancel_event.set()
-            self._wb._cancel = True
-        else:
-            self._cancel_event.clear()
-            self._wb._cancel = False
-
-    def cancel(self) -> None:
-        self._cancel = True
-
-    def _sync_cache(self) -> None:
-        self._cache = self._wb._cache
-        self._wb._cache = self._cache
 
     def download(
         self, url: str, dest: str, size: object, name: str = ""
@@ -506,11 +475,9 @@ class UpdateWorker:
             progress=self.progress,
             total_ref=total_ref,
             counted=self._counted,
-            urlopen=secure_urlopen,
         )
         self._total = total_ref["total"]
         self._downloaded = total_ref["downloaded"]
-        self._sync_cache()
         return result
 
     def _cancelled_abort(self) -> bool:
@@ -636,12 +603,16 @@ class UpdateWorker:
                 if self._cancel:
                     self._cancelled_abort()
                     return False
+        from ...core import launcher as _launcher1
         from ...core.filesystem import game_executable_exists as _gee
 
-        if not _gee(self.out_dir):
-            self.log("Recovered client has no WoW.exe — update failed.", "err")
+        _exe1 = _launcher1.client_executable() or "WoW.exe"
+        if not _gee(self.out_dir, _exe1):
+            self.log(
+                f"Recovered client has no {_exe1} — update failed.", "err"
+            )
             self._dispatcher.post(
-                UpdateFailed(message="no WoW.exe", op="update")
+                UpdateFailed(message=f"no {_exe1}", op="update")
             )
             return False
         self.log("  BitTorrent recovery download complete.", "ok")
@@ -784,10 +755,12 @@ class UpdateWorker:
                 os.remove(dest)
         except OSError:
             pass
+        from ...core import launcher as _launcher2
         from ...core.filesystem import game_executable_exists as _gee2
 
+        _exe2 = _launcher2.client_executable() or "WoW.exe"
         # Also accept external-launcher executables as playable.
-        has_playable = _gee2(self.out_dir)
+        has_playable = _gee2(self.out_dir, _exe2)
         if not has_playable:
             try:
                 from ...core.filesystem import pick_game_executable
@@ -796,17 +769,18 @@ class UpdateWorker:
                 exe2, _ = pick_game_executable(
                     self.out_dir,
                     _mods.external_launcher_executables(self.out_dir),
+                    exe_name=_exe2,
                 )
                 has_playable = os.path.isfile(exe2)
             except Exception:
                 pass
         if not has_playable:
             self.log(
-                "Fallback extracted but no WoW.exe found — update failed.",
+                f"Fallback extracted but no {_exe2} found — update failed.",
                 "err",
             )
             self._dispatcher.post(
-                UpdateFailed(message="no WoW.exe", op="update")
+                UpdateFailed(message=f"no {_exe2}", op="update")
             )
             return False
         remove_wdb(self.out_dir)
@@ -866,7 +840,8 @@ class UpdateWorker:
             )
             from ...core.filesystem import game_executable_exists
 
-            has_exe = game_executable_exists(self.out_dir)
+            _exe3 = _launcher.client_executable() or "WoW.exe"
+            has_exe = game_executable_exists(self.out_dir, _exe3)
             # Also consider external launchers for playability.
             if not has_exe:
                 try:
@@ -878,6 +853,7 @@ class UpdateWorker:
                     exe2, _ = pick_game_executable(
                         self.out_dir,
                         _mods.external_launcher_executables(self.out_dir),
+                        exe_name=_exe3,
                     )
                     has_exe = os.path.isfile(exe2)
                 except Exception:

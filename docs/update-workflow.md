@@ -48,7 +48,7 @@ flowchart TD
 | `TorrentVerifier` / `TorrentDownloader` | `services/update_backend/torrent_update.py` | libtorrent execution only, no policy |
 | `DownloadSource` / `_download_source()` | `services/update_backend/sources.py` | Resolve `torrent_url` / `magnet` / `fallback_url` from `server.download` |
 | `UpdateController` | `controllers/update.py` | Lifecycle owner; `_on_event` mutates `UpdateState`; `compute_readiness()` drives footer |
-| `ControllerBridge` | `ui/qt/bridge.py` | Drains `EventDispatcher` every 50 ms → Qt signals |
+| `ControllerBridge` | `ui/bridge.py` | Drains `EventDispatcher` every 50 ms → Qt signals |
 | Events | `state/events.py` | Typed dataclasses (`TorrentDiffReady`, `TorrentUpToDate`, `UpdateCompleted`, …) |
 
 ```
@@ -61,7 +61,7 @@ UI → UpdateController.start_verify()/start_update()
 Config: `server.download.torrent.{torrent_url, magnet, update?}` +
 `server.download.http.fallback` + `server.download.content.type`
 (`folder`/`zip`/`rar`). `.torrent` wins when both URL and magnet are set.
-`has_exe` = `WoW.exe` (case-insensitive) or external-launcher exe present.
+`has_exe` = configured client exe (`server.client_executable`, default `WoW.exe`, case-insensitive) or external-launcher exe present.
 
 ## 2. Source resolution
 
@@ -145,7 +145,14 @@ button; bypasses the `torrent.update` flag).
 - `torrent_url` + `update:false` freezes incremental pushes while keeping
   first-install (full recovery bypasses the flag) — a server-side kill-switch
   with no client release.
-- Note: verify currently ignores the flag (still reports diff); update
+- Note: verify ignores the flag (still reports diff), but neither the
+  footer nor the tab can reach the dead end: readiness falls through to
+  PLAY on an existing install, and the UPDATE tab hides once a playable
+  client exists (`update_tab_enabled`). First acquisition still uses the
+  tab + footer DOWNLOAD (full recovery bypasses the flag).
+- A failed torrent download posts `Torrent*` + `UpdateFailed`; the
+  controller lands one terminal — the `UpdateFailed` echo is ignored
+  once `_op` cleared, keeping the specific torrent error.
   enforces it. So `update:false` surfaces as UPDATE → `UpdateFailed` on
   existing installs.
 

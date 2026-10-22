@@ -143,7 +143,7 @@ catalog — remote, embedded, or repo `custom` — must pass it.
 
 ## Addon catalog entries
 
-Validated by `services/catalog.validate_addon()` via `services/catalog_models.AddonModel` (`catalog.py:222-254`, `catalog_models.py:48-85`).
+Validated by `services/catalog.validate_addon()` (`catalog.py:222-254`).
 
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
@@ -153,13 +153,13 @@ Validated by `services/catalog.validate_addon()` via `services/catalog_models.Ad
 | `branch` | `string` | no | Whitespace-free, no `..` |
 | `ref` | `string` | no | Pin — wins over `branch` |
 | `description` | `string` | no | |
-| `toc` | `{Title, Notes, Interface}` | no | Only these three keys kept; others dropped (`catalog_models.py:80-84`) |
+| `toc` | `{Title, Notes, Interface}` | no | Only these three keys kept; others dropped |
 | `recommended` | `bool` | no (default `false`) | Shown as recommended |
 | `blocked` | `bool` | no (default `false`) | When `true`, launcher refuses to install |
 
 ## Asset catalog entries
 
-Validated by `services/catalog.validate_asset()` via `catalog_models.AssetModel` (`catalog.py:438-484`, `catalog_models.py:87-163`).
+Validated by `services/catalog.validate_asset()` (`catalog.py:438-484`).
 
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|

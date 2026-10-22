@@ -3,7 +3,7 @@
 A small, toolkit-agnostic event bus that worker threads use to talk to the
 interface. Standard library only — no GUI toolkit. The UI thread drains
 events once per event-loop tick and forwards them to the registered
-handlers; `ui.qt.bridge.ControllerBridge` converts them into Qt signals.
+handlers; `ui.bridge.ControllerBridge` converts them into Qt signals.
 """
 
 from __future__ import annotations

@@ -16,6 +16,11 @@ import zipfile
 from ...core.log_sink import log
 from ...core.safety import safe_destination, safe_relative_path
 
+# Absolute ceiling on extracted client output: payloads hold multi-GB
+# MPQs, so no per-member cap applies here - only a sanity bound far
+# above any legitimate 1.12-3.3 client (~16 GB) to stop zip bombs.
+_MAX_TOTAL_BYTES = 64 * 1024 * 1024 * 1024
+
 
 def _root_archives(out_dir: str, ext: str) -> list[str]:
     """Archive files (matching ``ext``) sitting directly in ``out_dir``."""
@@ -60,6 +65,7 @@ def _is_zip_unsafe_type(info: zipfile.ZipInfo) -> bool:
 
 def _extract_zip(archive: str, dest: str) -> None:
     with zipfile.ZipFile(archive) as zf:
+        total_written = 0
         for info in zf.infolist():
             member = info.filename
             if "\x00" in member:
@@ -113,10 +119,21 @@ def _extract_zip(archive: str, dest: str) -> None:
                         f"unsafe zip entry (post-check): {member}"
                     )
             else:
+                total_written += info.file_size
+                if total_written > _MAX_TOTAL_BYTES:
+                    raise RuntimeError(
+                        f"archive exceeds the {_MAX_TOTAL_BYTES} byte budget:"
+                        f" {member}"
+                    )
+                parent = os.path.dirname(target)
                 parent = os.path.dirname(target)
                 if parent:
                     os.makedirs(parent, exist_ok=True)
-                    if not safe_destination(os.path.realpath(parent), dest):
+                    parent_real = os.path.realpath(parent)
+                    # parent == dest is the normal root-level file case.
+                    if parent_real != os.path.realpath(
+                        dest
+                    ) and not safe_destination(parent_real, dest):
                         raise RuntimeError(
                             f"unsafe zip entry (post-check parent): {member}"
                         )
@@ -154,6 +171,7 @@ def _extract_rar(archive: str, dest: str) -> None:
             "rarfile is not installed; cannot extract .rar"
         ) from None
     with rarfile.RarFile(archive) as rf:  # type: ignore[attr-defined]
+        total_written = 0
         for info in rf.infolist():
             member = info.filename
             if "\x00" in member:
@@ -204,12 +222,22 @@ def _extract_rar(archive: str, dest: str) -> None:
                     )
                 continue
             target = os.path.join(dest, norm)
+            total_written += info.file_size
+            if total_written > _MAX_TOTAL_BYTES:
+                raise RuntimeError(
+                    f"archive exceeds the {_MAX_TOTAL_BYTES} byte budget:"
+                    f" {member}"
+                )
             if not safe_destination(target, dest):
                 raise RuntimeError(f"unsafe rar entry (rar-slip): {member}")
             parent = os.path.dirname(target)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-                if not safe_destination(os.path.realpath(parent), dest):
+                parent_real = os.path.realpath(parent)
+                # parent == dest is the normal root-level file case.
+                if parent_real != os.path.realpath(
+                    dest
+                ) and not safe_destination(parent_real, dest):
                     raise RuntimeError(
                         f"unsafe rar entry (post-check parent): {member}"
                     )

@@ -1,7 +1,6 @@
 """Update subsystem: transports + workflow (torrent-only incremental, zip fallback)."""
 
 from .http import download_file
-from .torrent import is_available, recovery_available
 from .workflow import (
     TORRENT_VALIDATION_CACHE_KEY,
     DownloadSource,
@@ -9,6 +8,8 @@ from .workflow import (
     VerifyWorker,
     torrent_recovery_available,
 )
+from .workflow import _torrent_available as is_available
+from .workflow import torrent_recovery_available as recovery_available
 
 __all__ = [
     "DownloadSource",

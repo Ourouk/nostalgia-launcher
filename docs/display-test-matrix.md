@@ -3,24 +3,19 @@
 The Qt UI is layout-based and renders in *logical* pixels — Qt applies the
 display scale factor (device-pixel ratio) itself at compositor time, and the
 window's minimum size (~560x420) is expressed in logical units so it holds at
-any scaling. The automated checks in `tests/test_qt_display.py` cover the
-offscreen resize/min-size/high-DPI policy invariants on every host and run
-the real-display smoke (show, resize, tabs, settings dialog, detected scale
-factor) on an opted-in desktop session. What they cannot judge is *how it
-looks* — this matrix records that human pass.
+any scaling. The automated QML suite (`tests/test_qml_*.py`) runs offscreen
+on every host and covers loading, bindings and interactions. What it cannot
+judge is *how it looks* — this matrix records that human pass.
 
 ## How to run
 
-On a real desktop session, first run the automated real-display checks
-(X11 here; use `wayland` on a Wayland session):
+On a real desktop session, first run the automated QML checks:
 
 ```sh
-QT_QPA_PLATFORM=xcb RUN_QT_DISPLAY_TESTS=1 uv run pytest tests/test_qt_display.py -k display
+uv run pytest tests/test_qml_shell.py tests/test_qml_settings.py tests/test_qml_custom.py -q
 ```
 
-This prints the Qt devicePixelRatio Qt detected for the screen (e.g. `2.0`)
-and verifies the window shows, resizes, tabs switch and the settings dialog
-opens. Then launch the app itself at each display scale you test:
+Then launch the app itself at each display scale you test:
 
 ```sh
 uv run python -m nostalgia_launcher
@@ -79,4 +74,4 @@ Scale = OS display scaling. ✅ = good, ⚠️ = needs a look, ✗ = broken, —
 
 | Platform | Scale | DPR reported by Qt | Notes |
 | --- | --- | --- | --- |
-| X11 (this host) | 200% | 2.0 | `test_real_display_*` green; window, tabs, settings all fine |
+| X11 (this host) | 200% | 2.0 | manual pass (no automated real-display test); window, tabs, settings all fine |

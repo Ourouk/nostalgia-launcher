@@ -538,7 +538,52 @@ def test_kill_game_noop_off_linux(monkeypatch):
     assert killed == []
 
 
-# ── Linux feature detection ─────────────────────────────────────────────
+# ── game_process_alive ──────────────────────────────────────────────────
+
+
+def test_game_process_alive_true_while_wrapper_runs(monkeypatch):
+    """Wrapper alive → session live, no /proc scan needed."""
+    monkeypatch.setattr(umu, "_pid_alive", lambda pid: pid == 4242)
+    assert umu.game_process_alive(4242, 9999) is True
+
+
+def test_game_process_alive_true_while_group_survivor_runs(monkeypatch):
+    """Wrapper dead but a Proton child in the same pgid → still live."""
+    monkeypatch.setattr(umu, "_pid_alive", lambda pid: pid == 7777)
+    monkeypatch.setattr(umu.os, "listdir", lambda p: ["7777", "1"])
+    monkeypatch.setattr(
+        umu.os,
+        "getpgid",
+        lambda pid: 9999 if pid == 7777 else 1,
+        raising=False,
+    )
+    assert umu.game_process_alive(4242, 9999) is True
+
+
+def test_game_process_alive_false_when_all_dead(monkeypatch):
+    """Wrapper reaped and no group survivors → session gone (PLAY)."""
+    monkeypatch.setattr(umu, "_pid_alive", lambda pid: False)
+    monkeypatch.setattr(umu.os, "listdir", lambda p: ["1"])
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 1, raising=False)
+    assert umu.game_process_alive(4242, 9999) is False
+
+
+def test_pid_alive_treats_zombie_as_dead(monkeypatch, tmp_path):
+    """A zombie wrapper (kill(sig 0) ok, state Z) reads as not alive."""
+    monkeypatch.setattr(umu.os, "kill", lambda pid, sig: None)
+    real_open = open
+
+    def _fake_open(path, *a, **k):
+        if path == "/proc/4242/stat":
+            import io
+
+            return io.StringIO("4242 (umu-run) Z 1 1 0 0 0")
+        return real_open(path, *a, **k)
+
+    import builtins
+
+    monkeypatch.setattr(builtins, "open", _fake_open)
+    assert umu._pid_alive(4242) is False
 
 
 def test_find_gamemoderun_probes_path(monkeypatch):

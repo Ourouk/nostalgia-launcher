@@ -494,6 +494,46 @@ def test_extract_7z_map_happy_path_and_glob(monkeypatch, tmp_path):
     assert (client / "nested.dll").read_bytes() == b"N"
 
 
+def test_extract_7z_map_skips_dir_symlink_escape(monkeypatch, tmp_path):
+    """A 7z shipping a dir symlink (a -> /outside) must not leak host files
+    into the install: symlinked dirs are pruned from the walk."""
+    import os
+    import subprocess
+
+    client = tmp_path / "client"
+    client.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "passwd").write_bytes(b"secret")
+    monkeypatch.setattr(deploy, "find_seven_z", lambda: "/usr/bin/7z")
+
+    def _run(args, **kwargs):
+        outdir = next(
+            a[2:] for a in args if isinstance(a, str) and a.startswith("-o")
+        )
+        os.makedirs(os.path.join(outdir, "real"), exist_ok=True)
+        with open(os.path.join(outdir, "real", "ok.dll"), "wb") as f:
+            f.write(b"OK")
+        os.symlink(str(outside), os.path.join(outdir, "a"))
+
+        class _Proc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Proc()
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    written = deploy.extract_7z_map(
+        str(client),
+        b"fake-7z",
+        {"real/ok.dll": "ok.dll", "a/passwd": "pwned.dll"},
+    )
+    assert written == ["ok.dll"]
+    assert (client / "ok.dll").read_bytes() == b"OK"
+    assert not (client / "pwned.dll").exists()
+
+
 def test_extract_7z_map_failed_process(monkeypatch, tmp_path):
     import subprocess
 
@@ -582,3 +622,18 @@ def test_seven_z_missing_msg_names_distro_commands():
     # Windows/macOS dev runs (no staged vendor dir) still get a hint.
     assert "7z.exe on PATH" in deploy.SEVEN_Z_MISSING_MSG
     assert "brew install sevenzip" in deploy.SEVEN_Z_MISSING_MSG
+
+
+def test_deploy_unpack_folder_installs_root_level_files(tmp_path):
+    """A zip without a top-level folder (small single-file addons) must
+    install its root members, not silently drop them."""
+    import zipfile
+
+    dest_root = tmp_path / "Addon"
+    buf = __import__("io").BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("MyAddon.toc", "title")
+        zf.writestr("MyAddon.lua", "code")
+    deploy.unpack_folder(buf.getvalue(), str(dest_root))
+    assert (dest_root / "MyAddon.toc").exists()
+    assert (dest_root / "MyAddon.lua").exists()

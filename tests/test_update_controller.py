@@ -6,6 +6,7 @@ are swapped for a scripted fake via monkeypatch.
 """
 
 import io
+import os
 import subprocess
 import threading
 import time
@@ -163,6 +164,8 @@ def test_torrent_recovery_done_marks_client_ready(
 ):
     """A successful torrent recovery: client ready."""
 
+    controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
     worker_cls.script = [TorrentRecoveryDone()]
     controller.start_update()
     wait_for_event.drain_worker(controller, worker_cls.done)
@@ -224,6 +227,8 @@ def test_disabled_client_updates_prevent_verify_and_update(
 def test_update_done_reports_version(
     controller, worker_cls, controller_cfg, wait_for_event
 ):
+    controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
     worker_cls.script = [
         ClientVersionReady(version="1.12.2"),
         UpdateCompleted(version="1.12.2"),
@@ -246,6 +251,8 @@ def test_update_done_reports_version(
 def test_update_error_posts_failure(
     controller, worker_cls, controller_cfg, wait_for_event
 ):
+    controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
     worker_cls.script = [UpdateFailed(message="", op="update")]
     controller.start_update()
     wait_for_event.drain_worker(controller, worker_cls.done)
@@ -306,6 +313,36 @@ def test_start_update_when_busy_reports_and_returns_false(
         for event in events
     )
     assert not worker_cls.instances
+
+
+def test_start_verify_refuses_during_in_flight_update(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
+    """A verify must not spawn beside a running update: two workers would
+    share dispatcher/cache (last-save-wins hash loss, interleaved events)."""
+    controller.state.running = True
+    controller._op = "update"
+
+    controller.start_verify()
+
+    events = controller._dispatcher.drain()
+    assert any(
+        isinstance(event, LogMessage) and "already in progress" in event.text
+        for event in events
+    )
+    assert not worker_cls.instances
+
+
+def test_start_verify_replaces_in_flight_verify(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
+    """Verify-on-verify still cancels and restarts (re-verify UX)."""
+    controller.state.running = True
+    controller._op = "verify"
+
+    controller.start_verify()
+
+    assert len(worker_cls.instances) == 1
 
 
 # ── queue draining / progress / hashes ──────────────────────────────────
@@ -377,6 +414,8 @@ def test_empty_torrent_stale_set_skips_update_worker(
 ):
     controller.state.torrent_stale = []
     controller.state.verify_out_dir = controller_cfg["out_dir"]
+    with open(os.path.join(controller_cfg["out_dir"], "WoW.exe"), "wb") as f:
+        f.write(b"MZ")
 
     assert controller.start_update() is True
 
@@ -415,6 +454,8 @@ def test_start_update_never_persists_out_dir(
         return controller_cfg
 
     monkeypatch.setattr(uc, "update_config", spy)
+    controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
     worker_cls.script = [
         ClientVersionReady(version="1.12.2"),
         UpdateCompleted(version="1.12.2"),
@@ -497,7 +538,7 @@ def test_readiness_allows_play_without_manifest_when_updates_disabled(
     monkeypatch.setattr(controller, "_playable_client_present", lambda: True)
     r = controller.compute_readiness()
     assert r.mode == "play"
-    assert r.status == "Client updates disabled"
+    assert r.status == ""
 
 
 def test_torrent_diff_stores_stale_and_not_ready(
@@ -637,6 +678,33 @@ def test_readiness_unreachable_torrent_falls_back_to_play(
     assert r.status == "Torrent unavailable"
 
 
+def test_unreachable_torrent_stays_unverified_and_offers_play(
+    controller, worker_cls, controller_cfg, wait_for_event, tmp_path
+):
+    """Torrent snapshot unfetchable on an existing install: skip the
+    rescan and offer PLAY — but stay unverified (client_ready False),
+    so the next launch retries verification."""
+    game = tmp_path / "existing"
+    game.mkdir(exist_ok=True)
+    (game / "WoW.exe").write_text("")
+    controller_cfg["out_dir"] = str(game)
+    worker_cls.script = [
+        TorrentUnavailable(message="snapshot unreachable"),
+        VerificationUpToDate(),  # worker follow-up echo
+    ]
+    controller.start_verify()
+    wait_for_event.drain_worker(controller, worker_cls.done)
+    events = controller._dispatcher.drain()
+
+    assert controller.state.client_ready is False
+    assert controller.state.torrent_reachable is False
+    assert events.count(OperationFinished("verify", True)) == 1
+    r = controller.compute_readiness()
+    assert r.mode == "play"
+    assert r.label == "PLAY"
+    assert r.status == "Torrent unavailable — playing unverified client"
+
+
 def test_readiness_unreachable_torrent_disabled_when_not_launchable(
     controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
 ):
@@ -707,6 +775,8 @@ def test_readiness_busy_while_verifying(
 def test_readiness_busy_while_updating(
     controller, worker_cls, controller_cfg, wait_for_event
 ):
+    controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
     controller.start_update()
     r = controller.compute_readiness()
     assert r.mode == "busy"
@@ -832,6 +902,79 @@ def test_launch_game_linux_close_on_launch_redirects_output(
     assert controller.state.game_running is True
 
 
+def test_watch_game_waits_for_tree_after_wrapper_exit(
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
+):
+    """Wrapper wait() returns but the Proton tree is alive → TERMINATE
+    holds until the tree dies, then GameExited posts."""
+    import time as _time
+    import types as _types
+
+    proc = _FakeProc()
+    proc.exit_event.set()  # wrapper wait() returns immediately
+    alive = {"n": True}
+    monkeypatch.setattr(
+        controller,
+        "_game_tree_alive",
+        lambda pid, pgid: alive["n"],
+    )
+    monkeypatch.setattr(
+        "nostalgia_launcher.controllers.update.time",
+        _types.SimpleNamespace(
+            monotonic=_time.monotonic, sleep=lambda s: None
+        ),
+        raising=False,
+    )
+    controller.state.game_running = True
+    controller.state.game_pid = 1234
+    controller.state.game_pgid = 9999
+
+    thread = threading.Thread(
+        target=controller._watch_game, args=(proc, 1234), daemon=True
+    )
+    thread.start()
+    # Wrapper exited but tree alive → still TERMINATE, no exit event.
+    _time.sleep(0.3)
+    assert controller.state.game_running is True
+    assert not any(
+        isinstance(e, GameExited) for e in controller._dispatcher.drain()
+    )
+    alive["n"] = False
+    thread.join(timeout=10.0)
+    assert not thread.is_alive()
+    events = controller._dispatcher.drain()
+    assert GameExited(1234, 0) in events
+    assert controller.state.game_running is False
+
+
+def test_watch_game_exits_when_tree_dead_despite_hung_wait(
+    controller, worker_cls, controller_cfg, wait_for_event, monkeypatch
+):
+    """Tree dead → GameExited even when the wrapper wait() never returns
+    (lingering supervisor / wedged wait)."""
+
+    class _HungWaitProc(_FakeProc):
+        def wait(self):
+            threading.Event().wait(30)
+            return 0
+
+    proc = _HungWaitProc()
+    monkeypatch.setattr(controller, "_game_tree_alive", lambda p, g: False)
+    controller.state.game_running = True
+    controller.state.game_pid = 1234
+    controller.state.game_pgid = 9999
+
+    thread = threading.Thread(
+        target=controller._watch_game, args=(proc, 1234), daemon=True
+    )
+    thread.start()
+    thread.join(timeout=10.0)
+    assert not thread.is_alive()
+    events = controller._dispatcher.drain()
+    assert GameExited(1234, None) in events
+    assert controller.state.game_running is False
+
+
 def test_launch_game_linux_passes_skip_builtin_dxvk(
     controller,
     worker_cls,
@@ -938,6 +1081,14 @@ def test_game_watcher_posts_exited_and_clears_state(
     monkeypatch.setattr(
         "nostalgia_launcher.services.umu.compute_wine_prefix",
         lambda: "/prefix",
+    )
+    # The watcher's tree poll must follow the fake proc, not whatever
+    # pids exist on this machine (1234 may be a live foreign pid, which
+    # reads as "tree alive" and hangs the waiter).
+    monkeypatch.setattr(
+        uc.UpdateController,
+        "_game_tree_alive",
+        lambda self, pid, pgid: not proc.exit_event.is_set(),
     )
 
     controller.launch_game()
@@ -1176,6 +1327,42 @@ def test_watch_game_logs_child_output(controller, worker_cls, monkeypatch):
     assert GameExited(1234, 0) in events
 
 
+def test_watch_game_posts_exited_without_pipe_eof(
+    controller, worker_cls, monkeypatch, wait_for_event
+):
+    """GameExited must not wait for stdout EOF: Proton grandchildren inherit
+    the pipe, so EOF may never arrive after the game itself exits (footer
+    stuck on TERMINATE)."""
+
+    class _HangingPipeProc:
+        """wait() returns (game exited) but readline blocks forever
+        (grandchild holds the pipe open)."""
+
+        def __init__(self):
+            self.stdout = self
+            self._block = threading.Event()
+
+        def readline(self, *a):
+            self._block.wait(30)
+            return b""
+
+        def wait(self):
+            return 0
+
+    proc = _HangingPipeProc()
+    monkeypatch.setattr(uc, "log", lambda msg, tag="": None)
+
+    thread = threading.Thread(
+        target=controller._watch_game, args=(proc, 1234), daemon=True
+    )
+    thread.start()
+    thread.join(timeout=10.0)
+
+    assert not thread.is_alive()
+    events = controller._dispatcher.drain()
+    assert GameExited(1234, 0) in events
+
+
 def test_child_output_cap_suppresses_flood(controller, monkeypatch):
     """A chatty Wine session is capped; one suppression notice is logged."""
     lines = b"".join(b"wine fixme %d\n" % i for i in range(900))
@@ -1399,6 +1586,80 @@ def test_torrent_verify_diff_then_update_lifecycle(
     assert OperationFinished("update", True) in controller._dispatcher.drain()
 
 
+def test_no_torrent_verify_on_existing_install_posts_single_terminal(
+    controller, worker_cls, controller_cfg, wait_for_event, tmp_path
+):
+    """No-torrent verify with an exe posts TorrentUnavailable then
+    VerificationUpToDate — the controller lands on verify-ok ONCE
+    (no Finished(False) → Finished(True) flash). Unverified: PLAY is
+    offered but client_ready stays False so the next launch retries."""
+    game = tmp_path / "game"
+    game.mkdir(exist_ok=True)
+    (game / "WoW.exe").write_text("")
+    controller_cfg["out_dir"] = str(game)
+    worker_cls.script = [
+        TorrentUnavailable(message="No BitTorrent source configured."),
+        VerificationUpToDate(),
+    ]
+    controller.start_verify()
+    # Preamble (StatusChanged/ProgressChanged) — keep the worker's scripted
+    # events queued; only drop the two synchronous posts.
+    queued = controller._dispatcher.drain()
+    assert StatusChanged("Verifying…") in queued
+    wait_for_event.drain_worker(controller, worker_cls.done)
+    finished = [
+        e
+        for e in controller._dispatcher.drain()
+        if isinstance(e, OperationFinished)
+    ]
+    assert finished == [OperationFinished("verify", True)]
+    assert controller.state.client_ready is False
+    assert controller.state.running is False
+
+
+def test_torrent_download_failure_posts_single_terminal(
+    controller, worker_cls, controller_cfg, wait_for_event
+):
+    """A failed torrent download posts TorrentStalled then UpdateFailed
+    (the worker's fall-through echo) — the controller lands ONE terminal
+    (Finished(False) keeps the specific torrent error; the generic echo
+    must not clobber it with a second OperationFailed)."""
+    controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
+    worker_cls.script = [
+        TorrentStalled(message="stalled"),
+        UpdateFailed(message="BitTorrent update failed", op="update"),
+    ]
+    controller.start_update()
+    wait_for_event.drain_worker(controller, worker_cls.done)
+    events = controller._dispatcher.drain()
+    finished = [e for e in events if isinstance(e, OperationFinished)]
+    failed = [e for e in events if isinstance(e, OperationFailed)]
+    assert finished == [OperationFinished("update", False)]
+    assert failed == []
+    assert controller.state.running is False
+
+
+def test_update_tab_enabled_respects_frozen_flag(
+    controller, controller_cfg, monkeypatch, tmp_path
+):
+    """UPDATE tab hides only when updates are frozen AND a playable
+    client exists — first acquisition still needs the tab."""
+    from nostalgia_launcher.core import launcher
+
+    monkeypatch.setattr(launcher, "torrent_update_allowed", lambda: True)
+    assert controller.update_tab_enabled() is True
+
+    monkeypatch.setattr(launcher, "torrent_update_allowed", lambda: False)
+    assert controller.update_tab_enabled() is True  # no exe yet
+
+    game = tmp_path / "game"
+    game.mkdir(exist_ok=True)
+    (game / "WoW.exe").write_text("")
+    controller_cfg["out_dir"] = str(game)
+    assert controller.update_tab_enabled() is False
+
+
 def test_torrent_up_to_date_after_verify(
     controller, worker_cls, controller_cfg, wait_for_event
 ):
@@ -1422,8 +1683,63 @@ def test_torrent_diff_empty_skips_update_and_marks_ready(
     assert controller.state.torrent_stale == []
 
     controller._dispatcher.drain()
+    with open(os.path.join(controller_cfg["out_dir"], "WoW.exe"), "wb") as f:
+        f.write(b"MZ")
     assert controller.start_update() is True
     assert controller.state.client_ready is True
     assert controller.state.running is False
     assert len(worker_cls.instances) == 1  # no update worker was created
     assert OperationFinished("update", True) in controller._dispatcher.drain()
+
+
+def test_playable_client_present_with_renamed_exe(
+    dispatcher, tmp_path, monkeypatch
+):
+    """A folder holding only the configured rename counts as playable."""
+    from nostalgia_launcher.core import launcher
+
+    monkeypatch.setattr(
+        "nostalgia_launcher.services.mods.external_launcher_executables",
+        lambda client_dir: [],
+    )
+    game = tmp_path / "renamed"
+    game.mkdir(exist_ok=True)
+    (game / "ExampleClient.exe").write_bytes(b"MZ")
+    probe = UpdateController(dispatcher, get_out_dir=lambda: str(game))
+    assert probe._playable_client_present() is False
+
+    launcher.reset()
+    launcher.configure_from_dict(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "client_executable": "ExampleClient.exe",
+            }
+        }
+    )
+    try:
+        assert probe._playable_client_present() is True
+    finally:
+        launcher.reset()
+
+
+def test_start_update_without_verify_verifies_first(
+    controller, worker_cls, controller_cfg
+):
+    """Update with no verify results must verify, not full-download."""
+    worker_cls.script = []
+    assert controller.state.torrent_stale is None
+    assert controller.start_update() is False
+    assert len(worker_cls.instances) == 1
+    assert controller._op == "verify"
+
+
+def test_start_update_with_missing_exe_reverifies(
+    controller, worker_cls, controller_cfg
+):
+    """A cached empty verdict is stale once the exe is gone: re-verify."""
+    worker_cls.script = []
+    controller.state.torrent_stale = []
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
+    assert controller.start_update() is False
+    assert controller._op == "verify"

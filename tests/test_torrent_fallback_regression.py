@@ -55,7 +55,7 @@ def test_verify_fallback_to_torrent_when_manifest_fails(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(client_update, "_torrent_available", lambda: True)
     monkeypatch.setattr(
-        client_update,
+        td,
         "secure_urlopen",
         failing_urlopen(ConnectionError("down")),
     )
