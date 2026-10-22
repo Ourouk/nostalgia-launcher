@@ -6,6 +6,7 @@ are swapped for a scripted fake via monkeypatch.
 """
 
 import io
+import os
 import subprocess
 import threading
 import time
@@ -163,6 +164,8 @@ def test_torrent_recovery_done_marks_client_ready(
 ):
     """A successful torrent recovery: client ready."""
 
+    controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
     worker_cls.script = [TorrentRecoveryDone()]
     controller.start_update()
     wait_for_event.drain_worker(controller, worker_cls.done)
@@ -224,6 +227,8 @@ def test_disabled_client_updates_prevent_verify_and_update(
 def test_update_done_reports_version(
     controller, worker_cls, controller_cfg, wait_for_event
 ):
+    controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
     worker_cls.script = [
         ClientVersionReady(version="1.12.2"),
         UpdateCompleted(version="1.12.2"),
@@ -246,6 +251,8 @@ def test_update_done_reports_version(
 def test_update_error_posts_failure(
     controller, worker_cls, controller_cfg, wait_for_event
 ):
+    controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
     worker_cls.script = [UpdateFailed(message="", op="update")]
     controller.start_update()
     wait_for_event.drain_worker(controller, worker_cls.done)
@@ -407,6 +414,8 @@ def test_empty_torrent_stale_set_skips_update_worker(
 ):
     controller.state.torrent_stale = []
     controller.state.verify_out_dir = controller_cfg["out_dir"]
+    with open(os.path.join(controller_cfg["out_dir"], "WoW.exe"), "wb") as f:
+        f.write(b"MZ")
 
     assert controller.start_update() is True
 
@@ -445,6 +454,8 @@ def test_start_update_never_persists_out_dir(
         return controller_cfg
 
     monkeypatch.setattr(uc, "update_config", spy)
+    controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
     worker_cls.script = [
         ClientVersionReady(version="1.12.2"),
         UpdateCompleted(version="1.12.2"),
@@ -737,6 +748,8 @@ def test_readiness_busy_while_verifying(
 def test_readiness_busy_while_updating(
     controller, worker_cls, controller_cfg, wait_for_event
 ):
+    controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
     controller.start_update()
     r = controller.compute_readiness()
     assert r.mode == "busy"
@@ -1575,6 +1588,8 @@ def test_torrent_download_failure_posts_single_terminal(
     (the worker's fall-through echo) — the controller lands ONE terminal
     (Finished(False) keeps the specific torrent error; the generic echo
     must not clobber it with a second OperationFailed)."""
+    controller.state.torrent_stale = ["Data/a.bin"]
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
     worker_cls.script = [
         TorrentStalled(message="stalled"),
         UpdateFailed(message="BitTorrent update failed", op="update"),
@@ -1632,6 +1647,8 @@ def test_torrent_diff_empty_skips_update_and_marks_ready(
     assert controller.state.torrent_stale == []
 
     controller._dispatcher.drain()
+    with open(os.path.join(controller_cfg["out_dir"], "WoW.exe"), "wb") as f:
+        f.write(b"MZ")
     assert controller.start_update() is True
     assert controller.state.client_ready is True
     assert controller.state.running is False
@@ -1668,3 +1685,25 @@ def test_playable_client_present_with_renamed_exe(
         assert probe._playable_client_present() is True
     finally:
         launcher.reset()
+
+
+def test_start_update_without_verify_verifies_first(
+    controller, worker_cls, controller_cfg
+):
+    """Update with no verify results must verify, not full-download."""
+    worker_cls.script = []
+    assert controller.state.torrent_stale is None
+    assert controller.start_update() is False
+    assert len(worker_cls.instances) == 1
+    assert controller._op == "verify"
+
+
+def test_start_update_with_missing_exe_reverifies(
+    controller, worker_cls, controller_cfg
+):
+    """A cached empty verdict is stale once the exe is gone: re-verify."""
+    worker_cls.script = []
+    controller.state.torrent_stale = []
+    controller.state.verify_out_dir = controller_cfg["out_dir"]
+    assert controller.start_update() is False
+    assert controller._op == "verify"

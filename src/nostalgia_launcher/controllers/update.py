@@ -227,7 +227,29 @@ class UpdateController:
             if self.state.torrent_stale is not None
             else None
         )
-        if torrent_wanted == set():
+        if torrent_wanted is None:
+            # Never verified: a blind update would re-download the whole
+            # client (UpdateWorker treats None as "full"). Verify first.
+            self._dispatcher.post(
+                LogMessage(
+                    "No verify results yet — verifying first...\n", "dim"
+                )
+            )
+            self.start_verify()
+            return False
+        if not torrent_wanted:
+            # A cached empty verdict goes stale the moment local files
+            # change - re-check the game exe before reporting success.
+            if not self._playable_client_present():
+                self._dispatcher.post(
+                    LogMessage(
+                        "Game files changed since the last verify - "
+                        "verifying again...\n",
+                        "err",
+                    )
+                )
+                self.start_verify()
+                return False
             self.state.torrent_stale = None
             self.state.client_ready = True
             self.state.status = "Up to date"
