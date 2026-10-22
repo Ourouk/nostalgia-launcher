@@ -538,7 +538,7 @@ def test_readiness_allows_play_without_manifest_when_updates_disabled(
     monkeypatch.setattr(controller, "_playable_client_present", lambda: True)
     r = controller.compute_readiness()
     assert r.mode == "play"
-    assert r.status == "Client updates disabled"
+    assert r.status == ""
 
 
 def test_torrent_diff_stores_stale_and_not_ready(
@@ -676,6 +676,33 @@ def test_readiness_unreachable_torrent_falls_back_to_play(
     assert r.mode == "play"
     assert r.label == "PLAY"
     assert r.status == "Torrent unavailable"
+
+
+def test_unreachable_torrent_stays_unverified_and_offers_play(
+    controller, worker_cls, controller_cfg, wait_for_event, tmp_path
+):
+    """Torrent snapshot unfetchable on an existing install: skip the
+    rescan and offer PLAY — but stay unverified (client_ready False),
+    so the next launch retries verification."""
+    game = tmp_path / "existing"
+    game.mkdir(exist_ok=True)
+    (game / "WoW.exe").write_text("")
+    controller_cfg["out_dir"] = str(game)
+    worker_cls.script = [
+        TorrentUnavailable(message="snapshot unreachable"),
+        VerificationUpToDate(),  # worker follow-up echo
+    ]
+    controller.start_verify()
+    wait_for_event.drain_worker(controller, worker_cls.done)
+    events = controller._dispatcher.drain()
+
+    assert controller.state.client_ready is False
+    assert controller.state.torrent_reachable is False
+    assert events.count(OperationFinished("verify", True)) == 1
+    r = controller.compute_readiness()
+    assert r.mode == "play"
+    assert r.label == "PLAY"
+    assert r.status == "Torrent unavailable — playing unverified client"
 
 
 def test_readiness_unreachable_torrent_disabled_when_not_launchable(
@@ -1564,7 +1591,8 @@ def test_no_torrent_verify_on_existing_install_posts_single_terminal(
 ):
     """No-torrent verify with an exe posts TorrentUnavailable then
     VerificationUpToDate — the controller lands on verify-ok ONCE
-    (no Finished(False) → Finished(True) flash)."""
+    (no Finished(False) → Finished(True) flash). Unverified: PLAY is
+    offered but client_ready stays False so the next launch retries."""
     game = tmp_path / "game"
     game.mkdir(exist_ok=True)
     (game / "WoW.exe").write_text("")
@@ -1585,7 +1613,7 @@ def test_no_torrent_verify_on_existing_install_posts_single_terminal(
         if isinstance(e, OperationFinished)
     ]
     assert finished == [OperationFinished("verify", True)]
-    assert controller.state.client_ready is True
+    assert controller.state.client_ready is False
     assert controller.state.running is False
 
 

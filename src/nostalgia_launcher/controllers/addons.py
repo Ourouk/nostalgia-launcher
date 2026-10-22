@@ -1012,6 +1012,11 @@ class AddonsController:
                 st_rec = self.state.addons.get(folder)
                 if st_rec is not None and st_rec.status == "downloading":
                     st_rec.status = "outOfDate"
+        self.state.updates_count = sum(
+            1
+            for rec in self.state.addons.values()
+            if rec.status == "outOfDate"
+        )
         return installed
 
     def _fail_group(self, folders: list, git, err: str) -> None:

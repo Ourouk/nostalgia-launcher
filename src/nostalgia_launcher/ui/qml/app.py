@@ -288,6 +288,9 @@ class QmlNostalgiaLauncherApp:
         self._update.set_update_tab_enabled(
             self._hub.updater.update_tab_enabled()
         )
+        self._state.setProgressVisible(
+            self._hub.settings.client_update_enabled
+        )
         if ready.mode in ("play", "update", "download", "terminate"):
             self._update.update_primary(ready.label, True)
         else:

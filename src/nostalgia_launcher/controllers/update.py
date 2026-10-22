@@ -933,6 +933,12 @@ class UpdateController:
                     "UPDATE",
                     f"Torrent unavailable{error_detail}",
                 )
+            if self._playable_client_present():
+                return Readiness(
+                    "play",
+                    "PLAY",
+                    "Torrent unavailable — playing unverified client",
+                )
             return Readiness(
                 "play", "PLAY", f"Torrent unavailable{error_detail}"
             )
@@ -962,6 +968,12 @@ class UpdateController:
                 )
             return Readiness("update", "UPDATE", "Download via BitTorrent")
         if not self.state.client_ready:
+            if self._playable_client_present():
+                return Readiness(
+                    "play",
+                    "PLAY",
+                    "Torrent unavailable — playing unverified client",
+                )
             return self._readiness_no_client()
         if self._mods_have_errors():
             return Readiness("busy", "PLAY", "Mod errors — check MODS tab")
@@ -1003,8 +1015,8 @@ class UpdateController:
         if self._mods_have_errors():
             return Readiness("busy", "PLAY", "Mod errors — check MODS tab")
         if not can_launch_client():
-            return Readiness("busy", "READY", "Client updates disabled")
-        return Readiness("play", "PLAY", "Client updates disabled")
+            return Readiness("busy", "PLAY", "")
+        return Readiness("play", "PLAY", "")
 
     def _readiness_no_client(self) -> Readiness:
         """Readiness when no verified client exists and torrent is out.
@@ -1113,14 +1125,17 @@ class UpdateController:
 
     def _on_torrent_unreachable(self, event: TorrentUnavailable):
         if self._playable_client_present():
-            # No incremental source on an existing install: up-to-date
-            # w.r.t. torrent (HTTP diff is forbidden). The worker's
-            # follow-up VerificationUpToDate is then a no-op echo —
-            # _on_up_to_date ignores it once _op cleared.
+            # Torrent snapshot unfetchable on an existing install: skip
+            # the rescan (no point re-hashing presumably-good files) and
+            # offer PLAY — but stay unverified (client_ready False), so
+            # the next launch retries verification when the torrent may
+            # be reachable again. The worker's follow-up
+            # VerificationUpToDate is then a no-op echo — _on_up_to_date
+            # ignores it once _op cleared.
             self.state.running = False
-            self.state.client_ready = True
             self.state.torrent_reachable = False
             self.state.torrent_error = event.message or None
+            self.state.torrent_stale = None
             self._op = None
             self._dispatcher.post(ProgressChanged(0.0, ""))
             self._dispatcher.post(OperationFinished("verify", True))

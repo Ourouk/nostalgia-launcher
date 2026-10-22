@@ -45,6 +45,7 @@ class LauncherState(QObject):
     statusTextChanged = Signal()
     progressValueChanged = Signal()
     progressLabelChanged = Signal()
+    progressVisibleChanged = Signal()
     serverNameChanged = Signal()
     logoSourceChanged = Signal()
     logoFetched = Signal(str)
@@ -54,6 +55,7 @@ class LauncherState(QObject):
         self._status_text = "Ready to update"
         self._progress_value = 0.0
         self._progress_label = ""
+        self._progress_visible = True
         self._server_name = str(server_name or "")
         self._logo_source = str(logo_source or "")
         self.logoFetched.connect(
@@ -88,6 +90,26 @@ class LauncherState(QObject):
         _set_progress_value,
         notify=progressValueChanged,
     )
+
+    def _get_progress_visible(self) -> bool:
+        return self._progress_visible
+
+    def _set_progress_visible(self, value: bool):
+        if bool(value) != self._progress_visible:
+            self._progress_visible = bool(value)
+            self.progressVisibleChanged.emit()
+
+    progressVisible = Property(
+        bool,
+        _get_progress_visible,
+        _set_progress_visible,
+        notify=progressVisibleChanged,
+    )
+
+    @Slot(bool)
+    def setProgressVisible(self, value: bool):
+        """Footer mini-bar visibility (hidden when updates are off)."""
+        self._set_progress_visible(value)
 
     def _get_progress_label(self) -> str:
         return self._progress_label

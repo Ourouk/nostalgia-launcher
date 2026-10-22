@@ -87,12 +87,14 @@ ApplicationWindow {
                 objectName: "qmlVersionPill"
                 visible: settingsModel.clientVersion !== ""
                 text: settingsModel.clientVersion
-                font.pointSize: 8
-                color: appTheme.colors["C_TEXT_DIM"]
+                font.pointSize: 11
+                font.bold: true
+                color: appTheme.colors["C_TEXT"]
             }
             ToolButton {
                 objectName: "qmlGearButton"
                 text: "⚙"
+                font.pointSize: 13
                 Accessible.name: "Open settings"
                 ToolTip.text: "Settings"
                 ToolTip.visible: hovered
@@ -269,6 +271,7 @@ ApplicationWindow {
                 from: 0
                 to: 100
                 value: launcherState.progressValue * 100
+                visible: launcherState.progressVisible
             }
             Button {
                 objectName: "qmlPrimaryButton"
