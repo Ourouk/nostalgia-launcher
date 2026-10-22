@@ -321,7 +321,8 @@ def _https_url(value: object) -> str | None:
 def _magnet_uri(value: object) -> str | None:
     """Validate a ``magnet:`` URI: the scheme must be magnet and the query
     must carry at least one ``xt`` topic of ``urn:btih:`` (v1) or
-    ``urn:btmh:`` (v2)."""
+    ``urn:btmh:`` (v2) with a plausible hash — a typo'd hash validates
+    here but fails minutes later at Verify time, so fail fast instead."""
     if not isinstance(value, str):
         return None
     uri = value.strip()
@@ -334,11 +335,21 @@ def _magnet_uri(value: object) -> str | None:
     if parts.scheme != "magnet" or not parts.query:
         return None
     topics = [t.strip().lower() for t in parse_qs(parts.query).get("xt", [])]
-    if not any(
-        t.startswith("urn:btih:") or t.startswith("urn:btmh:") for t in topics
-    ):
-        return None
-    return uri
+    for t in topics:
+        if t.startswith("urn:btih:"):
+            h = t[len("urn:btih:") :]
+            # v1: 40 hex chars or 32 base32 chars.
+            if len(h) == 40 and all(c in "0123456789abcdef" for c in h):
+                return uri
+            if len(h) == 32 and all(
+                c in "abcdefghijklmnopqrstuvwxyz234567" for c in h
+            ):
+                return uri
+        elif t.startswith("urn:btmh:"):
+            # v2 multihash: encodings vary, so only demand a real hash.
+            if len(t[len("urn:btmh:") :]) >= 32:
+                return uri
+    return None
 
 
 def _host_of(url: object) -> str:
@@ -511,10 +522,12 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
 
 def discover_path() -> str:
     """Locate ``nostalgia_launcher.json``: next to the executable (frozen)
-    or the repo root (source), then the current working directory. On macOS
+    or the repo root (source). On macOS
     the frozen app also searches the folder *containing* the .app bundle, so
     the config can sit next to the bundle (e.g. in the DMG root) rather than
-    buried in Contents/MacOS."""
+    buried in Contents/MacOS. The current working directory is
+    deliberately not searched: trusting a file from wherever the user
+    happened to launch would hand its endpoints full trust."""
     if getattr(sys, "frozen", False):
         roots = [os.path.dirname(os.path.abspath(sys.executable))]
         if is_macos():
@@ -534,7 +547,6 @@ def discover_path() -> str:
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             )
         ]
-    roots.append(os.getcwd())
     for root in roots:
         candidate = os.path.join(root, LAUNCHER_FILE)
         if os.path.exists(candidate):

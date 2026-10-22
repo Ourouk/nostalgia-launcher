@@ -271,7 +271,9 @@ def test_has_torrent_from_download_block():
                 "server": {
                     "url": "https://srv.example",
                     "download": {
-                        "torrent": {"magnet": "magnet:?xt=urn:btih:AB"}
+                        "torrent": {
+                            "magnet": "magnet:?xt=urn:btih:" + "ab" * 20
+                        }
                     },
                 }
             }
@@ -1059,3 +1061,48 @@ def test_root_marker_override_wins():
 def test_client_executable_empty_when_unconfigured():
     launcher.reset()
     assert launcher.client_executable() == ""
+
+
+def test_discover_path_ignores_cwd(monkeypatch, tmp_path):
+    """A nostalgia_launcher.json in the working directory must never be
+    trusted: discovery covers the exe dir / repo root only."""
+    planted = tmp_path / "nostalgia_launcher.json"
+    planted.write_text(
+        json.dumps({"server": {"url": "https://evil.example"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    assert launcher.discover_path() != str(planted)
+
+
+def test_garbage_magnet_is_dropped_but_config_survives():
+    """A typo'd magnet hash must fail at import, not at Verify time."""
+    cfg = _config(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "download": {"torrent": {"magnet": "magnet:?xt=urn:btih:ZZZ"}},
+            }
+        }
+    )
+    assert cfg is not None
+    assert cfg.download_torrent_magnet is None
+    assert cfg.has_torrent() is False
+
+
+def test_base32_btih_magnet_accepted():
+    cfg = _config(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "download": {
+                    "torrent": {
+                        "magnet": "magnet:?xt=urn:btih:"
+                        "abcdefghijklmnopqrstuvwxyz234567"
+                    }
+                },
+            }
+        }
+    )
+    assert cfg is not None
+    assert cfg.has_torrent() is True
