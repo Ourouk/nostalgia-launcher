@@ -49,15 +49,6 @@ ColumnLayout {
                     color: appTheme.colors["C_TEXT_DIM"]
                     visible: root.legendText !== ""
                 }
-                ComboBox {
-                    objectName: "qmlContentScanVersion"
-                    visible: root.contentModel.scanVersions.length > 0
-                    model: root.contentModel.scanVersions
-                    Component.onCompleted: currentIndex = Math.max(0, find(root.contentModel.scanVersion))
-                    ToolTip.text: "The client's game version — decides which Data/ archives count as stock"
-                    ToolTip.visible: hovered
-                    onCurrentTextChanged: root.contentModel.setScanVersion(currentText)
-                }
                 ToolButton {
                     objectName: "qmlContentReload"
                     text: "⟳"
@@ -163,7 +154,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.rightMargin: 12
-                spacing: 6
+                spacing: 4
                 CheckBox {
                     Accessible.name: "Enable " + model.name
                     checked: model.enabled
@@ -241,8 +232,8 @@ ColumnLayout {
             }
             Rectangle {
                 Layout.fillWidth: true
-                Layout.topMargin: 6
-                Layout.bottomMargin: 6
+                Layout.topMargin: 3
+                Layout.bottomMargin: 3
                 Layout.preferredHeight: 1
                 color: appTheme.colors["C_DIVIDER"]
             }

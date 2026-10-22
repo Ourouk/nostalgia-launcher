@@ -434,22 +434,9 @@ class QmlNostalgiaLauncherApp:
                 return ctrl.apply_essential_assets()
 
             def extras_of(state):
-                from ...core import launcher as _launcher
-                from ...services import mpq
-                from .content import managed_names, scan_extras
+                from .content import assets_extras
 
-                version = model.current_scan_version()
-                if not version:
-                    version = (
-                        _launcher.client_version() or mpq.SUPPORTED_VERSIONS[0]
-                    )
-                    model._scan_version = version
-                scan = ctrl.data_scan(version)
-                return scan_extras(
-                    scan,
-                    managed_names(ctrl.registry),
-                    ctrl.client_dir(),
-                )
+                return assets_extras(ctrl)
 
             def on_extra(section, name):
                 ctrl.remove_foreign_mpq(name)
@@ -458,8 +445,6 @@ class QmlNostalgiaLauncherApp:
             op_kind = "assets"
 
         def snapshot():
-            from ...services import mpq
-
             state = ctrl.state
             rows = build_rows(
                 tab_rows(ctrl.registry, state),
@@ -469,9 +454,6 @@ class QmlNostalgiaLauncherApp:
                 action_for=ctrl.action_for,
             )
             extras, headline = extras_of(state)
-            scan_versions = (
-                list(mpq.SUPPORTED_VERSIONS) if op_kind == "assets" else []
-            )
             return (
                 rows,
                 state.updates_count,
@@ -482,7 +464,6 @@ class QmlNostalgiaLauncherApp:
                 ),
                 extras,
                 headline,
-                scan_versions,
                 len(getattr(state, "pending", {}) or {}),
             )
 

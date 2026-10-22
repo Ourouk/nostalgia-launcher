@@ -323,7 +323,7 @@ def test_action_apply_essential_reload(model):
 def test_refresh_uses_provider(model):
     _snapshot(model, updates_count=0)
     model.set_snapshot_provider(
-        lambda: ([], 0, False, False, False, [], "", [], 0)
+        lambda: ([], 0, False, False, False, [], "", 0)
     )
     model.refresh()
     assert model.rowCount() == 0
@@ -412,24 +412,29 @@ def test_scan_extras_no_client():
     assert sections == []
 
 
-def test_scan_extras_shapes_sections():
+def test_scan_extras_bundles_everything():
     from nostalgia_launcher.ui.qml.content import scan_extras
 
     scan = {
         "version": "1.12.1",
-        "stock": [{}, {}],
+        "stock": ["Data/patch.mpq"],
         "custom_managed": [{"path": "Data/patch-a.mpq", "size": 8}],
         "custom_foreign": [{"path": "Data/stray.mpq", "size": 4}],
     }
     headline, sections = scan_extras(
         scan, {"patch-a.mpq": "Patch A (launcher asset)"}, "/games/wow"
     )
-    assert "2 stock" in headline
-    assert sections[0]["title"] == "Foreign / untracked"
-    assert sections[0]["color"] == "err"
-    assert "Delete Data/stray.mpq" in sections[0]["rows"][0]["confirm"]
-    assert sections[1]["title"] == "Launcher-managed custom"
-    assert "Patch A" in sections[1]["rows"][0]["meta"]
+    assert "3 bundled" in headline
+    assert len(sections) == 1
+    assert sections[0]["title"] == "Bundled"
+    rows = sections[0]["rows"]
+    assert [r["name"] for r in rows] == [
+        "Data/patch-a.mpq",
+        "Data/patch.mpq",
+        "Data/stray.mpq",
+    ]
+    assert all(r["action"] == "" and r["confirm"] == "" for r in rows)
+    assert "Patch A" in rows[0]["meta"]
 
 
 def test_extras_snapshot_and_confirm(model):
@@ -488,14 +493,34 @@ def test_extra_direct_action_and_cancel(model):
     assert model.property("extraConfirmText") == ""
 
 
-def test_scan_version_slot(model):
-    model.set_snapshot([], scan_versions=["1.12.1", "2.4.3"])
-    assert model.property("scanVersions") == ["1.12.1", "2.4.3"]
-    model.set_snapshot_provider(
-        lambda: ([], 0, False, False, False, [], "", [], 0)
-    )
-    model.setScanVersion("2.4.3")
-    assert model.current_scan_version() == "2.4.3"
+def test_scan_version_follows_server_pin(model):
+    """No version selector: the scan always targets the server-pinned
+    client version."""
+    from nostalgia_launcher.ui.qml.content import assets_extras
+
+    seen = []
+
+    class _Ctrl:
+        registry = []
+
+        def data_scan(self, version):
+            seen.append(version)
+            return {
+                "version": version,
+                "stock": [],
+                "custom_managed": [],
+                "custom_foreign": [],
+            }
+
+        def client_dir(self):
+            return "/game"
+
+    from nostalgia_launcher.core import launcher
+
+    extras, headline = assets_extras(_Ctrl())
+    assert extras == []
+    assert seen == [(launcher.client_version() or "1.12.1")]
+    assert isinstance(headline, str)
 
 
 def test_extras_render_in_engine(engine):
@@ -582,3 +607,30 @@ def test_tab_rows_keeps_errored_and_staged():
         pending={"b": SimpleNamespace(enabled=True)},
     )
     assert [r["id"] for r in tab_rows(entries, state)] == ["a", "b"]
+
+
+def test_assets_extras_returns_sections_first():
+    """Regression: the snapshot unpacks (extras, headline) — a swapped
+    tuple renders the sections list as headline text."""
+    from nostalgia_launcher.ui.qml.content import assets_extras
+
+    class _Ctrl:
+        registry = []
+
+        def data_scan(self, version):
+            return {
+                "version": version,
+                "stock": [],
+                "custom_managed": [],
+                "custom_foreign": [{"path": "Data/x.mpq", "size": 1}],
+            }
+
+        def client_dir(self):
+            return "/game"
+
+    extras, headline = assets_extras(_Ctrl())
+    assert isinstance(headline, str)
+    assert "title" not in headline
+    assert isinstance(extras, list)
+    assert extras[0]["title"] == "Bundled"
+    assert all(isinstance(e, dict) for e in extras)

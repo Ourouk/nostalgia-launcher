@@ -99,7 +99,11 @@ def managed_names(registry) -> dict:
 
 
 def scan_extras(scan, names: dict, client_dir: str) -> tuple:
-    """ASSETS extras: (headline, sections) for the Data/ scan block."""
+    """ASSETS extras: (headline, sections) for the Data/ scan block.
+
+    Every MPQ present is treated as bundled with the game — stock,
+    launcher-managed and anything else alike — so rows carry no
+    action. There is deliberately no foreign/third-party distinction."""
     from ...services.mpq import human_size
 
     if not client_dir:
@@ -107,45 +111,55 @@ def scan_extras(scan, names: dict, client_dir: str) -> tuple:
             "Set the game folder in Settings to scan its Data/ folder.",
             [],
         )
-    headline = (
-        f"Data/ scan ({scan['version']}): "
-        f"{len(scan['stock'])} stock Blizzard archive(s), "
-        f"{len(scan['custom_managed'])} launcher-managed, "
-        f"{len(scan['custom_foreign'])} foreign/untracked."
-    )
-    sections = []
-    foreign = [
-        {
-            "name": info["path"],
-            "meta": human_size(info.get("size")),
-            "action": "Remove",
-            "confirm": (f"Delete {info['path']} from the client folder?"),
-        }
-        for info in scan.get("custom_foreign") or []
+    rows = [
+        {"name": rel, "meta": "stock", "action": "", "confirm": ""}
+        for rel in scan.get("stock") or []
     ]
-    if foreign:
-        sections.append(
-            {"title": "Foreign / untracked", "color": "err", "rows": foreign}
-        )
-    managed = []
     for info in scan.get("custom_managed") or []:
         base = info["path"].rsplit("/", 1)[-1]
         note = names.get(base.lower(), "")
         meta = "  ·  ".join(
             x for x in (human_size(info.get("size")), note) if x
         )
-        managed.append(
+        rows.append(
             {"name": info["path"], "meta": meta, "action": "", "confirm": ""}
         )
-    if managed:
-        sections.append(
+    for info in scan.get("custom_foreign") or []:
+        rows.append(
             {
-                "title": "Launcher-managed custom",
-                "color": "gold",
-                "rows": managed,
+                "name": info["path"],
+                "meta": human_size(info.get("size")),
+                "action": "",
+                "confirm": "",
             }
         )
+    rows.sort(key=lambda r: r["name"].lower())
+    headline = (
+        f"Data/ scan ({scan['version']}): {len(rows)} bundled archive(s)."
+    )
+    sections = (
+        [{"title": "Bundled", "color": "dim", "rows": rows}] if rows else []
+    )
     return headline, sections
+
+
+def assets_extras(ctrl) -> tuple:
+    """ASSETS extras block for the snapshot provider.
+
+    Returns ``(sections, headline)`` — the ``extras_of`` convention the
+    snapshot unpacks (``scan_extras`` itself returns the reverse order).
+    The scan always targets the server-pinned client version: offering
+    a choice would just mislabel stock archives.
+    """
+    from ...core import launcher as _launcher
+    from ...services import mpq
+
+    version = _launcher.client_version() or mpq.SUPPORTED_VERSIONS[0]
+    scan = ctrl.data_scan(version)
+    headline, sections = scan_extras(
+        scan, managed_names(ctrl.registry), ctrl.client_dir()
+    )
+    return sections, headline
 
 
 class ContentListModel(QAbstractListModel):
@@ -183,8 +197,6 @@ class ContentListModel(QAbstractListModel):
         self._extras_on_top = bool(extras_on_top)
         self._extra_headline = ""
         self._extra_sections: list = []
-        self._scan_versions: list = []
-        self._scan_version = ""
         self._extra_confirm = ""
         self._pending_extra = None
         self._snapshot_provider = None
@@ -293,7 +305,6 @@ class ContentListModel(QAbstractListModel):
             essential,
             extras,
             headline,
-            scan_versions,
             pending_count,
         ) = self._snapshot_provider()
         self.set_snapshot(
@@ -304,7 +315,6 @@ class ContentListModel(QAbstractListModel):
             essential,
             extras=extras,
             headline=headline,
-            scan_versions=scan_versions,
             pending_count=pending_count,
         )
 
@@ -317,7 +327,6 @@ class ContentListModel(QAbstractListModel):
         essential_pending=False,
         extras=None,
         headline="",
-        scan_versions=None,
         pending_count=0,
     ):
         self._rows = list(rows or [])
@@ -331,8 +340,6 @@ class ContentListModel(QAbstractListModel):
             self._loading = False
         self._extra_sections = list(extras or [])
         self._extra_headline = str(headline or "")
-        if scan_versions is not None:
-            self._scan_versions = list(scan_versions)
         self._refilter()
         self.chromeChanged.emit()
 
@@ -416,22 +423,6 @@ class ContentListModel(QAbstractListModel):
         "QVariantList", _get_extra_sections, notify=chromeChanged
     )
 
-    def _get_scan_versions(self) -> list:
-        return list(self._scan_versions)
-
-    scanVersions = Property(
-        "QVariantList", _get_scan_versions, notify=chromeChanged
-    )
-
-    def _get_scan_version(self) -> str:
-        return self._scan_version
-
-    scanVersion = Property(str, _get_scan_version, notify=chromeChanged)
-
-    def current_scan_version(self) -> str:
-        """Active Data/ scan version (read by the snapshot provider)."""
-        return self._scan_version
-
     def _get_extra_confirm(self) -> str:
         return self._extra_confirm
 
@@ -499,12 +490,6 @@ class ContentListModel(QAbstractListModel):
     def requestBrowse(self):
         """Empty-state Browse button (app.py opens the dialog)."""
         self.browseRequested.emit()
-
-    @Slot(str)
-    def setScanVersion(self, version: str):
-        if version != self._scan_version:
-            self._scan_version = version
-            self.refresh()
 
     @Slot(str, str)
     def requestExtra(self, section: str, name: str):
