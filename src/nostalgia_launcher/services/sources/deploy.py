@@ -154,6 +154,7 @@ def extract_zip_map(
             f.write(data)
         with zipfile.ZipFile(tmp_path) as zf:
             written = []
+            total = 0
             for zip_path, dest_rel in extract_map.items():
                 try:
                     info = zf.getinfo(zip_path)
@@ -166,6 +167,11 @@ def extract_zip_map(
                         "size cap, skipping"
                     )
                     continue
+                total += info.file_size
+                if total > _MAX_MEMBER_BYTES * 4:
+                    raise RuntimeError(
+                        "archive exceeds the total extraction budget"
+                    )
                 written.append(
                     install_plain(client_dir, zf.read(zip_path), dest_rel)
                 )
@@ -186,6 +192,7 @@ def extract_tar_map(
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
         all_names = tf.getnames()
         written = []
+        total = 0
         for pattern, dest_rel in extract_map.items():
             matched = (
                 pattern
@@ -213,6 +220,11 @@ def extract_tar_map(
                     "cap, skipping"
                 )
                 continue
+            total += member.size
+            if total > _MAX_MEMBER_BYTES * 4:
+                raise RuntimeError(
+                    "archive exceeds the total extraction budget"
+                )
             written.append(install_plain(client_dir, fh.read(), dest_rel))
         return written
 
@@ -317,12 +329,13 @@ def extract_7z_map(
 
 def _stripped_parts(filename: str) -> list[str]:
     """A zip member path with the archive's top-level "<repo>-<sha>/"
-    component removed and separators normalised ("" / "." dropped)."""
-    return [
-        p
-        for p in filename.replace("\\", "/").split("/")[1:]
-        if p not in ("", ".")
-    ]
+    component removed and separators normalised ("" / "." dropped)."
+    A root-level member has no top-level directory — keep it instead of
+    dropping the file silently."""
+    norm = filename.replace("\\", "/")
+    if "/" not in norm:
+        return [norm] if norm not in ("", ".") else []
+    return [p for p in norm.split("/")[1:] if p not in ("", ".")]
 
 
 def unpack_folder(data: bytes, dest_root: str) -> None:

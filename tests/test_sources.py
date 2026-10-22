@@ -622,3 +622,18 @@ def test_seven_z_missing_msg_names_distro_commands():
     # Windows/macOS dev runs (no staged vendor dir) still get a hint.
     assert "7z.exe on PATH" in deploy.SEVEN_Z_MISSING_MSG
     assert "brew install sevenzip" in deploy.SEVEN_Z_MISSING_MSG
+
+
+def test_deploy_unpack_folder_installs_root_level_files(tmp_path):
+    """A zip without a top-level folder (small single-file addons) must
+    install its root members, not silently drop them."""
+    import zipfile
+
+    dest_root = tmp_path / "Addon"
+    buf = __import__("io").BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("MyAddon.toc", "title")
+        zf.writestr("MyAddon.lua", "code")
+    deploy.unpack_folder(buf.getvalue(), str(dest_root))
+    assert (dest_root / "MyAddon.toc").exists()
+    assert (dest_root / "MyAddon.lua").exists()
