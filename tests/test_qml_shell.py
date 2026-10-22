@@ -101,7 +101,8 @@ def test_shell_chrome_objects_exist(engine):
         "qmlStatusLabel",
         "qmlProgressBar",
         "qmlPrimaryButton",
-        # Installer-parity header X buttons (BrowseView already had one).
+        # Installer-parity header X buttons (settings is now a modal
+        # in-app dialog; the log stays an independent window).
         "qmlSettingsClose",
         "qmlLogHeaderClose",
         "qmlLinuxClose",

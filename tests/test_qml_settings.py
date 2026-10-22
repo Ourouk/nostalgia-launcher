@@ -239,40 +239,36 @@ def test_settings_dialog_loads(engine):
 
 
 def test_gear_opens_settings(engine, qapp):
-    """Settings is an independent modeless window: hidden at startup,
-    shown (not modal) via showSettings(), single instance."""
-    from PySide6.QtGui import QWindow
-
+    """Settings is a modal in-app dialog: gear opens it via open()."""
     eng, _settings = engine
     root = eng.rootObjects()[0]
     assert root.findChild(QObject, "qmlGearButton") is not None
     dialog = root.findChild(QObject, "qmlSettingsDialog")
     assert dialog.property("visible") is False
-    assert isinstance(dialog, QWindow)
-    assert dialog.isModal() is False
-    dialog.showSettings()
-    for _ in range(6):
-        qapp.processEvents()
-    assert dialog.property("visible") is True
-    assert dialog.isModal() is False
-    # Single instance: second call raises instead of duplicating.
-    before = root.findChildren(QObject, "qmlSettingsDialog")
-    dialog.showSettings()
-    after = root.findChildren(QObject, "qmlSettingsDialog")
-    assert len(before) == len(after) == 1
+    assert dialog.property("modal") is True
     close_btn = dialog.findChild(QObject, "qmlSettingsClose")
     assert close_btn is not None
 
 
-def test_logs_button_label_follows_state(engine):
+def test_logs_button_label_follows_state(engine, qapp):
+    """Show/Hide logs button flips label with the model; the log window
+    itself stays independent so it can be watched while using the app."""
+    from PySide6.QtGui import QWindow
+
     eng, settings = engine
     root = eng.rootObjects()[0]
     dialog = root.findChild(QObject, "qmlSettingsDialog")
-    dialog.setProperty("visible", True)
+    dialog.open()
+    for _ in range(6):
+        qapp.processEvents()
     logs_btn = dialog.findChild(QObject, "qmlSettingsLogs")
     assert logs_btn.property("text") == "Show logs"
     settings.setLogsOpen(True)
     assert logs_btn.property("text") == "Hide logs"
+    log_dialog = root.findChild(QObject, "qmlLogDialog")
+    assert isinstance(log_dialog, QWindow)
+    assert log_dialog.isModal() is False
+    dialog.close()
 
 
 def test_log_dialog_follows_model(engine):

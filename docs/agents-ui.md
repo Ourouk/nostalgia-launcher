@@ -32,9 +32,10 @@ beside them) plus the toolkit glue in `ui/` (`bridge.py`, `theme.py`,
 
 ## QML conventions
 
-- Top-level secondary windows (Settings, Session log) are modeless
-  single-instance `ApplicationWindow`s with `showSettings()`/`showLog()`
-  (show + `requestActivate()` + `raise()`); short confirmations stay modal
+- The session log is a modeless single-instance `ApplicationWindow`
+  with `showLog()` (show + `requestActivate()` + `raise()`) so it stays
+  readable while interacting with the app; Settings is a modal in-app
+  `Dialog` (blocks the main window). Other popups are short modal
   `Dialog`s. One signal owner per toggle action — a QML `Connections`
   handler duplicating a Python slot double-fires (the `logsRequested`
   open→close race).

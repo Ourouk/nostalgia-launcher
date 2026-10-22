@@ -5,7 +5,8 @@
 // session-log viewer. Bindings read the live view-models (`launcherState`,
 // `newsModel`, `updateState`, `modsModel`, `assetsModel`, `addonsModel`,
 // `settingsModel`, `logModel`, `appTheme`) exposed by ui/qml/app.py.
-// Settings owns its sub-dialogs (Linux/UMU, profile-import wizard).
+// Settings owns its sub-dialogs (Linux/UMU, profile-import wizard); the
+// log is an independent window.
 
 import QtQuick
 import QtQuick.Controls
@@ -98,7 +99,7 @@ ApplicationWindow {
                 Accessible.name: "Open settings"
                 ToolTip.text: "Settings"
                 ToolTip.visible: hovered
-                onClicked: settingsDialog.showSettings()
+                onClicked: settingsDialog.open()
             }
         }
     }
@@ -118,7 +119,6 @@ ApplicationWindow {
         onRejected: {
             settingsModel.resolveSwitch(false)
             profileCombo.currentIndex = Math.max(0, settingsModel.profiles.indexOf(settingsModel.activeProfile))
-            settingsDialog.profilesComboIndex = Math.max(0, settingsModel.profiles.indexOf(settingsModel.activeProfile))
         }
     }
 

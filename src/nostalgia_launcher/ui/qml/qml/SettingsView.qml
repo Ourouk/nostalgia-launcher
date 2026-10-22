@@ -1,7 +1,9 @@
 // Settings dialog (Phase 6a): Game /
 // Sources / Profiles / Troubleshooting tabs. Reads the `settingsModel`
-// context property (ui/qml/settings.py:SettingsModel). Hosts the Linux
-// (UMU) dialog and the profile-import wizard (Phase 6b).
+// context property (ui/qml/settings.py:SettingsModel). Modal in-app
+// dialog (blocks the main window; the session log stays an independent
+// window so it can be watched while interacting with the app). Hosts
+// the Linux (UMU) dialog and the profile-import wizard (Phase 6b).
 
 import QtQuick
 import QtQuick.Controls
@@ -9,19 +11,14 @@ import QtQuick.Controls.Material
 import QtQuick.Dialogs
 import QtQuick.Layouts
 
-ApplicationWindow {
+Dialog {
     id: root
-    property alias profilesComboIndex: profilesCombo.currentIndex
     objectName: "qmlSettingsDialog"
     title: "Settings"
-    visible: false
-    width: 680
-    height: 700
-    minimumWidth: 560
-    minimumHeight: 480
-    color: appTheme.colors["C_BG"]
-    Material.theme: appTheme.themed ? Material.Dark : Material.System
-    Material.accent: appTheme.colors["C_GOLD"]
+    modal: true
+    width: Math.min(680, parent.width * 0.94)
+    height: Math.min(700, parent.height * 0.94)
+    anchors.centerIn: parent
 
     header: ToolBar {
         background: Rectangle {
@@ -46,18 +43,9 @@ ApplicationWindow {
                 Accessible.name: "Close"
                 ToolTip.text: "Close"
                 ToolTip.visible: hovered
-                onClicked: root.close()
+                onClicked: root.reject()
             }
         }
-    }
-
-    // Single-instance raise: the gear button calls showSettings(),
-    // which shows a hidden window or raises the visible one.
-    function showSettings() {
-        if (!visible)
-            show();
-        requestActivate();
-        raise();
     }
 
     ColumnLayout {
@@ -369,21 +357,9 @@ ApplicationWindow {
         }
     }
 
-    footer: ToolBar {
-        background: Rectangle {
-            color: appTheme.colors["C_HDR"]
-        }
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 16
-            anchors.rightMargin: 16
-            Item { Layout.fillWidth: true }
-            Button {
-                objectName: "qmlSettingsClose"
-                text: "Close"
-                onClicked: root.close()
-            }
-        }
+    footer: DialogButtonBox {
+        standardButtons: DialogButtonBox.Close
+        onRejected: root.reject()
     }
 
     FileDialog {

@@ -1,6 +1,7 @@
 // Session-log viewer (Phase 6a): a scrollable
 // monospace view of the retained session log with live tailing. Reads the
-// `logModel` context property (ui/qml/settings.py:LogModel).
+// `logModel` context property (ui/qml/settings.py:LogModel). Independent
+// modeless window (stays readable while interacting with the app).
 
 import QtQuick
 import QtQuick.Controls
@@ -24,7 +25,8 @@ ApplicationWindow {
 
     signal logDialogVisible(bool open)
 
-    // Single-instance raise (same pattern as SettingsView.showSettings).
+    // Single-instance raise. Settings is a modal Dialog; the log window
+    // intentionally stays independent.
     function showLog() {
         if (!visible)
             show();
