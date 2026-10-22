@@ -943,8 +943,6 @@ class QmlNostalgiaLauncherApp:
         bridge = self._hub.bridge
         bridge.sourceStatusChanged.connect(lambda _ok, _text: model.refresh())
         bridge.logMessage.connect(self._log_model.appendLine)
-        model.set_running(False)
-        model.set_scanning(False)
         model.refresh()
 
     def toggle_session_log(self):
