@@ -194,6 +194,7 @@ class AssetsController:
             self._dispatcher.post(AssetsLoaded(self.state))
 
         self._busy = True
+        self._dispatcher.post(AssetsLoaded(self.state))
         threading.Thread(target=worker, daemon=True).start()
         return True
 

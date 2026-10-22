@@ -96,7 +96,7 @@ ColumnLayout {
         Layout.rightMargin: 16
         Layout.topMargin: 12
         spacing: 8
-        visible: root.contentModel.emptyVisible && !root.contentModel.loading
+        visible: !root.contentModel.scanning && root.contentModel.emptyVisible
         Label {
             objectName: "qmlContentEmpty"
             Layout.fillWidth: true
@@ -117,7 +117,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.topMargin: 32
         spacing: 12
-        visible: root.contentModel.emptyVisible && root.contentModel.loading
+        visible: root.contentModel.scanning
         BusyIndicator {
             Layout.alignment: Qt.AlignHCenter
             running: parent.visible

@@ -285,6 +285,8 @@ class AddonsController:
                 AddonState.from_dict(rec) for rec in preview_rows
             ]
             self._dispatcher.post(AddonsLoaded(snapshot))
+        else:
+            self._dispatcher.post(AddonsLoaded(self.state))
 
         def worker():
             try:

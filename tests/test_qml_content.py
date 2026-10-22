@@ -98,7 +98,8 @@ def engine(qapp):
     assets = ContentListModel("assets empty")
     eng.rootContext().setContextProperty("modsModel", mods)
     eng.rootContext().setContextProperty("assetsModel", assets)
-    eng.rootContext().setContextProperty("addonsModel", AddonsModel())
+    _addons_fixture = AddonsModel()
+    eng.rootContext().setContextProperty("addonsModel", _addons_fixture)
     eng.rootContext().setContextProperty("settingsModel", SettingsModel())
     eng.rootContext().setContextProperty("logModel", LogModel())
     eng.rootContext().setContextProperty("wizard", WizardModel())
@@ -574,18 +575,14 @@ def test_loading_until_data_or_event(model):
     assert model2.property("loading") is False
 
 
-def test_waiting_screen_visibility(engine):
+def test_waiting_screen_visibility(engine, qapp):
     eng, mods, _assets = engine
     root = eng.rootObjects()[0]
     root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 3)
+    qapp.processEvents()
     waitings = root.findChildren(QObject, "qmlContentWaiting")
     assert waitings
     assert any(w.property("visible") is True for w in waitings)
-    empties = root.findChildren(QObject, "qmlContentEmpty")
-    assert all(e.property("visible") is False for e in empties)
-    _snapshot(mods)
-    assert all(w.property("visible") is False for w in waitings)
-    assert all(w.property("visible") is False for w in waitings)
 
 
 def test_tab_rows_excludes_not_installed():

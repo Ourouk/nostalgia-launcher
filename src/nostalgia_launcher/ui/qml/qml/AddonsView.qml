@@ -94,7 +94,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.topMargin: 32
         spacing: 12
-        visible: addonsModel.loading && addonList.count === 0
+        visible: addonsModel.scanning
         BusyIndicator {
             Layout.alignment: Qt.AlignHCenter
             running: parent.visible
@@ -112,7 +112,7 @@ ColumnLayout {
         Layout.rightMargin: 16
         Layout.topMargin: 12
         spacing: 8
-        visible: !addonsModel.loading && addonList.count === 0
+        visible: !addonsModel.scanning && addonList.count === 0
         Label {
             Layout.fillWidth: true
             text: "No add-ons installed yet."

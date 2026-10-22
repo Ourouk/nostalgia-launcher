@@ -638,10 +638,11 @@ def test_loading_until_data_or_event(qapp):
     assert model2.property("loading") is False
 
 
-def test_waiting_screen_visibility(engine):
+def test_waiting_screen_visibility(engine, qapp):
     eng, _addons = engine
     root = eng.rootObjects()[0]
     root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 2)
+    qapp.processEvents()
     waiting = root.findChild(QObject, "qmlAddonsWaiting")
     assert waiting is not None
     assert waiting.property("visible") is True

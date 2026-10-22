@@ -203,6 +203,7 @@ class AddonsModel(QAbstractListModel):
     StagedRole = Qt.ItemDataRole.UserRole + 15
 
     changed = Signal()
+    scanningChanged = Signal()
     chromeChanged = Signal()
     browseRequested = Signal()
 
@@ -217,6 +218,7 @@ class AddonsModel(QAbstractListModel):
         self._pending_count = 0
         self._recommended_pending = False
         self._busy = False
+        self._scanning = True
         self._footer_text = ""
         self._footer_color = ""
         self._footer_clickable = False
@@ -306,6 +308,7 @@ class AddonsModel(QAbstractListModel):
         finally:
             self.endResetModel()
         self.changed.emit()
+        self.set_scanning(bool(self._loading))
         self.chromeChanged.emit()
 
     def set_running(self, running: bool):
@@ -313,6 +316,14 @@ class AddonsModel(QAbstractListModel):
         if running != self._busy:
             self._busy = running
             self.chromeChanged.emit()
+
+    def set_scanning(self, scanning: bool):
+        """Waiting-screen flag for verify/catalog scans (distinct from
+        apply `busy`: the list itself is stale, not just the footer)."""
+        scanning = bool(scanning)
+        if scanning != self._scanning:
+            self._scanning = scanning
+            self.scanningChanged.emit()
 
     # ── properties ────────────────────────────────────────────────────
 
@@ -348,6 +359,11 @@ class AddonsModel(QAbstractListModel):
 
     busy = Property(bool, _get_busy, notify=chromeChanged)
 
+    def _get_scanning(self) -> bool:
+        return self._scanning
+
+    scanning = Property(bool, _get_scanning, notify=scanningChanged)
+
     def _get_loading(self) -> bool:
         return self._loading
 
@@ -355,10 +371,11 @@ class AddonsModel(QAbstractListModel):
 
     @Slot()
     def markLoaded(self):
-        """First loaded event arrived: leave the waiting screen."""
+        """First loaded event arrived: leave the waiting screens."""
         if self._loading:
             self._loading = False
             self.chromeChanged.emit()
+        self.set_scanning(False)
 
     def _get_footer_text(self) -> str:
         return self._footer_text
@@ -450,6 +467,7 @@ class AddonsModel(QAbstractListModel):
 
     @Slot()
     def checkForUpdates(self):
+        self.set_scanning(True)
         self._call("check")
 
     @Slot()

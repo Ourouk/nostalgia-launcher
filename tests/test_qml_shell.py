@@ -60,13 +60,12 @@ def engine(qapp):
     eng.rootContext().setContextProperty("launcherState", state)
     eng.rootContext().setContextProperty("appTheme", theme)
     eng.rootContext().setContextProperty("newsModel", news)
-    eng.rootContext().setContextProperty(
-        "modsModel", ContentListModel("mods empty")
-    )
-    eng.rootContext().setContextProperty(
-        "assetsModel", ContentListModel("assets empty")
-    )
-    eng.rootContext().setContextProperty("addonsModel", AddonsModel())
+    _mods_shell = ContentListModel("mods empty")
+    eng.rootContext().setContextProperty("modsModel", _mods_shell)
+    _assets_shell = ContentListModel("assets empty")
+    eng.rootContext().setContextProperty("assetsModel", _assets_shell)
+    _addons_shell = AddonsModel()
+    eng.rootContext().setContextProperty("addonsModel", _addons_shell)
     eng.rootContext().setContextProperty("settingsModel", SettingsModel())
     eng.rootContext().setContextProperty("logModel", LogModel())
     eng.rootContext().setContextProperty("wizard", WizardModel())
@@ -321,7 +320,8 @@ def test_browse_addons_resets_when_operation_settles(qapp):
     from nostalgia_launcher.ui.qml.addons import AddonsModel
 
     hub, shell = _browse_shell(qapp)
-    shell._addons_qml = AddonsModel()
+    _addons_settle = AddonsModel()
+    shell._addons_qml = _addons_settle
     rec = SimpleNamespace(
         folder="New",
         status="upToDate",

@@ -178,6 +178,7 @@ class ContentListModel(QAbstractListModel):
     StagedRole = Qt.ItemDataRole.UserRole + 11
 
     changed = Signal()
+    scanningChanged = Signal()
     chromeChanged = Signal()
     browseRequested = Signal()
 
@@ -193,6 +194,7 @@ class ContentListModel(QAbstractListModel):
         self._essential_pending = False
         self._busy = False
         self._loading = True
+        self._scanning = True
         self._empty_text = empty_text
         self._extras_on_top = bool(extras_on_top)
         self._extra_headline = ""
@@ -341,6 +343,7 @@ class ContentListModel(QAbstractListModel):
         self._extra_sections = list(extras or [])
         self._extra_headline = str(headline or "")
         self._refilter()
+        self.set_scanning(bool(self._loading))
         self.chromeChanged.emit()
 
     def set_running(self, running: bool):
@@ -349,6 +352,14 @@ class ContentListModel(QAbstractListModel):
         if running != self._busy:
             self._busy = running
             self.chromeChanged.emit()
+
+    def set_scanning(self, scanning: bool):
+        """Waiting-screen flag for reload/verify scans (distinct from
+        apply `busy`: the list itself is stale, not just the footer)."""
+        scanning = bool(scanning)
+        if scanning != self._scanning:
+            self._scanning = scanning
+            self.scanningChanged.emit()
 
     # ── properties ────────────────────────────────────────────────────
 
@@ -379,6 +390,11 @@ class ContentListModel(QAbstractListModel):
 
     busy = Property(bool, _get_busy, notify=chromeChanged)
 
+    def _get_scanning(self) -> bool:
+        return self._scanning
+
+    scanning = Property(bool, _get_scanning, notify=scanningChanged)
+
     def _get_loading(self) -> bool:
         return self._loading
 
@@ -386,10 +402,11 @@ class ContentListModel(QAbstractListModel):
 
     @Slot()
     def markLoaded(self):
-        """First loaded event arrived: leave the waiting screen."""
+        """First loaded event arrived: leave the waiting screens."""
         if self._loading:
             self._loading = False
             self.chromeChanged.emit()
+        self.set_scanning(False)
 
     def _get_empty_text(self) -> str:
         return self._empty_text
@@ -483,6 +500,7 @@ class ContentListModel(QAbstractListModel):
 
     @Slot()
     def reloadCatalog(self):
+        self.set_scanning(True)
         if self._on_reload is not None:
             self._on_reload()
 

@@ -492,6 +492,8 @@ class QmlNostalgiaLauncherApp:
         self._hub.bridge.operationFailed.connect(
             lambda k, m: self._after_content_op(model, k, op_kind)
         )
+        model.set_scanning(True)
+        model.set_running(False)
         model.refresh()
 
         if kind in ("mods", "assets"):
@@ -533,6 +535,7 @@ class QmlNostalgiaLauncherApp:
     def _after_content_op(self, model, kind: str, op_kind: str):
         """Drop the busy chrome when this tab's operation settles."""
         if kind == op_kind:
+            model.set_scanning(False)
             model.set_running(False)
             model.refresh()
             hook = self._browse_on_settle.get(op_kind)
@@ -610,6 +613,8 @@ class QmlNostalgiaLauncherApp:
             lambda k, ok, m: self._after_addons_op(k)
         )
         bridge.operationFailed.connect(lambda k, m: self._after_addons_op(k))
+        model.set_scanning(True)
+        model.set_running(False)
         model.refresh()
 
         # Browse dialog: not-installed catalog, one-click install.
@@ -656,6 +661,7 @@ class QmlNostalgiaLauncherApp:
 
     def _after_addons_op(self, kind: str):
         if kind == "addons":
+            self._addons_qml.set_scanning(False)
             self._addons_qml.set_running(False)
             self._addons_qml.refresh()
             hook = self._browse_on_settle.get("addons")
@@ -663,8 +669,6 @@ class QmlNostalgiaLauncherApp:
                 browse, refresh_browse = hook
                 browse.set_running(False)
                 refresh_browse()
-            self._addons_qml.set_running(False)
-            self._addons_qml.refresh()
 
     # ── profile import (wizard selection → server-named profile) ──────
 
@@ -938,8 +942,9 @@ class QmlNostalgiaLauncherApp:
         )
         bridge = self._hub.bridge
         bridge.sourceStatusChanged.connect(lambda _ok, _text: model.refresh())
-        model.logsRequested.connect(self.toggle_session_log)
         bridge.logMessage.connect(self._log_model.appendLine)
+        model.set_running(False)
+        model.set_scanning(False)
         model.refresh()
 
     def toggle_session_log(self):
