@@ -53,6 +53,16 @@ mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 install -m 0755 packaging/linux/AppRun "$APPDIR/AppRun"
 install -m 0644 packaging/linux/NostalgiaLauncher.desktop "$APPDIR/NostalgiaLauncher.desktop"
 
+# Drop the bundled C++ runtime so the host's always wins. AppRun puts
+# _internal first on LD_LIBRARY_PATH, so a bundled libstdc++ older than
+# the host's shadows the host GL drivers' dependency (e.g. Ubuntu 22.04
+# GCC 12 libstdc++ vs a newer Mesa/NVIDIA stack needing GLIBCXX_3.4.3x)
+# and GLX/EGL init dies with "Could not initialize GLX". libstdc++ is
+# forward-compatible — GCC-12-built binaries run against any newer host
+# runtime — so unbundling is safe on any distro from 22.04 up.
+rm -f "$APPDIR/usr/bin/_internal/libstdc++.so.6" \
+  "$APPDIR/usr/bin/_internal/libgcc_s.so.1"
+
 # 3. Run linuxdeploy (bundles missing Qt/system libs, validates the desktop
 #    entry, and builds the final AppImage)
 echo "==> Running linuxdeploy"
