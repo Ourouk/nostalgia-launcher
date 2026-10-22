@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # setup-uv stopped publishing major tags in v8 — pin the full version.
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
       - name: Sync dependencies
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
       - name: Sync dependencies
@@ -51,7 +51,7 @@ jobs:
         if: runner.os == 'Linux'
         # qt6-declarative-dev-tools provides qmllint so the lint test executes instead of skipping.
         run: sudo apt-get update && sudo apt-get install -y libegl1 qt6-declarative-dev-tools
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
           # Pin to the CPython the release builds ship (macOS universal2
