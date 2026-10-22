@@ -93,6 +93,8 @@ def ls_remote_sha(git_url: str, pin: str | None) -> str | None:
     sidesteps the git hosts' REST API quota. No clone, no worktree
     mutation. Returns None when git is missing, the command fails/times
     out, or the requested ref can't be resolved — never raises."""
+    if not is_allowed_git_url(git_url):
+        return None
     args = ["git", "ls-remote", git_url]
     args.append(pin if pin else "HEAD")
     env = clean_system_env({"GIT_TERMINAL_PROMPT": "0"})

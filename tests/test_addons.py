@@ -1098,3 +1098,17 @@ def test_snapjaw_cache_repo_urls_reads_git_configs(tmp_path):
 
 def test_snapjaw_cache_repo_urls_missing_cache_is_empty(tmp_path):
     assert addons.snapjaw_cache_repo_urls(str(tmp_path / "AddOns")) == set()
+
+
+def test_ls_remote_sha_refuses_non_allowlisted_host(monkeypatch):
+    """The git fallback must never talk to a host outside the allowlist,
+    even if a future caller forgets to check first."""
+    import subprocess
+
+    def _fail(*a, **k):
+        raise AssertionError("git must not run")
+
+    monkeypatch.setattr(subprocess, "run", _fail)
+    assert (
+        git_archive.ls_remote_sha("https://evil.example.com/a/b", None) is None
+    )
