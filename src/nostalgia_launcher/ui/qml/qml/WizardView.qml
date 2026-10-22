@@ -12,7 +12,6 @@ import QtQuick.Layouts
 
 Dialog {
     id: root
-    objectName: "qmlWizardDialog"
     title: "Welcome to Nostalgia Launcher"
     modal: true
     width: 600

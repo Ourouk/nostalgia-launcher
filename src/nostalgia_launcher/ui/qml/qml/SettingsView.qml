@@ -1,7 +1,7 @@
 // Settings dialog (Phase 6a): Game /
 // Sources / Profiles / Troubleshooting tabs. Reads the `settingsModel`
-// context property (ui/qml/settings.py:SettingsModel). Profile import and
-// the Linux (UMU) window land with the wizard dialogs (Phase 6b).
+// context property (ui/qml/settings.py:SettingsModel). Hosts the Linux
+// (UMU) dialog and the profile-import wizard (Phase 6b).
 
 import QtQuick
 import QtQuick.Controls
@@ -394,6 +394,25 @@ ApplicationWindow {
         text: "Delete this profile? Its server config, state and caches will be removed."
         buttons: MessageDialog.Yes | MessageDialog.No
         onAccepted: settingsModel.deleteProfile(profilesCombo.currentText)
+    }
+
+    LinuxSettingsView {
+        id: linuxDialog
+        objectName: "qmlLinuxSettingsDialog"
+    }
+
+    WizardView {
+        id: importWizard
+        objectName: "qmlImportWizard"
+        onAccepted: settingsModel.finishImport()
+    }
+
+    Connections {
+        target: settingsModel
+        function onLinuxRequested() {
+            linuxModel.refresh();
+            linuxDialog.open();
+        }
     }
 
     // One shared registry row (ADDONS / MODS).

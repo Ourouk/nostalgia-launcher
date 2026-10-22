@@ -10,7 +10,6 @@ import QtQuick.Layouts
 
 Dialog {
     id: root
-    objectName: "qmlLinuxSettingsDialog"
     title: "Linux (UMU) Settings"
     modal: true
     width: Math.min(560, parent.width * 0.9)
