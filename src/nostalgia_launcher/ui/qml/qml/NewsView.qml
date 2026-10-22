@@ -71,7 +71,7 @@ Item {
             text: "★ " + newsModel.featuredTitle
             Accessible.name: "Featured announcement: " + newsModel.featuredTitle
             ToolTip.text: newsModel.featuredUrl !== "" ? "Open announcement in browser" : ""
-            ToolTip.visible: featuredHover.hovered && newsModel.featuredUrl !== ""
+            ToolTip.visible: featuredHover.containsMouse && newsModel.featuredUrl !== ""
             MouseArea {
                 id: featuredHover
                 anchors.fill: parent
