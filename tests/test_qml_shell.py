@@ -269,6 +269,26 @@ def _browse_shell(qapp):
     return hub, shell
 
 
+def test_wire_settings_only_uses_settings_model_api(qapp):
+    """Regression: _wire_settings must not call content-model methods
+    (set_running/set_scanning) on the SettingsModel — that crashed
+    startup with AttributeError before the engine even loaded."""
+    import inspect
+
+    from nostalgia_launcher.ui.qml import app as app_mod
+    from nostalgia_launcher.ui.qml.settings import SettingsModel
+
+    src = inspect.getsource(app_mod.QmlNostalgiaLauncherApp._wire_settings)
+    for meth in ("set_running", "set_scanning", "checkForUpdates"):
+        assert f"model.{meth}" not in src, meth
+    # SettingsModel genuinely lacks the content-model chrome: wiring
+    # against it must stay limited to the snapshot/handlers contract.
+    model_attrs = set(dir(SettingsModel))
+    assert {"set_snapshot_provider", "set_handlers", "refresh"} <= model_attrs
+    assert "set_running" not in model_attrs
+    assert "set_scanning" not in model_attrs
+
+
 def test_browse_mods_resets_when_operation_settles(qapp):
     """Second install from Browse must work: settle clears busy and the
     installed entry leaves the Browse list."""
