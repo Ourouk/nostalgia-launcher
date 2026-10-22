@@ -390,3 +390,39 @@ def test_browse_addons_resets_when_operation_settles(qapp):
     shell._after_addons_op("addons")
     assert browse.property("busy") is False
     assert browse.rowCount() == 0
+
+
+def test_startup_verify_skips_first_run_and_running(qapp, monkeypatch):
+    """Cold-start verify fires once: skipped on first run and while busy."""
+    from nostalgia_launcher.ui.bridge import ControllerHub
+    from nostalgia_launcher.ui.qml.app import QmlNostalgiaLauncherApp
+    from nostalgia_launcher.ui.qml.viewmodels import (
+        LauncherState,
+        UpdateState,
+    )
+
+    hub = ControllerHub()
+    shell = QmlNostalgiaLauncherApp.__new__(QmlNostalgiaLauncherApp)
+    shell._hub = hub
+    shell._state = LauncherState()
+    shell._update = UpdateState()
+    calls = []
+    monkeypatch.setattr(
+        hub.updater, "start_verify", lambda **k: calls.append(k)
+    )
+
+    # First run: deferred until settings close with a confirmed folder.
+    hub.settings.state.first_run = True
+    shell._startup_verify()
+    assert calls == []
+
+    # Busy: never stack a second worker.
+    hub.settings.state.first_run = False
+    hub.updater.state.running = True
+    shell._startup_verify()
+    assert calls == []
+
+    # Normal cold start: fires once.
+    hub.updater.state.running = False
+    shell._startup_verify()
+    assert len(calls) == 1

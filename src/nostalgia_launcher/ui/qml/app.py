@@ -242,8 +242,28 @@ class QmlNostalgiaLauncherApp:
         QTimer.singleShot(1100, self._hub.assets.refresh_verdicts)
         QTimer.singleShot(1500, self._hub.addons.verify)
         QTimer.singleShot(2000, self._hub.updater.check_updater_update)
+        QTimer.singleShot(2500, self._startup_verify)
         if self._open_log:
             self.open_session_log()
+
+    def _startup_verify(self):
+        """Cold-start client verify (cache-aware, no cache drop).
+
+        Without this the footer sits on the idle "Verifying…" gate with
+        PLAY grayed until the user force-rechecks. Unlike Force recheck
+        (`verify_files`) this keeps the hash cache, so repeat launches
+        reuse the cached verdict instead of re-hashing. Skipped on
+        first run (verify is deferred until settings close with a
+        confirmed folder) and while anything is already in flight."""
+        hub = self._hub
+        if hub.updater.running:
+            return
+        if hub.settings.state.first_run:
+            return
+        if not hub.settings.client_update_enabled:
+            return
+        hub.updater.start_verify()
+        self._refresh_footer()
 
     def _start_logo_fetch(self):
         """Background logo refresh (widget-shell parity, never blocks).

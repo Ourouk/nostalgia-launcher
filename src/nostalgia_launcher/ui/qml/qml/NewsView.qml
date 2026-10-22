@@ -162,6 +162,16 @@ Item {
         ColumnLayout {
             anchors.centerIn: parent
             spacing: 12
+            Image {
+                Layout.alignment: Qt.AlignHCenter
+                visible: launcherState.logoSource !== ""
+                source: launcherState.logoSource
+                sourceSize.height: 128
+                fillMode: Image.PreserveAspectFit
+                Layout.preferredHeight: 128
+                Layout.maximumWidth: 480
+                Accessible.name: "Server logo"
+            }
             Label {
                 Layout.alignment: Qt.AlignHCenter
                 text: "404"

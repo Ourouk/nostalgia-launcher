@@ -72,6 +72,9 @@ ApplicationWindow {
                 onActivated: (index) => settingsModel.requestSwitch(textAt(index))
                 Layout.preferredWidth: 320
                 Layout.maximumWidth: 420
+                Layout.preferredHeight: 28
+                Layout.topMargin: 6
+                Layout.bottomMargin: 6
                 // Elide long server names so the dropdown arrow stays
                 // visible (qmllint can't resolve profileCombo.displayText
                 // statically, but it is valid at runtime).
