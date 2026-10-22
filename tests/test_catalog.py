@@ -69,6 +69,40 @@ def test_validate_addon_normalizes_bad_refs():
     assert cleaned["branch"] is None
 
 
+def test_validate_addon_depends_namespaced():
+    cleaned = catalog.validate_addon(
+        {"name": "pfUI", "depends": ["mod:ClassicAPI"]}
+    )
+    assert cleaned["depends"] == ["mod:ClassicAPI"]
+    # Legacy bare strings stay accepted as addon: refs.
+    cleaned = catalog.validate_addon({"name": "x", "depends": ["SomeLib"]})
+    assert cleaned["depends"] == ["SomeLib"]
+    assert catalog.parse_depends_dep("SomeLib") == ("addon", "SomeLib")
+    assert catalog.parse_depends_dep("mod:ClassicAPI") == (
+        "mod",
+        "ClassicAPI",
+    )
+
+
+def test_validate_addon_depends_fail_closed():
+    assert (
+        catalog.validate_addon({"name": "x", "depends": ["bogus:Foo"]}) is None
+    )
+    assert catalog.validate_addon({"name": "x", "depends": ["mod:"]}) is None
+    assert catalog.validate_addon({"name": "x", "depends": ["mod:../e"]})
+    assert (
+        catalog.validate_addon({"name": "x", "depends": ["file:../evil"]})
+        is None
+    )
+    assert (
+        catalog.validate_addon({"name": "x", "depends": ["file:/abs"]}) is None
+    )
+    assert (
+        catalog.validate_addon({"name": "x", "depends": "mod:ClassicAPI"})
+        is None
+    )
+
+
 # ── mod validation ───────────────────────────────────────────────────────────
 
 

@@ -199,6 +199,50 @@ def _text(v) -> str:
     return v.strip() if isinstance(v, str) else ""
 
 
+#: Dependency kinds for addon ``depends`` entries (``"<kind>:<ref>"``).
+DEPENDS_KINDS = ("mod", "addon", "file")
+
+
+def parse_depends_dep(dep: str) -> tuple[str, str] | None:
+    """Split one ``depends`` entry into ``(kind, ref)``.
+
+    Bare strings without a colon are legacy and resolve as ``addon``.
+    Returns None for non-string input or empty refs."""
+    if not isinstance(dep, str):
+        return None
+    kind, sep, ref = dep.partition(":")
+    if not sep:
+        ref = dep.strip()
+        return ("addon", ref) if ref else None
+    kind, ref = kind.strip(), ref.strip()
+    return (kind, ref) if kind and ref else None
+
+
+def validate_depends(deps) -> list[str] | None:
+    """Cleaned ``depends`` list, or None when the value is malformed.
+
+    Fail-closed like other catalog fields: unknown kinds and empty refs
+    reject the whole value. Bare strings (legacy, no colon) are accepted
+    as ``addon:`` refs."""
+    if not isinstance(deps, list):
+        return None
+    cleaned = []
+    for d in deps:
+        parsed = parse_depends_dep(d)
+        if parsed is None:
+            return None
+        kind, ref = parsed
+        if kind not in DEPENDS_KINDS:
+            return None
+        if kind == "file":
+            from ..core.safety import safe_relpath
+
+            if not safe_relpath(ref):
+                return None
+        cleaned.append(d if isinstance(d, str) else f"{kind}:{ref}")
+    return cleaned
+
+
 def safe_ref(v) -> str | None:
     """A branch/tag/ref string (whitespace-free, no traversal), else None."""
     if v is None or v == "":
@@ -242,6 +286,14 @@ def validate_addon(entry: dict) -> dict | None:
         if isinstance(toc, dict)
         else {}
     )
+    depends = entry.get("depends")
+    if depends is None:
+        depends = []
+    else:
+        checked = validate_depends(depends)
+        if checked is None:
+            return None
+        depends = checked
     return {
         "name": name,
         "git": git,
@@ -249,6 +301,7 @@ def validate_addon(entry: dict) -> dict | None:
         "ref": safe_ref(entry.get("ref")),
         "description": description,
         "toc": toc,
+        "depends": depends,
         "recommended": bool(entry.get("recommended", False)),
         "blocked": bool(entry.get("blocked", False)),
     }
@@ -270,6 +323,8 @@ def merge_addons(remote: list, custom: list) -> list:
         for key in ("git", "branch", "ref", "description"):
             if entry.get(key) is not None:
                 base[key] = entry[key]
+        if entry.get("depends") is not None:
+            base["depends"] = entry["depends"]
         base["recommended"] = base.get("recommended") or entry.get(
             "recommended", False
         )

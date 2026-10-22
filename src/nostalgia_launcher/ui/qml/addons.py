@@ -40,7 +40,9 @@ def matches(folder, title, needle: str) -> bool:
     return flt in hay or flt.replace(" ", "") in hay.replace(" ", "")
 
 
-def row_warning(rec, installed: bool, installed_names, expected: str) -> str:
+def row_warning(
+    rec, installed: bool, installed_names, expected: str, unmet: list = ()
+) -> str:
     """First row warning, if any (widget AddonRow parity)."""
     toc = rec.toc or {}
     if toc.get("Interface") and toc["Interface"] != expected:
@@ -56,6 +58,8 @@ def row_warning(rec, installed: bool, installed_names, expected: str) -> str:
         missing = [d for d in deps if d not in installed_names]
         if missing:
             return "Missing deps: " + ", ".join(missing)
+    if unmet:
+        return "Needs: " + ", ".join(str(d) for d in unmet)
     return ""
 
 
@@ -87,6 +91,7 @@ def build_items(
     pending=None,
     mode="all",
     available=None,
+    unmet_deps=None,
 ):
     """Flat row items for the ListView (widget `_render` parity).
 
@@ -153,7 +158,10 @@ def build_items(
         is_installed = rec.folder in installed_names
         staged = pending.get(rec.folder)
         checked = bool(staged) if staged is not None else is_installed
-        warning = row_warning(rec, is_installed, installed_names, expected)
+        unmet = (unmet_deps or {}).get(rec.folder, ())
+        warning = row_warning(
+            rec, is_installed, installed_names, expected, unmet
+        )
         kind, text = row_status(rec, is_installed, warning)
         toc = rec.toc or {}
         git = rec.git or ""

@@ -667,6 +667,7 @@ class AddonsController:
                 "ref": a.get("ref"),
                 "toc": a.get("toc") or {},
                 "description": a.get("description"),
+                "depends": list(a.get("depends") or []),
                 "error": None,
             }
             # Same repo (or unknown source): last wins by norm (mirrors
@@ -706,6 +707,7 @@ class AddonsController:
                         "ref": None,
                         "toc": {},
                         "description": None,
+                        "depends": [],
                         "error": None,
                     }
                 )
@@ -729,6 +731,7 @@ class AddonsController:
                     "ref": None,
                     "toc": {},
                     "description": None,
+                    "depends": [],
                     "error": None,
                 }
                 available.append(rec)

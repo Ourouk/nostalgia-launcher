@@ -551,10 +551,52 @@ class QmlNostalgiaLauncherApp:
         model = self._addons_qml
         ctrl = self._hub.addons
 
+        def unmet_deps_for(rows):
+            """Catalog-declared deps not satisfied, keyed by addon folder.
+
+            Warning-only (never blocks install): mod: against present
+            client mods (ids + dlls.txt entries), addon: against installed
+            addon folders, file: against the client directory."""
+            try:
+                from ...services import mods as mods_service
+
+                client = (self._hub.addons._get_out_dir() or "").strip()
+                mods_state = self._hub.mods.state
+                present = {
+                    mid
+                    for mid, rec in mods_state.records.items()
+                    if rec.present
+                }
+                if client:
+                    try:
+                        entries = mods_service.read_dlls_entries(client)
+                    except Exception:
+                        entries = set()
+                    present |= set(entries)
+                    present |= {e.rsplit(".", 1)[0] for e in entries if e}
+                installed = set(ctrl.state.addons)
+            except Exception:
+                present, installed, client = set(), set(), ""
+            out = {}
+            for rec in rows:
+                deps = rec.depends if hasattr(rec, "depends") else []
+                if not deps:
+                    continue
+                missing = addons_service.unmet_depends(
+                    list(deps),
+                    mods_present=present,
+                    installed_addons=installed,
+                    client_dir=client,
+                )
+                if missing:
+                    out[rec.folder] = missing
+            return out
+
         def snapshot():
             state = ctrl.state
             footer_text, footer_color, cursor = ctrl.footer_state()
             ts = addons_service.catalog_last_updated()
+            rows = list(state.addons.values()) + list(state.available)
             return {
                 "items": build_items(
                     state,
@@ -564,6 +606,7 @@ class QmlNostalgiaLauncherApp:
                     pending=state.pending,
                     mode=model.current_filter_mode(),
                     available=[],
+                    unmet_deps=unmet_deps_for(rows),
                 ),
                 "updates_count": state.updates_count,
                 "apply_visible": bool(state.pending),
@@ -634,9 +677,17 @@ class QmlNostalgiaLauncherApp:
         def _refresh_browse():
             from ...core.helpers import strip_wow_colors
 
+            unmet = unmet_deps_for(ctrl.state.available)
             rows = []
             for rec in addon_browse_entries(ctrl.state):
                 toc = rec.toc or {}
+                desc = strip_wow_colors(
+                    toc.get("Notes") or rec.description or ""
+                )
+                needs = unmet.get(rec.folder, ())
+                if needs:
+                    suffix = "Requires: " + ", ".join(str(d) for d in needs)
+                    desc = f"{desc}\n{suffix}" if desc else suffix
                 rows.append(
                     {
                         "id": rec.folder,
@@ -644,9 +695,7 @@ class QmlNostalgiaLauncherApp:
                             toc.get("Title") or rec.folder
                         ),
                         "version": "",
-                        "description": strip_wow_colors(
-                            toc.get("Notes") or rec.description or ""
-                        ),
+                        "description": desc,
                         "repo_url": rec.git or "",
                     }
                 )

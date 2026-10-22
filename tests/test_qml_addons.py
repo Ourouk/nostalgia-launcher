@@ -147,6 +147,26 @@ def test_row_warning():
     assert "LibX" in row_warning(rec, True, {"a"}, "11200")
     assert row_warning(_rec("pfUI"), True, set(), "11200") == ""
     assert row_warning(_rec("a"), False, set(), "11200") == ""
+    rec = _rec("a", status="available")
+    warn = row_warning(rec, False, set(), "11200", ["mod:ClassicAPI"])
+    assert "ClassicAPI" in warn
+    assert row_status(rec, False, warn)[0] == "warning"
+
+
+def test_build_items_unmet_deps_warn():
+    state = _state(
+        addons={"pfUI": _rec("pfUI", status="upToDate")},
+        available=[_rec("pfUI")],
+    )
+    items = build_items(
+        state,
+        recommended=set(),
+        expected="11200",
+        unmet_deps={"pfUI": ["mod:ClassicAPI"]},
+    )
+    pfui = next(i for i in items if i["folder"] == "pfUI")
+    assert pfui["statusKind"] == "warning"
+    assert "ClassicAPI" in pfui["statusText"]
 
 
 # ── builder ───────────────────────────────────────────────────────────
