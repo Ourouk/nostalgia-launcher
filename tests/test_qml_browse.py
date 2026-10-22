@@ -214,3 +214,50 @@ def test_browse_addons_dialog_loads(engine):
     eng, _mods, _assets = engine
     root = eng.rootObjects()[0]
     assert root.findChild(QObject, "qmlBrowseAddonsDialog") is not None
+
+
+def test_set_selected_toggles_entry_role(model):
+    model.set_entries(_entries())
+    assert model.property("selectedCount") == 0
+    model.setSelected("a", True)
+    assert model.property("selectedCount") == 1
+    idx = model.index(0, 0)
+    assert model.data(idx, BrowseModel.SelectedRole) is True
+    # echo guard: same value again changes nothing
+    model.setSelected("a", True)
+    assert model.property("selectedCount") == 1
+    model.setSelected("a", False)
+    assert model.property("selectedCount") == 0
+    assert model.data(idx, BrowseModel.SelectedRole) is False
+
+
+def test_install_selected_chains_on_settle(model):
+    calls = []
+    model.set_entries(_entries())
+    model.set_install_handler(lambda eid: calls.append(eid) or True)
+    model.setSelected("a", True)
+    model.setSelected("b", True)
+    model.installSelected()
+    assert calls == ["a"]
+    assert model.property("busy") is True
+    assert model.property("selectedCount") == 0
+    # first install settles: the next queued entry starts, staying busy
+    model.set_running(False)
+    assert calls == ["a", "b"]
+    assert model.property("busy") is True
+    # queue drained: busy drops
+    model.set_running(False)
+    assert model.property("busy") is False
+
+
+def test_install_selected_skips_refused_starts(model):
+    calls = []
+    model.set_entries(_entries())
+    model.set_install_handler(lambda eid: calls.append(eid) or eid != "a")
+    model.setSelected("a", True)
+    model.setSelected("b", True)
+    model.installSelected()
+    assert calls == ["a", "b"]
+    assert model.property("busy") is True
+    model.set_running(False)
+    assert model.property("busy") is False

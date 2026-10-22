@@ -88,8 +88,6 @@ ApplicationWindow {
                 text: settingsModel.clientVersion
                 font.pointSize: 8
                 color: appTheme.colors["C_TEXT_DIM"]
-                ToolTip.text: "Declared client version for this profile"
-                ToolTip.visible: hovered
             }
             ToolButton {
                 objectName: "qmlGearButton"
