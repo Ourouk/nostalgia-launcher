@@ -552,7 +552,10 @@ def test_game_process_alive_true_while_group_survivor_runs(monkeypatch):
     monkeypatch.setattr(umu, "_pid_alive", lambda pid: pid == 7777)
     monkeypatch.setattr(umu.os, "listdir", lambda p: ["7777", "1"])
     monkeypatch.setattr(
-        umu.os, "getpgid", lambda pid: 9999 if pid == 7777 else 1
+        umu.os,
+        "getpgid",
+        lambda pid: 9999 if pid == 7777 else 1,
+        raising=False,
     )
     assert umu.game_process_alive(4242, 9999) is True
 
@@ -561,7 +564,7 @@ def test_game_process_alive_false_when_all_dead(monkeypatch):
     """Wrapper reaped and no group survivors → session gone (PLAY)."""
     monkeypatch.setattr(umu, "_pid_alive", lambda pid: False)
     monkeypatch.setattr(umu.os, "listdir", lambda p: ["1"])
-    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 1)
+    monkeypatch.setattr(umu.os, "getpgid", lambda pid: 1, raising=False)
     assert umu.game_process_alive(4242, 9999) is False
 
 

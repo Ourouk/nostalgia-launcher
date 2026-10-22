@@ -341,10 +341,14 @@ def _pid_alive(pid: int) -> bool:
     reaped-or-reparented dead — treat as not alive."""
     try:
         os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
     except PermissionError:
         return True
+    except OSError:
+        # ProcessLookupError (reaped) or a platform-specific failure
+        # (e.g. Windows: sig 0 is invalid → EINVAL). Either way the pid
+        # is not a known-live process — never report it alive, or the
+        # game watcher would keep TERMINATE forever.
+        return False
     try:
         with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
             parts = f.read().rsplit(")", 1)
@@ -375,11 +379,13 @@ def game_process_alive(pid: int, pgid: int) -> bool:
             try:
                 if os.getpgid(other) != pgid:
                     continue
-            except (OSError, PermissionError):
+            except (AttributeError, OSError, PermissionError):
+                # AttributeError: os.getpgid missing (Windows).
                 continue
             if _pid_alive(other):
                 return True
-    except OSError:
+    except (AttributeError, OSError):
+        # No /proc (Windows/macOS) or os.listdir itself unavailable.
         pass
     return False
 

@@ -1055,6 +1055,14 @@ def test_game_watcher_posts_exited_and_clears_state(
         "nostalgia_launcher.services.umu.compute_wine_prefix",
         lambda: "/prefix",
     )
+    # The watcher's tree poll must follow the fake proc, not whatever
+    # pids exist on this machine (1234 may be a live foreign pid, which
+    # reads as "tree alive" and hangs the waiter).
+    monkeypatch.setattr(
+        uc.UpdateController,
+        "_game_tree_alive",
+        lambda self, pid, pgid: not proc.exit_event.is_set(),
+    )
 
     controller.launch_game()
     controller._dispatcher.drain()
