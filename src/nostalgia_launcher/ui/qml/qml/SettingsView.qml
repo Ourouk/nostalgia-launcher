@@ -16,8 +16,9 @@ Dialog {
     objectName: "qmlSettingsDialog"
     title: "Settings"
     modal: true
-    width: Math.min(680, parent.width * 0.94)
-    height: Math.min(700, parent.height * 0.94)
+    // Fill the window: a four-tab working surface, not a confirmation.
+    width: parent.width
+    height: parent.height
     anchors.centerIn: parent
 
     header: ToolBar {

@@ -467,8 +467,8 @@ class AddonsModel(QAbstractListModel):
 
     @Slot()
     def checkForUpdates(self):
-        self.set_scanning(True)
-        self._call("check")
+        if self._call("check"):
+            self.set_scanning(True)
 
     @Slot()
     def requestBrowse(self):

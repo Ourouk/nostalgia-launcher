@@ -500,9 +500,8 @@ class ContentListModel(QAbstractListModel):
 
     @Slot()
     def reloadCatalog(self):
-        self.set_scanning(True)
-        if self._on_reload is not None:
-            self._on_reload()
+        if self._on_reload is not None and self._on_reload():
+            self.set_scanning(True)
 
     @Slot()
     def requestBrowse(self):
