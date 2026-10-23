@@ -60,7 +60,7 @@ def _embedded_hosts(config) -> list[str]:
 def trust_hosts(config) -> list[str]:
     """Every host the launcher would contact under this configuration.
 
-    Covers the registry/feed/download endpoints, the Discord button, the
+    Covers the registry/feed/download endpoints, the community button, the
     theme logo, and URLs embedded directly in the configuration. Sorted
     and de-duplicated; network-free.
     """
@@ -74,7 +74,8 @@ def trust_hosts(config) -> list[str]:
         config.assets_registry_url,
         config.download_fallback_url or "",
         config.download_torrent_url or "",
-        config.discord_url or "",
+        config.community_url or "",
+        (config.download_manifest or {}).get("url", ""),
     ]
     for url in urls:
         h = _host(url)
@@ -90,21 +91,47 @@ def trust_hosts(config) -> list[str]:
     return hosts
 
 
-def _catalog_summary(explicit_url: bool, embedded: int) -> str:
+def _catalog_summary(
+    explicit_url: bool, embedded: int, manifest: int = 0
+) -> str:
     """One-line description of where a content category comes from:
-    remote catalog URL(s), embedded entries, or both."""
-    if explicit_url and embedded:
-        return f"catalog + {embedded} embedded"
+    remote catalog URL(s), manifest-managed entries, embedded entries,
+    or a combination."""
+    parts: list[str] = []
     if explicit_url:
-        return "catalog"
+        parts.append("catalog")
+    if manifest:
+        parts.append(f"{manifest} manifest-managed")
     if embedded:
-        return f"{embedded} embedded"
-    return "not configured"
+        parts.append(f"{embedded} embedded")
+    return " + ".join(parts) if parts else "not configured"
+
+
+def _manifest_route_counts(config) -> tuple[int, int]:
+    """(asset_count, mod_count) of manifest routes in the config.
+
+    Network-free: counts the declared ``routes`` targets, so the trust
+    panel lists what the manifest *would* manage before anything is
+    fetched."""
+    block = getattr(config, "download_manifest", None)
+    if not isinstance(block, dict):
+        return 0, 0
+    routes = block.get("routes")
+    if not isinstance(routes, list):
+        return 0, 0
+    assets = sum(
+        1 for r in routes if isinstance(r, dict) and r.get("as") == "asset"
+    )
+    mods = sum(
+        1 for r in routes if isinstance(r, dict) and r.get("as") == "mod"
+    )
+    return assets, mods
 
 
 def trust_capabilities(config) -> list[tuple[str, bool, str]]:
-    """The four trust rows: (key, enabled, label) for client, mods,
-    addons and news. Network-free."""
+    """The five trust rows: (key, enabled, label) for client, mods,
+    addons, assets and news. Network-free — manifest counts come from
+    the config's declared routes, never a fetch."""
     has_client = bool(config.download_fallback_url or config.has_torrent())
     if config.download_fallback_url and config.has_torrent():
         client_detail = "BitTorrent + HTTPS archive"
@@ -115,15 +142,32 @@ def trust_capabilities(config) -> list[tuple[str, bool, str]]:
     else:
         client_detail = "not configured"
     addon_urls = [u for u in (config.addons_registry_urls or []) if u]
+    manifest_assets, manifest_mods = _manifest_route_counts(config)
+    has_manifest_mods = manifest_mods > 0
+    has_manifest_client_files = bool(
+        getattr(config, "download_manifest", None)
+    )
+    if has_manifest_client_files and (
+        config.download_fallback_url or config.has_torrent()
+    ):
+        client_detail = f"{client_detail} + manifest overlay"
+    elif has_manifest_client_files:
+        has_client = True
+        client_detail = "manifest overlay only"
     return [
         ("client", has_client, f"Client — {client_detail}"),
         (
             "mods",
-            bool(config.mods_registry_url or config.embedded_mods),
+            bool(
+                config.mods_registry_url
+                or config.embedded_mods
+                or has_manifest_mods
+            ),
             "Mods — "
             + _catalog_summary(
                 bool(config.mods_registry_url),
                 len(config.embedded_mods),
+                manifest_mods,
             ),
         ),
         (
@@ -131,6 +175,20 @@ def trust_capabilities(config) -> list[tuple[str, bool, str]]:
             bool(addon_urls or config.embedded_addons),
             "Addons — "
             + _catalog_summary(bool(addon_urls), len(config.embedded_addons)),
+        ),
+        (
+            "assets",
+            bool(
+                config.assets_registry_url
+                or config.embedded_assets
+                or manifest_assets > 0
+            ),
+            "Assets — "
+            + _catalog_summary(
+                bool(config.assets_registry_url),
+                len(config.embedded_assets or []),
+                manifest_assets,
+            ),
         ),
         (
             "news",
