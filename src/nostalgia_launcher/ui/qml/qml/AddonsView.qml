@@ -1,7 +1,7 @@
 // ADDONS tab (Phase 5b): legend + catalog
 // age + check-for-updates + search header, NEED UPDATE / INSTALLED /
 // AVAILABLE collapsible sections, rows (checkbox, ★, title, status action,
-// repo link, description, error), ★-recommended/Apply/footer-label footer.
+// repo link, description, error), ★-recommended/Uninstall/footer-label footer.
 // Reads the `addonsModel` context property (ui/qml/addons.py:AddonsModel).
 
 import QtQuick
@@ -75,7 +75,7 @@ ColumnLayout {
             }
             Label {
                 Layout.fillWidth: true
-                text: "☐ off = remove on Apply · ● = unapplied change"
+                text: "☑ = uninstall on confirm · ● = marked for uninstall"
                 font.pointSize: 9
                 color: appTheme.colors["C_TEXT_DIM"]
                 elide: Text.ElideRight
@@ -146,7 +146,7 @@ ColumnLayout {
                 Layout.rightMargin: 12
                 spacing: 4
                 CheckBox {
-                    Accessible.name: "Install or remove " + model.folder
+                    Accessible.name: "Uninstall " + model.folder
                     checked: model.checked || false
                     onCheckedChanged: addonsModel.toggleEntry(
                         model.folder, checked)
@@ -156,7 +156,7 @@ ColumnLayout {
                     font.pointSize: 8
                     color: appTheme.colors["C_GOLD"]
                     visible: model.staged || false
-                    Accessible.name: "Unapplied change for " + model.folder
+                    Accessible.name: "Marked for uninstall: " + model.folder
                 }
                 Label {
                     text: "★"
@@ -285,9 +285,10 @@ ColumnLayout {
         Item { Layout.fillWidth: true }
         Button {
             objectName: "qmlAddonsApply"
-            text: addonsModel.busy ? "Applying…" : (addonsModel.pendingCount > 0 ? "Apply (" + addonsModel.pendingCount + ")" : "Apply")
-            enabled: !addonsModel.busy && addonsModel.applyVisible
+            text: addonsModel.busy ? "Uninstalling…" : (addonsModel.pendingCount > 0 ? "Uninstall (" + addonsModel.pendingCount + ")" : "Uninstall")
+            enabled: !addonsModel.busy && addonsModel.pendingCount > 0
             highlighted: true
+            flat: true
             onClicked: addonsModel.applyAll()
         }
         Button {

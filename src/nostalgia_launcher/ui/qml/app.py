@@ -475,7 +475,11 @@ class QmlNostalgiaLauncherApp:
             )
 
         def on_toggle(eid, checked):
-            ctrl.toggle(eid, checked)
+            # Select-to-uninstall: a tick stages removal
+            # (pending.enabled False); unticking clears the stage.
+            ctrl.toggle(eid, not checked)
+            if not checked:
+                ctrl.state.pending.pop(eid, None)
             model.refresh()
 
         model._extras_on_top = op_kind == "assets"
@@ -627,11 +631,13 @@ class QmlNostalgiaLauncherApp:
             }
 
         def on_toggle(folder, checked):
-            is_installed = folder in ctrl.state.addons
-            if checked == is_installed:
-                ctrl.state.pending.pop(folder, None)
+            # Select-to-uninstall: a tick stages removal
+            # (pending False = enabled-off). Only an uninstall tick is
+            # staged — anything else clears the stage.
+            if checked:
+                ctrl.toggle(folder, False)
             else:
-                ctrl.toggle(folder, checked)
+                ctrl.state.pending.pop(folder, None)
             model.refresh()
 
         def on_update_one(folder):

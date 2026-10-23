@@ -212,15 +212,16 @@ def test_build_row_fields():
     items = build_items(state, recommended={"A"}, expected="11200")
     row = next(i for i in items if i["kind"] == "row")
     assert row["title"] == "Red"
-    assert row["checked"] is True
+    # Installed but untouched: checkbox off (select-to-uninstall).
+    assert row["checked"] is False
     assert row["recommended"] is True
     assert row["repoUrl"] == "https://example.test/a"
 
 
 def test_build_pending_overrides_checked():
-    """Staged checkbox changes render instead of snapping back (mods
-    build_rows parity): a checked AVAILABLE row stays checked, an
-    unchecked INSTALLED row stays unchecked."""
+    """Staged checkbox changes render instead of snapping back: a ticked
+    (staged-for-uninstall) INSTALLED row stays checked, everything
+    else stays unchecked."""
     state = _state(
         addons={"A": _rec("A")},
         available=[_rec("B", git="https://example.test/b.git")],
@@ -229,7 +230,7 @@ def test_build_pending_overrides_checked():
         state, recommended=set(), expected="11200", pending={"A": False}
     )
     by_folder = {i.get("folder"): i for i in items if i["kind"] == "row"}
-    assert by_folder["A"]["checked"] is False
+    assert by_folder["A"]["checked"] is True
     assert by_folder["B"]["checked"] is False
     items = build_items(
         state,
@@ -238,12 +239,14 @@ def test_build_pending_overrides_checked():
         pending={"A": False, "B": True},
     )
     by_folder = {i.get("folder"): i for i in items if i["kind"] == "row"}
-    assert by_folder["A"]["checked"] is False
-    assert by_folder["B"]["checked"] is True
-    # Without pending the on-disk truth renders as before.
+    # Only an unambiguous uninstall tick (False) checks the box — a
+    # True staging entry never does.
+    assert by_folder["A"]["checked"] is True
+    assert by_folder["B"]["checked"] is False
+    # Without pending every installed row renders unchecked.
     items = build_items(state, recommended=set(), expected="11200")
     by_folder = {i.get("folder"): i for i in items if i["kind"] == "row"}
-    assert by_folder["A"]["checked"] is True
+    assert by_folder["A"]["checked"] is False
     assert by_folder["B"]["checked"] is False
 
 
@@ -422,7 +425,7 @@ def test_toggleEntry_echo_dropped():
                     "kind": "row",
                     "folder": "A",
                     "title": "A",
-                    "checked": True,
+                    "checked": False,
                     "recommended": False,
                     "statusKind": "none",
                     "statusText": "",
@@ -445,14 +448,14 @@ def test_toggleEntry_echo_dropped():
             ]
         }
     )
-    # Echoes of the current state are dropped…
-    model.toggleEntry("A", True)
+    # Echoes of the current (unchecked) state are dropped…
+    model.toggleEntry("A", False)
     model.toggleEntry("B", False)
     assert calls == []
-    # …while real user flips still reach the handler.
-    model.toggleEntry("A", False)
+    # …while real user ticks still reach the handler.
+    model.toggleEntry("A", True)
     model.toggleEntry("B", True)
-    assert calls == [("A", False), ("B", True)]
+    assert calls == [("A", True), ("B", True)]
 
 
 def test_all_installed_rows_render(engine, qapp):
@@ -479,7 +482,7 @@ def test_all_installed_rows_render(engine, qapp):
                     "kind": "row",
                     "folder": folder,
                     "title": folder,
-                    "checked": True,
+                    "checked": False,
                     "recommended": False,
                     "statusKind": "none",
                     "statusText": "",
@@ -504,7 +507,8 @@ def test_all_installed_rows_render(engine, qapp):
 
 
 def _pending_snapshot(pending):
-    """Snapshot provider shaped like app.py: pending overrides checked."""
+    """Snapshot provider shaped like app.py: uninstall ticks render
+    checked (stored pending False = staged for removal)."""
 
     def provider():
         items = [
@@ -512,7 +516,7 @@ def _pending_snapshot(pending):
                 "kind": "row",
                 "folder": "Alpha",
                 "title": "Alpha",
-                "checked": True,
+                "checked": False,
                 "recommended": False,
                 "statusKind": "none",
                 "statusText": "",
@@ -535,8 +539,8 @@ def _pending_snapshot(pending):
         ]
         for item in items:
             staged = pending.get(item.get("folder", ""))
-            if item.get("kind") == "row" and staged is not None:
-                item["checked"] = bool(staged)
+            if item.get("kind") == "row" and staged is False:
+                item["checked"] = True
         return {"items": items, "apply_visible": bool(pending)}
 
     return provider
@@ -557,8 +561,8 @@ def _model_checked(model, folder):
 
 
 def test_staged_toggle_stays_visible(engine, qapp):
-    """Staging a checkbox survives the refresh: the row keeps the staged
-    state and Apply appears (previously the tick snapped back)."""
+    """Staging a checkbox survives the refresh: the ticked row stays
+    checked and Apply appears (previously the tick snapped back)."""
     eng, addons = engine
     root = eng.rootObjects()[0]
     root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 2)
@@ -569,11 +573,12 @@ def test_staged_toggle_stays_visible(engine, qapp):
 
     def on_toggle(folder, checked):
         toggles.append((folder, checked))
-        installed = folder == "Alpha"  # on-disk truth in this fixture
-        if checked == installed:
-            pending.pop(folder, None)
+        # Select-to-uninstall glue (app.py parity): a tick stages
+        # removal (stored False); unticking clears the stage.
+        if checked:
+            pending[folder] = False
         else:
-            pending[folder] = checked
+            pending.pop(folder, None)
         addons.refresh()
 
     addons.set_snapshot_provider(_pending_snapshot(pending))
@@ -582,35 +587,34 @@ def test_staged_toggle_stays_visible(engine, qapp):
     for _ in range(6):
         qapp.processEvents()
 
-    # Stage an install and a removal through the model's slot (user flip).
+    # Stage two uninstalls through the model's slot (user ticks).
     addons.toggleEntry("Beta", True)
-    addons.toggleEntry("Alpha", False)
+    addons.toggleEntry("Alpha", True)
     for _ in range(6):
         qapp.processEvents()
 
-    assert toggles == [("Beta", True), ("Alpha", False)]
-    assert pending == {"Beta": True, "Alpha": False}
+    assert toggles == [("Beta", True), ("Alpha", True)]
+    assert pending == {"Beta": False, "Alpha": False}
     assert addons.property("applyVisible") is True
     assert _model_checked(addons, "Beta") == ("found", True)
-    assert _model_checked(addons, "Alpha") == ("found", False)
+    assert _model_checked(addons, "Alpha") == ("found", True)
 
 
 def test_staged_toggle_revert_restores(engine, qapp):
-    """Flipping a staged row back to its on-disk state clears pending and
-    restores the row (no stuck checkbox, no phantom Apply)."""
+    """Unticking a staged row clears pending and restores the row
+    (no stuck checkbox, no phantom Apply)."""
     eng, addons = engine
     root = eng.rootObjects()[0]
     root.findChild(QObject, "qmlNavBar").setProperty("currentIndex", 2)
     qapp.processEvents()
 
-    pending = {"Beta": True}
+    pending = {"Beta": False}
 
     def on_toggle(folder, checked):
-        installed = folder == "Alpha"
-        if checked == installed:
-            pending.pop(folder, None)
+        if checked:
+            pending[folder] = False
         else:
-            pending[folder] = checked
+            pending.pop(folder, None)
         addons.refresh()
 
     addons.set_snapshot_provider(_pending_snapshot(pending))

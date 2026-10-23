@@ -72,8 +72,13 @@ Config: `server.download.torrent.{torrent_url, magnet, update?}` +
 (`folder`/`zip`/`rar`). `.torrent` wins when both URL and magnet are set.
 `has_exe` = configured client exe (`server.client_executable`, default `WoW.exe`, case-insensitive) or external-launcher exe present.
 Manifest entries own a `manifest:`-prefixed stale namespace so the update
-path stays uniform; the manifest's `sha256` is parsed/validated but not
-yet enforced (existence-only staleness).
+path stays uniform; the stale set shows stripped in the UPDATE tab
+(`UpdateFilesModel` strips one leading `manifest:` for display, so
+download progress on the stripped path marks the listed row instead of
+appending a duplicate). Staleness is content-hash decided: missing →
+stale; present with a non-empty `sha256` → stale on size mismatch (no
+hash I/O) or sha256 mismatch; empty-sha entries keep
+existence-only staleness. The version cursor is informational only.
 
 ## 2. Source resolution
 
@@ -98,8 +103,8 @@ yet enforced (existence-only staleness).
 3. Manifest overlay (`stages_manifest.split_manifest_paths`), when
    `server.download.manifest` is configured: fetch + parse the upstream
    manifest (HTTPS, 2 MiB cap, `__manifest_snapshot__` cache, offline
-   serves cache); post `TorrentReachable`, then existence-compare listed
-   paths against the client and post `TorrentUpToDate` /
+   serves cache); post `TorrentReachable`, then size-precheck + sha256
+   compare listed entries against the client and post `TorrentUpToDate` /
    `TorrentDiffReady(manifest:…)` (sorted, `manifest:`-prefixed). A
    reachable manifest owns the verdict (the torrent base is a
    third-party client the manifest publisher does not version).
@@ -143,9 +148,11 @@ entries first).
 
 - `manifest:` paths download first via `_manifest_overlay_download()`:
   HTTPS from each entry's own `download_url` (`download_file` resume +
-  retry, per-file progress), `remove_wdb`, record version under
-  `__manifest_installed__`. Failure posts `UpdateFailed`. Manifest-only
-  stale set → `UpdateCompleted` without touching torrent.
+  retry, per-file progress), sha256-gated per entry (mismatch →
+  discard + `UpdateFailed`, empty sha skips the gate), `remove_wdb`,
+  record version under `__manifest_installed__`. Failure posts
+  `UpdateFailed`. Manifest-only stale set → `UpdateCompleted` without
+  touching torrent.
 - Remaining (non-`manifest:`) paths flow to the torrent stage below
   (`_torrent_stage.torrent_allowed` policy — frozen/magnet-only leaves
   torrent-owned paths unpatched):

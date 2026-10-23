@@ -32,11 +32,16 @@ def is_server_managed(entry: dict) -> bool:
 def build_rows(entries, state, *, version_of, action_for):
     """Flatten registry + state into role dicts, sorted by name.
 
-    `version_of(entry, rec, state) -> str` and
-    `action_for(eid) -> "retry" | "update" | None` come from the tab
-    glue. Server-managed rows carry ``serverManaged: True`` — the QML
-    delegate renders them locked (badge, disabled checkbox, no action
-    button).
+    The manage tab is a select-to-uninstall list: ``enabled`` is True
+    only when the entry is staged for removal (the checkbox tick).
+    Unticked rows render unchecked; ``staged`` mirrors the tick so the
+    QML ● dot marks rows queued for uninstall. The stored
+    ``pending.enabled`` keeps its worker meaning (False = uninstall),
+    so a tick maps to ``pending.enabled is False``.
+    ``version_of``, ``action_for(eid) -> "retry" | "update" | None``
+    come from the tab glue. Server-managed rows carry
+    ``serverManaged: True`` — the QML delegate renders them locked
+    (badge, disabled checkbox, no action button).
     """
     recs = getattr(state, "records", {}) or {}
     pending = getattr(state, "pending", {}) or {}
@@ -45,12 +50,8 @@ def build_rows(entries, state, *, version_of, action_for):
         eid = entry["id"]
         rec = recs.get(eid)
         pend = pending.get(eid)
-        if pend is not None and pend.enabled is not None:
-            enabled = bool(pend.enabled)
-        elif rec is not None:
-            enabled = bool(rec.enabled)
-        else:
-            enabled = False
+        pend_enabled = getattr(pend, "enabled", None)
+        enabled = pend is not None and pend_enabled is False
         rows.append(
             {
                 "eid": eid,
@@ -70,7 +71,7 @@ def build_rows(entries, state, *, version_of, action_for):
                 "serverManaged": is_server_managed(entry),
                 "action": action_for(eid) or "",
                 "error": (rec.error if rec is not None else None) or "",
-                "staged": pend is not None,
+                "staged": enabled,
             }
         )
     return rows

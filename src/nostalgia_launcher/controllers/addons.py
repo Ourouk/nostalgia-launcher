@@ -845,7 +845,12 @@ class AddonsController:
             rec["status"] = "outOfDate"
 
     def toggle(self, folder: str, enabled: bool):
-        """Record a pending checkbox change for the addon."""
+        """Record a pending checkbox change for the addon.
+
+        The manage tab is select-to-uninstall: a tick passes
+        ``enabled=False`` (staged for removal); unticking clears the
+        stage via ``pending.pop`` in the tab glue.
+        """
         self.state.pending[folder] = enabled
 
     def add_custom_entry(self, entry: dict) -> str | None:
@@ -857,10 +862,18 @@ class AddonsController:
         return catalog.add_custom_entry("addons", entry)
 
     def apply_pending(self) -> bool:
-        """Install/update checked addons and remove unchecked ones.
+        """Uninstall addons staged (ticked) for removal.
 
+        Installs never flow through pending: the Browse dialog installs
+        directly via ``apply()``. Only ``pending[folder] is False``
+        (enabled-off) entries are acted on; anything else is dropped.
         Returns True when the worker actually started."""
-        if self.state.busy or not self.state.pending:
+        staged = [
+            folder
+            for folder, enabled in (self.state.pending or {}).items()
+            if enabled is False
+        ]
+        if self.state.busy or not staged:
             return False
         client = (self._get_out_dir() or "").strip()
         if not client:
@@ -870,7 +883,7 @@ class AddonsController:
             return False
         self.state.busy = True
         self.state.installing = True
-        self._dispatcher.post(StatusChanged("Applying addon changes…"))
+        self._dispatcher.post(StatusChanged("Uninstalling addons…"))
         threading.Thread(
             target=self._apply_pending_worker, args=(client,), daemon=True
         ).start()
@@ -1222,13 +1235,14 @@ class AddonsController:
             self.verify(remote_checks=False)
 
     def _apply_pending_worker(self, client: str):
-        """Install checked addons and remove unchecked ones from pending."""
+        """Remove addons staged (ticked) for uninstall."""
         pending = self.state.pending
         failed = []
 
-        # Process removals first (unchecked addons).
+        # Only uninstall ticks are acted on — installs come from the
+        # Browse dialog via apply(), never through pending.
         for folder, enabled in list(pending.items()):
-            if enabled:
+            if enabled is not False:
                 continue
             try:
                 dirp = os.path.join(addons.addons_path(client), folder)
@@ -1250,43 +1264,6 @@ class AddonsController:
                     )
                 )
                 failed.append(folder)
-
-        # Process installs/updates (checked addons), grouped by repo so
-        # one archive fetch serves every folder from the same repo.
-        wanted = []
-        for folder, enabled in list(pending.items()):
-            if not enabled:
-                continue
-            rec = next(
-                (a for a in self.state.available if a.folder == folder),
-                None,
-            )
-            if rec is None:
-                continue
-            wanted.append(rec)
-        for (git, branch, ref), group in self._group_recs(
-            [
-                {
-                    "folder": r.folder,
-                    "git": r.git,
-                    "branch": r.branch,
-                    "ref": r.ref,
-                }
-                for r in wanted
-            ]
-        ):
-            folders = [rec["folder"] for rec in group]
-            try:
-                if not git or not addons.is_allowed_git_url(git):
-                    raise RuntimeError(
-                        "Addon URL is not from an allowed git host"
-                    )
-                self._install_group(client, git, branch, ref, folders)
-                self._dispatcher.post(AddonsLoaded(self.state))
-            except Exception as e:
-                err = describe_install_error(e)
-                self._fail_group(folders, git, err)
-                failed.extend(folders)
 
         self.state.pending = {}
         self.state.busy = False

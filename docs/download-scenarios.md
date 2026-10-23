@@ -62,9 +62,12 @@ Notes:
 
 - The manifest snapshot is fetched over HTTPS (2 MiB cap), cached under
   `__manifest_snapshot__`, and served from cache offline.
-- Staleness is **existence-only**: a listed path missing from the client
-  is stale. The per-entry `sha256` is parsed and shape-validated but not
-  yet enforced on download.
+- Staleness is **content-hash decided**: missing → stale; present with
+  a non-empty `sha256` → stale on size mismatch (no hash I/O) or sha256
+  mismatch; empty-sha entries keep existence-only staleness. The
+  version cursor is informational only.
+- Each downloaded file is sha256-gated against its manifest entry
+  (mismatch → discard + `UpdateFailed`; empty sha skips the gate).
 - The installed version cursor is recorded under
   `__manifest_installed__` after a successful overlay download.
 - Manifest-routed entries also appear as **bundled entries** in the

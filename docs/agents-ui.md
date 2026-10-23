@@ -47,18 +47,11 @@ beside them) plus the toolkit glue in `ui/` (`bridge.py`, `theme.py`,
   childItems walks or role-derived `objectName` (findChild-invisible).
 
 - Button language is all-caps for primary/global actions (`UPDATE`/`PLAY`,
-  nav tabs) and Title Case for panel actions ("Apply", "Retry") — machine
-  strings (`"retry"`/`"update"`) stay in models, labels in QML.
-- Every interactive element that carries an `objectName` keeps it stable:
-  engine tests find nodes via `findChild(QObject, "…")`.
-- Icon-only controls get `ToolTip.text` + `Accessible.name`.
-- Context properties are engine-global: `launcherState`, `appTheme`,
-  `newsModel`, `updateState`, `modsModel`, `assetsModel`, `addonsModel`,
-  `settingsModel`, `logModel`, `wizard`, `customModModel`,
-  `customAddonModel`, `customAssetModel`, `linuxModel`. Do NOT name a
-  context property `theme` — it collides with a QtQuick.Controls internal
-  and binds null (use `appTheme`).
-- Destructive actions confirm via `MessageDialog`; checkbox echo
+  nav tabs) and Title Case for panel actions ("Uninstall", "Retry", "Install
+  Recommended") — machine strings (`"retry"`/`"update"`) stay in models,
+  labels in QML.
+- Destructive actions run without a confirm dialog on the manage tabs
+  (ticking + Uninstall is the confirm); checkbox echo
   (`onCheckedChanged` re-firing on programmatic refresh) is dropped
   model-side by comparing against current state.
 

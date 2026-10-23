@@ -218,9 +218,18 @@ def addon_browse_entries(state) -> list:
 
 
 def tab_rows(entries, state) -> list:
-    """Registry entries the manage-tab may show: anything with a record
-    (installed, failed, or staged) — never pure catalog entries."""
+    """Registry entries the manage-tab may show: installed entries
+    (present on disk, or staged for uninstall) — never pure catalog
+    entries. Installs happen in the Browse dialog; this tab only
+    lists what can be uninstalled."""
     recs = getattr(state, "records", {}) or {}
     pending = getattr(state, "pending", {}) or {}
-    known = set(recs) | set(pending)
+    staged = set()
+    for eid, pend in pending.items():
+        enabled = getattr(pend, "enabled", pend)
+        if enabled is False:
+            staged.add(eid)
+    known = {
+        eid for eid, rec in recs.items() if getattr(rec, "present", False)
+    } | staged
     return [e for e in entries or [] if e["id"] in known]

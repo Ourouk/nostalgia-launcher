@@ -1,7 +1,7 @@
 // Shared MODS/ASSETS list (Phase 5):
 // banner (title + search + All/Installed/Updates chips + reload), rows
 // (checkbox, name/version, retry/update action, repo link, description,
-// error), empty state, Apply footer. Instantiated per tab with a
+// error), empty state, Uninstall footer. Instantiated per tab with a
 // `contentModel` (ui/qml/content.py:ContentListModel) plus tab wording.
 
 import QtQuick
@@ -155,7 +155,7 @@ ColumnLayout {
                 Layout.rightMargin: 12
                 spacing: 4
                 CheckBox {
-                    Accessible.name: "Enable " + model.name
+                    Accessible.name: "Uninstall " + model.name
                     checked: model.enabled
                     enabled: !(model.serverManaged || false)
                     onCheckedChanged: root.contentModel.toggleEntry(model.eid, checked)
@@ -165,7 +165,7 @@ ColumnLayout {
                     font.pointSize: 8
                     color: appTheme.colors["C_GOLD"]
                     visible: (model.staged || false) && !(model.serverManaged || false)
-                    Accessible.name: "Unapplied change for " + model.name
+                    Accessible.name: "Marked for uninstall: " + model.name
                 }
                 Label {
                     text: "SERVER"
@@ -324,8 +324,8 @@ ColumnLayout {
         spacing: 8
         Button {
             objectName: "qmlContentApply"
-            text: root.contentModel.busy ? "Applying…" : (root.contentModel.pendingCount > 0 ? "Apply (" + root.contentModel.pendingCount + ")" : "Apply")
-            enabled: !root.contentModel.busy && root.contentModel.applyVisible
+            text: root.contentModel.busy ? "Uninstalling…" : (root.contentModel.pendingCount > 0 ? "Uninstall (" + root.contentModel.pendingCount + ")" : "Uninstall")
+            enabled: !root.contentModel.busy && root.contentModel.pendingCount > 0
             highlighted: true
             onClicked: root.contentModel.applyAll()
         }

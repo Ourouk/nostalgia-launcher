@@ -249,9 +249,9 @@ the QLocalServer guard remains authoritative there.
   against the snapshot captured at install, cached under
   `"asset_probe_cache"`; any probe failure is conservative: never stale) →
   nothing provided ⇒ never stale. Manifest-bundled assets carry the
-  manifest's version cursor as their `version` (existence-gated staleness
-  in the overlay path) and their per-entry `sha256` is parsed/validated
-  but not yet enforced on download — see the manifest section below.
+  manifest's version cursor as their `version` and their per-entry `sha256`
+  is hash-enforced in the overlay path (size pre-check + sha256 staleness,
+  post-download sha256 gate) — see the manifest section below.
   A missing file is an install decision,
   not an update. Downloads stream through the hardened transport with the
   SHA-1 computed on the fly and install via temp-file + rename. A

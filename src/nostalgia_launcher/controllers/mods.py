@@ -116,6 +116,12 @@ class ModsController:
         threading.Thread(target=worker, daemon=True).start()
 
     def toggle(self, mod_id: str, enabled: bool):
+        """Record a pending checkbox change for the mod.
+
+        The manage tab is select-to-uninstall: a tick arrives as
+        ``enabled=False`` (staged for removal); unticking clears the
+        stage via ``pending.pop`` in the tab glue.
+        """
         from ..services import manifest as _manifest
 
         mod = next(

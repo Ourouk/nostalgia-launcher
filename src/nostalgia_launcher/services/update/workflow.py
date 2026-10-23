@@ -496,7 +496,9 @@ class VerifyWorker(WorkerBase):
         TorrentDiffReady(manifest:...) / TorrentUpToDate and owns the
         verdict — the torrent base is a third-party client the server
         does not version, so manifest staleness is authoritative.
-        Unreachable manifest → False (fall through to torrent logic).
+        Staleness is size + sha256 per entry; the version cursor is
+        informational only. Unreachable manifest → False (fall through
+        to torrent logic).
         """
         from .. import manifest as _manifest
 
@@ -520,23 +522,10 @@ class VerifyWorker(WorkerBase):
         )
         update_avail, version = _manifest.manifest_update_available(snapshot)
         if update_avail and version:
-            # Version cursor moved since install: every manifest-listed
-            # file may have new content at a known-good path, so
-            # existence alone can't clear it — all entries go stale.
-            listed = sorted(
-                e["path"]
-                for e in entries
-                if isinstance(e, dict)
-                and isinstance(e.get("path"), str)
-                and e.get("path")
-            )
-            missing = set(stale)
-            stale = listed
             self.log(
                 f"[manifest] Version cursor moved ({version}) — "
-                f"{len(listed)} file(s) refresh "
-                f"({len(missing)} missing).",
-                "acct",
+                "staleness decided by content hash.",
+                "dim",
             )
         if not stale:
             self.log("Everything is up to date (manifest).", "ok")
@@ -779,8 +768,9 @@ class UpdateWorker(WorkerBase):
 
         Returns True when every path landed (caller continues with any
         remaining torrent work); posts UpdateFailed + False on error.
-        Staleness here is version-cursor/existence only — the version
-        is recorded on success so the next verify is quiet.
+        Each downloaded file is sha256-gated against its manifest
+        entry — the version is recorded on success so the next verify
+        is quiet.
         """
         from .. import manifest as _manifest
 
@@ -850,6 +840,35 @@ class UpdateWorker(WorkerBase):
                     UpdateFailed(message=str(e), op="update")
                 )
                 return False
+            want = entry.get("sha256", "")
+            want = want.strip().lower() if isinstance(want, str) else ""
+            if want:
+                from ...core.filesystem import sha256_file as _sha256
+
+                try:
+                    got = _sha256(dest)
+                except OSError as e:
+                    self.log(f"[manifest] Could not hash {path}: {e}", "err")
+                    self._dispatcher.post(
+                        UpdateFailed(
+                            message=f"manifest sha256 mismatch: {path}",
+                            op="update",
+                        )
+                    )
+                    return False
+                if got != want:
+                    try:
+                        os.remove(dest)
+                    except OSError:
+                        pass
+                    self.log(f"[manifest] sha256 mismatch: {path}", "err")
+                    self._dispatcher.post(
+                        UpdateFailed(
+                            message=f"manifest sha256 mismatch: {path}",
+                            op="update",
+                        )
+                    )
+                    return False
         _manifest.remember_installed_version(
             snapshot.get("version", ""), snapshot.get("url", "")
         )

@@ -380,10 +380,22 @@ class NewsFeedModel(QAbstractListModel):
 
 
 class UpdateFilesModel(QAbstractListModel):
-    """Updated-files list for QML (mirrors panel file tracking)."""
+    """Updated-files list for QML (mirrors panel file tracking).
+
+    Manifest-owned paths arrive ``manifest:``-prefixed for routing;
+    the tab shows them stripped (torrent paths have no prefix, so the
+    raw prefix would only ever appear on manifest updates).
+    """
 
     NameRole = Qt.ItemDataRole.UserRole + 1
     DoneRole = Qt.ItemDataRole.UserRole + 2
+
+    @staticmethod
+    def _display(path) -> str:
+        name = str(path).replace("\\", "/")
+        if name.startswith("manifest:"):
+            return name[len("manifest:") :]
+        return name
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -415,14 +427,14 @@ class UpdateFilesModel(QAbstractListModel):
         """Replace the list (separators normalized to "/"), all pending."""
         self.beginResetModel()
         try:
-            self._files = [str(f).replace("\\", "/") for f in (files or [])]
+            self._files = [self._display(f) for f in (files or [])]
             self._done = set()
         finally:
             self.endResetModel()
 
     def mark_done(self, path: str) -> bool:
         """Mark a listed file done; True when it was listed."""
-        name = str(path).replace("\\", "/")
+        name = self._display(path)
         if name not in self._files:
             return False
         if name not in self._done:
@@ -434,7 +446,7 @@ class UpdateFilesModel(QAbstractListModel):
 
     def append_done(self, path: str):
         """Append an already-updated file (dedups against listed ones)."""
-        name = str(path).replace("\\", "/")
+        name = self._display(path)
         if name in self._files:
             self.mark_done(name)
             return

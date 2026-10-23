@@ -142,7 +142,7 @@ def test_build_rows_sorts_and_maps():
 def test_build_rows_pending_overrides_enabled():
     state = SimpleNamespace(
         records={"a-mod": _rec(enabled=False)},
-        pending={"a-mod": SimpleNamespace(enabled=True)},
+        pending={"a-mod": SimpleNamespace(enabled=False)},
         latest_versions={},
     )
     rows = build_rows(
@@ -151,7 +151,26 @@ def test_build_rows_pending_overrides_enabled():
         version_of=lambda e, r, s: "unknown",
         action_for=lambda eid: None,
     )
+    # A tick stages removal: pending.enabled False → checked on.
     assert rows[0]["enabled"] is True
+    assert rows[0]["staged"] is True
+
+
+def test_build_rows_unticked_by_default():
+    state = SimpleNamespace(
+        records={"a-mod": _rec(enabled=True, present=True)},
+        pending={},
+        latest_versions={},
+    )
+    rows = build_rows(
+        [ENTRIES[1]],
+        state,
+        version_of=lambda e, r, s: "unknown",
+        action_for=lambda eid: None,
+    )
+    # Installed but untouched: checkbox off, not staged.
+    assert rows[0]["enabled"] is False
+    assert rows[0]["staged"] is False
 
 
 def test_build_rows_marks_server_managed():
@@ -273,8 +292,11 @@ def test_toggle_echo_guard(model):
     calls = []
     model.set_handlers(toggle=lambda eid, c: calls.append((eid, c)))
     _snapshot(model)
+    # Row "a" renders checked=True (staged for uninstall): echoing the
+    # tick reaches no handler…
     model.toggleEntry("a", True)
     assert calls == []
+    # …while unticking flips through to the handler.
     model.toggleEntry("a", False)
     assert calls == [("a", False)]
     model.toggleEntry("missing", True)
@@ -572,15 +594,29 @@ def test_tab_rows_excludes_not_installed():
     assert [r["id"] for r in tab_rows(entries, state)] == ["a"]
 
 
-def test_tab_rows_keeps_errored_and_staged():
+def test_tab_rows_uninstall_staged_only():
+    """The manage tab is installed-only: present records plus rows
+    staged for uninstall — never error-only or install-staged rows."""
     from nostalgia_launcher.ui.qml.browse import tab_rows
 
     entries = [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}]
     state = SimpleNamespace(
-        records={"a": SimpleNamespace(present=False)},
-        pending={"b": SimpleNamespace(enabled=True)},
+        records={
+            "a": SimpleNamespace(present=False),
+            "b": SimpleNamespace(present=True),
+        },
+        pending={
+            "a": SimpleNamespace(enabled=False),
+            "b": SimpleNamespace(enabled=True),
+        },
     )
+    # b is present; a stays only because it is staged for uninstall.
+    # The enabled=True staging entry is not an uninstall stage.
     assert [r["id"] for r in tab_rows(entries, state)] == ["a", "b"]
+    state2 = SimpleNamespace(
+        records={"a": SimpleNamespace(present=False)}, pending={}
+    )
+    assert tab_rows(entries, state2) == []
 
 
 def test_assets_extras_returns_sections_first():

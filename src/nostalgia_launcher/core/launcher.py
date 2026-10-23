@@ -70,8 +70,8 @@ acquisition:
   a sibling of ``torrent``/``http``, not a child of ``http``.)
 * ``manifest`` — optional upstream file-list overlay (``url`` + ``schema`` +
   ``routes``; see ``services/manifest.py``). Server-owned files layered over
-  the base client, verified by existence and downloaded per-file over HTTPS.
-  Each entry's ``sha256`` is parsed and shape-validated but not yet enforced.
+  the base client, verified per entry by size pre-check + ``sha256`` and
+  downloaded per-file over HTTPS with a post-download sha256 gate.
 * ``content`` — ``type`` is one of ``folder`` | ``zip`` | ``rar`` and describes
   how the delivered client is packaged. ``folder`` means the source already
   delivers extracted files; ``zip``/``rar`` means the acquired payload is an

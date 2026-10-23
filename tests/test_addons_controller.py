@@ -863,7 +863,7 @@ def test_apply_without_folder_is_noop(controller, cfg):
 def test_apply_pending_without_folder_refuses_with_message(controller, cfg):
     """Strict folder confirmation: no folder → refuse loudly, no worker."""
     cfg["out_dir"] = ""
-    controller.state.pending = {"Foo": True}
+    controller.state.pending = {"Foo": False}
     assert controller.apply_pending() is False
     events = controller._dispatcher.drain()
     assert any(
@@ -871,6 +871,15 @@ def test_apply_pending_without_folder_refuses_with_message(controller, cfg):
         and "Please set the game folder first" in e.text
         for e in events
     )
+
+
+def test_apply_pending_ignores_non_uninstall_staging(controller, cfg):
+    """Only uninstall ticks (stored False) start the worker — a True
+    staging entry never does (installs come from Browse)."""
+    cfg["out_dir"] = "/game"
+    controller.state.pending = {"Foo": True}
+    assert controller.apply_pending() is False
+    assert controller.state.busy is False
 
 
 def test_apply_marks_pfui_for_profile_patch(

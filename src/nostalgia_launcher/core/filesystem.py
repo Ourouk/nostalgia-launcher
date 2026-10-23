@@ -47,6 +47,14 @@ def sha1_file(path) -> str:
     return h.hexdigest().upper()
 
 
+def sha256_file(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest().lower()
+
+
 def cached_sha1(path_str: str, cache: dict) -> str:
     try:
         mtime = os.path.getmtime(path_str)

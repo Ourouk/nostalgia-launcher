@@ -1,10 +1,10 @@
 """Manifest stage: server-owned overlay over the base client.
 
-Checks the upstream manifest's listed files for existence and
-downloads missing ones over HTTPS from the manifest's own URLs.
-Additions only — never deletes, never touches user-managed paths.
-Owns the verify verdict when reachable (the torrent base is a
-third-party client the manifest publisher does not version).
+Checks the upstream manifest's listed files by size pre-check + sha256
+and downloads stale ones over HTTPS from the manifest's own URLs (each
+download sha256-gated). Additions only — never deletes, never touches
+user-managed paths. Owns the verify verdict when reachable (the torrent
+base is a third-party client the manifest publisher does not version).
 """
 
 from __future__ import annotations

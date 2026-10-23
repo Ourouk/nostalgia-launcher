@@ -9,9 +9,9 @@ mods/assets verticals.
 
 No per-distribution strings live here — the mapping is owned by the
 distribution's own config. Whole-file ``direct_file`` fetch; staleness
-via the manifest ``version`` cursor plus existence checks. Each entry's
-``sha256`` is parsed and shape-validated but not yet enforced on
-download or used for staleness.
+is decided per entry by size pre-check + sha256 hash comparison, with
+the manifest ``version`` cursor kept as informational only. Post-download
+bytes are sha256-gated before the installed cursor advances.
 """
 
 from __future__ import annotations
@@ -340,12 +340,17 @@ def stale_overlay_entries(
     entries: list,
     log=None,
 ) -> list[str]:
-    """Manifest-listed paths missing on disk (client-relative).
+    """Manifest-listed paths stale on disk (client-relative).
 
-    Phase 1 staleness is existence-only: any listed path absent from
-    the client is stale. Hash comparison lands with sha256 support.
+    Hash decides: missing → stale; present with a non-empty ``sha256`` →
+    stale when the local size differs (no hash I/O) or the local sha256
+    mismatches. Entries with an empty sha carry no hash info, so they
+    keep existence-only staleness. Hash I/O errors are conservative
+    (stale — the download path heals it).
     """
     import os as _os
+
+    from ..core.filesystem import sha256_file as _sha256_file
 
     stale: list[str] = []
     for entry in entries:
@@ -358,6 +363,35 @@ def stale_overlay_entries(
         try:
             if not _os.path.isfile(full):
                 stale.append(path)
+                continue
+        except OSError:
+            stale.append(path)
+            continue
+        sha = entry.get("sha256", "")
+        sha = sha.strip().lower() if isinstance(sha, str) else ""
+        if not sha:
+            continue
+        size = entry.get("size", None)
+        if (
+            isinstance(size, (int, float))
+            and not isinstance(size, bool)
+            and int(size) > 0
+        ):
+            try:
+                if _os.path.getsize(full) != int(size):
+                    stale.append(path)
+                    continue
+            except OSError:
+                stale.append(path)
+                continue
+        try:
+            if _sha256_file(full) != sha:
+                stale.append(path)
+                if log is not None:
+                    try:
+                        log(f"[manifest] sha256 mismatch: {path}", "dim")
+                    except Exception:
+                        pass
         except OSError:
             stale.append(path)
     return sorted(stale)

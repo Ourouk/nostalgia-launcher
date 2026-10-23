@@ -95,9 +95,10 @@ def build_items(
 ):
     """Flat row items for the ListView (widget `_render` parity).
 
-    ``pending`` maps folder → bool for staged checkbox changes not yet
-    applied: it overrides the rendered ``checked`` state (mods parity)
-    so staging is visible instead of snapping back on refresh. Row
+    The manage tab is a select-to-uninstall list: rows for installed
+    addons render unchecked until ticked. ``pending`` maps folder →
+    bool with the controller meaning (False = enabled-off = staged
+    for uninstall); a ticked row forces ``checked`` on. Row
     status/warning text still reflects on-disk truth.
     Out-of-date rows lead so updates are visible without filtering.
     ``mode`` is "all" or "updates": "updates" keeps only rows needing
@@ -156,8 +157,12 @@ def build_items(
     items = []
     for rec in ordered:
         is_installed = rec.folder in installed_names
-        staged = pending.get(rec.folder)
-        checked = bool(staged) if staged is not None else is_installed
+        pend = pending.get(rec.folder)
+        # Stored pending keeps the controller meaning: False =
+        # enabled-off = staged for uninstall. Only an unambiguous
+        # uninstall tick renders checked.
+        staged = pend is False
+        checked = staged
         unmet = (unmet_deps or {}).get(rec.folder, ())
         warning = row_warning(
             rec, is_installed, installed_names, expected, unmet
@@ -185,7 +190,7 @@ def build_items(
                 "error": (
                     "" if rec.status == "unknown" else (rec.error or "")
                 ),
-                "staged": staged is not None,
+                "staged": staged,
             }
         )
     if mode == "updates":

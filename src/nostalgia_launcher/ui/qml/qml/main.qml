@@ -235,7 +235,7 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 contentModel: modsModel
                 tabTitle: "MODS"
-                legendText: "☐ off = disabled · ● = unapplied (Apply to confirm)"
+                legendText: "☑ = uninstall on confirm · ● = marked for uninstall"
                 loadingText: "Loading mods…"
             }
             ContentView {
@@ -243,7 +243,7 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 contentModel: assetsModel
                 tabTitle: "ASSETS"
-                legendText: "☐ off = disabled · ● = unapplied (Apply to confirm)"
+                legendText: "☑ = uninstall on confirm · ● = marked for uninstall"
                 loadingText: "Loading assets…"
             }
         }

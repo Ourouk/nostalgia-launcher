@@ -132,6 +132,32 @@ def test_files_append_done_dedups(qapp):
     assert files.data(files.index(1), UpdateFilesModel.DoneRole) is True
 
 
+def test_files_strip_manifest_prefix(qapp):
+    """Verify-listed `manifest:` paths display stripped (torrent paths
+    have no prefix, so the raw prefix would only show on manifest
+    updates)."""
+    files = UpdateFilesModel()
+    files.set_files(["manifest:Data/a.mpq", "Data/b.mpq"])
+    assert files.rowCount() == 2
+    assert files.data(files.index(0), UpdateFilesModel.NameRole) == (
+        "Data/a.mpq"
+    )
+    assert files.data(files.index(1), UpdateFilesModel.NameRole) == (
+        "Data/b.mpq"
+    )
+
+
+def test_files_manifest_progress_marks_listed_row(qapp):
+    """Download progress reports the stripped path while verify listed
+    the prefixed one — mark_done must hit the listed row instead of
+    appending a duplicate."""
+    files = UpdateFilesModel()
+    files.set_files(["manifest:Data/a.mpq"])
+    assert files.mark_done("Data/a.mpq") is True
+    assert files.rowCount() == 1
+    assert files.data(files.index(0), UpdateFilesModel.DoneRole) is True
+
+
 def test_files_mark_all_done(qapp):
     files = UpdateFilesModel()
     files.set_files(["a", "b"])
@@ -199,6 +225,21 @@ def test_progress_tracks_files(state):
     assert files.data(files.index(0), UpdateFilesModel.DoneRole) is True
     state.on_progress(_progress(value=0.6, current_file="Data/b.mpq"))
     assert files.rowCount() == 2
+
+
+def test_progress_manifest_prefixed_list_no_duplicate(state):
+    """Verify listed `manifest:Data/a.mpq`; progress reports the
+    stripped download path — the listed row flips done, rowCount stays
+    1 (no duplicate stripped row appended)."""
+    state.on_files(UpdateFilesList(["manifest:Data/a.mpq"]))
+    files = state.property("files")
+    assert files.rowCount() == 1
+    assert files.data(files.index(0), UpdateFilesModel.NameRole) == (
+        "Data/a.mpq"
+    )
+    state.on_progress(_progress(value=0.5, current_file="Data/a.mpq"))
+    assert files.rowCount() == 1
+    assert files.data(files.index(0), UpdateFilesModel.DoneRole) is True
 
 
 def test_status_intake(state):
