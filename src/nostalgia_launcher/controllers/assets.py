@@ -19,7 +19,7 @@ from collections.abc import Callable
 
 from ..core import config_store
 from ..core.errors import describe_install_error
-from ..services import assets, catalog, mpq
+from ..services import assets, catalog
 from ..state.events import (
     AssetsLoaded,
     EventDispatcher,
@@ -50,13 +50,8 @@ class AssetsController:
         self.state = AssetsState()
         self._busy = False
         # Per-asset staleness verdicts from the latest background refresh
-        # (refresh_verdicts). The render path (action_for) reads these
-        # instead of running live HEAD probes on the GUI thread.
+        # (refresh_verdicts): feeds the ADDONS/MODS/ASSETS updates badges.
         self._verdict_cache: dict[str, bool] = {}
-        # ponytail: GUI-thread snapshots reuse this until Data/ changes;
-        # move the walk itself off-thread if rescan latency ever shows.
-        self._scan_key = None
-        self._scan_cache: dict = {}
         if get_out_dir is None:
 
             def _default_get_out_dir() -> str:
@@ -75,51 +70,6 @@ class AssetsController:
         """The full asset registry (id, name, url, dest, update metadata…)
         the panel renders from — the UI keeps its assets import-free."""
         return assets.assets_registry()
-
-    def client_dir(self) -> str:
-        """The current game folder ('' when unset)."""
-        return (self._get_out_dir() or "").strip()
-
-    def data_scan(self, version: str) -> dict:
-        """Classify every MPQ under the client's Data/ tree for `version`
-        (see `services.mpq.scan_custom_mpqs`); registry dests mark the
-        launcher-managed customs. Read-only; empty buckets when no game
-        folder is configured. Results are cached on a single-level Data/
-        marker so repeated snapshots skip the recursive walk."""
-        client_dir = self.client_dir()
-        key = (client_dir, version, self._scan_marker(client_dir))
-        if key != self._scan_key:
-            self._scan_cache = mpq.scan_custom_mpqs(
-                client_dir, version, mpq.managed_dests(self.registry)
-            )
-            self._scan_key = key
-        return self._scan_cache
-
-    @staticmethod
-    def _scan_marker(client_dir: str):
-        """Cheap Data/ fingerprint (one scandir, no recursion)."""
-        try:
-            entries = list(os.scandir(os.path.join(client_dir, "Data")))
-        except OSError:
-            return None
-        marker = []
-        for entry in entries:
-            try:
-                st = entry.stat(follow_symlinks=False)
-                marker.append((entry.name, st.st_mtime_ns, st.st_size))
-            except OSError:
-                marker.append((entry.name, 0, 0))
-        return tuple(sorted(marker))
-
-    def remove_foreign_mpq(self, rel_path: str) -> None:
-        """Delete one untracked MPQ from Data/ (confirmed in the UI) and
-        republish the snapshot. Routed through the controller — like every
-        other mutation — so the panel never touches services directly."""
-        error = mpq.remove_custom_mpq(self.client_dir(), rel_path)
-        if error:
-            self._dispatcher.post(LogMessage(f"  {error}", "err"))
-        else:
-            self._dispatcher.post(AssetsLoaded(self.state))
 
     @property
     def updates_count(self) -> int:
@@ -213,28 +163,6 @@ class AssetsController:
             return err
         self._dispatcher.post(AssetsLoaded(self.state))
         return None
-
-    def action_for(self, asset_id: str) -> str | None:
-        """'retry' when the asset is in an error state, 'update' when a
-        staleness verdict fired, else None. Runs on the GUI thread
-        during panel renders: it consults the cached background verdict
-        when one exists and otherwise computes a probe-free verdict —
-        never a live HEAD request."""
-        rec = self.state.records.get(asset_id)
-        if rec is not None and rec.error:
-            return "retry"
-        if asset_id in self._verdict_cache:
-            return "update" if self._verdict_cache[asset_id] else None
-        asset = next(
-            (a for a in assets.assets_registry() if a["id"] == asset_id),
-            None,
-        )
-        if asset is None:
-            return None
-        stale, _ = self._verdict(
-            asset, (self._get_out_dir() or "").strip(), allow_probe=False
-        )
-        return "update" if stale else None
 
     def apply(self, only_asset_id: str | None = None) -> bool:
         if self._busy:

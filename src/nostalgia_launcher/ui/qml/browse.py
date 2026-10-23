@@ -22,7 +22,6 @@ class BrowseModel(QAbstractListModel):
     changed = Signal()
     chromeChanged = Signal()
     selectionChanged = Signal()
-    chromeChanged = Signal()
 
     def __init__(self, empty_text="Nothing available.", parent=None):
         super().__init__(parent)
@@ -30,7 +29,6 @@ class BrowseModel(QAbstractListModel):
         self._visible: list = []
         self._selected: set = set()
         self._queue: list = []
-        self._visible: list = []
         self._filter_text = ""
         self._busy = False
         self._empty_text = empty_text
@@ -190,7 +188,6 @@ class BrowseModel(QAbstractListModel):
         return self._empty_text
 
     emptyText = Property(str, _get_empty_text, constant=True)
-    emptyText = Property(str, _get_empty_text, constant=True)
 
 
 def content_browse_entries(entries, state) -> list:
@@ -214,7 +211,49 @@ def addon_browse_entries(state) -> list:
     gits by the controller, so it passes through untouched.
     """
     return list(getattr(state, "available", []) or [])
-    return list(getattr(state, "available", []) or [])
+
+
+def addon_tab_entries(state) -> list:
+    """Installed addons as registry-like dicts for the shared manage tab.
+
+    Maps ``state.addons`` (folder → AddonState) to ``{id, name,
+    description, repo_url}`` dicts the shared ``build_rows`` consumes.
+    Titles/descriptions strip WoW color escapes (Browse mapping parity);
+    repo URL drops a trailing ``.git`` for display. Installed-only by
+    construction: only ``state.addons`` keys appear."""
+    from ...core.helpers import strip_wow_colors
+
+    entries = []
+    for folder, rec in (getattr(state, "addons", {}) or {}).items():
+        toc = getattr(rec, "toc", None) or {}
+        title = strip_wow_colors(toc.get("Title") or "") or folder
+        notes = strip_wow_colors(
+            toc.get("Notes") or getattr(rec, "description", None) or ""
+        )
+        git = getattr(rec, "git", None) or ""
+        if git.endswith(".git"):
+            git = git[: -len(".git")]
+        entries.append(
+            {
+                "id": folder,
+                "name": title,
+                "description": notes,
+                "repo_url": git,
+            }
+        )
+    return entries
+
+
+def addon_tab_rows(state) -> list:
+    """Manage-tab entries for ADDONS: installed folders plus rows
+    staged for uninstall (pending.enabled is False)."""
+    present = set(getattr(state, "addons", {}) or {})
+    staged = {
+        folder
+        for folder, pend in (getattr(state, "pending", {}) or {}).items()
+        if getattr(pend, "enabled", pend) is False
+    }
+    return [e for e in addon_tab_entries(state) if e["id"] in present | staged]
 
 
 def tab_rows(entries, state) -> list:

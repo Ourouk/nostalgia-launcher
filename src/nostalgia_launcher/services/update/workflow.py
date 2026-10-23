@@ -869,6 +869,15 @@ class UpdateWorker(WorkerBase):
                         )
                     )
                     return False
+            for dll in _manifest.dlls_for_path(path):
+                from .. import mods as _mods
+
+                try:
+                    _mods.add_dll(self.out_dir, dll)
+                except Exception as e:
+                    self.log(
+                        f"[manifest] Could not register {dll}: {e}", "err"
+                    )
         _manifest.remember_installed_version(
             snapshot.get("version", ""), snapshot.get("url", "")
         )

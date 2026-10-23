@@ -258,17 +258,6 @@ def test_toggle_server_managed_refused(controller, registry, monkeypatch):
     )
 
 
-def test_action_for_server_managed_is_none(controller, registry, monkeypatch):
-    monkeypatch.setattr(
-        mc.mods,
-        "mods_registry",
-        lambda *a, **k: [
-            {"id": "manifest-patch", "name": "Patch", "source": {}}
-        ],
-    )
-    assert controller.action_for("manifest-patch") is None
-
-
 # ── apply ──────────────────────────────────────────────────────────────
 
 
@@ -410,7 +399,6 @@ def test_apply_failed_update_keeps_old_record_for_retry(
     assert rec["installed_version"] == "0.5"
     assert rec["installed_files"] == ["old.dll"]
     assert rec["error"] == "download blocked"
-    assert controller.action_for("AlphaMod") == "retry"
 
     controller.apply(only_mod_id="AlphaMod")
 
@@ -602,22 +590,6 @@ def test_load_records_surfaces_unknown_dlls(controller, cfg, tmp_path):
 
     assert controller.state.unknown == ["mystery.dll"]
     assert controller.state.records == {}
-
-
-def test_remove_unknown_deletes_from_filesystem(controller, cfg, tmp_path):
-    out = tmp_path / "game"
-    out.mkdir()
-    (out / "dlls.txt").write_text("mystery.dll\n")
-    (out / "mystery.dll").write_bytes(b"MZ")
-    cfg["out_dir"] = str(out)
-
-    controller.remove_unknown("mystery.dll")
-
-    assert not (out / "dlls.txt").exists()
-    assert not (out / "mystery.dll").exists()
-    assert controller.state.unknown == []
-    collected = controller._dispatcher.drain()
-    assert any(isinstance(e, ModsLoaded) for e in collected)
 
 
 def test_apply_uninstalls_adopted_mod_when_disabled(

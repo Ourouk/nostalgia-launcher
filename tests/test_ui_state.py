@@ -54,7 +54,6 @@ def test_addons_state_defaults():
     assert a.installing is False
     assert a.verified_ts == 0.0
     assert a.errors == {}
-    assert a.sections_open == {"INSTALLED": True, "AVAILABLE": True}
     assert a.updates_count == 0
 
 

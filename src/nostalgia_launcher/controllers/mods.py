@@ -188,30 +188,6 @@ class ModsController:
         self._dispatcher.post(ModsLoaded(self.state))
         return None
 
-    def action_for(self, mod_id: str) -> str | None:
-        """'retry' when the mod is in an error state, 'update' when a newer
-        version is available, else None. Server-managed entries never
-        offer actions — the UPDATE tab owns them."""
-        from ..services import manifest as _manifest
-
-        mod = next(
-            (m for m in mods.mods_registry() if m["id"] == mod_id), None
-        )
-        if mod is None or _manifest.is_server_managed(mod):
-            rec = self.state.records.get(mod_id)
-            if rec is not None and rec.error:
-                return "retry"
-            return None
-        rec = self.state.records.get(mod_id)
-        if rec is not None and rec.error:
-            return "retry"
-        live = {"latest_version": self.state.latest_versions.get(mod_id)}
-        if mods.mod_update_available(
-            mod, self._state_dict(mod_id) or {}, live
-        ):
-            return "update"
-        return None
-
     def apply(self, only_mod_id: str | None = None) -> bool:
         if self._busy:
             return False
@@ -230,16 +206,6 @@ class ModsController:
     def invalidate(self):
         """Drop the cached latest versions; the next load refetches."""
         self.state.latest_versions = {}
-
-    def remove_unknown(self, name: str):
-        """Uninstall a detected-but-untracked mod (a dlls.txt entry no catalog
-        mod claims) straight from the filesystem, then republish the panel."""
-        out = (self._get_out_dir() or "").strip()
-        if not out:
-            return
-        mods.remove_unknown_mod(out, name)
-        self.state.records, self.state.unknown = self._load_records()
-        self._dispatcher.post(ModsLoaded(self.state))
 
     def reset(self):
         """Clear pending changes and drop cached versions (a game-folder

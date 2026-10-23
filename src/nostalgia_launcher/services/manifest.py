@@ -397,6 +397,30 @@ def stale_overlay_entries(
     return sorted(stale)
 
 
+def dlls_for_path(path: str) -> list[str]:
+    """DLL names the manifest route registers for ``path``.
+
+    Lets the UPDATE pipeline mirror what the MODS tab does on install
+    (``mods.add_dll`` into ``dlls.txt``): bundled DLLs land loaded,
+    not just on disk. Route-declared via ``register_dll``; no route
+    match (or no list) → []. Never raises.
+    """
+    try:
+        block = _manifest_block()
+        routes = block.get("routes") if isinstance(block, dict) else None
+        if not isinstance(routes, list):
+            return []
+        route = route_entry(path, routes)
+        if route is None:
+            return []
+        register_dll = route.get("register_dll")
+        if not isinstance(register_dll, list):
+            return []
+        return [d for d in register_dll if isinstance(d, str) and d]
+    except Exception:
+        return []
+
+
 def remember_installed_version(version: str, url: str) -> None:
     """Record the manifest version now present on disk."""
     from ..core import config_store as _store

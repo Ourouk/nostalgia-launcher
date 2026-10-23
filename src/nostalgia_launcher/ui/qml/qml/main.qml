@@ -226,9 +226,13 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
             }
-            AddonsView {
+            ContentView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                contentModel: addonsModel
+                tabTitle: "ADDONS"
+                legendText: "☑ = uninstall on confirm · ● = marked for uninstall"
+                loadingText: "Loading addons…"
             }
             ContentView {
                 Layout.fillWidth: true

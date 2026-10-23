@@ -17,8 +17,6 @@ import pytest
 import nostalgia_launcher.controllers.addons as ac
 from nostalgia_launcher.controllers.addons import (
     C_COULD_NOT_CHECK,
-    C_OK,
-    C_TEXT_DIM,
     AddonsController,
 )
 from nostalgia_launcher.state.events import (
@@ -173,31 +171,6 @@ def test_verify_scans_and_posts_addons_loaded(
     assert controller.updates_count == 0
 
 
-def test_ensure_catalog_loaded_stores_addon_state_objects(
-    controller, monkeypatch
-):
-    monkeypatch.setattr(
-        ac.addons,
-        "addons_catalog",
-        lambda force=False: [
-            {
-                "name": "Example",
-                "git": "https://github.com/example/addon",
-                "recommended": True,
-            }
-        ],
-    )
-
-    controller._ensure_catalog_loaded()
-
-    assert all(
-        isinstance(record, AddonState) for record in controller.state.available
-    )
-    assert any(
-        record.folder == "Example" for record in controller.state.available
-    )
-
-
 def test_verify_marks_unreachable_addon_unknown(
     controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
@@ -223,7 +196,7 @@ def test_verify_marks_unreachable_addon_unknown(
     assert rec.status == "unknown"
     assert rec.error == "Couldn't check for updates"
     assert controller.updates_count == 0
-    assert [r.folder for r in controller.update_all()] == []
+    assert [r.folder for r in controller.state.addons.values()] == ["Foo"]
 
 
 def test_verify_adopts_untracked_installed_catalog_addon(
@@ -547,7 +520,7 @@ def test_verify_checks_catalog_branch_when_repos_match(
     assert controller.state.addons["Foo"].branch == "main"
 
 
-def test_verify_honors_catalog_recommended_and_blocked(
+def test_verify_honors_catalog_blocked(
     controller, cfg, monkeypatch, wait_for_event
 ):
     monkeypatch.setattr(
@@ -557,13 +530,11 @@ def test_verify_honors_catalog_recommended_and_blocked(
             {
                 "name": "Star",
                 "git": "https://github.com/x/Star",
-                "recommended": True,
                 "blocked": False,
             },
             {
                 "name": "Hidden",
                 "git": "https://github.com/x/Hidden",
-                "recommended": False,
                 "blocked": True,
             },
         ],
@@ -578,9 +549,6 @@ def test_verify_honors_catalog_recommended_and_blocked(
     folders = {a.folder for a in controller.state.available}
     assert "Star" in folders
     assert "Hidden" not in folders
-    # Flagged recommendations join the curated ones for the star/sort order.
-    assert "Star" in controller.recommended
-    assert set(ac.addons.RECOMMENDED_ADDONS) <= controller.recommended
 
 
 # ── apply ───────────────────────────────────────────────────────────────
@@ -741,11 +709,11 @@ def test_apply_marks_existing_addon_downloading(
     assert controller.state.busy is False
 
 
-def test_update_all_flips_records_to_downloading(
+def test_apply_flips_records_to_downloading(
     controller, cfg, tmp_path, monkeypatch, wait_for_event
 ):
-    """The footer's 'Update all' path goes through apply() too — every
-    out-of-date record must show 'downloading' synchronously."""
+    """apply() flips every out-of-date record to 'downloading'
+    synchronously."""
     client = str(tmp_path)
     _install_folder(client, "Foo")
     _install_folder(client, "Bar")
@@ -769,7 +737,8 @@ def test_update_all_flips_records_to_downloading(
         )[1],
     )
 
-    assert controller.apply(controller.update_all()) is True
+    recs = [rec.to_dict() for rec in controller.state.addons.values()]
+    assert controller.apply(recs) is True
 
     for name in ("Foo", "Bar"):
         assert controller.state.addons[name].status == "downloading"
@@ -862,8 +831,10 @@ def test_apply_without_folder_is_noop(controller, cfg):
 
 def test_apply_pending_without_folder_refuses_with_message(controller, cfg):
     """Strict folder confirmation: no folder → refuse loudly, no worker."""
+    from nostalgia_launcher.state.models import AddonPending
+
     cfg["out_dir"] = ""
-    controller.state.pending = {"Foo": False}
+    controller.state.pending = {"Foo": AddonPending(enabled=False)}
     assert controller.apply_pending() is False
     events = controller._dispatcher.drain()
     assert any(
@@ -876,10 +847,21 @@ def test_apply_pending_without_folder_refuses_with_message(controller, cfg):
 def test_apply_pending_ignores_non_uninstall_staging(controller, cfg):
     """Only uninstall ticks (stored False) start the worker — a True
     staging entry never does (installs come from Browse)."""
+    from nostalgia_launcher.state.models import AddonPending
+
     cfg["out_dir"] = "/game"
-    controller.state.pending = {"Foo": True}
+    controller.state.pending = {"Foo": AddonPending(enabled=True)}
     assert controller.apply_pending() is False
     assert controller.state.busy is False
+
+
+def test_toggle_stores_addon_pending(controller):
+    """toggle() stores an AddonPending (dict shape parity with
+    mods/assets): a tick passes enabled=False (staged for removal)."""
+    from nostalgia_launcher.state.models import AddonPending
+
+    controller.toggle("Foo", False)
+    assert controller.state.pending == {"Foo": AddonPending(enabled=False)}
 
 
 def test_apply_marks_pfui_for_profile_patch(
@@ -913,40 +895,13 @@ def test_apply_marks_pfui_for_profile_patch(
     assert patched == [client]
 
 
-# ── update_all / remove ─────────────────────────────────────────────────
+# ── badge data ────────────────────────────────────────────────────────
 
 
-def test_update_all_only_collects_out_of_date(controller):
-    controller.state.addons["A"] = AddonState(folder="A", status="outOfDate")
-    controller.state.addons["B"] = AddonState(folder="B", status="upToDate")
-    controller.state.addons["C"] = AddonState(folder="C", status="outOfDate")
-
-    recs = controller.update_all()
-    assert [r["folder"] for r in recs] == ["A", "C"]
-
-
-# ── footer / badge data ─────────────────────────────────────────────────
-
-
-def test_footer_state_and_updates_count(controller):
-    assert controller.footer_state() == (
-        "Everything up to date",
-        C_TEXT_DIM,
-        "arrow",
-    )
+def test_updates_count_tracks_out_of_date(controller):
     assert controller.updates_count == 0
-
-    controller.state.state = "verifying"
-    assert controller.footer_state() == ("Checking…", C_TEXT_DIM, "arrow")
-    controller.state.state = "done"
-
-    controller.state.busy = True
-    assert controller.footer_state()[0] == "Checking…"
-    controller.state.busy = False
-
     controller.state.addons["A"] = AddonState(folder="A", status="outOfDate")
     controller.state.updates_count = 1
-    assert controller.footer_state() == ("Update all", C_OK, "hand2")
     assert controller.updates_count == 1
 
 
@@ -960,7 +915,6 @@ def test_reset_clears_state(controller, cfg):
     controller.state.available = [AddonState(folder="B")]
     controller.state.errors["A"] = AddonError("oops")
     controller.state.updates_count = 3
-    controller.state.sections_open["INSTALLED"] = False
 
     controller.reset()
 
@@ -970,8 +924,6 @@ def test_reset_clears_state(controller, cfg):
     assert controller.state.available == []
     assert controller.state.errors == {}
     assert controller.state.updates_count == 0
-    # Section open/closed state survives a folder change.
-    assert controller.state.sections_open["INSTALLED"] is False
 
 
 def test_verify_posts_cached_preview_before_scan(
@@ -1135,7 +1087,12 @@ def test_apply_groups_same_repo_into_one_install(
             toc={},
         )
 
-    assert controller.apply(controller.update_all()) is True
+    recs = [
+        rec.to_dict()
+        for rec in controller.state.addons.values()
+        if rec.status == "outOfDate"
+    ]
+    assert controller.apply(recs) is True
     wait_for_event(
         controller._dispatcher, lambda e: isinstance(e, OperationFinished)
     )

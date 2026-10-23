@@ -85,7 +85,7 @@ def test_records_empty_initially(env):
     assert ctl.updates_count == 0
 
 
-def test_verdict_marks_stale_and_action_update(env, monkeypatch):
+def test_verdict_marks_stale(env, monkeypatch):
     tmp_path, client, monkeypatch = env
     data_dir = client / "Data"
     data_dir.mkdir(parents=True)
@@ -108,8 +108,6 @@ def test_verdict_marks_stale_and_action_update(env, monkeypatch):
         launcher, "embedded_assets", lambda: [_entry(version="v2")]
     )
     ctl = _make(client)
-    assert ctl.action_for("patch3") == "update"
-    assert not ctl.action_for("nonexistent")
 
     ctl.refresh_verdicts()
     for _ in range(100):
@@ -169,7 +167,6 @@ def test_download_failure_records_error(env, monkeypatch):
     rec = config_store.load_config()["assets"]["patch3"]
     assert rec["error"]
     assert ctl.state.records["patch3"].has_error
-    assert ctl.action_for("patch3") == "retry"
 
 
 def test_reload_catalog_embedded_only_republishes_silently(env):

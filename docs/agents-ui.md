@@ -46,10 +46,16 @@ beside them) plus the toolkit glue in `ui/` (`bridge.py`, `theme.py`,
   through the model (`checked: model.checked` binds directly), not via
   childItems walks or role-derived `objectName` (findChild-invisible).
 
+- The ADDONS/MODS/ASSETS manage tabs share one uninstall-only list
+  (`ContentListModel` + `ContentView.qml`): minimal rows (checkbox,
+  name, description, repo link, SERVER lock), tick-to-stage-uninstall,
+  an `Uninstall (N)` footer. Installs/updates happen only in the Browse
+  dialog; the tab badge (`updatesCount`) is a stale indicator fed by
+  the existing background checks — no per-row action buttons, no
+  extras blocks, no filter beyond search.
 - Button language is all-caps for primary/global actions (`UPDATE`/`PLAY`,
-  nav tabs) and Title Case for panel actions ("Uninstall", "Retry", "Install
-  Recommended") — machine strings (`"retry"`/`"update"`) stay in models,
-  labels in QML.
+  nav tabs) and Title Case for panel actions ("Uninstall", "Add ...") —
+  machine state stays in models, labels in QML.
 - Destructive actions run without a confirm dialog on the manage tabs
   (ticking + Uninstall is the confirm); checkbox echo
   (`onCheckedChanged` re-firing on programmatic refresh) is dropped

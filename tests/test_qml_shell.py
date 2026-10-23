@@ -22,7 +22,6 @@ from PySide6.QtWidgets import QApplication
 
 from nostalgia_launcher import cli
 from nostalgia_launcher.state.events import ProgressChanged, StatusChanged
-from nostalgia_launcher.ui.qml.addons import AddonsModel
 from nostalgia_launcher.ui.qml.app import QmlNostalgiaLauncherApp, qml_dir
 from nostalgia_launcher.ui.qml.content import ContentListModel
 from nostalgia_launcher.ui.qml.custom import (
@@ -64,7 +63,7 @@ def engine(qapp):
     eng.rootContext().setContextProperty("modsModel", _mods_shell)
     _assets_shell = ContentListModel("assets empty")
     eng.rootContext().setContextProperty("assetsModel", _assets_shell)
-    _addons_shell = AddonsModel()
+    _addons_shell = ContentListModel("addons empty")
     eng.rootContext().setContextProperty("addonsModel", _addons_shell)
     eng.rootContext().setContextProperty("settingsModel", SettingsModel())
     eng.rootContext().setContextProperty("logModel", LogModel())
@@ -235,7 +234,6 @@ def test_tabs_open_browse_dialog(engine, qapp):
     assert browse is not None
     assert browse.property("visible") is False
     assert root.findChild(QObject, "qmlContentBrowse") is not None
-    assert root.findChild(QObject, "qmlAddonsBrowse") is not None
     # Fixture context models are temporaries (may be GC'd): rebind a held
     # model so the view resolves a live object, mirroring app.py.
     from nostalgia_launcher.ui.qml.content import ContentListModel
@@ -244,23 +242,23 @@ def test_tabs_open_browse_dialog(engine, qapp):
     eng.rootContext().setContextProperty("modsModel", mods)
     qapp.processEvents()
     views = root.findChildren(QObject, "qmlContentView")
-    assert views[0].property("contentModel") is mods
+    mods_views = [v for v in views if v.property("contentModel") is mods]
+    assert mods_views, "mods ContentView not found"
     opened = []
     mods.browseRequested.connect(lambda: opened.append(True))
     mods.requestBrowse()
     qapp.processEvents()
     assert opened == [True]
-    assert opened == [True]
 
 
-def test_updates_only_toggle(engine, qapp):
-    """Chips collapsed to a single Updates-only toggle per tab."""
+def test_addons_mods_assets_share_manage_view(engine, qapp):
+    """All three manage tabs are ContentView instances (no Updates-only
+    toggle, no extras blocks)."""
     eng, _state, _theme = engine
     root = eng.rootObjects()[0]
-    assert root.findChild(QObject, "qmlContentUpdatesOnly") is not None
+    assert root.findChild(QObject, "qmlContentUpdatesOnly") is None
     assert root.findChild(QObject, "qmlContentBrowseMore") is not None
-    assert root.findChild(QObject, "qmlAddonsUpdatesOnly") is not None
-    assert root.findChild(QObject, "qmlAddonsUpdatesOnly") is not None
+    assert len(root.findChildren(QObject, "qmlContentView")) == 3
 
 
 def _browse_shell(qapp):
@@ -323,8 +321,6 @@ def test_browse_mods_resets_when_operation_settles(qapp):
         state=state,
         apply=lambda only_mod_id=None: applied.append(only_mod_id) or True,
         reload_catalog=lambda: None,
-        remove_unknown=lambda s, n: None,
-        action_for=lambda eid: "",
         toggle=lambda eid, checked: None,
     )
     model = ContentListModel("x")
@@ -346,40 +342,42 @@ def test_browse_addons_resets_when_operation_settles(qapp):
     """Same settle contract for ADDONS: busy clears, installed leaves."""
     from types import SimpleNamespace
 
-    from nostalgia_launcher.ui.qml.addons import AddonsModel
+    from nostalgia_launcher.state.models import AddonState
+    from nostalgia_launcher.ui.qml.content import ContentListModel
 
     hub, shell = _browse_shell(qapp)
-    _addons_settle = AddonsModel()
+    _addons_settle = ContentListModel("addons empty")
     shell._addons_qml = _addons_settle
-    rec = SimpleNamespace(
+    rec = AddonState(
         folder="New",
-        status="upToDate",
         git="https://example.test/new.git",
-        toc={},
+        toc={"Title": "New", "Notes": "fresh"},
         description="fresh",
-        error=None,
-        to_dict=lambda: {"folder": "New"},
     )
     state = SimpleNamespace(
         addons={},
-        available=[rec],
+        available=[AddonState(folder="New")],
         pending={},
-        sections_open={},
         updates_count=0,
         busy=False,
     )
     applied = []
     ctrl = SimpleNamespace(
         state=state,
-        recommended=set(),
-        footer_state=lambda: ("", "", ""),
-        apply=lambda recs: applied.extend(r["folder"] for r in recs) or True,
+        apply=lambda recs: (
+            applied.extend(
+                r.folder if hasattr(r, "folder") else r["folder"] for r in recs
+            )
+            or True
+        ),
         verify=lambda force=False: True,
         apply_pending=lambda: False,
-        apply_recommended_addons=lambda: False,
+        toggle=lambda eid, checked: None,
     )
     hub.addons = ctrl
-    shell._wire_addons()
+    shell._wire_content(
+        _addons_settle, ctrl, "addons", hub.bridge.addonsLoaded
+    )
     browse = shell._browse_addons
     assert browse.rowCount() == 1
     browse.install("New")
@@ -387,7 +385,7 @@ def test_browse_addons_resets_when_operation_settles(qapp):
     assert browse.property("busy") is True
     state.addons["New"] = rec
     state.available = []
-    shell._after_addons_op("addons")
+    shell._after_content_op(_addons_settle, "addons", "addons")
     assert browse.property("busy") is False
     assert browse.rowCount() == 0
 

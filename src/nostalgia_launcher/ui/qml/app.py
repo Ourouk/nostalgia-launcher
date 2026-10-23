@@ -20,17 +20,15 @@ from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication
 
 from ...core import launcher, platform_support, profiles
-from ...core.helpers import relative_age
-from ...services import addons as addons_service
 from ...services import logo as logo_service
 from ...state.events import LogMessage
 from ..bridge import ControllerHub
 from ..relaunch import switch_profile
 from ..theme import logo_for_config, palette_for_config
-from .addons import AddonsModel, build_items, expected_interface
 from .browse import (
     BrowseModel,
     addon_browse_entries,
+    addon_tab_rows,
     content_browse_entries,
     tab_rows,
 )
@@ -50,6 +48,9 @@ _MODS_EMPTY = (
     "No mods catalog available.\n"
     "Configure a catalog URL under Settings → Catalog "
     "registries, then use Reload."
+)
+_ADDONS_EMPTY = (
+    "No addons installed yet.\nUse Add addons to install from the catalog."
 )
 _ASSETS_EMPTY = (
     "No server content available.\n"
@@ -157,6 +158,7 @@ class QmlNostalgiaLauncherApp:
         bridge.gameExited.connect(self._refresh_footer)
         self._mods = ContentListModel(_MODS_EMPTY)
         self._assets = ContentListModel(_ASSETS_EMPTY)
+        self._addons_qml = ContentListModel(_ADDONS_EMPTY)
         self._browse_mods = BrowseModel("No mods available.")
         self._browse_assets = BrowseModel("No assets available.")
         self._browse_addons = BrowseModel("No addons available.")
@@ -170,8 +172,9 @@ class QmlNostalgiaLauncherApp:
         self._wire_content(
             self._assets, self._hub.assets, "assets", bridge.assetsLoaded
         )
-        self._addons_qml = AddonsModel()
-        self._wire_addons()
+        self._wire_content(
+            self._addons_qml, self._hub.addons, "addons", bridge.addonsLoaded
+        )
         self._settings = SettingsModel()
         self._log_model = LogModel()
         self._wire_settings()
@@ -404,75 +407,60 @@ class QmlNostalgiaLauncherApp:
         self._hub.settings.verify_files()
         self._refresh_footer()
 
-    # ── content tabs (shared MODS/ASSETS core) ────────────────────────
+    # ── content tabs (ADDONS/MODS/ASSETS shared list) ────────────────
 
     def _wire_content(self, model, ctrl, kind, loaded_signal):
         """Snapshot provider + action callbacks for one content tab."""
-        if kind == "mods":
+        if kind == "addons":
 
-            def version_of(entry, rec, state):
-                return (
-                    (rec.installed_version if rec else None)
-                    or state.latest_versions.get(entry["id"])
-                    or "unknown"
-                )
+            def tab_entries(state):
+                return addon_tab_rows(state)
 
-            def apply_one(eid):
-                return ctrl.apply(only_mod_id=eid)
+            def apply_all():
+                return ctrl.apply_pending()
+
+            def reload():
+                return ctrl.verify(force=True)
+
+            browse = self._browse_addons
+            dialog = "qmlBrowseAddonsDialog"
+        elif kind == "mods":
+
+            def tab_entries(state):
+                return tab_rows(ctrl.registry, state)
 
             def apply_all():
                 return ctrl.apply()
 
-            def extras_of(state):
-                from .content import unknown_sections
+            def reload():
+                return ctrl.reload_catalog()
 
-                return unknown_sections(getattr(state, "unknown", None)), ""
-
-            def on_extra(section, name):
-                ctrl.remove_unknown(name)
-                model.refresh()
-
-            op_kind = "mods"
+            browse = self._browse_mods
+            dialog = "qmlBrowseModsDialog"
         else:
 
-            def version_of(entry, rec, state):
-                return (rec.installed_version if rec else None) or "unknown"
-
-            def apply_one(eid):
-                return ctrl.apply(only_asset_id=eid)
+            def tab_entries(state):
+                return tab_rows(ctrl.registry, state)
 
             def apply_all():
                 return ctrl.apply()
 
-            def extras_of(state):
-                from .content import assets_extras
+            def reload():
+                return ctrl.reload_catalog()
 
-                return assets_extras(ctrl)
-
-            def on_extra(section, name):
-                ctrl.remove_foreign_mpq(name)
-                model.refresh()
-
-            op_kind = "assets"
+            browse = self._browse_assets
+            dialog = "qmlBrowseAssetsDialog"
 
         def snapshot():
             state = ctrl.state
-            rows = build_rows(
-                tab_rows(ctrl.registry, state),
-                state,
-                version_of=version_of,
-                action_for=ctrl.action_for,
+            rows = build_rows(tab_entries(state), state)
+            pending = getattr(state, "pending", {}) or {}
+            staged = sum(
+                1
+                for pend in pending.values()
+                if getattr(pend, "enabled", pend) is False
             )
-            extras, headline = extras_of(state)
-            return (
-                rows,
-                state.updates_count,
-                state.has_pending_changes,
-                state.has_errors,
-                extras,
-                headline,
-                len(getattr(state, "pending", {}) or {}),
-            )
+            return (rows, state.updates_count, staged)
 
         def on_toggle(eid, checked):
             # Select-to-uninstall: a tick stages removal
@@ -482,33 +470,58 @@ class QmlNostalgiaLauncherApp:
                 ctrl.state.pending.pop(eid, None)
             model.refresh()
 
-        model._extras_on_top = op_kind == "assets"
         model.set_snapshot_provider(snapshot)
         model.set_handlers(
             toggle=on_toggle,
-            action=apply_one,
             apply=apply_all,
-            reload=ctrl.reload_catalog,
-            extra=on_extra,
+            reload=reload,
         )
         loaded_signal.connect(lambda _e: model.refresh())
         loaded_signal.connect(lambda _e: model.markLoaded())
         self._hub.bridge.operationFinished.connect(
-            lambda k, ok, m: self._after_content_op(model, k, op_kind)
+            lambda k, ok, m: self._after_content_op(model, k, kind)
         )
         self._hub.bridge.operationFailed.connect(
-            lambda k, m: self._after_content_op(model, k, op_kind)
+            lambda k, m: self._after_content_op(model, k, kind)
         )
         model.set_scanning(True)
         model.set_running(False)
         model.refresh()
 
-        if kind in ("mods", "assets"):
-            # Browse dialog: not-installed catalog, one-click install.
-            browse = (
-                self._browse_mods if kind == "mods" else self._browse_assets
-            )
-            browse.set_install_handler(lambda eid: apply_one(eid))
+        # Browse dialog: not-installed catalog, one-click install.
+        if kind == "addons":
+            from ...core.helpers import strip_wow_colors
+
+            def _browse_install(folder):
+                rec = next(
+                    (r for r in ctrl.state.available if r.folder == folder),
+                    None,
+                )
+                if rec is None:
+                    return False
+                return ctrl.apply([rec.to_dict()])
+
+            browse.set_install_handler(_browse_install)
+
+            def _refresh_browse():
+                rows = []
+                for rec in addon_browse_entries(ctrl.state):
+                    toc = rec.toc or {}
+                    rows.append(
+                        {
+                            "id": rec.folder,
+                            "name": strip_wow_colors(
+                                toc.get("Title") or rec.folder
+                            ),
+                            "version": "",
+                            "description": strip_wow_colors(
+                                toc.get("Notes") or rec.description or ""
+                            ),
+                            "repo_url": rec.git or "",
+                        }
+                    )
+                browse.set_entries(rows)
+        else:
 
             def _refresh_browse():
                 latest = getattr(ctrl.state, "latest_versions", {}) or {}
@@ -527,17 +540,21 @@ class QmlNostalgiaLauncherApp:
                     ]
                 )
 
-            loaded_signal.connect(lambda _e: _refresh_browse())
-            _refresh_browse()
-            browse_dialog = (
-                "qmlBrowseModsDialog"
-                if kind == "mods"
-                else "qmlBrowseAssetsDialog"
-            )
-            model.browseRequested.connect(
-                lambda _b=browse_dialog: self._open_browse_dialog(_b)
-            )
-            self._browse_on_settle[op_kind] = (browse, _refresh_browse)
+            if kind == "mods":
+                browse.set_install_handler(
+                    lambda eid: ctrl.apply(only_mod_id=eid)
+                )
+            else:
+                browse.set_install_handler(
+                    lambda eid: ctrl.apply(only_asset_id=eid)
+                )
+
+        loaded_signal.connect(lambda _e: _refresh_browse())
+        _refresh_browse()
+        model.browseRequested.connect(
+            lambda _b=dialog: self._open_browse_dialog(_b)
+        )
+        self._browse_on_settle[kind] = (browse, _refresh_browse)
 
     def _after_content_op(self, model, kind: str, op_kind: str):
         """Drop the busy chrome when this tab's operation settles."""
@@ -546,183 +563,6 @@ class QmlNostalgiaLauncherApp:
             model.set_running(False)
             model.refresh()
             hook = self._browse_on_settle.get(op_kind)
-            if hook is not None:
-                browse, refresh_browse = hook
-                browse.set_running(False)
-                refresh_browse()
-
-    # ── addons tab (git flows, own model) ─────────────────────────────
-
-    def _wire_addons(self):
-        """Snapshot provider + action callbacks for the ADDONS tab."""
-        model = self._addons_qml
-        ctrl = self._hub.addons
-
-        def unmet_deps_for(rows):
-            """Catalog-declared deps not satisfied, keyed by addon folder.
-
-            Warning-only (never blocks install): mod: against present
-            client mods (ids + dlls.txt entries), addon: against installed
-            addon folders, file: against the client directory."""
-            try:
-                from ...services import mods as mods_service
-
-                client = (self._hub.addons._get_out_dir() or "").strip()
-                mods_state = self._hub.mods.state
-                present = {
-                    mid
-                    for mid, rec in mods_state.records.items()
-                    if rec.present
-                }
-                if client:
-                    try:
-                        entries = mods_service.read_dlls_entries(client)
-                    except Exception:
-                        entries = set()
-                    present |= set(entries)
-                    present |= {e.rsplit(".", 1)[0] for e in entries if e}
-                installed = set(ctrl.state.addons)
-            except Exception:
-                present, installed, client = set(), set(), ""
-            out = {}
-            for rec in rows:
-                deps = rec.depends if hasattr(rec, "depends") else []
-                if not deps:
-                    continue
-                missing = addons_service.unmet_depends(
-                    list(deps),
-                    mods_present=present,
-                    installed_addons=installed,
-                    client_dir=client,
-                )
-                if missing:
-                    out[rec.folder] = missing
-            return out
-
-        def snapshot():
-            state = ctrl.state
-            footer_text, footer_color, cursor = ctrl.footer_state()
-            ts = addons_service.catalog_last_updated()
-            rows = list(state.addons.values()) + list(state.available)
-            return {
-                "items": build_items(
-                    state,
-                    recommended=ctrl.recommended,
-                    expected=expected_interface(launcher.client_version()),
-                    needle=model.current_filter(),
-                    pending=state.pending,
-                    mode=model.current_filter_mode(),
-                    available=[],
-                    unmet_deps=unmet_deps_for(rows),
-                ),
-                "updates_count": state.updates_count,
-                "apply_visible": bool(state.pending),
-                "pending_count": len(state.pending),
-                "recommended_enabled": bool(
-                    set(ctrl.recommended) - set(state.addons)
-                )
-                and not state.busy,
-                "footer_text": footer_text,
-                "footer_color": footer_color,
-                "footer_clickable": cursor == "hand2",
-                "age_text": (
-                    f"Catalog updated {relative_age(ts)}" if ts else ""
-                ),
-            }
-
-        def on_toggle(folder, checked):
-            # Select-to-uninstall: a tick stages removal
-            # (pending False = enabled-off). Only an uninstall tick is
-            # staged — anything else clears the stage.
-            if checked:
-                ctrl.toggle(folder, False)
-            else:
-                ctrl.state.pending.pop(folder, None)
-            model.refresh()
-
-        def on_update_one(folder):
-            rec = ctrl.state.addons.get(folder)
-            if rec is None:
-                return False
-            return ctrl.apply([rec.to_dict()])
-
-        def on_update_all():
-            return ctrl.apply(ctrl.update_all())
-
-        model.set_snapshot_provider(snapshot)
-        model.set_handlers(
-            toggle=on_toggle,
-            update_one=on_update_one,
-            update_all=on_update_all,
-            apply=ctrl.apply_pending,
-            recommended=ctrl.apply_recommended_addons,
-            check=lambda: ctrl.verify(force=True),
-        )
-        bridge = self._hub.bridge
-        bridge.addonsLoaded.connect(lambda _e: model.refresh())
-        bridge.addonsLoaded.connect(lambda _e: model.markLoaded())
-        bridge.operationFinished.connect(
-            lambda k, ok, m: self._after_addons_op(k)
-        )
-        bridge.operationFailed.connect(lambda k, m: self._after_addons_op(k))
-        model.set_scanning(True)
-        model.set_running(False)
-        model.refresh()
-
-        # Browse dialog: not-installed catalog, one-click install.
-        browse = self._browse_addons
-
-        def _browse_install(folder):
-            rec = next(
-                (r for r in ctrl.state.available if r.folder == folder),
-                None,
-            )
-            if rec is None:
-                return False
-            return ctrl.apply([rec.to_dict()])
-
-        browse.set_install_handler(_browse_install)
-
-        def _refresh_browse():
-            from ...core.helpers import strip_wow_colors
-
-            unmet = unmet_deps_for(ctrl.state.available)
-            rows = []
-            for rec in addon_browse_entries(ctrl.state):
-                toc = rec.toc or {}
-                desc = strip_wow_colors(
-                    toc.get("Notes") or rec.description or ""
-                )
-                needs = unmet.get(rec.folder, ())
-                if needs:
-                    suffix = "Requires: " + ", ".join(str(d) for d in needs)
-                    desc = f"{desc}\n{suffix}" if desc else suffix
-                rows.append(
-                    {
-                        "id": rec.folder,
-                        "name": strip_wow_colors(
-                            toc.get("Title") or rec.folder
-                        ),
-                        "version": "",
-                        "description": desc,
-                        "repo_url": rec.git or "",
-                    }
-                )
-            browse.set_entries(rows)
-
-        bridge.addonsLoaded.connect(lambda _e: _refresh_browse())
-        _refresh_browse()
-        model.browseRequested.connect(
-            lambda: self._open_browse_dialog("qmlBrowseAddonsDialog")
-        )
-        self._browse_on_settle["addons"] = (browse, _refresh_browse)
-
-    def _after_addons_op(self, kind: str):
-        if kind == "addons":
-            self._addons_qml.set_scanning(False)
-            self._addons_qml.set_running(False)
-            self._addons_qml.refresh()
-            hook = self._browse_on_settle.get("addons")
             if hook is not None:
                 browse, refresh_browse = hook
                 browse.set_running(False)

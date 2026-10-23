@@ -253,10 +253,17 @@ class AddonError:
 
 
 @dataclass
+class AddonPending:
+    """One not-yet-applied checkbox change from the ADDONS tab."""
+
+    enabled: bool | None = None
+
+
+@dataclass
 class AddonsState:
     """ADDONS panel state, mirroring _addons_status, _addons_busy,
-    _addons_installing, _addons_verified_ts, _addon_errors,
-    _addon_sections_open and _addon_updates_count."""
+    _addons_installing, _addons_verified_ts, _addon_errors
+    and _addon_updates_count."""
 
     state: str = "idle"
     addons: dict[str, AddonState] = field(default_factory=dict)
@@ -265,10 +272,7 @@ class AddonsState:
     installing: bool = False
     verified_ts: float = 0.0
     errors: dict[str, AddonError] = field(default_factory=dict)
-    pending: dict[str, bool] = field(default_factory=dict)
-    sections_open: dict[str, bool] = field(
-        default_factory=lambda: {"INSTALLED": True, "AVAILABLE": True}
-    )
+    pending: dict[str, AddonPending] = field(default_factory=dict)
     updates_count: int = 0
 
 

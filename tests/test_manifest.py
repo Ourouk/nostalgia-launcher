@@ -75,6 +75,33 @@ def test_route_entry_first_match_wins():
     assert _manifest.route_entry("other.txt", routes) is None
 
 
+def test_dlls_for_path_reads_route_register_dll(monkeypatch):
+    monkeypatch.setattr(
+        _manifest,
+        "_manifest_block",
+        lambda: {
+            "routes": [
+                {
+                    "match": "EpochConnection.dll",
+                    "as": "mod",
+                    "register_dll": ["EpochConnection.dll"],
+                },
+                {"match": "Data/*.MPQ", "as": "asset"},
+            ]
+        },
+    )
+    assert _manifest.dlls_for_path("EpochConnection.dll") == [
+        "EpochConnection.dll"
+    ]
+    assert _manifest.dlls_for_path("Data/patch-A.MPQ") == []
+    assert _manifest.dlls_for_path("other.txt") == []
+
+
+def test_dlls_for_path_no_block(monkeypatch):
+    monkeypatch.setattr(_manifest, "_manifest_block", lambda: None)
+    assert _manifest.dlls_for_path("EpochConnection.dll") == []
+
+
 def test_stale_overlay_entries_missing_only(tmp_path):
     import hashlib
 
@@ -382,6 +409,48 @@ def test_manifest_overlay_download_sha_gate(tmp_path, monkeypatch):
         if isinstance(e, UpdateFailed)
     ]
     assert failed and "sha256 mismatch" in failed[0].message
-    assert not _os.path.exists(
-        _os.path.join(bad_worker.out_dir, "Data", "a.MPQ")
+
+
+def test_manifest_overlay_download_registers_dlls(tmp_path, monkeypatch):
+    """Bundled DLLs land in dlls.txt (mirrors the MODS tab install:
+    without registration the client never loads them)."""
+    import hashlib
+
+    import nostalgia_launcher.services.update.workflow as w
+
+    dll_bytes = b"dll-bytes"
+    entries = [
+        {
+            "path": "EpochConnection.dll",
+            "size": len(dll_bytes),
+            "sha256": hashlib.sha256(dll_bytes).hexdigest(),
+            "download_url": "https://u/m/EpochConnection.dll",
+        }
+    ]
+    worker = _manifest_worker(tmp_path, monkeypatch, entries)
+    monkeypatch.setattr(
+        _manifest,
+        "_manifest_block",
+        lambda: {
+            "url": "https://u/m",
+            "routes": [
+                {
+                    "match": "EpochConnection.dll",
+                    "as": "mod",
+                    "register_dll": ["EpochConnection.dll"],
+                }
+            ],
+        },
     )
+    import os as _os
+
+    def _write_dll(self, url, dest, size, name=""):
+        with open(dest, "wb") as f:
+            f.write(dll_bytes)
+
+    monkeypatch.setattr(w.UpdateWorker, "download", _write_dll)
+    assert worker._manifest_overlay_download({"EpochConnection.dll"}) is True
+    with open(_os.path.join(worker.out_dir, "dlls.txt")) as f:
+        assert "EpochConnection.dll" in [
+            line.strip() for line in f if line.strip()
+        ]

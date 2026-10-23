@@ -2,9 +2,8 @@
 
 Owns the ADDONS-panel business logic: the catalog fetch with its offline
 fallback, the Interface/AddOns scan with .toc parsing, the cached remote-sha
-verification (TTL-gated, cache-only on demand), the sequential
-install/update/remove worker, and the recommended-addons install triggered by
-the panel's "Install Recommended" button. Publishes snapshots as AddonsLoaded
+verification (TTL-gated, cache-only on demand) and the sequential
+install/update/remove worker. Publishes snapshots as AddonsLoaded
 and worker outcomes as OperationFinished on the shared EventDispatcher; the Qt
 Addons panel renders them. No GUI toolkit.
 """
@@ -31,11 +30,6 @@ from ..state.events import (
     StatusChanged,
 )
 from ..state.models import AddonError, AddonsState, AddonState
-
-# Footer-label colours — mirror qt_theme's ok / text-dim so the
-# toolkit-agnostic footer_state() can render without importing Qt.
-C_OK = "#6abf69"
-C_TEXT_DIM = "#7a7670"
 
 # Status message when the remote could not be reached to compare SHAs — a
 # transient state (rate limit, outage), distinct from a broken addon folder.
@@ -213,7 +207,6 @@ class AddonsController:
     ) -> None:
         self._dispatcher = dispatcher
         self.state = AddonsState()
-        self._recommended = set(addons.RECOMMENDED_ADDONS)
         if get_out_dir is None:
 
             def _default_get_out_dir() -> str:
@@ -225,12 +218,6 @@ class AddonsController:
         self._get_out_dir = get_out_dir
 
     # ── public API ──────────────────────────────────────────────────────────
-
-    @property
-    def recommended(self) -> set:
-        """Set of recommended addon folder names (★ badge / sort order).
-        Grows as the catalog flags addons as recommended during a verify."""
-        return self._recommended
 
     @property
     def updates_count(self) -> int:
@@ -695,11 +682,10 @@ class AddonsController:
         self._finish_verify(installed, available)
 
     def _available_from_catalog(self, catalog_list: list) -> list:
-        """Map catalog entries to AVAILABLE row dicts: curated blocked/
-        recommended flags plus any flags the catalog carries, with curated
-        git overrides applied (and synthesized rows for renamed entries)."""
+        """Map catalog entries to AVAILABLE row dicts: curated blocked
+        flags plus any flags the catalog carries, with curated git
+        overrides applied (and synthesized rows for renamed entries)."""
         blocked = set(addons.BLOCKED_ADDONS)
-        recommended = set(addons.RECOMMENDED_ADDONS)
         blocked_norms = {_norm_folder(n) for n in blocked}
         blocked_norms.discard("")
         available = []
@@ -713,8 +699,6 @@ class AddonsController:
                 blocked.add(name)
                 blocked_norms.add(_norm_folder(name))
                 blocked_norms.discard("")
-            if a.get("recommended"):
-                recommended.add(name)
             if _norm_folder(name) in blocked_norms:
                 # A blocked folder stays hidden even under a variant
                 # spelling; drop any earlier variant row too.
@@ -760,6 +744,7 @@ class AddonsController:
             by_name[name] = rec
             if key:
                 by_norm[key] = rec
+        # Curated git overrides for renamed entries.
         for name, override in addons.RECOMMENDED_ADDONS.items():
             rec = by_name.get(name)
             if rec is None:
@@ -778,9 +763,8 @@ class AddonsController:
                         "error": None,
                     }
                 )
-            elif not same_git_repo(rec.get("git"), override):
+            elif rec.get("git") != override:
                 rec.update(git=override, branch=None, ref=None)
-        self._recommended = recommended
         return available
 
     def _overlay_errors(self, available: list):
@@ -851,7 +835,9 @@ class AddonsController:
         ``enabled=False`` (staged for removal); unticking clears the
         stage via ``pending.pop`` in the tab glue.
         """
-        self.state.pending[folder] = enabled
+        from ..state.models import AddonPending
+
+        self.state.pending[folder] = AddonPending(enabled=enabled)
 
     def add_custom_entry(self, entry: dict) -> str | None:
         """Validate a user-built addon entry and persist it into the local
@@ -870,8 +856,8 @@ class AddonsController:
         Returns True when the worker actually started."""
         staged = [
             folder
-            for folder, enabled in (self.state.pending or {}).items()
-            if enabled is False
+            for folder, pend in (self.state.pending or {}).items()
+            if getattr(pend, "enabled", pend) is False
         ]
         if self.state.busy or not staged:
             return False
@@ -912,66 +898,9 @@ class AddonsController:
         ).start()
         return True
 
-    def update_all(self) -> list:
-        """The out-of-date installed addons as record dicts, for apply()."""
-        return [
-            rec.to_dict()
-            for rec in self.state.addons.values()
-            if rec.status == "outOfDate"
-        ]
-
-    def apply_recommended_addons(self) -> bool:
-        """Install every recommended addon (from catalog + constant) not yet
-        present. Returns True when an install actually started."""
-        if self.state.busy:
-            return False
-        client = (self._get_out_dir() or "").strip()
-        from ..core.filesystem import game_executable_exists
-
-        if not client or not game_executable_exists(client):
-            return False
-        # If the recommended set only has the constant (empty by default) and
-        # the available list is empty, force a catalog fetch so the recommended
-        # set gets populated from the server's catalog.
-        if not self.state.available and self._recommended == set(
-            addons.RECOMMENDED_ADDONS
-        ):
-            self._ensure_catalog_loaded()
-        ap = addons.addons_path(client)
-        recs = []
-        for name in sorted(self._recommended):
-            if os.path.isdir(os.path.join(ap, name)):
-                continue
-            rec = next(
-                (r for r in self.state.available if r.folder == name), None
-            )
-            if rec is not None:
-                recs.append(rec.to_dict())
-            elif name in addons.RECOMMENDED_ADDONS:
-                recs.append(
-                    {
-                        "folder": name,
-                        "status": "available",
-                        "git": addons.RECOMMENDED_ADDONS[name],
-                        "branch": None,
-                        "ref": None,
-                        "toc": {},
-                        "description": None,
-                        "error": None,
-                    }
-                )
-        if not recs:
-            return False
-        self._dispatcher.post(
-            LogMessage("\nInstalling recommended addons...\n", "acct")
-        )
-        # Propagate the worker's verdict: a refused start must not report
-        # success (the panel keys its busy chrome off this boolean).
-        return self.apply(recs)
-
     def reset(self):
         """Drop the session verify TTL/content (called when the game folder
-        changes). The section open/closed state is intentionally preserved."""
+        changes)."""
         try:
             addons.prune_toc_cache()
         except Exception:
@@ -982,45 +911,12 @@ class AddonsController:
         self.state.available = []
         self.state.errors = {}
         self.state.updates_count = 0
-        self._recommended = set(addons.RECOMMENDED_ADDONS)
 
     def invalidate(self):
         """Drop the verify TTL so the next verify() rescans and rebuilds the
         list (used after a catalog reload)."""
         self.state.verified_ts = 0.0
         self.state.state = "idle"
-
-    def footer_state(self) -> tuple[str, str, str]:
-        """The ADDONS footer label as (text, fg, cursor)."""
-        if self.state.state == "verifying" or self.state.busy:
-            return "Checking…", C_TEXT_DIM, "arrow"
-        if any(
-            rec.status == "outOfDate" for rec in self.state.addons.values()
-        ):
-            return "Update all", C_OK, "hand2"
-        return "Everything up to date", C_TEXT_DIM, "arrow"
-
-    def _ensure_catalog_loaded(self):
-        """Force a catalog fetch and populate _recommended and state.available.
-        Used by apply_recommended_addons on first run when the catalog hasn't
-        been fetched yet. Never raises — this runs on the GUI thread, and an
-        escaping exception would abort the caller's Qt slot mid-install."""
-        try:
-            catalog = addons.addons_catalog(force=True)
-        except Exception:
-            try:
-                catalog = addons.catalog_from_cache()
-            except Exception:
-                catalog = []
-        available = self._available_from_catalog(catalog)
-        available = _suppress_shadowed(
-            available,
-            {
-                f: (s.git if isinstance(s, AddonState) else None)
-                for f, s in self.state.addons.items()
-            },
-        )
-        self.state.available = [AddonState.from_dict(rec) for rec in available]
 
     # ── internals ───────────────────────────────────────────────────────────
 
@@ -1241,8 +1137,8 @@ class AddonsController:
 
         # Only uninstall ticks are acted on — installs come from the
         # Browse dialog via apply(), never through pending.
-        for folder, enabled in list(pending.items()):
-            if enabled is not False:
+        for folder, pend in list(pending.items()):
+            if getattr(pend, "enabled", pend) is not False:
                 continue
             try:
                 dirp = os.path.join(addons.addons_path(client), folder)
