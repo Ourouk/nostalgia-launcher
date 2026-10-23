@@ -302,7 +302,7 @@ def test_update_worker_uses_verified_torrent_paths_without_manifest(
         lambda wanted: (recovered.append(wanted), True)[1],
     )
 
-    worker.run({"Data/a.bin"})
+    worker.run_incremental({"Data/a.bin"})
 
     assert recovered == [{"Data/a.bin"}]
     events = dispatcher.drain()

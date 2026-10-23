@@ -51,8 +51,8 @@ flowchart TD
 
 | Piece | File | Role |
 |---|---|---|
-| `VerifyWorker` / `UpdateWorker` | `services/update/workflow.py` | Background threads; own verify/update logic |
-| `TorrentVerifier` / `TorrentDownloader` | `services/update_backend/torrent_update.py` | libtorrent execution only, no policy |
+| `VerifyWorker` / `UpdateWorker` | `services/update/workflow.py` | Orchestrator facade: `VerifyWorker.run()` verifies; `UpdateWorker` splits into `run_initial()` (one-off full acquisition — BitTorrent full, then single-zip HTTP fallback) and `run_incremental(wanted)` (manifest HTTPS first, torrent selective second). `run()` keeps the legacy signature and dispatches by stage for API stability. |
+| `ownership` / `stages_*` | `services/update/ownership.py`, `stages_initial/static/manifest/torrent.py` | Stage logic: ownership guardrail, initial acquisition, static/manifest/torrent incremental |
 | `services/manifest.py` | `services/manifest.py` | server-agnostic manifest overlay: fetch/parse/route/bundled entries (`manifest:`-prefixed stale paths) |
 | `DownloadSource` / `_download_source()` | `services/update_backend/sources.py` | Resolve `torrent_url` / `magnet` / `fallback_url` from `server.download` |
 | `UpdateController` | `controllers/update.py` | Lifecycle owner; `_on_event` mutates `UpdateState`; `compute_readiness()` drives footer |
@@ -82,14 +82,20 @@ yet enforced (existence-only staleness).
 - `torrent_locator = torrent_url or magnet`.
 - `has_torrent() = bool(torrent_url or magnet)`.
 - `torrent_update_allowed()`: explicit `torrent.update` wins; else inferred
-  as `bool(torrent_url)` — **magnet-only defaults to first-time-only**,
+  as `bool(torrent_url)` — **magnet-only defaults to first-time-only**
+  (magnet content is immutable once published — info-hash addressed —
+  so it cannot carry updates; only a refreshed `torrent_url` can),
   `torrent_url` defaults to updatable.
 
 ## 3. Verify (`VerifyWorker.run`)
 
 1. Post `Verifying…` progress; seed `WTF/Config.wtf` + `realmlist.wtf` if
    `overwrite_config` or missing.
-2. Manifest overlay first (`_manifest_verify()`), when
+2. Ownership guard (`ownership.check_server_write`): when the manifest
+   stage owns the verdict, collisions between server-owned paths and
+   user `installed_files` are logged (server wins, never silent);
+   downloads into `Interface/` / `dlls.txt` are refused.
+3. Manifest overlay (`stages_manifest.split_manifest_paths`), when
    `server.download.manifest` is configured: fetch + parse the upstream
    manifest (HTTPS, 2 MiB cap, `__manifest_snapshot__` cache, offline
    serves cache); post `TorrentReachable`, then existence-compare listed
@@ -125,33 +131,38 @@ yet enforced (existence-only staleness).
 4. `compute_readiness()` stays `disabled / "Verifying…"` until a verdict
    (`torrent_stale/reachable/error`) exists.
 
-## 4. Update (`UpdateWorker.run`)
+## 4. Update (`UpdateWorker.run_initial` / `run_incremental`)
 
-Inputs: `torrent_wanted` (stale set from verify, `manifest:`-prefixed
-entries first), `recovery_full` (full-client
-button; bypasses the `torrent.update` flag).
+`UpdateController.start_client_download()` → `run_initial()` (initial
+stage: full base acquisition, torrent-full then HTTP fallback, no
+stale-set logic). `UpdateController.start_update()` → `run_incremental(wanted)`
+(incremental stage: patch a playable client).
+
+Incremental inputs: `wanted` (stale set from verify, `manifest:`-prefixed
+entries first).
 
 - `manifest:` paths download first via `_manifest_overlay_download()`:
   HTTPS from each entry's own `download_url` (`download_file` resume +
   retry, per-file progress), `remove_wdb`, record version under
   `__manifest_installed__`. Failure posts `UpdateFailed`. Manifest-only
   stale set → `UpdateCompleted` without touching torrent.
-- Remaining (non-`manifest:`) paths flow to the torrent path unchanged:
-- `wanted == set()` → `TorrentUpToDate`, no-op.
-- `can_torrent = locator and libtorrent and torrent_update_allowed()`
-  (flag skipped when `recovery_full`):
-  - ✅ → `TorrentDownloader.download(locator, wanted)`: **online session**,
-    per-file priorities `7` = wanted, `0` = rest (selective). `wanted=None`
-    means full client. Selective still missing files afterwards → escalate
-    to full. No `WoW.exe` after → `UpdateFailed`. Else `remove_wdb`,
+- Remaining (non-`manifest:`) paths flow to the torrent stage below
+  (`_torrent_stage.torrent_allowed` policy — frozen/magnet-only leaves
+  torrent-owned paths unpatched):
+- `can_torrent = locator and libtorrent and torrent_allowed`:
+  - ✅ → `_recovery_download(wanted)`: **online session**,
+    per-file priorities `7` = wanted, `0` = rest (selective).
+    Selective still missing files afterwards → escalate
+    to full. No exe after → `UpdateFailed`. Else `remove_wdb`,
     seed configs if missing, cache `stale:[]`, post `TorrentRecoveryDone`.
-  - ✅ but throws → existing install: `UpdateFailed`; first install with
-    fallback: retry via HTTP below.
-  - ❌ + first install + `fallback_url` → `_http_fallback_download()`:
-    stream archive to `_fallback.{zip,rar}`, `extract_client_payload()`,
-    delete archive, `remove_wdb`, seed configs → `UpdateCompleted(version)`.
-  - ❌ + existing install → `UpdateFailed` (**HTTP never patches an install**).
-  - ❌ + first install, no fallback → `UpdateFailed("No download source")`.
+  - ✅ but throws → `UpdateFailed` (no fallback: HTTP never patches
+    an install).
+  - ❌ → `UpdateFailed` — manifest-uncovered paths on a frozen /
+    torrent-less source stay unpatched; **HTTP never patches an install**.
+
+`run_initial()` (first acquisition, no playable client yet) is the only
+path that touches the HTTP fallback: torrent-full first, single-zip
+fallback second, else `UpdateFailed("No download source")`.
 
 ## 5. Scenario matrix
 

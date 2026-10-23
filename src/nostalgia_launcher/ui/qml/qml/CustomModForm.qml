@@ -39,18 +39,6 @@ ColumnLayout {
                 model: customModModel.modTypes
                 onCurrentTextChanged: customModModel.setField("modType", currentText)
             }
-            Label {
-                text: "INSTALLATION"
-                font.bold: true
-                font.pointSize: 9
-                color: appTheme.colors["C_GOLD"]
-            }
-            ComboBox {
-                Accessible.name: "INSTALLATION"
-                Layout.fillWidth: true
-                model: customModModel.installations
-                onCurrentTextChanged: customModModel.setField("installation", currentText)
-            }
             Field {
                 caption: "GAME EXECUTABLE (relative to the game folder)"
                 visible: typeCombo.currentText === "external-launcher"

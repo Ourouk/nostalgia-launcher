@@ -129,7 +129,6 @@ def test_mod_lists_come_from_catalog(qapp):
     model = CustomModModel()
     assert "github_release" in model.property("sourceKinds")
     assert model.property("modTypes") != []
-    assert model.property("installations") != []
 
 
 # ── custom addon ──────────────────────────────────────────────────────
@@ -181,10 +180,8 @@ def test_asset_accepts_entry(qapp):
     model.setField("assetId", "a")
     model.setField("url", "https://example.test/patch.mpq")
     model.setField("dest", "Data/patch.mpq")
-    model.setFlag("essential", True)
     assert model.submit() is True
     assert entries[0]["dest"] == "Data/patch.mpq"
-    assert entries[0]["essential"] is True
 
 
 # ── linux ─────────────────────────────────────────────────────────────

@@ -250,35 +250,6 @@ class AssetsController:
     def invalidate(self):
         pass
 
-    def apply_essential_assets(self) -> bool:
-        """Install every essential asset not already present. Returns True
-        when an install actually started."""
-        if self._busy:
-            return False
-        out = (self._get_out_dir() or "").strip()
-        from ..core.filesystem import game_executable_exists
-
-        if not out or not game_executable_exists(out):
-            return False
-        records_cfg = config_store.load_config().get("assets", {})
-        pending = False
-        for asset in assets.assets_registry():
-            if not asset.get("essential", False):
-                continue
-            state = records_cfg.get(asset["id"], {})
-            if state.get("installed_files") and self._files_present(
-                state.get("installed_files"), out
-            ):
-                continue  # already installed
-            self.toggle(asset["id"], True)
-            pending = True
-        if not pending:
-            return False
-        self._dispatcher.post(
-            LogMessage("\nInstalling essential assets...\n", "acct")
-        )
-        return self.apply()
-
     def reset(self):
         """Clear pending changes and verdicts (a game-folder change)."""
         self.state.pending = {}

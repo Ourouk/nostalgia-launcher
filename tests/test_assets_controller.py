@@ -21,7 +21,6 @@ def _entry(**over):
         "url": "https://server.test/uploads/patch-3.MPQ",
         "dest": "Data/patch-3.MPQ",
         "version": "v1",
-        "essential": True,
     }
     e.update(over)
     return e
@@ -84,28 +83,6 @@ def test_records_empty_initially(env):
     ctl = _make(client)
     assert ctl.state.records == {}
     assert ctl.updates_count == 0
-
-
-def test_apply_essential_installs_missing_asset(env, monkeypatch):
-    tmp_path, client, monkeypatch = env
-    body = b"MPQDATA"
-    _serve(monkeypatch, body)
-    ctl = _make(client)
-    assert ctl.apply_essential_assets() is True
-
-    deadline = threading.Event()
-    for _ in range(200):
-        if not ctl.busy:
-            break
-        deadline.wait(0.05)
-    assert not ctl.busy
-
-    installed = client / "Data" / "patch-3.MPQ"
-    assert installed.read_bytes() == body
-    rec = config_store.load_config()["assets"]["patch3"]
-    assert rec["enabled"] is True
-    assert rec["installed_version"] == "v1"
-    assert rec["installed_files"] == ["Data/patch-3.MPQ"]
 
 
 def test_verdict_marks_stale_and_action_update(env, monkeypatch):

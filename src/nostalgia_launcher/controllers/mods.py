@@ -196,40 +196,6 @@ class ModsController:
         """Drop the cached latest versions; the next load refetches."""
         self.state.latest_versions = {}
 
-    def apply_essential_mods(self) -> bool:
-        """Install every required mod not already present. Returns True when
-        an install actually started (a client is present and at least one
-        required mod is missing). An explicit user opt-out (an enabled=False
-        record) always wins: the catalog policy never force-reinstalls a mod
-        the user turned off."""
-        if self._busy:
-            return False
-        out = (self._get_out_dir() or "").strip()
-        from ..core.filesystem import game_executable_exists
-
-        if not out or not game_executable_exists(out):
-            return False
-        mods_cfg = config_store.load_config().get("mods", {})
-        pending = False
-        for mod in mods.mods_registry():
-            if mod.get("installation") != "required":
-                continue
-            state = mods_cfg.get(mod["id"], {})
-            if state.get("enabled") is False:
-                continue  # user opted out — liberty beats policy
-            if state.get(
-                "installed_version"
-            ) and mods.mod_installed_files_present(mod, out):
-                continue  # already installed
-            self.toggle(mod["id"], True)
-            pending = True
-        if not pending:
-            return False
-        self._dispatcher.post(
-            LogMessage("\nInstalling required mods...\n", "acct")
-        )
-        return self.apply()
-
     def remove_unknown(self, name: str):
         """Uninstall a detected-but-untracked mod (a dlls.txt entry no catalog
         mod claims) straight from the filesystem, then republish the panel."""

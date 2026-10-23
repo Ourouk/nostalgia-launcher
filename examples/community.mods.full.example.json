@@ -2,9 +2,8 @@
   {
     "id": "example-tweak",
     "type": "mod",
-    "installation": "user_opt_in",
     "name": "ExampleTweak",
-    "description": "github_release — asset picked by glob `asset_pattern`; `prefer_no` deprioritises candidates containing that substring.",
+    "description": "github_release \u2014 asset picked by glob `asset_pattern`; `prefer_no` deprioritises candidates containing that substring.",
     "repo_url": "https://github.com/example-community/example-tweak",
     "source": {
       "kind": "github_release",
@@ -16,16 +15,21 @@
         "ExampleTweak.dll": "ExampleTweak.dll"
       }
     },
-    "register_dll": ["ExampleTweak.dll"],
-    "installed_files": ["ExampleTweak.dll"],
-    "client_versions": ["1.12.1"]
+    "register_dll": [
+      "ExampleTweak.dll"
+    ],
+    "installed_files": [
+      "ExampleTweak.dll"
+    ],
+    "client_versions": [
+      "1.12.1"
+    ]
   },
   {
     "id": "example-tweak-asset-version",
     "type": "mod",
-    "installation": "user_opt_in",
     "name": "ExampleTweakAssetVersion",
-    "description": "github_release with version_from=asset — version derived from asset filename (for repos with a static tag).",
+    "description": "github_release with version_from=asset \u2014 version derived from asset filename (for repos with a static tag).",
     "repo_url": "https://github.com/example-community/example-tweak",
     "source": {
       "kind": "github_release",
@@ -37,15 +41,18 @@
       },
       "version_from": "asset"
     },
-    "register_dll": ["SuperWoW.dll"],
-    "installed_files": ["SuperWoW.dll"]
+    "register_dll": [
+      "SuperWoW.dll"
+    ],
+    "installed_files": [
+      "SuperWoW.dll"
+    ]
   },
   {
     "id": "example-codeberg",
     "type": "mod",
-    "installation": "user_opt_in",
     "name": "ExampleCodeberg",
-    "description": "codeberg_release — same fields as github_release but served from codeberg.org Gitea API.",
+    "description": "codeberg_release \u2014 same fields as github_release but served from codeberg.org Gitea API.",
     "repo_url": "https://codeberg.org/example-community/example-codeberg",
     "source": {
       "kind": "codeberg_release",
@@ -56,15 +63,18 @@
         "CodebergMod.dll": "CodebergMod.dll"
       }
     },
-    "register_dll": ["CodebergMod.dll"],
-    "installed_files": ["CodebergMod.dll"]
+    "register_dll": [
+      "CodebergMod.dll"
+    ],
+    "installed_files": [
+      "CodebergMod.dll"
+    ]
   },
   {
     "id": "example-direct-dll",
     "type": "mod",
-    "installation": "user_opt_in",
     "name": "ExampleDirectDll",
-    "description": "direct_file streaming — single file streamed to `dest` beside its final location (supports large MPQ/archives).",
+    "description": "direct_file streaming \u2014 single file streamed to `dest` beside its final location (supports large MPQ/archives).",
     "repo_url": "https://github.com/example-community/example-direct",
     "source": {
       "kind": "direct_file",
@@ -72,16 +82,21 @@
       "dest": "example_mod.dll",
       "pinned_version": "v1.0.0"
     },
-    "register_dll": ["example_mod.dll"],
-    "installed_files": ["example_mod.dll"],
-    "client_versions": ["1.12.1"]
+    "register_dll": [
+      "example_mod.dll"
+    ],
+    "installed_files": [
+      "example_mod.dll"
+    ],
+    "client_versions": [
+      "1.12.1"
+    ]
   },
   {
     "id": "example-direct-integrity",
     "type": "mod",
-    "installation": "user_opt_in",
     "name": "ExampleDirectIntegrity",
-    "description": "direct_file with sha1+size integrity pins — download rejected on mismatch.",
+    "description": "direct_file with sha1+size integrity pins \u2014 download rejected on mismatch.",
     "repo_url": "https://github.com/example-community/example-direct",
     "source": {
       "kind": "direct_file",
@@ -91,15 +106,18 @@
       "sha1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "size": 123456
     },
-    "register_dll": ["secure.dll"],
-    "installed_files": ["secure.dll"]
+    "register_dll": [
+      "secure.dll"
+    ],
+    "installed_files": [
+      "secure.dll"
+    ]
   },
   {
     "id": "example-direct-archive",
     "type": "mod",
-    "installation": "user_opt_in",
     "name": "ExampleDirectArchive",
-    "description": "direct_file archive — fetched into memory and extracted via extract_map (zip or tar.gz by URL extension).",
+    "description": "direct_file archive \u2014 fetched into memory and extracted via extract_map (zip or tar.gz by URL extension).",
     "repo_url": "https://github.com/example-community/example-archive",
     "source": {
       "kind": "direct_file",
@@ -110,15 +128,19 @@
       },
       "pinned_version": "v1.1.0"
     },
-    "register_dll": ["ExampleArchive.dll"],
-    "installed_files": ["ExampleArchive.dll", "ExampleArchive.conf"]
+    "register_dll": [
+      "ExampleArchive.dll"
+    ],
+    "installed_files": [
+      "ExampleArchive.dll",
+      "ExampleArchive.conf"
+    ]
   },
   {
     "id": "example-tar",
     "type": "mod",
-    "installation": "user_opt_in",
     "name": "ExampleTar",
-    "description": "direct_tar — requires extract_map; supports fnmatch globs in the archive member pattern.",
+    "description": "direct_tar \u2014 requires extract_map; supports fnmatch globs in the archive member pattern.",
     "repo_url": "https://github.com/example-community/example-tar",
     "source": {
       "kind": "direct_tar",
@@ -129,15 +151,19 @@
       },
       "pinned_version": "v3.0.0"
     },
-    "register_dll": ["ExampleTar.dll"],
-    "installed_files": ["ExampleTar.dll", "ExampleTar.ini"]
+    "register_dll": [
+      "ExampleTar.dll"
+    ],
+    "installed_files": [
+      "ExampleTar.dll",
+      "ExampleTar.ini"
+    ]
   },
   {
     "id": "example-git-archive",
     "type": "mod",
-    "installation": "user_opt_in",
     "name": "ExampleGitArchive",
-    "description": "git_archive — fetches archive zip at `ref`/`branch` commit (GitHub/GitLab/Gitea/Codeberg allowlisted hosts).",
+    "description": "git_archive \u2014 fetches archive zip at `ref`/`branch` commit (GitHub/GitLab/Gitea/Codeberg allowlisted hosts).",
     "repo_url": "https://github.com/example-community/example-git",
     "source": {
       "kind": "git_archive",
@@ -145,15 +171,18 @@
       "branch": "main",
       "ref": "v1.0.0"
     },
-    "register_dll": ["ExampleGitArchive.dll"],
-    "installed_files": ["ExampleGitArchive.dll"]
+    "register_dll": [
+      "ExampleGitArchive.dll"
+    ],
+    "installed_files": [
+      "ExampleGitArchive.dll"
+    ]
   },
   {
     "id": "example-loader",
     "type": "external-launcher",
-    "installation": "required",
     "name": "ExampleLoader",
-    "description": "external-launcher — provides the game executable the launcher starts when installed and enabled.",
+    "description": "external-launcher \u2014 provides the game executable the launcher starts when installed and enabled.",
     "repo_url": "https://github.com/example-community/example-loader",
     "source": {
       "kind": "github_release",
@@ -166,17 +195,23 @@
         "ExampleLoader.exe": "ExampleLoader.exe"
       }
     },
-    "register_dll": ["ExampleLoaderHook.dll"],
-    "installed_files": ["ExampleLoaderHook.dll", "ExampleLoader.exe"],
+    "register_dll": [
+      "ExampleLoaderHook.dll"
+    ],
+    "installed_files": [
+      "ExampleLoaderHook.dll",
+      "ExampleLoader.exe"
+    ],
     "executable": "ExampleLoader.exe",
-    "client_versions": ["1.12.1"]
+    "client_versions": [
+      "1.12.1"
+    ]
   },
   {
     "id": "example-dxvk",
     "type": "mod",
-    "installation": "user_opt_in",
     "name": "ExampleDxvk",
-    "description": "Mod with post_install hook — only allowlisted hooks (currently `write_dxvk_conf`) accepted, and only for type `mods`.",
+    "description": "Mod with post_install hook \u2014 only allowlisted hooks (currently `write_dxvk_conf`) accepted, and only for type `mods`.",
     "repo_url": "https://github.com/example-community/example-dxvk",
     "source": {
       "kind": "direct_tar",
@@ -184,17 +219,22 @@
       "extract_map": {
         "d3d9.dll": "d3d9.dll"
       },
-      "post_install": ["write_dxvk_conf"]
+      "post_install": [
+        "write_dxvk_conf"
+      ]
     },
-    "register_dll": ["d3d9.dll"],
-    "installed_files": ["d3d9.dll"]
+    "register_dll": [
+      "d3d9.dll"
+    ],
+    "installed_files": [
+      "d3d9.dll"
+    ]
   },
   {
     "id": "example-multi-dll",
     "type": "mod",
-    "installation": "required",
     "name": "ExampleMultiDll",
-    "description": "Mod registering multiple DLLs — `register_dll` must be a non-empty list of safe_relative_path entries.",
+    "description": "Mod registering multiple DLLs \u2014 `register_dll` must be a non-empty list of safe_relative_path entries.",
     "repo_url": "https://github.com/example-community/example-multi",
     "source": {
       "kind": "github_release",
@@ -206,7 +246,13 @@
         "B.dll": "B.dll"
       }
     },
-    "register_dll": ["A.dll", "B.dll"],
-    "installed_files": ["A.dll", "B.dll"]
+    "register_dll": [
+      "A.dll",
+      "B.dll"
+    ],
+    "installed_files": [
+      "A.dll",
+      "B.dll"
+    ]
   }
 ]

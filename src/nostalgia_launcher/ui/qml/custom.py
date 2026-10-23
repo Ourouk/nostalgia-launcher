@@ -50,11 +50,6 @@ class CustomModModel(_FormModel):
 
     modTypes = Property("QVariantList", _get_mod_types, constant=True)
 
-    def _get_installations(self) -> list:
-        return list(catalog.MOD_INSTALLATIONS)
-
-    installations = Property("QVariantList", _get_installations, constant=True)
-
     def _get_source_kinds(self) -> list:
         return list(_MOD_KINDS)
 
@@ -68,7 +63,6 @@ class CustomModModel(_FormModel):
             "repoUrl": "",
             "description": "",
             "modType": catalog.MOD_TYPES[0],
-            "installation": catalog.MOD_INSTALLATIONS[0],
             "executable": "",
             "clientVersions": "",
             "kind": _MOD_KINDS[0],
@@ -117,7 +111,6 @@ class CustomModModel(_FormModel):
             "id": mid,
             "name": f["name"].strip() or mid,
             "type": mod_type,
-            "installation": f["installation"],
             "description": f["description"].strip(),
             "source": {"kind": kind},
         }
@@ -230,7 +223,6 @@ class CustomAssetModel(_FormModel):
             "version": "",
             "repoUrl": "",
         }
-        self._essential = False
         self._probe = False
 
     @Slot(str, str)
@@ -240,9 +232,7 @@ class CustomAssetModel(_FormModel):
 
     @Slot(str, bool)
     def setFlag(self, name: str, value: bool):
-        if name == "essential":
-            self._essential = bool(value)
-        elif name == "probe":
+        if name == "probe":
             self._probe = bool(value)
 
     @Slot(result=bool)
@@ -257,7 +247,6 @@ class CustomAssetModel(_FormModel):
             "url": f["url"].strip(),
             "dest": f["dest"].strip(),
             "description": "",
-            "essential": self._essential,
             "probe": self._probe,
         }
         for key in ("sha1", "version", "repoUrl"):

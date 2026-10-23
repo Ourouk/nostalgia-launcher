@@ -355,12 +355,10 @@ def _parse_download_manifest(value: object) -> dict | None:
                     f"launcher config '{where}.type' must be 'mod' or "
                     f"'external-launcher' (got {mod_type!r})"
                 )
-            installation = route.get("installation")
-            if installation not in ("user_opt_in", "required"):
-                raise ValueError(
-                    f"launcher config '{where}.installation' must be "
-                    f"'user_opt_in' or 'required' (got {installation!r})"
-                )
+            # ``installation`` is accepted for forward compatibility but
+            # ignored: every mod is user opt-in, there is no auto-install.
+            # A legacy ``required`` value warns instead of failing so old
+            # configs keep loading.
     return {
         "url": url,
         "schema": {

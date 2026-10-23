@@ -273,10 +273,13 @@ class UpdateController:
             self._dispatcher,
             source=_download_source(),
         )
+        # Incremental path only: initial acquisition goes through
+        # start_client_download (run_initial). A stale set here means
+        # a playable client exists — patch it.
         self._worker = worker
         self.state.torrent_stale = None
         threading.Thread(
-            target=worker.run,
+            target=worker.run_incremental,
             args=(torrent_wanted,),
             daemon=True,
         ).start()
@@ -285,11 +288,13 @@ class UpdateController:
         return True
 
     def start_client_download(self) -> bool:
-        """First-time client acquisition via BitTorrent (``torrent_url`` or
-        ``magnet``), available even when client updates are disabled. Downloads
-        the whole client manifest-less; the torrent's piece hashes are the
-        integrity guarantee. The payload is then extracted per
-        ``server.download.content.type`` (folder/zip/rar)."""
+        """First-time client acquisition (initial stage), available even
+        when client updates are disabled. ``run_initial`` downloads the
+        whole base client — BitTorrent full first, single-zip HTTP
+        fallback second; the torrent's piece hashes are the integrity
+        guarantee. The payload is then extracted per
+        ``server.download.content.type`` (folder/zip/rar). Never an
+        incremental patch: precondition is no playable client yet."""
         if self.state.running:
             self._dispatcher.post(
                 LogMessage("An operation is already in progress.\n", "dim")
@@ -318,9 +323,7 @@ class UpdateController:
 
         worker = UpdateWorker(out, self._dispatcher, source=_download_source())
         self._worker = worker
-        threading.Thread(
-            target=worker.run, kwargs={"recovery_full": True}, daemon=True
-        ).start()
+        threading.Thread(target=worker.run_initial, daemon=True).start()
         self._dispatcher.post(StatusChanged("Downloading client…"))
         self._dispatcher.post(ProgressChanged(0.0, ""))
         return True
@@ -904,15 +907,35 @@ class UpdateController:
                         return Readiness("disabled", "UPDATE", "Verifying…")
                     return Readiness("disabled", "PLAY", "Verifying…")
         if self.state.torrent_stale:
-            # Magnet-only first-time-only: don't offer incremental
-            # torrent updates (server.download.torrent.update).
+            # Manifest-owned paths are always updatable over HTTPS —
+            # even when the torrent side is frozen (magnet-only
+            # first-time-only: a magnet's content is immutable, so the
+            # manifest is the only incremental channel). The
+            # torrent.update flag gates torrent-owned paths only.
             from ..core import launcher as _launcher_cfg
 
             _cfg = _launcher_cfg.config()
+            _manifest_stale = [
+                p
+                for p in self.state.torrent_stale
+                if p.startswith("manifest:")
+            ]
+            _torrent_stale = [
+                p
+                for p in self.state.torrent_stale
+                if not p.startswith("manifest:")
+            ]
+            if _manifest_stale:
+                n = len(_manifest_stale)
+                return Readiness(
+                    "update",
+                    "UPDATE",
+                    f"{n} file(s) to update via manifest",
+                )
             if _cfg is not None and not _cfg.torrent_update_allowed():
                 pass  # fall through — no torrent update for magnet-only
-            else:
-                n = len(self.state.torrent_stale)
+            elif _torrent_stale:
+                n = len(_torrent_stale)
                 error_suffix = ""
                 if self.state.torrent_error:
                     error_suffix = f" ({self.state.torrent_error})"
@@ -1070,13 +1093,18 @@ class UpdateController:
     def update_tab_enabled(self) -> bool:
         """Whether the UPDATE tab has anything to offer.
 
-        Incremental torrent updates allowed, or no playable client
-        yet (first acquisition still downloads through the tab).
-        Frozen updates on an existing install hide the tab; the
-        footer already falls through to PLAY there."""
+        Any live incremental backend keeps the tab visible: torrent
+        (when its update policy allows) or the manifest overlay (HTTPS
+        patches independent of the torrent flag). Frozen torrent with
+        no manifest on an existing install hides the tab; the footer
+        already falls through to PLAY there. No playable client yet
+        keeps the tab — first acquisition still downloads through it."""
         from ..core import launcher
 
         if launcher.torrent_update_allowed():
+            return True
+        cfg = launcher.config()
+        if cfg is not None and cfg.download_manifest:
             return True
         return not self._playable_client_present()
 

@@ -30,10 +30,6 @@ ColumnLayout {
             Field { caption: "VERSION TAG (optional)"; onEdit: (t) => customAssetModel.setField("version", t) }
             Field { caption: "REPO URL (optional https link)"; onEdit: (t) => customAssetModel.setField("repoUrl", t) }
             CheckBox {
-                text: "Essential (auto-install)"
-                onToggled: customAssetModel.setFlag("essential", checked)
-            }
-            CheckBox {
                 text: "Probe the remote file for updates (drift detection)"
                 onToggled: customAssetModel.setFlag("probe", checked)
             }

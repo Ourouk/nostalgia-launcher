@@ -235,8 +235,7 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 contentModel: modsModel
                 tabTitle: "MODS"
-                legendText: "★ required · ☐ off = disabled · ● = unapplied (Apply to confirm)"
-                essentialText: "★  Install Required"
+                legendText: "☐ off = disabled · ● = unapplied (Apply to confirm)"
                 loadingText: "Loading mods…"
             }
             ContentView {
@@ -245,7 +244,6 @@ ApplicationWindow {
                 contentModel: assetsModel
                 tabTitle: "ASSETS"
                 legendText: "☐ off = disabled · ● = unapplied (Apply to confirm)"
-                essentialText: "★  Install Essential"
                 loadingText: "Loading assets…"
             }
         }

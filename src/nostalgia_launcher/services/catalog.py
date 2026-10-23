@@ -47,12 +47,9 @@ MOD_SOURCE_KINDS = set(_source_kinds())
 MOD_POST_INSTALL_HOOKS = set(_hooks.names())
 
 # Mod discriminators. ``type`` says what a mod provides (a DLL drop-in vs
-# the game executable itself); ``installation`` replaces the legacy
-# ``essential`` boolean ("required" mods auto-install by default — an
-# explicit user opt-out is always respected). A catalog entry carrying the
-# legacy ``essential: true`` is translated to ``installation: "required"``.
+# the game executable itself). Every mod is user opt-in — there is no
+# auto-install policy; the user enables what they want in the MODS panel.
 MOD_TYPES = ("mod", "external-launcher")
-MOD_INSTALLATIONS = ("required", "user_opt_in")
 
 # Catalogs auto-refresh at most once a week: startup and panel loads serve
 # the persisted cache instantly, and only a cache older than this TTL (or an
@@ -411,7 +408,6 @@ def validate_mod(entry: dict) -> dict | None:
         "name": name,
         # Explicit null behaves like absence (the documented "default mod").
         "type": entry.get("type") or "mod",
-        "installation": _mod_installation(entry),
         "description": (
             entry.get("description")
             if isinstance(entry.get("description"), str)
@@ -421,8 +417,6 @@ def validate_mod(entry: dict) -> dict | None:
         "source": {},
     }
     if mod["type"] not in MOD_TYPES:
-        return None
-    if mod["installation"] not in MOD_INSTALLATIONS:
         return None
     hooks = source.get("post_install") or []
     if hooks:
@@ -484,23 +478,14 @@ def validate_mod(entry: dict) -> dict | None:
     return mod
 
 
-def _mod_installation(entry: dict) -> str:
-    """The effective installation policy: the ``installation`` field when
-    it is a string, else the "user_opt_in" default."""
-    installation = entry.get("installation")
-    if isinstance(installation, str):
-        return installation.lower()
-    return "user_opt_in"
-
-
 # Fields a kind's custom layer may override on an existing (remote/server)
-# entry; absent or null values leave the base copy untouched.
+# entry; absent or null values leave the base copy untouched. No install
+# policy lives here — every entry is user opt-in.
 MOD_MERGE_FIELDS = (
     "name",
     "description",
     "repo_url",
     "type",
-    "installation",
     "source",
     "register_dll",
     "installed_files",
@@ -512,7 +497,6 @@ ASSET_MERGE_FIELDS = (
     "name",
     "description",
     "repo_url",
-    "essential",
     "url",
     "dest",
     "version",
@@ -587,7 +571,6 @@ def validate_asset(entry: dict) -> dict | None:
     return {
         "id": aid,
         "name": name,
-        "essential": bool(entry.get("essential", False)),
         "description": description,
         "repo_url": repo_url,
         "url": url.strip(),

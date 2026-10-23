@@ -111,7 +111,6 @@ def test_validate_mod_github_release():
         {
             "id": "ExampleLoader",
             "name": "ExampleLoader",
-            "installation": "required",
             "repo_url": "https://github.com/hannesmann/example-loader",
             "source": {
                 "kind": "github_release",
@@ -129,7 +128,6 @@ def test_validate_mod_github_release():
     assert cleaned["source"]["kind"] == "github_release"
     assert cleaned["source"]["owner"] == "hannesmann"
     assert cleaned["register_dll"] == ["VfPatcher.dll"]
-    assert cleaned["installation"] == "required"
     assert cleaned["type"] == "mod"
 
 
@@ -395,7 +393,7 @@ def test_validate_entries_skips_invalid_with_log():
 # ── mod type / installation / multi-dll schema ──────────────────────────────
 
 
-def test_validate_mod_defaults_type_and_installation():
+def test_validate_mod_defaults_type():
     cleaned = catalog.validate_mod(
         {
             "id": "X",
@@ -407,10 +405,11 @@ def test_validate_mod_defaults_type_and_installation():
         }
     )
     assert cleaned["type"] == "mod"
-    assert cleaned["installation"] == "user_opt_in"
+    # No install-policy field: every mod is user opt-in.
+    assert "installation" not in cleaned
 
 
-def test_validate_mod_installation_field_honored():
+def test_validate_mod_ignores_legacy_policy_fields():
     base = {
         "id": "X",
         "source": {
@@ -419,22 +418,15 @@ def test_validate_mod_installation_field_honored():
             "dest": "x.dll",
         },
     }
-    # The "installation" field is honored.
+    # Legacy policy fields are dropped, not honored.
     assert (
-        catalog.validate_mod({**base, "installation": "required"})[
-            "installation"
-        ]
-        == "required"
+        catalog.validate_mod({**base, "installation": "required"})["type"]
+        == "mod"
     )
-    # The legacy "essential" boolean is no longer honored; it falls back
-    # to the "user_opt_in" default.
-    assert (
-        catalog.validate_mod({**base, "essential": True})["installation"]
-        == "user_opt_in"
-    )
+    assert catalog.validate_mod({**base, "essential": True})["type"] == "mod"
 
 
-def test_validate_mod_rejects_unknown_type_and_installation():
+def test_validate_mod_rejects_unknown_type():
     base = {
         "id": "X",
         "source": {
@@ -444,7 +436,6 @@ def test_validate_mod_rejects_unknown_type_and_installation():
         },
     }
     assert catalog.validate_mod({**base, "type": "loader"}) is None
-    assert catalog.validate_mod({**base, "installation": "mandatory"}) is None
 
 
 def test_validate_mod_external_launcher_fields():

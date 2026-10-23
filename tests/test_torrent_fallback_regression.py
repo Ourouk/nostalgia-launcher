@@ -35,7 +35,7 @@ def test_update_recovery_download_torrent_failure_posts_failure(
         raise td.TorrentCorruptError("corrupt")
 
     monkeypatch.setattr(td.TorrentDownloader, "download", boom)
-    worker.run({"Data/a.bin"})
+    worker.run_incremental({"Data/a.bin"})
     events = dispatcher.drain()
     # Should post a torrent error, not recovery done
     from nostalgia_launcher.state.events import TorrentCorrupt

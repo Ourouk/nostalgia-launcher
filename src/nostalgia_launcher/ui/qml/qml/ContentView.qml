@@ -1,7 +1,7 @@
 // Shared MODS/ASSETS list (Phase 5):
 // banner (title + search + All/Installed/Updates chips + reload), rows
-// (checkbox, ★, name/version, retry/update action, repo link, description,
-// error), empty state, ★-install/Apply footer. Instantiated per tab with a
+// (checkbox, name/version, retry/update action, repo link, description,
+// error), empty state, Apply footer. Instantiated per tab with a
 // `contentModel` (ui/qml/content.py:ContentListModel) plus tab wording.
 
 import QtQuick
@@ -18,7 +18,6 @@ ColumnLayout {
     property var contentModel
     property string tabTitle: ""
     property string legendText: ""
-    property string essentialText: ""
     property string customLabel: ""
     property string loadingText: "Loading…"
     signal customRequested()
@@ -168,12 +167,6 @@ ColumnLayout {
                     Accessible.name: "Unapplied change for " + model.name
                 }
                 Label {
-                    text: "★"
-                    font.pointSize: 11
-                    color: appTheme.colors["C_GOLD"]
-                    visible: model.required
-                }
-                Label {
                     Layout.fillWidth: true
                     text: model.name + "  " + model.version
                     font.bold: true
@@ -320,12 +313,6 @@ ColumnLayout {
         Layout.topMargin: 6
         Layout.bottomMargin: 10
         spacing: 8
-        Button {
-            objectName: "qmlContentEssential"
-            text: root.essentialText
-            enabled: root.contentModel.essentialEnabled
-            onClicked: root.contentModel.installEssential()
-        }
         Button {
             objectName: "qmlContentApply"
             text: root.contentModel.busy ? "Applying…" : (root.contentModel.pendingCount > 0 ? "Apply (" + root.contentModel.pendingCount + ")" : "Apply")

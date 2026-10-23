@@ -1,5 +1,19 @@
-"""Update subsystem: transports + workflow (torrent-only incremental, zip fallback)."""
+"""Update subsystem: transports + staged workflow.
 
+``workflow`` is the orchestrator facade (``VerifyWorker`` /
+``UpdateWorker`` keep their public API); the stage modules hold the
+per-phase logic: ``ownership`` (server-base vs community-overlay),
+``stages_initial`` (one-off acquisition), ``stages_manifest``,
+``stages_static`` and ``stages_torrent`` (incremental strategies).
+"""
+
+from . import (
+    ownership,
+    stages_initial,
+    stages_manifest,
+    stages_static,
+    stages_torrent,
+)
 from .http import download_file
 from .workflow import (
     TORRENT_VALIDATION_CACHE_KEY,
@@ -18,6 +32,11 @@ __all__ = [
     "VerifyWorker",
     "download_file",
     "is_available",
+    "ownership",
     "recovery_available",
+    "stages_initial",
+    "stages_manifest",
+    "stages_static",
+    "stages_torrent",
     "torrent_recovery_available",
 ]

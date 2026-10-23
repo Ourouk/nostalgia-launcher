@@ -41,7 +41,6 @@ def _manifest_config():
                                 "match": "*.dll",
                                 "as": "mod",
                                 "type": "mod",
-                                "installation": "required",
                             },
                         ],
                     }

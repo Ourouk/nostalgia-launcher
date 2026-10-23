@@ -24,7 +24,6 @@ from nostalgia_launcher.state.models import ModPending
 # Small synthetic registry so tests don't depend on the real one.
 MOD_A = {
     "id": "AlphaMod",
-    "installation": "required",
     "name": "AlphaMod",
     "description": "alpha",
     "source": {
@@ -38,7 +37,6 @@ MOD_A = {
 }
 MOD_B = {
     "id": "BetaMod",
-    "installation": "user_opt_in",
     "name": "BetaMod",
     "description": "beta",
     "source": {

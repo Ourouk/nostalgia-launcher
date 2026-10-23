@@ -893,7 +893,7 @@ def test_run_recovers_full_torrent_when_manifest_down(tmp_path, monkeypatch):
         failing_urlopen(ConnectionError("manifest down")),
     )
 
-    worker.run()
+    worker.run_initial()
 
     assert calls == [("https://srv/client.torrent", None)]
     events = dispatcher.drain()
@@ -935,12 +935,14 @@ def test_recovery_fails_when_snapshot_lacks_wanted_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(td.TorrentDownloader, "download", fake_download)
 
-    worker.run({"Data/old.bin"})
+    worker.run_incremental({"Data/old.bin"})
 
     events = dispatcher.drain()
     assert any(isinstance(e, TorrentVerifyFailed) for e in events)
     assert not any(isinstance(e, TorrentRecoveryDone) for e in events)
-    assert not any(isinstance(e, UpdateFailed) for e in events)
+    # Incremental failure is terminal for the operation: UpdateFailed
+    # surfaces it to the controller (the monolith swallowed it).
+    assert any(isinstance(e, UpdateFailed) for e in events)
     assert client_update.TORRENT_VALIDATION_CACHE_KEY not in saved
 
 
@@ -965,7 +967,7 @@ def test_run_errors_when_manifest_down_without_torrent(tmp_path, monkeypatch):
         failing_urlopen(ConnectionError("manifest down")),
     )
 
-    worker.run()
+    worker.run_initial()
 
     assert calls == []
     events = dispatcher.drain()
@@ -999,7 +1001,7 @@ def test_run_errors_when_manifest_down_without_libtorrent(
         failing_urlopen(ConnectionError("manifest down")),
     )
 
-    worker.run()
+    worker.run_initial()
 
     assert calls == []
     events = dispatcher.drain()

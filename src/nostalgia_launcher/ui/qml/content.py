@@ -1,9 +1,9 @@
 """Shared content-list model for the MODS/ASSETS QML tabs.
 
-Implements the shared MODS/ASSETS list: one catalog-entry row (checkbox, required
-star, name/version, repo link, retry/update action, description, error),
-a banner with search + All/Installed/Updates chips, an empty state, and a
-★-install/Apply footer. `build_rows` flattens a controller registry +
+Implements the shared MODS/ASSETS list: one catalog-entry row (checkbox,
+name/version, repo link, retry/update action, description, error),
+a banner with search + All/Installed/Updates chips, an empty state, and an
+Apply footer. `build_rows` flattens a controller registry +
 state into plain role dicts so this module never imports controllers; the
 per-kind wiring (registry/state/action callbacks) lives in `ui.qml.app`.
 """
@@ -17,10 +17,10 @@ from PySide6.QtCore import (
 )
 
 
-def build_rows(entries, state, *, required_of, version_of, action_for):
+def build_rows(entries, state, *, version_of, action_for):
     """Flatten registry + state into role dicts, sorted by name.
 
-    `required_of(entry) -> bool`, `version_of(entry, rec, state) -> str`,
+    `version_of(entry, rec, state) -> str`,
     `action_for(eid) -> "retry" | "update" | None` come from the tab glue.
     """
     recs = getattr(state, "records", {}) or {}
@@ -45,25 +45,12 @@ def build_rows(entries, state, *, required_of, version_of, action_for):
                 "repoUrl": entry.get("repo_url", ""),
                 "installed": bool(rec.present) if rec is not None else False,
                 "enabled": enabled,
-                "required": bool(required_of(entry)),
                 "action": action_for(eid) or "",
                 "error": (rec.error if rec is not None else None) or "",
                 "staged": pend is not None,
             }
         )
     return rows
-
-
-def essential_pending(entries, state, *, required_of) -> bool:
-    """True while a required entry is not yet present on disk."""
-    recs = getattr(state, "records", {}) or {}
-    for entry in entries or []:
-        if not required_of(entry):
-            continue
-        rec = recs.get(entry["id"])
-        if rec is None or not rec.present:
-            return True
-    return False
 
 
 def unknown_sections(unknown) -> list:
@@ -171,11 +158,10 @@ class ContentListModel(QAbstractListModel):
     DescriptionRole = Qt.ItemDataRole.UserRole + 4
     InstalledRole = Qt.ItemDataRole.UserRole + 5
     EnabledRole = Qt.ItemDataRole.UserRole + 6
-    RequiredRole = Qt.ItemDataRole.UserRole + 7
-    ActionRole = Qt.ItemDataRole.UserRole + 8
-    ErrorRole = Qt.ItemDataRole.UserRole + 9
-    RepoUrlRole = Qt.ItemDataRole.UserRole + 10
-    StagedRole = Qt.ItemDataRole.UserRole + 11
+    ActionRole = Qt.ItemDataRole.UserRole + 7
+    ErrorRole = Qt.ItemDataRole.UserRole + 8
+    RepoUrlRole = Qt.ItemDataRole.UserRole + 9
+    StagedRole = Qt.ItemDataRole.UserRole + 10
 
     changed = Signal()
     scanningChanged = Signal()
@@ -191,7 +177,6 @@ class ContentListModel(QAbstractListModel):
         self._updates_count = 0
         self._apply_visible = False
         self._pending_count = 0
-        self._essential_pending = False
         self._busy = False
         self._loading = True
         self._scanning = True
@@ -205,7 +190,6 @@ class ContentListModel(QAbstractListModel):
         self._on_toggle = None
         self._on_action = None
         self._on_apply = None
-        self._on_essential = None
         self._on_reload = None
         self._on_extra = None
 
@@ -224,7 +208,6 @@ class ContentListModel(QAbstractListModel):
             ContentListModel.DescriptionRole: b"description",
             ContentListModel.InstalledRole: b"installed",
             ContentListModel.EnabledRole: b"enabled",
-            ContentListModel.RequiredRole: b"required",
             ContentListModel.ActionRole: b"action",
             ContentListModel.ErrorRole: b"error",
             ContentListModel.RepoUrlRole: b"repoUrl",
@@ -242,7 +225,6 @@ class ContentListModel(QAbstractListModel):
             ContentListModel.DescriptionRole: "description",
             ContentListModel.InstalledRole: "installed",
             ContentListModel.EnabledRole: "enabled",
-            ContentListModel.RequiredRole: "required",
             ContentListModel.ActionRole: "action",
             ContentListModel.ErrorRole: "error",
             ContentListModel.RepoUrlRole: "repoUrl",
@@ -291,7 +273,7 @@ class ContentListModel(QAbstractListModel):
     # ── snapshot + chrome ─────────────────────────────────────────────
 
     def set_snapshot_provider(self, provider):
-        """Zero-arg callable → (rows, updates, pending, errors, essential)."""
+        """Zero-arg callable → (rows, updates, pending, errors)."""
         self._snapshot_provider = provider
 
     @Slot()
@@ -304,7 +286,6 @@ class ContentListModel(QAbstractListModel):
             updates,
             pending,
             errors,
-            essential,
             extras,
             headline,
             pending_count,
@@ -314,7 +295,6 @@ class ContentListModel(QAbstractListModel):
             updates,
             pending,
             errors,
-            essential,
             extras=extras,
             headline=headline,
             pending_count=pending_count,
@@ -326,7 +306,6 @@ class ContentListModel(QAbstractListModel):
         updates_count=0,
         has_pending=False,
         has_errors=False,
-        essential_pending=False,
         extras=None,
         headline="",
         pending_count=0,
@@ -335,7 +314,6 @@ class ContentListModel(QAbstractListModel):
         self._updates_count = int(updates_count or 0)
         self._apply_visible = bool(has_pending or has_errors)
         self._pending_count = int(pending_count or 0)
-        self._essential_pending = bool(essential_pending)
         if self._rows:
             # Data on screen: nothing left to wait for, even before the
             # first loaded event arrives.
@@ -377,13 +355,6 @@ class ContentListModel(QAbstractListModel):
         return self._pending_count
 
     pendingCount = Property(int, _get_pending_count, notify=chromeChanged)
-
-    def _get_essential_enabled(self) -> bool:
-        return self._essential_pending and not self._busy
-
-    essentialEnabled = Property(
-        bool, _get_essential_enabled, notify=chromeChanged
-    )
 
     def _get_busy(self) -> bool:
         return self._busy
@@ -453,14 +424,12 @@ class ContentListModel(QAbstractListModel):
         toggle=None,
         action=None,
         apply=None,
-        essential=None,
         reload=None,
         extra=None,
     ):
         self._on_toggle = toggle
         self._on_action = action
         self._on_apply = apply
-        self._on_essential = essential
         self._on_reload = reload
         self._on_extra = extra
 
@@ -489,14 +458,6 @@ class ContentListModel(QAbstractListModel):
     def applyAll(self):
         if self._on_apply is not None and self._on_apply():
             self.set_running(True)
-
-    @Slot()
-    def installEssential(self):
-        if self._on_essential is not None:
-            if self._on_essential():
-                self.set_running(True)
-            else:
-                self.chromeChanged.emit()
 
     @Slot()
     def reloadCatalog(self):

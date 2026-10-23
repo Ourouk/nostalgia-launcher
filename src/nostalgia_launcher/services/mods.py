@@ -424,10 +424,9 @@ def external_launcher_executables(client_dir: str) -> list:
     registry order (first = highest precedence).
 
     Active means: ``type == "external-launcher"`` with a non-empty
-    ``executable``, the installation policy satisfied ("required" mods are
-    always active; "user_opt_in" only when their per-user record is enabled),
-    AND the executable exists on disk. Anything else is excluded so launch
-    falls back to WoW.exe — no implicit loader preference.
+    ``executable``, the per-user record enabled, AND the executable
+    exists on disk. Anything else is excluded so launch falls back to
+    WoW.exe — no implicit loader preference.
     """
     out = []
     records = load_config().get("mods", {})
@@ -437,9 +436,7 @@ def external_launcher_executables(client_dir: str) -> list:
         exe = mod.get("executable")
         if not exe:
             continue
-        if mod.get("installation") != "required" and not records.get(
-            mod["id"], {}
-        ).get("enabled", False):
+        if not records.get(mod["id"], {}).get("enabled", False):
             continue
         if os.path.exists(os.path.join(client_dir, exe)):
             out.append(exe)

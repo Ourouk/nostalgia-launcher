@@ -24,9 +24,9 @@ def test_validate_asset_minimal():
     assert a is not None
     assert a["id"] == "patch3"
     assert a["dest"] == "Data/patch-3.MPQ"
-    assert a["essential"] is False
     assert a["sha1"] is None and a["size"] is None
     assert a["version"] is None and a["probe"] is False
+    assert "essential" not in a
 
 
 def test_validate_asset_full_metadata():
@@ -35,7 +35,6 @@ def test_validate_asset_full_metadata():
             sha1="A" * 40,  # upper-case accepted, normalized
             size=123,
             version="2026-08-01",
-            essential=True,
             probe=True,
         )
     )

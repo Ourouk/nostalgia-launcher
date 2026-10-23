@@ -3,8 +3,11 @@
     "name": "ExampleAddon",
     "git": "https://github.com/example-community/example-addon",
     "branch": "main",
-    "description": "Minimal addon — only required fields (name + git + branch). `name` must be a safe_folder (no separators, no traversal).",
-    "toc": { "Title": "Example Addon", "Interface": "11200" },
+    "description": "Minimal addon \u2014 only required fields (name + git + branch). `name` must be a safe_folder (no separators, no traversal).",
+    "toc": {
+      "Title": "Example Addon",
+      "Interface": "11200"
+    },
     "recommended": false,
     "blocked": false
   },
@@ -14,7 +17,11 @@
     "branch": "main",
     "ref": "v1.2.3",
     "description": "Pinned to a tag via `ref`; when `ref` is set it wins over `branch`. Both must be whitespace-free and without `..`.",
-    "toc": { "Title": "Example Addon Pinned", "Notes": "Pinned to v1.2.3", "Interface": "11200" },
+    "toc": {
+      "Title": "Example Addon Pinned",
+      "Notes": "Pinned to v1.2.3",
+      "Interface": "11200"
+    },
     "recommended": true,
     "blocked": false
   },
@@ -22,8 +29,11 @@
     "name": "ExampleAddonCodeberg",
     "git": "https://codeberg.org/example-community/example-addon",
     "branch": "master",
-    "description": "Codeberg/Gitea-hosted addon — any allowlisted git host (github, gitlab, gitea, codeberg plus `addon_git_hosts`).",
-    "toc": { "Title": "Codeberg Addon", "Interface": "11200" },
+    "description": "Codeberg/Gitea-hosted addon \u2014 any allowlisted git host (github, gitlab, gitea, codeberg plus `addon_git_hosts`).",
+    "toc": {
+      "Title": "Codeberg Addon",
+      "Interface": "11200"
+    },
     "recommended": false,
     "blocked": false
   },
@@ -31,8 +41,10 @@
     "name": "ExampleBlockedAddon",
     "git": "https://github.com/example-community/blocked-addon",
     "branch": "master",
-    "description": "Blocked addon — launcher will not install it when `blocked: true`.",
-    "toc": { "Title": "Blocked Addon" },
+    "description": "Blocked addon \u2014 launcher will not install it when `blocked: true`.",
+    "toc": {
+      "Title": "Blocked Addon"
+    },
     "recommended": false,
     "blocked": true
   },
@@ -40,22 +52,29 @@
     "name": "ExampleRecommendedAddon",
     "git": "https://github.com/example-community/recommended-addon",
     "branch": "master",
-    "description": "Recommended addon — shown as recommended in the UI when `recommended: true`.",
-    "toc": { "Title": "Recommended Addon", "Notes": "Recommended for everyone" },
+    "description": "Recommended addon \u2014 shown as recommended in the UI when `recommended: true`.",
+    "toc": {
+      "Title": "Recommended Addon",
+      "Notes": "Recommended for everyone"
+    },
     "recommended": true,
     "blocked": false
   },
   {
     "name": "ExampleNoBranch",
     "git": "https://github.com/example-community/no-branch-addon",
-    "description": "No branch/ref — defaults to the repo default branch (HEAD).",
-    "toc": { "Title": "No Branch Addon" }
+    "description": "No branch/ref \u2014 defaults to the repo default branch (HEAD).",
+    "toc": {
+      "Title": "No Branch Addon"
+    }
   },
   {
     "folder": "ExampleLegacyFolder",
     "git": "https://github.com/example-community/legacy-folder-addon",
     "branch": "main",
-    "description": "Legacy `folder` alias for `name` — both accepted, `name` takes precedence when both present.",
-    "toc": { "Title": "Legacy Folder Addon" }
+    "description": "Legacy `folder` alias for `name` \u2014 both accepted, `name` takes precedence when both present.",
+    "toc": {
+      "Title": "Legacy Folder Addon"
+    }
   }
 ]

@@ -1,6 +1,6 @@
 {
   "server": {
-    "name": "Example Community — Full",
+    "name": "Example Community \u2014 Full",
     "url": "https://launcher.example.com",
     "realm": "realm.example.com",
     "news_url": "https://launcher.example.com/news.json",
@@ -24,20 +24,36 @@
       "http": {
         "fallback": "https://launcher.example.com/client/latest/client.zip"
       },
-      "content": { "type": "zip" },
+      "content": {
+        "type": "zip"
+      },
       "manifest": {
         "url": "https://launcher.example.com/api/manifest",
         "schema": {
           "files": "files",
           "version": "contentVersion",
           "base_url": "filesBaseUrl",
-          "entry": { "path": "path", "size": "size", "sha256": "sha256" },
+          "entry": {
+            "path": "path",
+            "size": "size",
+            "sha256": "sha256"
+          },
           "download_url": "{base_url}{path}"
         },
         "routes": [
-          { "match": "Data/*.MPQ", "as": "asset", "probe": false },
-          { "match": "*.dll", "as": "mod", "type": "mod",
-            "installation": "required", "register_dll": ["example.dll"] }
+          {
+            "match": "Data/*.MPQ",
+            "as": "asset",
+            "probe": false
+          },
+          {
+            "match": "*.dll",
+            "as": "mod",
+            "type": "mod",
+            "register_dll": [
+              "example.dll"
+            ]
+          }
         ]
       }
     }
@@ -56,14 +72,20 @@
     "C_ERR": "#bf6969",
     "logo": "https://launcher.example.com/logo.png"
   },
-  "addon_git_hosts": ["gitea.example.com", "git.example.org"],
+  "addon_git_hosts": [
+    "gitea.example.com",
+    "git.example.org"
+  ],
   "addons": [
     {
       "name": "ExampleAddon",
       "git": "https://github.com/example/example-addon",
       "branch": "master",
-      "description": "Minimal addon — only required fields (name + git).",
-      "toc": { "Title": "Example Addon", "Interface": "11200" },
+      "description": "Minimal addon \u2014 only required fields (name + git).",
+      "toc": {
+        "Title": "Example Addon",
+        "Interface": "11200"
+      },
       "recommended": true,
       "blocked": false
     },
@@ -73,7 +95,11 @@
       "branch": "main",
       "ref": "v1.2.3",
       "description": "Pinned to a tag via `ref`; branch is the fallback when ref is absent.",
-      "toc": { "Title": "Example Addon Pinned", "Notes": "Pinned example", "Interface": "11200" },
+      "toc": {
+        "Title": "Example Addon Pinned",
+        "Notes": "Pinned example",
+        "Interface": "11200"
+      },
       "recommended": false,
       "blocked": false
     },
@@ -81,8 +107,10 @@
       "name": "ExampleBlockedAddon",
       "git": "https://codeberg.org/example/blocked-addon",
       "branch": "master",
-      "description": "Blocked addon — launcher will not install it when blocked=true.",
-      "toc": { "Title": "Blocked Addon" },
+      "description": "Blocked addon \u2014 launcher will not install it when blocked=true.",
+      "toc": {
+        "Title": "Blocked Addon"
+      },
       "recommended": false,
       "blocked": true
     }
@@ -91,7 +119,7 @@
     {
       "id": "ExamplePatch",
       "name": "Example Content Patch",
-      "description": "Minimal asset — only required fields (id, url, dest).",
+      "description": "Minimal asset \u2014 only required fields (id, url, dest).",
       "url": "https://launcher.example.com/patches/patch.mpq",
       "dest": "Data/patch.mpq",
       "version": "v1",
@@ -107,25 +135,22 @@
       "version": "v2.1.0",
       "sha1": "abcdef0123456789abcdef0123456789abcdef01",
       "size": 1048576,
-      "essential": true,
       "probe": true
     },
     {
       "id": "ExampleProbeAsset",
       "name": "Example Probe Asset",
-      "description": "Asset with probe=true — launcher captures Last-Modified/ETag for drift detection.",
+      "description": "Asset with probe=true \u2014 launcher captures Last-Modified/ETag for drift detection.",
       "url": "https://launcher.example.com/patches/probe.mpq",
       "dest": "Data/probe.mpq",
       "version": "v3",
-      "probe": false,
-      "essential": false
+      "probe": false
     }
   ],
   "mods": [
     {
       "id": "ExampleDirectDll",
       "type": "mod",
-      "installation": "user_opt_in",
       "name": "Example Direct DLL",
       "description": "Single-file mod streamed to `dest` beside its final location (supports large MPQ).",
       "repo_url": "https://github.com/example/example-mod",
@@ -135,16 +160,21 @@
         "dest": "example_mod.dll",
         "pinned_version": "v1.0.0"
       },
-      "register_dll": ["example_mod.dll"],
-      "installed_files": ["example_mod.dll"],
-      "client_versions": ["1.12.1"]
+      "register_dll": [
+        "example_mod.dll"
+      ],
+      "installed_files": [
+        "example_mod.dll"
+      ],
+      "client_versions": [
+        "1.12.1"
+      ]
     },
     {
       "id": "ExampleDirectFileWithIntegrity",
       "type": "mod",
-      "installation": "user_opt_in",
       "name": "Example Direct File With Integrity",
-      "description": "Direct file with sha1+size pins — download is rejected on mismatch.",
+      "description": "Direct file with sha1+size pins \u2014 download is rejected on mismatch.",
       "repo_url": "https://github.com/example/example-mod",
       "source": {
         "kind": "direct_file",
@@ -154,13 +184,16 @@
         "sha1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "size": 123456
       },
-      "register_dll": ["secure.dll"],
-      "installed_files": ["secure.dll"]
+      "register_dll": [
+        "secure.dll"
+      ],
+      "installed_files": [
+        "secure.dll"
+      ]
     },
     {
       "id": "ExampleDirectArchive",
       "type": "mod",
-      "installation": "user_opt_in",
       "name": "Example Direct Archive",
       "description": "Archive fetched into memory and extracted via `extract_map` (zip or tar.gz by URL).",
       "repo_url": "https://github.com/example/example-archive-mod",
@@ -173,15 +206,19 @@
         },
         "pinned_version": "v1.1.0"
       },
-      "register_dll": ["ExampleArchive.dll"],
-      "installed_files": ["ExampleArchive.dll", "ExampleArchive.conf"]
+      "register_dll": [
+        "ExampleArchive.dll"
+      ],
+      "installed_files": [
+        "ExampleArchive.dll",
+        "ExampleArchive.conf"
+      ]
     },
     {
       "id": "ExampleReleaseMod",
       "type": "mod",
-      "installation": "user_opt_in",
       "name": "Example Release Mod",
-      "description": "GitHub release — asset picked by `asset_pattern`, `prefer_no` deprioritises matches containing the substring.",
+      "description": "GitHub release \u2014 asset picked by `asset_pattern`, `prefer_no` deprioritises matches containing the substring.",
       "repo_url": "https://github.com/example/example-release-mod",
       "source": {
         "kind": "github_release",
@@ -193,16 +230,22 @@
           "ExampleMod.dll": "ExampleMod.dll"
         }
       },
-      "register_dll": ["ExampleMod.dll"],
-      "installed_files": ["ExampleMod.dll"],
-      "client_versions": ["1.12.1", "1.12.2"]
+      "register_dll": [
+        "ExampleMod.dll"
+      ],
+      "installed_files": [
+        "ExampleMod.dll"
+      ],
+      "client_versions": [
+        "1.12.1",
+        "1.12.2"
+      ]
     },
     {
       "id": "ExampleReleaseModAssetVersion",
       "type": "mod",
-      "installation": "required",
       "name": "Example Release Mod (Asset Version)",
-      "description": "Release with `version_from: asset` — version derived from the matched asset filename (e.g. SuperWoW-style static tag).",
+      "description": "Release with `version_from: asset` \u2014 version derived from the matched asset filename (e.g. SuperWoW-style static tag).",
       "repo_url": "https://github.com/example/example-static-tag-mod",
       "source": {
         "kind": "github_release",
@@ -214,15 +257,18 @@
         },
         "version_from": "asset"
       },
-      "register_dll": ["SuperWoW.dll"],
-      "installed_files": ["SuperWoW.dll"]
+      "register_dll": [
+        "SuperWoW.dll"
+      ],
+      "installed_files": [
+        "SuperWoW.dll"
+      ]
     },
     {
       "id": "ExampleCodebergMod",
       "type": "mod",
-      "installation": "user_opt_in",
       "name": "Example Codeberg Mod",
-      "description": "Codeberg release — same fields as GitHub but served from codeberg.org Gitea API.",
+      "description": "Codeberg release \u2014 same fields as GitHub but served from codeberg.org Gitea API.",
       "repo_url": "https://codeberg.org/example/example-codeberg-mod",
       "source": {
         "kind": "codeberg_release",
@@ -233,15 +279,18 @@
           "CodebergMod.dll": "CodebergMod.dll"
         }
       },
-      "register_dll": ["CodebergMod.dll"],
-      "installed_files": ["CodebergMod.dll"]
+      "register_dll": [
+        "CodebergMod.dll"
+      ],
+      "installed_files": [
+        "CodebergMod.dll"
+      ]
     },
     {
       "id": "ExampleTarMod",
       "type": "mod",
-      "installation": "user_opt_in",
       "name": "Example Tar Mod",
-      "description": "Tarball release — requires `extract_map`; URL extension decides zip vs tar.gz handling, supports fnmatch globs.",
+      "description": "Tarball release \u2014 requires `extract_map`; URL extension decides zip vs tar.gz handling, supports fnmatch globs.",
       "repo_url": "https://github.com/example/example-tar-mod",
       "source": {
         "kind": "direct_tar",
@@ -252,15 +301,19 @@
         },
         "pinned_version": "v3.0.0"
       },
-      "register_dll": ["ExampleTar.dll"],
-      "installed_files": ["ExampleTar.dll", "ExampleTar.ini"]
+      "register_dll": [
+        "ExampleTar.dll"
+      ],
+      "installed_files": [
+        "ExampleTar.dll",
+        "ExampleTar.ini"
+      ]
     },
     {
       "id": "ExampleGitArchiveMod",
       "type": "mod",
-      "installation": "user_opt_in",
       "name": "Example Git Archive Mod",
-      "description": "Git snapshot — fetches archive zip at `ref`/`branch` commit (GitHub/GitLab/Gitea/Codeberg).",
+      "description": "Git snapshot \u2014 fetches archive zip at `ref`/`branch` commit (GitHub/GitLab/Gitea/Codeberg).",
       "repo_url": "https://github.com/example/example-git-mod",
       "source": {
         "kind": "git_archive",
@@ -268,15 +321,18 @@
         "branch": "main",
         "ref": "v1.0.0"
       },
-      "register_dll": ["ExampleGitMod.dll"],
-      "installed_files": ["ExampleGitMod.dll"]
+      "register_dll": [
+        "ExampleGitMod.dll"
+      ],
+      "installed_files": [
+        "ExampleGitMod.dll"
+      ]
     },
     {
       "id": "ExampleExternalLauncher",
       "type": "external-launcher",
-      "installation": "required",
       "name": "Example External Launcher",
-      "description": "External launcher — provides the game executable the launcher starts (no register_dll required).",
+      "description": "External launcher \u2014 provides the game executable the launcher starts (no register_dll required).",
       "repo_url": "https://github.com/example/example-loader",
       "source": {
         "kind": "github_release",
@@ -288,17 +344,23 @@
           "ExampleLoader.exe": "ExampleLoader.exe"
         }
       },
-      "register_dll": ["ExampleLoaderHook.dll"],
-      "installed_files": ["ExampleLoaderHook.dll", "ExampleLoader.exe"],
+      "register_dll": [
+        "ExampleLoaderHook.dll"
+      ],
+      "installed_files": [
+        "ExampleLoaderHook.dll",
+        "ExampleLoader.exe"
+      ],
       "executable": "ExampleLoader.exe",
-      "client_versions": ["1.12.1"]
+      "client_versions": [
+        "1.12.1"
+      ]
     },
     {
       "id": "ExampleDxvkMod",
       "type": "mod",
-      "installation": "user_opt_in",
       "name": "Example DXVK Mod",
-      "description": "Mod with post_install hook — only allowlisted hooks (currently `write_dxvk_conf`) are accepted and only for type `mods`.",
+      "description": "Mod with post_install hook \u2014 only allowlisted hooks (currently `write_dxvk_conf`) are accepted and only for type `mods`.",
       "repo_url": "https://github.com/example/example-dxvk",
       "source": {
         "kind": "direct_tar",
@@ -306,10 +368,16 @@
         "extract_map": {
           "d3d9.dll": "d3d9.dll"
         },
-        "post_install": ["write_dxvk_conf"]
+        "post_install": [
+          "write_dxvk_conf"
+        ]
       },
-      "register_dll": ["d3d9.dll"],
-      "installed_files": ["d3d9.dll"]
+      "register_dll": [
+        "d3d9.dll"
+      ],
+      "installed_files": [
+        "d3d9.dll"
+      ]
     }
   ]
 }

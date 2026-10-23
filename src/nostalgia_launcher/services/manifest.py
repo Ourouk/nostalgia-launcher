@@ -225,10 +225,10 @@ def _build_mod(entry: dict, route: dict, version: str) -> dict:
         "id": f"manifest-{_slug(entry['path'])}",
         "name": _os.path.basename(entry["path"]),
         "type": route.get("type", "mod"),
-        "installation": route.get("installation", "user_opt_in"),
         "description": f"Server file (manifest v{version})"
         if version
         else "Server file",
+        "source_type": "direct",
         "source": {
             "kind": "direct_file",
             "url": entry["download_url"],

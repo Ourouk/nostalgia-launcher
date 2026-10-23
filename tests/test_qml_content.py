@@ -23,11 +23,7 @@ from PySide6.QtWidgets import QApplication
 
 from nostalgia_launcher.ui.qml.addons import AddonsModel
 from nostalgia_launcher.ui.qml.app import qml_dir
-from nostalgia_launcher.ui.qml.content import (
-    ContentListModel,
-    build_rows,
-    essential_pending,
-)
+from nostalgia_launcher.ui.qml.content import ContentListModel, build_rows
 from nostalgia_launcher.ui.qml.custom import (
     CustomAddonModel,
     CustomAssetModel,
@@ -50,14 +46,12 @@ ENTRIES = [
         "name": "B Mod",
         "description": "Second",
         "repo_url": "",
-        "installation": "user_opt_in",
     },
     {
         "id": "a-mod",
         "name": "A Mod",
         "description": "First shiny",
         "repo_url": "https://example.test/a",
-        "installation": "required",
     },
 ]
 
@@ -129,7 +123,6 @@ def test_build_rows_sorts_and_maps():
     rows = build_rows(
         ENTRIES,
         state,
-        required_of=lambda e: e.get("installation") == "required",
         version_of=lambda e, r, s: (
             (r.installed_version if r else None)
             or s.latest_versions.get(e["id"])
@@ -138,7 +131,6 @@ def test_build_rows_sorts_and_maps():
         action_for=lambda eid: "update" if eid == "b-mod" else None,
     )
     assert [r["eid"] for r in rows] == ["a-mod", "b-mod"]
-    assert rows[0]["required"] is True
     assert rows[0]["version"] == "1.0"
     assert rows[0]["installed"] is True
     assert rows[1]["version"] == "2.0"
@@ -156,23 +148,10 @@ def test_build_rows_pending_overrides_enabled():
     rows = build_rows(
         [ENTRIES[1]],
         state,
-        required_of=lambda e: False,
         version_of=lambda e, r, s: "unknown",
         action_for=lambda eid: None,
     )
     assert rows[0]["enabled"] is True
-
-
-def test_essential_pending():
-    state = SimpleNamespace(records={}, pending={}, latest_versions={})
-
-    def req(entry):
-        return entry.get("installation") == "required"
-
-    assert essential_pending(ENTRIES, state, required_of=req) is True
-    state.records["a-mod"] = _rec(present=True)
-    assert essential_pending(ENTRIES, state, required_of=req) is False
-    assert essential_pending([], state, required_of=req) is False
 
 
 # ── model ─────────────────────────────────────────────────────────────
@@ -188,7 +167,6 @@ def _snapshot(model, **kw):
             "repoUrl": "",
             "installed": True,
             "enabled": True,
-            "required": True,
             "action": "",
             "error": "",
         },
@@ -200,7 +178,6 @@ def _snapshot(model, **kw):
             "repoUrl": "",
             "installed": False,
             "enabled": False,
-            "required": False,
             "action": "update",
             "error": "",
         },
@@ -212,7 +189,6 @@ def _snapshot(model, **kw):
             "repoUrl": "",
             "installed": False,
             "enabled": False,
-            "required": False,
             "action": "retry",
             "error": "boom",
         },
@@ -221,7 +197,6 @@ def _snapshot(model, **kw):
         "updates_count": 1,
         "has_pending": False,
         "has_errors": True,
-        "essential_pending": True,
     }
     base.update(kw)
     model.set_snapshot(
@@ -229,7 +204,6 @@ def _snapshot(model, **kw):
         updates_count=base["updates_count"],
         has_pending=base["has_pending"],
         has_errors=base["has_errors"],
-        essential_pending=base["essential_pending"],
     )
 
 
@@ -271,9 +245,7 @@ def test_chrome(model):
     _snapshot(model)
     assert model.property("updatesCount") == 1
     assert model.property("applyVisible") is True
-    assert model.property("essentialEnabled") is True
     model.set_running(True)
-    assert model.property("essentialEnabled") is False
     assert model.property("busy") is True
     model.set_running(False)
 
@@ -297,12 +269,11 @@ def test_toggle_echo_guard(model):
     assert calls == [("a", False)]
 
 
-def test_action_apply_essential_reload(model):
+def test_action_apply_reload(model):
     calls = []
     model.set_handlers(
         action=lambda eid: calls.append(("act", eid)) or True,
         apply=lambda: calls.append(("apply",)) or True,
-        essential=lambda: calls.append(("essential",)) or False,
         reload=lambda: calls.append(("reload",)),
     )
     _snapshot(model)
@@ -310,9 +281,6 @@ def test_action_apply_essential_reload(model):
     assert ("act", "b") in calls
     assert model.property("busy") is True
     model.set_running(False)
-    model.installEssential()
-    assert ("essential",) in calls
-    assert model.property("busy") is False
     model.applyAll()
     assert ("apply",) in calls
     assert model.property("busy") is True
@@ -323,9 +291,7 @@ def test_action_apply_essential_reload(model):
 
 def test_refresh_uses_provider(model):
     _snapshot(model, updates_count=0)
-    model.set_snapshot_provider(
-        lambda: ([], 0, False, False, False, [], "", 0)
-    )
+    model.set_snapshot_provider(lambda: ([], 0, False, False, [], "", 0))
     model.refresh()
     assert model.rowCount() == 0
     assert model.property("updatesCount") == 0
@@ -566,7 +532,6 @@ def test_loading_until_data_or_event(model):
                 "repoUrl": "",
                 "installed": False,
                 "enabled": False,
-                "required": False,
                 "action": "",
                 "error": "",
             }

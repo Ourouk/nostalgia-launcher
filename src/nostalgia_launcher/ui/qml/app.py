@@ -34,7 +34,7 @@ from .browse import (
     content_browse_entries,
     tab_rows,
 )
-from .content import ContentListModel, build_rows, essential_pending
+from .content import ContentListModel, build_rows
 from .custom import CustomAddonModel, CustomAssetModel, CustomModModel
 from .linux import LinuxModel, renderer_label, renderer_labels
 from .settings import LogModel, SettingsModel
@@ -410,9 +410,6 @@ class QmlNostalgiaLauncherApp:
         """Snapshot provider + action callbacks for one content tab."""
         if kind == "mods":
 
-            def required_of(entry):
-                return entry.get("installation") == "required"
-
             def version_of(entry, rec, state):
                 return (
                     (rec.installed_version if rec else None)
@@ -426,9 +423,6 @@ class QmlNostalgiaLauncherApp:
             def apply_all():
                 return ctrl.apply()
 
-            def essential():
-                return ctrl.apply_essential_mods()
-
             def extras_of(state):
                 from .content import unknown_sections
 
@@ -441,9 +435,6 @@ class QmlNostalgiaLauncherApp:
             op_kind = "mods"
         else:
 
-            def required_of(entry):
-                return bool(entry.get("essential", False))
-
             def version_of(entry, rec, state):
                 return (rec.installed_version if rec else None) or "unknown"
 
@@ -452,9 +443,6 @@ class QmlNostalgiaLauncherApp:
 
             def apply_all():
                 return ctrl.apply()
-
-            def essential():
-                return ctrl.apply_essential_assets()
 
             def extras_of(state):
                 from .content import assets_extras
@@ -472,7 +460,6 @@ class QmlNostalgiaLauncherApp:
             rows = build_rows(
                 tab_rows(ctrl.registry, state),
                 state,
-                required_of=required_of,
                 version_of=version_of,
                 action_for=ctrl.action_for,
             )
@@ -482,9 +469,6 @@ class QmlNostalgiaLauncherApp:
                 state.updates_count,
                 state.has_pending_changes,
                 state.has_errors,
-                essential_pending(
-                    ctrl.registry, state, required_of=required_of
-                ),
                 extras,
                 headline,
                 len(getattr(state, "pending", {}) or {}),
@@ -500,7 +484,6 @@ class QmlNostalgiaLauncherApp:
             toggle=on_toggle,
             action=apply_one,
             apply=apply_all,
-            essential=essential,
             reload=ctrl.reload_catalog,
             extra=on_extra,
         )
