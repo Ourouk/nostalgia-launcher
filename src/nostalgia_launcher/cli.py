@@ -338,6 +338,13 @@ def _guard_enter(key, prof):
         return None  # no Qt at all: lock-only protection
     global _GUARD_SERVER_KEY
     existing = app_lock_qt.try_connect_existing(key)
+    if existing is None:
+        # A slow peer bind can miss the first probe — retry once before
+        # concluding nobody is listening.
+        import time as _time
+
+        _time.sleep(0.5)
+        existing = app_lock_qt.try_connect_existing(key)
     if existing is not None:
         app_lock_qt.send_json_line(existing, {"op": "raise"})
         sys.stderr.write(

@@ -1161,37 +1161,6 @@ def test_ls_remote_sha_refuses_non_allowlisted_host(monkeypatch):
     )
 
 
-def test_unmet_depends_resolution(tmp_path):
-    """mod:/addon:/file: resolve against mods, installed addons, disk."""
-    (tmp_path / "Interface").mkdir()
-    (tmp_path / "Interface" / "SomeFile.lua").write_text("x")
-    deps = ["mod:ClassicAPI", "addon:LibX", "file:Interface/SomeFile.lua"]
-    assert (
-        addons.unmet_depends(
-            deps,
-            mods_present={"ClassicAPI"},
-            installed_addons={"LibX"},
-            client_dir=str(tmp_path),
-        )
-        == []
-    )
-    missing = addons.unmet_depends(
-        deps, mods_present=set(), installed_addons=set(), client_dir=""
-    )
-    assert set(missing) == set(deps)
-    # Legacy bare strings resolve as addon: refs.
-    assert (
-        addons.unmet_depends(["SomeLib"], installed_addons={"SomeLib"}) == []
-    )
-    assert addons.unmet_depends(["SomeLib"], installed_addons=set()) == [
-        "SomeLib"
-    ]
-    # Unknown kinds and unsafe refs are unmet, never crash.
-    assert addons.unmet_depends(["bogus:Foo"]) == ["bogus:Foo"]
-    assert addons.unmet_depends(["file:../evil"]) == ["file:../evil"]
-    assert addons.unmet_depends(None) == []
-
-
 def test_install_addon_direct_flat_zip(tmp_path, monkeypatch):
     """A prebuilt direct zip (members at root, no wrapper dir) installs
     into Interface/AddOns with multi-addon discovery."""

@@ -35,7 +35,7 @@ from nostalgia_launcher.ui.qml.viewmodels import (
     LauncherState,
     NewsFeedModel,
     ThemeBridge,
-    UpdateState,
+    UpdateViewState,
 )
 from nostalgia_launcher.ui.qml.wizard import WizardModel
 from nostalgia_launcher.ui.theme import HEX, Palette
@@ -54,7 +54,7 @@ def engine(qapp):
     state = LauncherState()
     theme = ThemeBridge(Palette())
     news = NewsFeedModel()
-    update = UpdateState()
+    update = UpdateViewState()
     eng = QQmlApplicationEngine()
     eng.rootContext().setContextProperty("launcherState", state)
     eng.rootContext().setContextProperty("appTheme", theme)
@@ -219,7 +219,7 @@ def test_refresh_footer_syncs_button_and_status(qapp):
     shell = QmlNostalgiaLauncherApp.__new__(QmlNostalgiaLauncherApp)
     shell._hub = hub
     shell._state = LauncherState()
-    shell._update = UpdateState()
+    shell._update = UpdateViewState()
     shell._refresh_footer()
     ready = hub.updater.compute_readiness()
     assert shell._state.property("statusText") == ready.status
@@ -396,14 +396,14 @@ def test_startup_verify_skips_first_run_and_running(qapp, monkeypatch):
     from nostalgia_launcher.ui.qml.app import QmlNostalgiaLauncherApp
     from nostalgia_launcher.ui.qml.viewmodels import (
         LauncherState,
-        UpdateState,
+        UpdateViewState,
     )
 
     hub = ControllerHub()
     shell = QmlNostalgiaLauncherApp.__new__(QmlNostalgiaLauncherApp)
     shell._hub = hub
     shell._state = LauncherState()
-    shell._update = UpdateState()
+    shell._update = UpdateViewState()
     calls = []
     monkeypatch.setattr(
         hub.updater, "start_verify", lambda **k: calls.append(k)

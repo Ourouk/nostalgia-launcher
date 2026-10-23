@@ -712,8 +712,17 @@ class TorrentVerifier(WorkerBase):
         ranges = _file_piece_ranges(files, piece_length)
         stale = []
         for i, pieces in enumerate(ranges):
-            if pieces and not all(h.have_piece(p) for p in pieces):
-                tp = files.file_path(i).replace("\\", "/")
+            tp = files.file_path(i).replace("\\", "/")
+            if not pieces:
+                # Zero-byte member: no covering pieces, so piece state
+                # can never flag it — missing file is stale (create it),
+                # an existing one is fine.
+                import os
+
+                if not os.path.isfile(os.path.join(self.out_dir, mapping[tp])):
+                    stale.append(mapping[tp])
+                continue
+            if not all(h.have_piece(p) for p in pieces):
                 stale.append(mapping[tp])
         return stale
 

@@ -40,7 +40,7 @@ from .viewmodels import (
     LauncherState,
     NewsFeedModel,
     ThemeBridge,
-    UpdateState,
+    UpdateViewState,
 )
 from .wizard import WizardModel
 
@@ -145,7 +145,7 @@ class QmlNostalgiaLauncherApp:
             lambda: self._hub.news.refresh_announcements(force=True)
         )
         self._hub.bridge.newsLoaded.connect(self._news.on_event)
-        self._update = UpdateState()
+        self._update = UpdateViewState()
         self._update.set_primary_handler(self._primary_action)
         self._update.set_recheck_handler(self._force_recheck)
         bridge = self._hub.bridge

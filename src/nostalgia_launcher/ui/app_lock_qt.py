@@ -28,13 +28,17 @@ _SERVERS = {}
 
 
 def stop_server(key):
-    """Close our server for ``key`` and remove its socket file."""
+    """Close our server for ``key`` and remove its socket file.
+
+    Only this process's own served keys are removed — tearing down
+    another instance's name would deafen its successor. Unknown keys
+    (never served here) only close the lookup handle, never unlink."""
     from PySide6.QtNetwork import QLocalServer
 
     server = _SERVERS.pop(key, None)
     if server is not None:
         server.close()
-    QLocalServer.removeServer(key)
+        QLocalServer.removeServer(key)
 
 
 def stop_all():
@@ -85,8 +89,15 @@ def serve(key, on_message=None):
     # second listener can succeed SILENTLY (splitting raise-to-front
     # traffic), so this pre-check runs on every platform. A crashed
     # instance leaves a socket with NO listener — the probe ignores it,
-    # and the AddressInUse branch below clears it.
-    if try_connect_existing(key) is not None:
+    # and the AddressInUse branch below clears it. The first probe can
+    # miss a slow peer bind, so retry once (~500 ms) before serving.
+    if try_connect_existing(key) is None:
+        import time as _time
+
+        _time.sleep(0.5)
+        if try_connect_existing(key) is not None:
+            raise RuntimeError("another instance of this profile just started")
+    else:
         raise RuntimeError("another instance of this profile just started")
 
     server = QLocalServer()

@@ -27,11 +27,13 @@ from ..services.self_update import (
     fetch_updater_latest_tag,
     updater_update_available,
 )
+from ..services.update.stages_initial import fallback_available
 from ..services.update.workflow import (
     UpdateWorker,
     VerifyWorker,
     torrent_recovery_available,
 )
+from ..services.update_backend.sources import _download_source
 from ..state.events import (
     ClientVersionReady,
     Event,
@@ -128,6 +130,8 @@ class UpdateController:
         self._lock = threading.Lock()
         self._worker: UpdateWorker | None = None
         self._verify_worker: VerifyWorker | None = None
+        self._game_proc = None
+        self._verify_gen = 0
         self._op: str | None = None
         # Set by check_updater_update(): a newer updater release exists and
         # the header "Update available!" label should be shown.
@@ -180,6 +184,8 @@ class UpdateController:
         self.state.running = True
         self._op = "verify"
         self.state.status = "Verifying…"
+        self._verify_gen += 1
+        gen = self._verify_gen
         from ..services.update_backend.sources import _download_source
 
         worker = VerifyWorker(
@@ -188,6 +194,7 @@ class UpdateController:
             overwrite_config=overwrite_config,
             source=_download_source(),
         )
+        worker.verify_gen = gen
         self._verify_worker = worker
         threading.Thread(target=worker.run, daemon=True).start()
         self._dispatcher.post(StatusChanged("Verifying…"))
@@ -306,12 +313,17 @@ class UpdateController:
                 LogMessage("✗  Please set the game folder first.\n", "err")
             )
             return False
-        if not torrent_recovery_available():
+        # run_initial is torrent-first/fallback-second; the gate must
+        # match so an HTTP-only server still reaches first install.
+        src = _download_source()
+        fallback = fallback_available(src)
+        if not (torrent_recovery_available() or fallback):
             self._dispatcher.post(
                 LogMessage(
-                    "✗  This server has no BitTorrent source configured — "
+                    "✗  This server has no download source configured — "
                     "ask the server operator to add "
-                    "server.download.torrent.torrent_url or magnet.\n",
+                    "server.download.torrent.torrent_url or magnet, or "
+                    "server.download.http.fallback.\n",
                     "err",
                 )
             )
@@ -319,9 +331,12 @@ class UpdateController:
         self.state.running = True
         self._op = "download"
         self.state.status = "Downloading client…"
-        from ..services.update_backend.sources import _download_source
 
-        worker = UpdateWorker(out, self._dispatcher, source=_download_source())
+        worker = UpdateWorker(
+            out,
+            self._dispatcher,
+            source=src if src is not None else _download_source(),
+        )
         self._worker = worker
         threading.Thread(target=worker.run_initial, daemon=True).start()
         self._dispatcher.post(StatusChanged("Downloading client…"))
@@ -539,9 +554,11 @@ class UpdateController:
                 )
             pid = proc.pid
             pgid = getattr(proc, "pgid", None) or pid
-            self.state.game_running = True
-            self.state.game_pid = pid
-            self.state.game_pgid = pgid
+            with self._lock:
+                self._game_proc = proc
+                self.state.game_running = True
+                self.state.game_pid = pid
+                self.state.game_pgid = pgid
             self._dispatcher.post(GameLaunched(pid, pgid))
             threading.Thread(
                 target=self._watch_game,
@@ -551,9 +568,11 @@ class UpdateController:
             self._dispatcher.post(LogMessage(f"Launched {exe_lbl}!\n", "ok"))
             return True, dxvk_notice
         except Exception as e:
-            self.state.game_running = False
-            self.state.game_pid = None
-            self.state.game_pgid = None
+            with self._lock:
+                self.state.game_running = False
+                self._game_proc = None
+                self.state.game_pid = None
+                self.state.game_pgid = None
             self._dispatcher.post(
                 LogMessage(f"Failed to launch {exe_lbl}: {e}\n", "err")
             )
@@ -611,9 +630,11 @@ class UpdateController:
                 ),
                 output_file=output_file,
             )
-            self.state.game_running = True
-            self.state.game_pid = pid
-            self.state.game_pgid = pgid
+            with self._lock:
+                self.state.game_running = True
+                self._game_proc = proc
+                self.state.game_pid = pid
+                self.state.game_pgid = pgid
             self._dispatcher.post(GameLaunched(pid, pgid))
             if not output_file:
                 threading.Thread(
@@ -640,9 +661,11 @@ class UpdateController:
             )
             return True, False
         except Exception as e:
-            self.state.game_running = False
-            self.state.game_pid = None
-            self.state.game_pgid = None
+            with self._lock:
+                self.state.game_running = False
+                self._game_proc = None
+                self.state.game_pid = None
+                self.state.game_pgid = None
             self._dispatcher.post(
                 LogMessage(f"Failed to launch {exe_lbl} via umu: {e}\n", "err")
             )
@@ -672,7 +695,8 @@ class UpdateController:
             args=(proc, source),
             daemon=True,
         ).start()
-        pgid = self.state.game_pgid
+        with self._lock:
+            pgid = self.state.game_pgid
         if pgid is not None and source == "umu":
             code = self._wait_umu_exit(proc, pid, pgid)
         else:
@@ -680,9 +704,11 @@ class UpdateController:
                 code = proc.wait()
             except Exception:
                 code = None
-        self.state.game_running = False
-        self.state.game_pid = None
-        self.state.game_pgid = None
+        with self._lock:
+            self.state.game_running = False
+            self._game_proc = None
+            self.state.game_pid = None
+            self.state.game_pgid = None
         self._dispatcher.post(GameExited(pid, code))
         if code in (0, None):
             self._dispatcher.post(StatusChanged("Game exited."))
@@ -771,25 +797,56 @@ class UpdateController:
                 log(f"{prefix}… {dropped} more lines suppressed", "dim")
 
     def terminate_game(self) -> bool:
-        """Request termination of the running game (umu + WoW.exe process
-        group). Returns True when a game was running; the actual exit is
-        reported asynchronously via GameExited from the watcher. The kill
-        itself runs off-thread: its grace wait (up to ~2 s) must not freeze
-        the GUI."""
+        """Request termination of the running game. Returns True when a
+        game was running; the actual exit is reported asynchronously via
+        GameExited from the watcher. The kill itself runs off-thread: its
+        grace wait must not freeze the GUI. Linux kills the umu process
+        group; Windows terminates the stored Popen handle (taskkill
+        escalation when terminate() times out)."""
         if not self.state.game_running:
             return False
-        pid = self.state.game_pid
-        pgid = self.state.game_pgid
+        with self._lock:
+            pid = self.state.game_pid
+            pgid = self.state.game_pgid
+            proc = self._game_proc
         self._dispatcher.post(
             LogMessage(f"Terminating game (PID {pid})…\n", "acct")
         )
 
         def _killer():
-            from ..services import umu
+            if is_linux():
+                from ..services import umu
 
+                try:
+                    assert pid is not None and pgid is not None
+                    umu.kill_game(pid, pgid)
+                except Exception as e:
+                    self._dispatcher.post(
+                        LogMessage(f"Failed to terminate game: {e}\n", "err")
+                    )
+                return
             try:
-                assert pid is not None and pgid is not None
-                umu.kill_game(pid, pgid)
+                assert proc is not None
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                    return
+                except Exception:
+                    pass
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    import subprocess as _sp
+
+                    _sp.run(
+                        ["taskkill", "/F", "/PID", str(pid)],
+                        capture_output=True,
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
             except Exception as e:
                 self._dispatcher.post(
                     LogMessage(f"Failed to terminate game: {e}\n", "err")
@@ -1124,6 +1181,12 @@ class UpdateController:
             return
         op = event.op or self._op or "update"
         self.state.running = False
+        if event.cancelled:
+            # Cancel keeps readiness: a playable client stays PLAY.
+            self._op = None
+            self._dispatcher.post(ProgressChanged(0.0, ""))
+            self._dispatcher.post(OperationFinished(op, False))
+            return
         self.state.client_ready = False
         self._op = None
         self._dispatcher.post(ProgressChanged(0.0, ""))
@@ -1201,6 +1264,8 @@ class UpdateController:
         self._dispatcher.post(OperationFinished(op, False))
 
     def _on_torrent_diff(self, event: TorrentDiffReady):
+        if event.verify_gen and event.verify_gen != self._verify_gen:
+            return  # stale verify overlapped by a newer start_verify
         self.state.running = False
         self.state.client_ready = False
         self.state.torrent_reachable = True
@@ -1214,6 +1279,8 @@ class UpdateController:
         self._dispatcher.post(OperationFinished("verify", False))
 
     def _on_torrent_up_to_date(self, event: TorrentUpToDate):
+        if event.verify_gen and event.verify_gen != self._verify_gen:
+            return  # stale verify overlapped by a newer start_verify
         self.state.running = False
         self.state.client_ready = True
         self.state.torrent_reachable = True

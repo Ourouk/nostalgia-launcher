@@ -169,9 +169,9 @@ def pick_game_executable(
     Returns ``(absolute_path, label)`` with the on-disk spelling as label.
     """
     for name in external_executables or []:
-        candidate = os.path.join(client_dir, name)
-        if os.path.exists(candidate):
-            return candidate, name
+        found = _find_case_insensitive(client_dir, name)
+        if found is not None:
+            return found, os.path.basename(found)
     wanted = exe_name or _configured_exe()
     found = _find_case_insensitive(client_dir, wanted)
     if found:

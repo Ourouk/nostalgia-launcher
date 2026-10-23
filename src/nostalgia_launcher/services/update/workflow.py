@@ -109,6 +109,10 @@ class VerifyWorker(WorkerBase):
         self._cache: dict[str, object] = load_cache()
         self.overwrite_config: bool = overwrite_config
         self._source = source
+        # Stamped by the controller per start_verify; stale generations
+        # are dropped by _on_event so overlapping verifies can't flip
+        # the footer back.
+        self.verify_gen: int = 0
 
     def run(self) -> None:
         try:
@@ -255,8 +259,12 @@ class VerifyWorker(WorkerBase):
                     RuntimeError("snapshot metadata could not be parsed")
                 )
             assert isinstance(cached, dict)
+            # Empty content hashes collide across unrelated snapshots —
+            # never reuse a verdict when either side has none.
             same_content = (
-                cached.get("content_hash") == identity["content_hash"]
+                bool(cached.get("content_hash"))
+                and bool(identity["content_hash"])
+                and cached.get("content_hash") == identity["content_hash"]
             )
             old_hash = cached.get("info_hash")
             new_hash = identity["info_hash"]
@@ -449,23 +457,31 @@ class VerifyWorker(WorkerBase):
 
     def _post_torrent_verdict(self, stale: list[str]):
         self._dispatcher.post(TorrentReachable())
+        gen = getattr(self, "verify_gen", 0)
         if not stale:
             self.log(
                 "Everything is up to date (BitTorrent snapshot).",
                 "ok",
             )
-            self._dispatcher.post(TorrentUpToDate())
+            self._dispatcher.post(TorrentUpToDate(verify_gen=gen))
         else:
             self.log(
                 f"Update available — {len(stale)} stale file(s) "
                 f"vs the BitTorrent snapshot.",
                 "acct",
             )
-            self._dispatcher.post(TorrentDiffReady(stale=sorted(stale)))
+            self._dispatcher.post(
+                TorrentDiffReady(
+                    stale=sorted(stale),
+                    verify_gen=getattr(self, "verify_gen", 0),
+                )
+            )
 
     def _cancel_torrent_verify(self) -> bool:
-        self.log("\nVerify cancelled.", "err")
-        self._dispatcher.post(UpdateFailed(message="", op="verify"))
+        self.log("\nVerify cancelled.", "dim")
+        self._dispatcher.post(
+            UpdateFailed(message="", op="verify", cancelled=True)
+        )
         return True
 
     def _report_overlay_collisions(self) -> None:
@@ -505,7 +521,9 @@ class VerifyWorker(WorkerBase):
         if _manifest._manifest_block() is None:
             return False
         self._report_overlay_collisions()
-        snapshot = _manifest.fetch_snapshot()
+        # Always refetch: a cached snapshot would pin stale hashes and
+        # hide an updated upstream manifest (new DLL build) forever.
+        snapshot = _manifest.fetch_snapshot(force=True)
         if snapshot is None or self._cancel:
             return False
         entries = snapshot.get("entries", [])
@@ -525,6 +543,17 @@ class VerifyWorker(WorkerBase):
             self.log(
                 f"[manifest] Version cursor moved ({version}) — "
                 "staleness decided by content hash.",
+                "dim",
+            )
+        # Reconcile on every owned verdict, not just the up-to-date
+        # one: a DLL can be present and hash-current while its dlls.txt
+        # line is missing (deleted, never written), and staleness alone
+        # would never repair it. Idempotent — only touches on-disk DLLs.
+        reconciled = _manifest.reconcile_dlls(self.out_dir)
+        if reconciled:
+            self.log(
+                f"[manifest] Registered {reconciled} bundled "
+                "DLL(s) in dlls.txt.",
                 "dim",
             )
         if not stale:
@@ -584,9 +613,11 @@ class UpdateWorker(WorkerBase):
         return result
 
     def _cancelled_abort(self) -> bool:
-        self.log("\nUpdate cancelled.", "err")
+        self.log("\nUpdate cancelled.", "dim")
         self.progress(0.0, "Cancelled")
-        self._dispatcher.post(UpdateFailed(message="", op="update"))
+        self._dispatcher.post(
+            UpdateFailed(message="", op="update", cancelled=True)
+        )
         return True
 
     def _recovery_failed(
@@ -774,7 +805,9 @@ class UpdateWorker(WorkerBase):
         """
         from .. import manifest as _manifest
 
-        snapshot = _manifest.fetch_snapshot()
+        # Same refetch rule as verify: never compare against a stale
+        # cached snapshot when downloading.
+        snapshot = _manifest.fetch_snapshot(force=True)
         if snapshot is None:
             self.log("[manifest] Snapshot unavailable.", "err")
             self._dispatcher.post(
@@ -830,8 +863,15 @@ class UpdateWorker(WorkerBase):
             )
             self.log(f"[manifest] Downloading {path}…", "acct")
             try:
-                self.download(url, dest, size, path)
+                # Atomic landing: download to .tmp and replace only after
+                # the sha gate passes, so a corrupt payload can never
+                # delete a good original.
+                self.download(url, dest + ".tmp", size, path)
             except Exception as e:
+                try:
+                    os.remove(dest + ".tmp")
+                except OSError:
+                    pass
                 if self._cancel:
                     self._cancelled_abort()
                     return False
@@ -842,12 +882,17 @@ class UpdateWorker(WorkerBase):
                 return False
             want = entry.get("sha256", "")
             want = want.strip().lower() if isinstance(want, str) else ""
+            landing = dest + ".tmp"
             if want:
                 from ...core.filesystem import sha256_file as _sha256
 
                 try:
-                    got = _sha256(dest)
+                    got = _sha256(landing)
                 except OSError as e:
+                    try:
+                        os.remove(landing)
+                    except OSError:
+                        pass
                     self.log(f"[manifest] Could not hash {path}: {e}", "err")
                     self._dispatcher.post(
                         UpdateFailed(
@@ -858,7 +903,7 @@ class UpdateWorker(WorkerBase):
                     return False
                 if got != want:
                     try:
-                        os.remove(dest)
+                        os.remove(landing)
                     except OSError:
                         pass
                     self.log(f"[manifest] sha256 mismatch: {path}", "err")
@@ -869,6 +914,14 @@ class UpdateWorker(WorkerBase):
                         )
                     )
                     return False
+            try:
+                os.replace(landing, dest)
+            except OSError as e:
+                self.log(f"[manifest] Could not install {path}: {e}", "err")
+                self._dispatcher.post(
+                    UpdateFailed(message=str(e), op="update")
+                )
+                return False
             for dll in _manifest.dlls_for_path(path):
                 from .. import mods as _mods
 
@@ -957,7 +1010,7 @@ class UpdateWorker(WorkerBase):
         try:
             from ..update_backend.extract import extract_client_payload
 
-            ok = extract_client_payload(self.out_dir, effective_type)
+            ok = extract_client_payload(self.out_dir, effective_type, dest)
             if not ok:
                 self.log(
                     "[extract] No archive found for extraction "

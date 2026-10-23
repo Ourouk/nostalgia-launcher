@@ -5,7 +5,6 @@ import pytest
 from nostalgia_launcher.core.helpers import (
     fmt_size,
     fmt_speed,
-    format_news_date,
     parse_version,
     parse_wow_colored,
     same_git_repo,
@@ -103,26 +102,6 @@ def test_strip_html_removes_tags_and_scripts():
 
 def test_strip_html_unescapes_entities():
     assert strip_html("<p>a &amp; b</p>") == "a & b"
-
-
-def test_format_news_date():
-    assert format_news_date("2026-08-13T10:00:00+02:00") == "13 Aug 2026"
-
-
-def test_format_news_date_invalid_returns_input():
-    assert format_news_date("not-a-date") == "not-a-date"
-
-
-def test_relative_age_buckets():
-    from nostalgia_launcher.core.helpers import relative_age
-
-    now = 1_000_000_000
-    assert relative_age(None) == ""
-    assert relative_age(0) == ""
-    assert relative_age(now - 30, now=now) == "just now"
-    assert relative_age(now - 5 * 60, now=now) == "5m ago"
-    assert relative_age(now - 3 * 3600, now=now) == "3h ago"
-    assert relative_age(now - 2 * 86400, now=now) == "2d ago"
 
 
 def test_parse_version_alnum_qualifiers():

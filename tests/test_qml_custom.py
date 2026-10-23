@@ -38,7 +38,7 @@ from nostalgia_launcher.ui.qml.viewmodels import (
     LauncherState,
     NewsFeedModel,
     ThemeBridge,
-    UpdateState,
+    UpdateViewState,
 )
 from nostalgia_launcher.ui.qml.wizard import WizardModel
 from nostalgia_launcher.ui.theme import Palette
@@ -59,7 +59,7 @@ def engine(qapp):
     eng.rootContext().setContextProperty("launcherState", LauncherState())
     eng.rootContext().setContextProperty("appTheme", ThemeBridge(Palette()))
     eng.rootContext().setContextProperty("newsModel", NewsFeedModel())
-    eng.rootContext().setContextProperty("updateState", UpdateState())
+    eng.rootContext().setContextProperty("updateState", UpdateViewState())
     eng.rootContext().setContextProperty(
         "modsModel", ContentListModel("mods empty")
     )
@@ -244,7 +244,7 @@ def test_linux_snapshot_and_actions(qapp):
 
 def test_realm_prompt_flow(qapp):
     answers = []
-    state = UpdateState()
+    state = UpdateViewState()
     state.set_realm_handler(answers.append)
     assert state.property("realmPrompt") == ""
     state.prompt_realm("OldRealm", "NewRealm")

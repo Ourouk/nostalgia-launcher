@@ -36,7 +36,7 @@ from nostalgia_launcher.ui.qml.viewmodels import (
     NewsFeedModel,
     ThemeBridge,
     UpdateFilesModel,
-    UpdateState,
+    UpdateViewState,
 )
 from nostalgia_launcher.ui.qml.wizard import WizardModel
 from nostalgia_launcher.ui.theme import Palette
@@ -69,7 +69,7 @@ def qapp():
 
 @pytest.fixture()
 def state(qapp):
-    return UpdateState()
+    return UpdateViewState()
 
 
 @pytest.fixture()
@@ -98,7 +98,7 @@ def engine(qapp):
         "customAssetModel", CustomAssetModel()
     )
     eng.rootContext().setContextProperty("linuxModel", LinuxModel())
-    update = UpdateState()
+    update = UpdateViewState()
     eng.rootContext().setContextProperty("updateState", update)
     eng.load(QUrl.fromLocalFile(os.path.join(qml_dir(), "main.qml")))
     yield eng, update

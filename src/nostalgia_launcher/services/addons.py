@@ -209,66 +209,6 @@ def catalog_from_cache() -> list:
     return merged
 
 
-def catalog_last_updated() -> float | None:
-    """The newest per-URL catalog fetch timestamp (epoch), or None when no
-    catalog was ever fetched. Network-free."""
-    cache = _config_store.load_config().get("addons_catalog_cache", {}) or {}
-    stamps: list[float] = []
-    for e in cache.values():
-        if isinstance(e, dict):
-            ts = e.get("timestamp")
-            if isinstance(ts, (int, float)):
-                stamps.append(float(ts))
-    return max(stamps) if stamps else None
-
-
-def unmet_depends(
-    depends: list,
-    *,
-    mods_present: set | None = None,
-    installed_addons: set | None = None,
-    client_dir: str = "",
-) -> list[str]:
-    """Catalog-declared deps from ``depends`` that are not satisfied.
-
-    Resolution per kind: ``mod:`` against the present client mods (ids or
-    DLL names resolved on disk), ``addon:`` against installed addon folders,
-    ``file:`` against the client directory. Unknown kinds and unsafe refs
-    are reported as unmet (fail-closed); entries already carry validated
-    refs from ``catalog.validate_addon``. Never raises — a poisoned value
-    degrades to all-unmet rather than breaking the scan."""
-    missing = []
-    try:
-        mods_present = set(mods_present or ())
-        installed_addons = {a for a in (installed_addons or ()) if a}
-        for dep in depends or []:
-            parsed = catalog.parse_depends_dep(dep)
-            if parsed is None:
-                missing.append(str(dep))
-                continue
-            kind, ref = parsed
-            if kind == "mod":
-                if ref not in mods_present:
-                    missing.append(dep)
-            elif kind == "addon":
-                if ref not in installed_addons:
-                    missing.append(dep)
-            elif kind == "file":
-                from ..core.safety import safe_relpath
-
-                if (
-                    not client_dir
-                    or not safe_relpath(ref)
-                    or not os.path.exists(os.path.join(client_dir, ref))
-                ):
-                    missing.append(dep)
-            else:
-                missing.append(dep)
-    except Exception:
-        return [str(d) for d in (depends or []) if d]
-    return missing
-
-
 def _default_enabled() -> bool:
     try:
         val = load_config().get("addons_default_enabled")

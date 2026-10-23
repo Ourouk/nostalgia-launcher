@@ -31,6 +31,27 @@ from ...core.safety import safe_destination, safe_relative_path
 # far below disk-filling territory.
 _MAX_MEMBER_BYTES = 1 * 1024 * 1024 * 1024
 
+# Total uncompressed ceiling across all members of one archive.
+_MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024
+
+
+def _capped_read(fh, cap: int, what: str) -> bytes:
+    """Read at most ``cap + 1`` bytes so a lying size header aborts
+    instead of buffering unbounded input (no OOM on hostile streams)."""
+    chunks: list[bytes] = []
+    remaining = cap + 1
+    while remaining > 0:
+        chunk = fh.read(min(256 * 1024, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    payload = b"".join(chunks)
+    if len(payload) > cap:
+        raise RuntimeError(f"{what} exceeds the extraction size cap")
+    return payload
+
+
 # System 7z binary candidates: upstream 7-Zip ships `7zz`, p7zip and most
 # distro/brew packages ship `7z`, minimal builds ship `7za`. Probed in
 # order via `find_seven_z` (mirrors services/umu.find_umu).
@@ -168,13 +189,13 @@ def extract_zip_map(
                     )
                     continue
                 total += info.file_size
-                if total > _MAX_MEMBER_BYTES * 4:
+                if total > _MAX_TOTAL_BYTES:
                     raise RuntimeError(
                         "archive exceeds the total extraction budget"
                     )
-                written.append(
-                    install_plain(client_dir, zf.read(zip_path), dest_rel)
-                )
+                with zf.open(zip_path) as fh:
+                    payload = _capped_read(fh, _MAX_MEMBER_BYTES, zip_path)
+                written.append(install_plain(client_dir, payload, dest_rel))
             return written
     finally:
         if os.path.exists(tmp_path):
@@ -221,11 +242,12 @@ def extract_tar_map(
                 )
                 continue
             total += member.size
-            if total > _MAX_MEMBER_BYTES * 4:
+            if total > _MAX_TOTAL_BYTES:
                 raise RuntimeError(
                     "archive exceeds the total extraction budget"
                 )
-            written.append(install_plain(client_dir, fh.read(), dest_rel))
+            payload = _capped_read(fh, _MAX_MEMBER_BYTES, matched)
+            written.append(install_plain(client_dir, payload, dest_rel))
         return written
 
 
@@ -311,15 +333,9 @@ def extract_7z_map(
                 log(f"  Warning: no file matching '{pattern}' in 7z, skipping")
                 continue
             with open(members[matched], "rb") as f:
-                payload = f.read()
-            if len(payload) > _MAX_MEMBER_BYTES:
-                log(
-                    f"  Warning: {matched} exceeds the extraction size "
-                    "cap, skipping"
-                )
-                continue
+                payload = _capped_read(f, _MAX_MEMBER_BYTES, matched)
             total += len(payload)
-            if total > _MAX_MEMBER_BYTES * 4:
+            if total > _MAX_TOTAL_BYTES:
                 raise RuntimeError(
                     "archive exceeds the total extraction budget"
                 )

@@ -65,7 +65,11 @@ def test_umu_available_reflects_find(monkeypatch):
 
 
 def test_resolve_proton_passes_through_paths():
-    assert umu.resolve_proton("~/GE-Proton9-4") == "~/GE-Proton9-4"
+    import os
+
+    assert umu.resolve_proton("~/GE-Proton9-4") == os.path.expanduser(
+        "~/GE-Proton9-4"
+    )
     assert umu.resolve_proton("/opt/Proton") == "/opt/Proton"
     assert umu.resolve_proton("") == ""
 

@@ -339,13 +339,13 @@ def test_deploy_extract_zip_map_total_budget(tmp_path):
     emap = {n: n for n in ("a.bin", "b.bin", "c.bin", "d.bin", "e.bin")}
     import nostalgia_launcher.services.sources.deploy as deploy_mod
 
-    orig = deploy_mod._MAX_MEMBER_BYTES
-    deploy_mod._MAX_MEMBER_BYTES = 1
+    orig = deploy_mod._MAX_TOTAL_BYTES
+    deploy_mod._MAX_TOTAL_BYTES = 1
     try:
         with pytest.raises(RuntimeError, match="total extraction budget"):
             deploy.extract_zip_map(str(client), buf.getvalue(), "t", emap)
     finally:
-        deploy_mod._MAX_MEMBER_BYTES = orig
+        deploy_mod._MAX_TOTAL_BYTES = orig
 
 
 def test_deploy_extract_tar_map_total_budget(tmp_path):
@@ -363,13 +363,13 @@ def test_deploy_extract_tar_map_total_budget(tmp_path):
     emap = {n: n for n in ("a.bin", "b.bin", "c.bin", "d.bin", "e.bin")}
     import nostalgia_launcher.services.sources.deploy as deploy_mod
 
-    orig = deploy_mod._MAX_MEMBER_BYTES
-    deploy_mod._MAX_MEMBER_BYTES = 1
+    orig = deploy_mod._MAX_TOTAL_BYTES
+    deploy_mod._MAX_TOTAL_BYTES = 1
     try:
         with pytest.raises(RuntimeError, match="total extraction budget"):
             deploy.extract_tar_map(str(client), buf.getvalue(), emap)
     finally:
-        deploy_mod._MAX_MEMBER_BYTES = orig
+        deploy_mod._MAX_TOTAL_BYTES = orig
 
 
 def test_extract_client_zip_total_budget(tmp_path):

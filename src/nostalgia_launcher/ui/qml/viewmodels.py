@@ -250,6 +250,7 @@ class NewsFeedModel(QAbstractListModel):
     statusTextChanged = Signal()
     featuredChanged = Signal()
     failedChanged = Signal()
+    configuredChanged = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -313,6 +314,11 @@ class NewsFeedModel(QAbstractListModel):
 
     failed = Property(bool, _get_failed, notify=failedChanged)
 
+    def _get_configured(self) -> bool:
+        return self._configured
+
+    configured = Property(bool, _get_configured, notify=configuredChanged)
+
     # ── intake ──────────────────────────────────────────────────────
 
     def set_refresh_handler(self, callback):
@@ -327,6 +333,7 @@ class NewsFeedModel(QAbstractListModel):
 
     def set_snapshot(self, items, loading=False, error="", configured=True):
         """Replace the announcements snapshot (mirrors panel `render`)."""
+        prev_configured = self._configured
         self.beginResetModel()
         try:
             self._items = list(items or [])
@@ -335,6 +342,8 @@ class NewsFeedModel(QAbstractListModel):
             self._configured = bool(configured)
         finally:
             self.endResetModel()
+        if self._configured != prev_configured:
+            self.configuredChanged.emit()
         self._refresh_status()
 
     def on_event(self, event):
@@ -467,8 +476,13 @@ class UpdateFilesModel(QAbstractListModel):
             self.dataChanged.emit(top, bottom, [UpdateFilesModel.DoneRole])
 
 
-class UpdateState(QObject):
+class UpdateViewState(QObject):
     """UPDATE tab + footer primary button (mirrors UpdatePanel + footer).
+
+    Named to avoid colliding with the controller-side state dataclass
+    ``state.models.UpdateState`` (same importable short name, different
+    layer — dataclass vs Qt view-model). The QML context property is
+    still ``updateState``; only the Python class name changed.
 
     Formatting (sizes, speeds) happens here via `core.helpers` so QML
     stays declarative. Controller calls arrive as injected callbacks

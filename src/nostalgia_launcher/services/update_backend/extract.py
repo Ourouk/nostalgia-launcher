@@ -265,43 +265,64 @@ def _extract_rar(archive: str, dest: str) -> None:
                 )
 
 
-def extract_client_payload(out_dir: str, content_type: str) -> bool:
+def extract_client_payload(
+    out_dir: str, content_type: str, archive: str | None = None
+) -> bool:
     """Extract the client payload in ``out_dir`` per ``content_type``.
 
-    ``folder`` → nothing to do (returns True). ``zip`` / ``rar`` → extract every
-    matching archive found at the root of ``out_dir`` into ``out_dir`` and remove
-    the archive. Returns True when extraction ran (or was a no-op), False when an
-    archive was expected but none was found (caller may warn)."""
+    ``folder`` → nothing to do (returns True). ``zip`` / ``rar`` →
+    extract exactly ``archive`` into ``out_dir`` and remove it. The
+    archive must sit directly in ``out_dir`` (never delete anything
+    else — a globbed ``*.zip`` once ate user backups). When ``archive``
+    is None (legacy torrent-recovery path) the single archive at the
+    root is used only if exactly one exists; otherwise fail loudly."""
+
     if content_type == "folder":
         return True
     if content_type not in ("zip", "rar"):
         return True
     ext = ".zip" if content_type == "zip" else ".rar"
-    archives = _root_archives(out_dir, ext)
-    if not archives:
-        log(
-            f"[extract] content.type is '{content_type}' but no {ext} "
-            "archive was found in the game folder.",
-            "err",
-        )
-        return False
-    for archive in archives:
-        log(
-            f"[extract] Extracting {os.path.basename(archive)} "
-            f"into {out_dir}…",
-            "acct",
-        )
-        try:
-            if content_type == "zip":
-                _extract_zip(archive, out_dir)
-            else:
-                _extract_rar(archive, out_dir)
-        except Exception as e:
-            log(f"[extract] Failed to extract {archive}: {e}", "err")
+    if archive is None:
+        found = _root_archives(out_dir, ext)
+        if len(found) != 1:
+            log(
+                f"[extract] content.type is '{content_type}' but "
+                f"expected exactly one {ext} archive in the game "
+                f"folder (found {len(found)}).",
+                "err",
+            )
             return False
-        try:
-            os.remove(archive)
-        except OSError:
-            pass
-        log(f"[extract] Extracted {os.path.basename(archive)}.", "ok")
+        archive = found[0]
+    else:
+        want = os.path.abspath(archive)
+        if os.path.dirname(want) != os.path.abspath(out_dir):
+            log(
+                f"[extract] archive outside game folder: {archive}",
+                "err",
+            )
+            return False
+        if not os.path.isfile(want):
+            log(
+                f"[extract] archive not found: {archive}",
+                "err",
+            )
+            return False
+        archive = want
+    log(
+        f"[extract] Extracting {os.path.basename(archive)} into {out_dir}…",
+        "acct",
+    )
+    try:
+        if content_type == "zip":
+            _extract_zip(archive, out_dir)
+        else:
+            _extract_rar(archive, out_dir)
+    except Exception as e:
+        log(f"[extract] Failed to extract {archive}: {e}", "err")
+        return False
+    try:
+        os.remove(archive)
+    except OSError:
+        pass
+    log(f"[extract] Extracted {os.path.basename(archive)}.", "ok")
     return True

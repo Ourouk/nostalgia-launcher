@@ -1702,7 +1702,7 @@ def test_update_tab_stays_visible_with_manifest_overlay(
 def test_manifest_stale_updatable_when_torrent_frozen(
     controller, controller_cfg, monkeypatch
 ):
-    """Magnet-only first-time-only + manifest overlay (the Epoch shape):
+    """Magnet-only first-time-only + manifest overlay (this shape):
     manifest-owned stale paths still offer UPDATE — the manifest is
     the only incremental channel when the magnet cannot carry updates."""
     from nostalgia_launcher.core.launcher import LauncherConfig

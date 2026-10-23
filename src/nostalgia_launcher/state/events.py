@@ -199,11 +199,14 @@ class TorrentDiffReady(Event):
     """Torrent verify found stale files (replaces DIFF + TORRENT_DIFF)."""
 
     stale: list[str] = field(default_factory=list)
+    verify_gen: int = 0
 
 
 @dataclass
 class TorrentUpToDate(Event):
     """Client matches BitTorrent snapshot."""
+
+    verify_gen: int = 0
 
 
 @dataclass
@@ -231,6 +234,7 @@ class UpdateFailed(Event):
 
     message: str = ""
     op: str = "update"
+    cancelled: bool = False
 
 
 class EventDispatcher:

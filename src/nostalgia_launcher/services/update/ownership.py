@@ -14,8 +14,6 @@ config-store cache (offline serves cache).
 
 from __future__ import annotations
 
-import os
-
 from ...core.safety import safe_relpath
 
 #: User-layer directories the server syncs must never descend into.
@@ -27,8 +25,17 @@ USER_LOADER_LIST = "dlls.txt"
 
 
 def _norm(path: str) -> str:
-    """Normalize a client-relative path for ownership comparison."""
-    return path.replace("\\", "/").strip().lower()
+    """Normalize a client-relative path for ownership comparison.
+
+    Case-insensitive only where the OS is (Windows/macOS) —
+    ``os.path.normcase`` semantics; Linux keeps exact compare so
+    ``Data/x`` and ``Data/X`` stay distinct owners."""
+    norm = path.replace("\\", "/").strip()
+    import sys
+
+    if sys.platform in ("win32", "darwin"):
+        return norm.lower()
+    return norm
 
 
 def _valid(path: object) -> str | None:
@@ -168,11 +175,3 @@ def check_server_write(
             emit(f"[ownership] Refusing server write to user file: {path}")
         return False
     return True
-
-
-def user_files_under(out_dir: str, rel: str) -> bool:
-    """Filesystem check: does a user-managed path exist under ``out_dir``."""
-    if not _valid(rel):
-        return False
-    full = os.path.join(out_dir, rel.replace("/", os.sep))
-    return os.path.exists(full)

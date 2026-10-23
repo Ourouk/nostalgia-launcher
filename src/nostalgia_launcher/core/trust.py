@@ -127,6 +127,34 @@ def _manifest_route_counts(config) -> tuple[int, int]:
     return assets, mods
 
 
+def _manifest_executable_targets(config) -> list[str]:
+    """Manifest paths ending in executable types (.dll/.exe/.so/.dylib).
+
+    Display-only: these land in the game folder with the client's own
+    privileges — worth naming on the trust screen. Plain-language
+    suffixes, no logic change."""
+    block = getattr(config, "download_manifest", None)
+    if not isinstance(block, dict):
+        return []
+    routes = block.get("routes")
+    if not isinstance(routes, list):
+        return []
+    found: list[str] = []
+    for r in routes:
+        if not isinstance(r, dict):
+            continue
+        match = r.get("match")
+        if not isinstance(match, str):
+            continue
+        low = match.lower()
+        if (
+            low.endswith((".dll", ".exe", ".so", ".dylib"))
+            and match not in found
+        ):
+            found.append(match)
+    return found
+
+
 def trust_capabilities(config) -> list[tuple[str, bool, str]]:
     """The five trust rows: (key, enabled, label) for client, mods,
     addons, assets and news. Network-free — manifest counts come from
@@ -154,7 +182,7 @@ def trust_capabilities(config) -> list[tuple[str, bool, str]]:
     elif has_manifest_client_files:
         has_client = True
         client_detail = "manifest overlay only"
-    return [
+    rows = [
         ("client", has_client, f"Client — {client_detail}"),
         (
             "mods",
@@ -186,3 +214,46 @@ def trust_capabilities(config) -> list[tuple[str, bool, str]]:
             f"News — {'feed configured' if config.news_url else 'no feed'}",
         ),
     ]
+    # Display-only high-risk rows: executable manifest targets, extra
+    # git hosts, fallback/torrent hosts. Plain-language warnings — no
+    # change to the trust model.
+    for target in _manifest_executable_targets(config):
+        rows.append(
+            (
+                "risk-executable",
+                True,
+                f"Runs code — manifest installs {target} "
+                "with the game's privileges",
+            )
+        )
+    extra_hosts = [
+        h for h in (getattr(config, "addon_git_hosts", None) or []) if h
+    ]
+    for h in sorted(set(extra_hosts)):
+        rows.append(
+            (
+                "risk-git-host",
+                True,
+                f"Extra addon host — {h} "
+                "(community-run, beyond the built-in git hosts)",
+            )
+        )
+    if config.download_fallback_url:
+        rows.append(
+            (
+                "risk-fallback",
+                True,
+                "Fallback host — the full client archive "
+                "downloads from here over HTTPS",
+            )
+        )
+    if config.has_torrent():
+        rows.append(
+            (
+                "risk-torrent",
+                True,
+                "Torrent source — the client downloads "
+                "peer-to-peer via BitTorrent",
+            )
+        )
+    return rows

@@ -3,7 +3,9 @@
 // dated entries (date / title / author / body / link). Reads the
 // `newsModel` context property (ui/qml/viewmodels.py:NewsFeedModel).
 // Load failure (error, unconfigured, or empty feed) swaps the content
-// column for a centered 404 + Play overlay (`newsModel.failed`).
+// column for a centered logo + Play overlay (`newsModel.failed`).
+// The 404 numeral and status line only show for configured feeds;
+// unconfigured feeds get just logo + Play.
 
 import QtQuick
 import QtQuick.Controls
@@ -173,14 +175,18 @@ Item {
                 Accessible.name: "Server logo"
             }
             Label {
+                objectName: "qmlNewsFallbackCode"
                 Layout.alignment: Qt.AlignHCenter
+                visible: newsModel.configured
                 text: "404"
                 font.pointSize: 48
                 font.bold: true
                 color: appTheme.colors["C_GOLD"]
             }
             Label {
+                objectName: "qmlNewsFallbackStatus"
                 Layout.alignment: Qt.AlignHCenter
+                visible: newsModel.configured && text !== ""
                 text: newsModel.statusText
                 font.pointSize: 10
                 color: appTheme.colors["C_TEXT_DIM"]

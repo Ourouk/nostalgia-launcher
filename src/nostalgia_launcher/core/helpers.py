@@ -5,7 +5,6 @@ No global state, no I/O — deterministic and easy to test in isolation.
 
 import html as html_mod
 import re
-from datetime import datetime
 from urllib.parse import urlsplit
 
 
@@ -108,26 +107,3 @@ def strip_html(raw: str) -> str:
     txt = re.sub(r" ?\n ?", "\n", txt)
     txt = re.sub(r"\n{3,}", "\n\n", txt)
     return txt.strip()
-
-
-def format_news_date(iso: str) -> str:
-    try:
-        return datetime.fromisoformat(iso).strftime("%d %b %Y")
-    except Exception:
-        return iso
-
-
-def relative_age(ts: float | None, now: float | None = None) -> str:
-    """Human age of an epoch timestamp: "just now", "5m ago", "3h ago",
-    "3d ago". Empty string when there is no timestamp (never fetched)."""
-    if not ts:
-        return ""
-    now = now if now is not None else datetime.now().timestamp()
-    delta = max(0, int(now - ts))
-    if delta < 60:
-        return "just now"
-    if delta < 3600:
-        return f"{delta // 60}m ago"
-    if delta < 86400:
-        return f"{delta // 3600}h ago"
-    return f"{delta // 86400}d ago"

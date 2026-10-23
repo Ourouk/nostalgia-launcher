@@ -42,7 +42,7 @@ def engine(qapp):
         LauncherState,
         NewsFeedModel,
         ThemeBridge,
-        UpdateState,
+        UpdateViewState,
     )
     from nostalgia_launcher.ui.qml.wizard import WizardModel
     from nostalgia_launcher.ui.theme import Palette
@@ -51,7 +51,7 @@ def engine(qapp):
     eng.rootContext().setContextProperty("launcherState", LauncherState())
     eng.rootContext().setContextProperty("appTheme", ThemeBridge(Palette()))
     eng.rootContext().setContextProperty("newsModel", NewsFeedModel())
-    eng.rootContext().setContextProperty("updateState", UpdateState())
+    eng.rootContext().setContextProperty("updateState", UpdateViewState())
     mods = ContentListModel("mods empty")
     assets = ContentListModel("assets empty")
     eng.rootContext().setContextProperty("modsModel", mods)

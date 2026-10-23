@@ -116,7 +116,8 @@ Key points:
   matched by filename pattern, first match wins). Files owned by the upstream
   list download individually over HTTPS during update; everything else still
   goes through the torrent path. Each entry's `sha256` is checked for shape
-  when the list is read, and is not yet used to re-verify downloads.
+  when the list is read, gates every download, and drives staleness
+  (size pre-check + local hash compare).
 - The `server.download.http` block carries a **single** `fallback` URL
   (`client.zip`/`rar`). It is fetched only when no playable client (`WoW.exe`)
   is present. There is no per-file HTTP `traverse()` and no mirror failover.
@@ -160,14 +161,16 @@ The client-update engine lives in `services/update/workflow.py`
 2. **First-install fallback**: when torrent verification cannot run (no source
    or libtorrent missing) and no playable `WoW.exe` is present, `VerifyWorker`
    resolves `server.download.http.fallback` via `DownloadSource` → `http.py`
-   streams the single zip with `httpx` + `tenacity` over HTTPS
+   streams the single zip with `httpx` (fixed backoff) over HTTPS
    via `secure_urlopen`, then extracts per `content.type`. Otherwise the install
    cannot proceed and the controller offers a disabled VERIFY prompt.
    When an upstream manifest is configured, its listed files are verified
-   first (present-on-disk comparison) and their staleness overrides the
-   torrent verdict.
+   first (size + sha256 comparison, not just present-on-disk) and their
+   staleness overrides the torrent verdict.
 3. **Update (torrent + manifest overlay)**: `UpdateWorker` first downloads
-   any upstream-manifest-owned files individually over HTTPS, then
+   any upstream-manifest-owned files individually over HTTPS (each download
+   sha256-gated, and `register_dll` routes wire their DLLs into `dlls.txt`
+   so bundled mods load like MODS-tab installs), then
    bulk-downloads the remaining stale set via
    `TorrentDownloader` (selective piece priorities keep only gaps downloading;
    the TLS-fetched `.torrent` / btih-verified magnet metadata's piece hashes

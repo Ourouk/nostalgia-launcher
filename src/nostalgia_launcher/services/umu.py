@@ -127,8 +127,10 @@ def resolve_proton(name: str) -> str:
     default (downloading UMU-Proton) or fail with its own message.
     """
     name = (name or "").strip()
-    if not name or "/" in name or name.startswith("~"):
-        return name
+    if not name or "/" in name:
+        return os.path.expanduser(name) if name else name
+    if name.startswith("~"):
+        return os.path.expanduser(name)
     for base in _COMPAT_TOOLS_DIRS:
         root = os.path.expanduser(base)
         if not os.path.isdir(root):

@@ -153,22 +153,11 @@ def route_entry(path: str, routes: list) -> dict | None:
     return None
 
 
-def bundled_assets(snapshot_entries: list[dict] | None = None) -> list:
-    """Manifest-routed asset entries for the standard client update.
-
-    Server-managed install data — consumed by the UPDATE pipeline
-    (verify → stale set → stage download), NOT by the ASSETS tab.
-    The tab lists community entries only (see ``assets_registry``);
-    these entries never render there.
-    """
-    return _bundled("asset", snapshot_entries)
-
-
 def bundled_mods(snapshot_entries: list[dict] | None = None) -> list:
     """Manifest-routed mod entries for the standard client update.
 
     Server-managed install data — consumed by the UPDATE pipeline,
-    NOT by the MODS tab. See ``bundled_assets``.
+    NOT by the MODS tab.
     """
     return _bundled("mod", snapshot_entries)
 
@@ -198,6 +187,8 @@ def _bundled(target: str, snapshot_entries: list[dict] | None = None) -> list:
     entries = snapshot_entries
     version = ""
     if entries is None:
+        # UI-list path (MODS-tab registry): cached snapshot, no fetch —
+        # staleness/downloads always go through verify/update (refetch).
         snapshot = fetch_snapshot()
         if snapshot is None:
             return []
@@ -207,7 +198,18 @@ def _bundled(target: str, snapshot_entries: list[dict] | None = None) -> list:
     for entry in entries:
         path = entry.get("path", "")
         route = route_entry(path, routes)
-        if route is None or route.get("as") != target:
+        if route is None:
+            # Unrouted root-level DLLs are still server-bundled mods:
+            # without a fallback they vanish from the MODS tab entirely
+            # whenever the manifest ships more DLLs than the routes name.
+            # Synthesize the obvious route — read-only server row, same
+            # as routed.
+            if target != "mod":
+                continue
+            if "/" in path or not path.lower().endswith(".dll"):
+                continue
+            route = {"as": "mod", "register_dll": [path]}
+        elif route.get("as") != target:
             continue
         if target == "asset":
             built = _build_asset(entry, route, version)
@@ -276,7 +278,10 @@ def fetch_snapshot(*, force: bool = False) -> dict | None:
 
     Returns ``{"version", "entries", "url"}`` or None when no manifest
     is configured / unreachable with nothing cached. ``force=True``
-    refetches; otherwise the cached snapshot is served network-free.
+    refetches; otherwise the cached snapshot is served network-free
+    — only the UI-list path (MODS-tab registry) opts into that;
+    verify/update callers refetch so an updated upstream manifest
+    (new DLL build) stays visible.
     """
     from ..core import config_store as _store
 
@@ -289,12 +294,16 @@ def fetch_snapshot(*, force: bool = False) -> dict | None:
         return None
     stored = _store.load_config().get(MANIFEST_CACHE_KEY)
     cached = stored if isinstance(stored, dict) else None
+    if not force:
+        log("Manifest snapshot served from cache.", "dim")
     if not force and cached and cached.get("url") == url:
         entries = cached.get("entries")
         if isinstance(entries, list):
             return cached
     try:
         req = urllib_request.Request(url, headers={"User-Agent": UA})
+        req.add_header("Cache-Control", "no-cache")
+        req.add_header("Pragma", "no-cache")
         with secure_urlopen(req, timeout=30) as r:
             doc = json.loads(read_capped(r, MANIFEST_FETCH_CAP))
         version, entries = parse_manifest(doc, schema)
@@ -395,6 +404,54 @@ def stale_overlay_entries(
         except OSError:
             stale.append(path)
     return sorted(stale)
+
+
+def reconcile_dlls(out_dir: str) -> int:
+    """Register every on-disk route DLL in ``dlls.txt`` (idempotent).
+
+    Verify-time counterpart to the download-path ``dlls_for_path``
+    registration: a bundled DLL that is present and current (or that
+    landed outside this launcher) still needs its ``dlls.txt`` line or
+    the client never loads it. Missing files are skipped — only the
+    download path heals those. Returns the number of lines added.
+    Never raises.
+    """
+    try:
+        block = _manifest_block()
+        routes = block.get("routes") if isinstance(block, dict) else None
+        if not isinstance(routes, list):
+            return 0
+        import os as _os
+
+        from ..core.safety import safe_relpath as _safe
+        from . import mods as _mods
+
+        added = 0
+        seen: dict[str, str] = {}
+        for route in routes:
+            if not isinstance(route, dict):
+                continue
+            for dll in route.get("register_dll") or []:
+                if not isinstance(dll, str) or not dll.strip():
+                    continue
+                key = dll.strip().lower()
+                if key not in seen:
+                    seen[key] = dll.strip()
+        for key in sorted(seen):
+            dll = seen[key]
+            try:
+                full = _os.path.join(out_dir, dll.replace("/", _os.sep))
+                if not _safe(dll) or not _os.path.isfile(full):
+                    continue
+                before = _mods.read_dlls_entries(out_dir)
+                _mods.add_dll(out_dir, dll)
+                if key not in before:
+                    added += 1
+            except Exception:
+                continue
+        return added
+    except Exception:
+        return 0
 
 
 def dlls_for_path(path: str) -> list[str]:

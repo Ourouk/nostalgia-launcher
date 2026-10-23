@@ -418,14 +418,14 @@ def test_scan_unknown_mods_claims_bundled_server_dlls(tmp_path, monkeypatch):
 
     client = tmp_path / "client"
     client.mkdir()
-    (client / "dlls.txt").write_text("EpochConnection.dll\nmystery.dll\n")
+    (client / "dlls.txt").write_text("ServerConnection.dll\nmystery.dll\n")
     monkeypatch.setattr(
         manifest,
         "bundled_mods",
         lambda *a, **k: [
             {
-                "id": "manifest-epochconnection.dll",
-                "register_dll": ["EpochConnection.dll"],
+                "id": "manifest-serverconnection.dll",
+                "register_dll": ["ServerConnection.dll"],
             }
         ],
     )

@@ -178,6 +178,11 @@ def download_file(
                         if hasher is not None:
                             hasher.update(chunk)
                         downloaded += len(chunk)
+                        if downloaded > _MAX_NODE_SIZE:
+                            raise OSError(
+                                f"download exceeds the {fmt_size(_MAX_NODE_SIZE)}"
+                                f" cap: {name}"
+                            )
                         now, dt = time.monotonic(), time.monotonic() - t0
                         if dt >= 0.5:
                             speed_str = "   •   " + fmt_speed(
