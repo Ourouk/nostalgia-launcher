@@ -109,12 +109,15 @@ def _configured_registry_url() -> str:
 def assets_registry(force=False) -> list:
     """The effective asset registry — see ``catalog.layered_registry`` for
     the layer order. Empty when nothing is configured."""
+    from . import manifest as _manifest
+
     return catalog.layered_registry(
         "assets",
         catalog.validate_asset,
         catalog.ASSET_MERGE_FIELDS,
         embedded_assets(),
         remote=fetch_assets_catalog(force=force),
+        bundled=_manifest.bundled_assets(),
     )
 
 

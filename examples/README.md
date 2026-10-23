@@ -49,6 +49,7 @@ object may carry:
 | `download.torrent.update` | `bool\|null` | omitted → inferred | When `false`, torrent is first-time-only even if `torrent_url` present. When `true`, forces incremental torrent updates. |
 | `download.http.fallback` | `https URL` | `launcher.py:512` (`url` alias still accepted) | Single zip/rar fallback for first install when no `WoW.exe` present. `manifest`/`client` under `http` are hard-removed (`launcher.py:507-511`) |
 | `download.content.type` | `"zip"\|"rar"\|"folder"` | `launcher.py:498-500` | How `fallback` is packaged. `folder` = already extracted; `zip`/`rar` = extracted by the launcher |
+| `download.manifest` | `object\|null` | `launcher.py:_parse_download_manifest` — `url` https, `schema.{files,version,base_url,download_url}` + `schema.entry.{path,size,sha256}` non-empty strings, `routes` non-empty list of `{match, as: asset\|mod}` (+ `type`/`installation` for mods) | Optional upstream file list overlaid on the base client. `schema` maps the JSON keys; `download_url` template (`{base_url}{path}`) builds each file URL; `routes` (case-sensitive globs, first match wins) route files to `"asset"`/`"mod"` verticals. `probe` (assets) / `register_dll`+`executable` (mods) are the allowed route overlays. Malformed block → hard config error; absent → no overlay |
 
 All endpoint URLs must be `https://` with a host; `http://`, missing-host,
 or credential-embedded URLs are rejected. Any HTTPS host declared by the
@@ -58,7 +59,7 @@ configuration or its catalogs is trusted.
 
 | Field | Type | Validation | Notes |
 |-------|------|------------|-------|
-| `discord_url` | `https URL\|null\|""` | `launcher.py:385-397` | When blank/missing → `null`. Non-empty non-https → hard error |
+| `community_url` | `https URL\|null\|""` | `launcher.py:385-397` | When blank/missing → `null`. Non-empty non-https → hard error |
 | `theme` | `{C_*: "#rrggbb", logo: https}` | `launcher.py:415-416` soft-ignored; `core/themes.py:19-48` `DEFAULT_COLORS` (28 keys) + `LOGO_KEY` | Any unknown key or non-hex value makes the whole theme fall back to defaults (`themes.py:106-127`). Cosmetic — never fails startup |
 | `addon_git_hosts` | `[hostname]` | `launcher.py:268-283` validates `host` (no `/`, `\`, `:`, `..`, only alnum `.-`) | Extra git hosts beyond the built-in allowlist (`github.com`, `raw.githubusercontent.com`, `gitlab.com`, `gitea.com`, `codeberg.org` at `launcher.py:259-265`). **Top-level** in the current code; docs historically said `server.addon_git_hosts` — both are documented here for compat. |
 | `mods` | `[object]` | only `dict` kept, sanitized in `services/mods` | Embedded catalog entries — same shape as the remote catalog. Override remote catalog by `id`; repo `custom` overrides both (`services/catalog.py:538-560`). |
@@ -69,7 +70,7 @@ At import time `launcher.persist()` splits `mods`/`addons`/`assets` out of the
 document into per-profile local repos
 (`local_<kind>_repo.json` shaped `{"server": [...], "custom": [...]}` at
 `launcher.py:614-717`) — the persisted `nostalgia_launcher.json` keeps only
-`server`/`theme`/`discord_url` etc.
+`server`/`theme`/`community_url` etc.
 
 ### Minimal vs full
 
@@ -78,7 +79,7 @@ document into per-profile local repos
   `addons_registry_url`. Enough to run offline.
 * **Full** (`community.example.full.json`): every field above populated,
   including plural `addons_registry_urls`,
-  `torrent_root_marker`, `addon_git_hosts`, `discord_url`, `theme` with
+  `torrent_root_marker`, `addon_git_hosts`, `community_url`, `theme` with
   several `C_*` slots + `logo`, `magnet` with tracker param, and 10
   embedded mods covering all 5 `source.kind` values (see below) plus varied
   addon/asset examples.

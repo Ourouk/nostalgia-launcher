@@ -716,16 +716,19 @@ def layered_registry(
     embedded_entries: list,
     *,
     remote: list | None,
+    bundled: list | None = None,
 ) -> list:
     """The effective registry for a content kind, in override order (later
-    wins by id): the remote/cached catalog < the local repo's server-imported
-    entries < the launcher config's embedded entries < the repo's user-custom
-    entries. Empty when nothing is configured."""
+    wins by id): the remote/cached catalog < manifest-bundled entries <
+    the local repo's server-imported entries < the launcher config's
+    embedded entries < the repo's user-custom entries. Empty when
+    nothing is configured."""
     base = [] if remote is None else remote
     repo = read_local_repo(kind)
     label = f"local {kind} repo"
     merged = base
     for layer in (
+        [] if bundled is None else bundled,
         validate_entries(repo["server"], validator, label),
         embedded_entries,
         validate_entries(repo["custom"], validator, label),

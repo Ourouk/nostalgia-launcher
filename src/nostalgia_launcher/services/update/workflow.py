@@ -104,6 +104,11 @@ class VerifyWorker(WorkerBase):
             if self._cancel:
                 self._cancel_torrent_verify()
                 return
+            # Manifest overlay: server-owned files over the base client.
+            # Runs before/alongside torrent verify; posts TorrentDiffReady
+            # with manifest: paths so the update path is uniform.
+            if self._manifest_verify():
+                return
             # No torrent configured → fallback-only for first install.
             if not src.torrent_locator:
                 self._handle_no_torrent("No BitTorrent source configured.")
@@ -439,14 +444,56 @@ class VerifyWorker(WorkerBase):
         self._dispatcher.post(UpdateFailed(message="", op="verify"))
         return True
 
+    def _manifest_verify(self) -> bool:
+        """Verify the manifest overlay; True when it owned the verdict.
+
+        Returns False when no manifest is configured so the torrent path
+        runs as before. A reachable manifest posts TorrentReachable +
+        TorrentDiffReady(manifest:...) / TorrentUpToDate and owns the
+        verdict — the torrent base is a third-party client the server
+        does not version, so manifest staleness is authoritative.
+        Unreachable manifest → False (fall through to torrent logic).
+        """
+        from .. import manifest as _manifest
+
+        if _manifest._manifest_block() is None:
+            return False
+        snapshot = _manifest.fetch_snapshot()
+        if snapshot is None or self._cancel:
+            return False
+        entries = snapshot.get("entries", [])
+        if not isinstance(entries, list):
+            return False
+        self.log(
+            f"[manifest] Snapshot v{snapshot.get('version', '?')} — "
+            f"{len(entries)} file(s).",
+            "dim",
+        )
+        self._dispatcher.post(TorrentReachable())
+        stale = _manifest.stale_overlay_entries(
+            self.out_dir, entries, self.log
+        )
+        if not stale:
+            self.log("Everything is up to date (manifest).", "ok")
+            self._dispatcher.post(TorrentUpToDate())
+        else:
+            self.log(
+                f"Update available — {len(stale)} stale file(s) "
+                "vs the manifest.",
+                "acct",
+            )
+            self._dispatcher.post(
+                TorrentDiffReady(stale=sorted(f"manifest:{p}" for p in stale))
+            )
+        return True
+
 
 class UpdateWorker(WorkerBase):
-    """Torrent-primary updater with single-zip HTTP fallback.
+    """Torrent-primary updater with manifest overlay + HTTP fallback.
 
-    Incremental updates are torrent-only. HTTP fallback (single zip/rar
-    via ``server.download.http.fallback``) is only for first-time
-    installs when no game exe is present and torrent is unavailable or
-    failed.
+    Manifest-owned files (``manifest:`` paths) download over HTTPS from
+    the manifest's own URLs. Torrent still covers the base client;
+    HTTP fallback (single zip/rar) stays first-install only.
     """
 
     def __init__(
@@ -660,9 +707,74 @@ class UpdateWorker(WorkerBase):
         except Exception as e:  # pragma: no cover
             self.log(f"[extract] payload extraction failed: {e}", "err")
 
+    def _manifest_overlay_download(self, paths: set[str]) -> bool:
+        """Download manifest-owned files over HTTPS into the client.
+
+        Returns True when every path landed (caller continues with any
+        remaining torrent work); posts UpdateFailed + False on error.
+        Staleness here is version-cursor/existence only — the version
+        is recorded on success so the next verify is quiet.
+        """
+        from .. import manifest as _manifest
+
+        snapshot = _manifest.fetch_snapshot()
+        if snapshot is None:
+            self.log("[manifest] Snapshot unavailable.", "err")
+            self._dispatcher.post(
+                UpdateFailed(message="manifest unavailable", op="update")
+            )
+            return False
+        by_path = {
+            e["path"]: e
+            for e in snapshot.get("entries", [])
+            if isinstance(e, dict) and isinstance(e.get("path"), str)
+        }
+        total = len(paths)
+        for i, path in enumerate(sorted(paths)):
+            if self._cancel:
+                self._cancelled_abort()
+                return False
+            entry = by_path.get(path)
+            if entry is None:
+                self.log(f"[manifest] No entry for {path}.", "err")
+                self._dispatcher.post(
+                    UpdateFailed(
+                        message=f"manifest entry missing: {path}",
+                        op="update",
+                    )
+                )
+                return False
+            url = entry.get("download_url", "")
+            size = entry.get("size", 0)
+            dest = os.path.join(self.out_dir, path.replace("/", os.sep))
+            self.progress(
+                i / max(total, 1),
+                f"Downloading {path}…",
+                phase="Downloading",
+                transport="HTTPS",
+                current_file=path,
+            )
+            self.log(f"[manifest] Downloading {path}…", "acct")
+            try:
+                self.download(url, dest, size, path)
+            except Exception as e:
+                if self._cancel:
+                    self._cancelled_abort()
+                    return False
+                self.log(f"[manifest] Download failed ({path}): {e}", "err")
+                self._dispatcher.post(
+                    UpdateFailed(message=str(e), op="update")
+                )
+                return False
+        _manifest.remember_installed_version(
+            snapshot.get("version", ""), snapshot.get("url", "")
+        )
+        remove_wdb(self.out_dir)
+        self.log("[manifest] Overlay download complete.", "ok")
+        return True
+
     def _http_fallback_download(self, fallback_url: str) -> bool:
         """Single-zip HTTP fallback for first-install only.
-
         Downloads the archive at ``fallback_url`` into the game folder
         and extracts it. Returns True on success (UpdateCompleted
         posted), False otherwise (UpdateFailed posted).
@@ -817,7 +929,28 @@ class UpdateWorker(WorkerBase):
                 wanted = None
             else:
                 wanted = torrent_wanted
-            if wanted is not None and len(wanted) == 0:
+            # Manifest overlay first: manifest: paths download over
+            # HTTPS from the manifest's own URLs. The remainder (if
+            # any) flows to the torrent path below.
+            manifest_paths: set[str] = set()
+            torrent_paths: set[str] | None = wanted
+            if wanted:
+                manifest_paths = {
+                    p[len("manifest:") :]
+                    for p in wanted
+                    if p.startswith("manifest:")
+                }
+                rest = {p for p in wanted if not p.startswith("manifest:")}
+                torrent_paths = rest
+                if manifest_paths and not self._manifest_overlay_download(
+                    manifest_paths
+                ):
+                    return
+            if (
+                torrent_paths is not None
+                and len(torrent_paths) == 0
+                and not manifest_paths
+            ):
                 self.log(
                     "[torrent] No stale files; torrent update skipped.",
                     "ok",
@@ -825,6 +958,16 @@ class UpdateWorker(WorkerBase):
                 self.progress(1.0, "")
                 self._dispatcher.post(TorrentUpToDate())
                 return
+            if torrent_paths is not None and len(torrent_paths) == 0:
+                # Manifest-only update — already applied above.
+                self._report_client_version()
+                self._dispatcher.post(
+                    UpdateCompleted(
+                        version=get_client_version(self.out_dir) or None
+                    )
+                )
+                return
+            wanted = torrent_paths
             from ...core import launcher as _launcher
 
             cfg = _launcher.config()

@@ -169,7 +169,9 @@ the QLocalServer guard remains authoritative there.
   open/clear-custom buttons manage the repo files, and clear wipes only
   "custom".
 - **Registry precedence per vertical** (later wins by id/folder): remote
-  catalog < repo "server" < embedded-in-config (only live for direct
+  catalog < manifest-bundled entries (`services/manifest.py`, only when
+  `server.download.manifest` is configured) < repo "server" <
+  embedded-in-config (only live for direct
   ``--launcher-config`` runs, which never persist) < repo "custom".
   Plumbing: `catalog.read_local_repo` /
   write_local_repo` / `add_custom_entry` / `clear_custom_entries`;
@@ -177,7 +179,11 @@ the QLocalServer guard remains authoritative there.
 - The mods/addons/assets lists come from remote JSON catalogs
   (`services/catalog.py` holds the shared validation/merge logic; the fetch
   entry points live in `services/mods.py` / `services/addons.py` /
-  `services/assets.py`). `mods.mods_registry()` is
+  `services/assets.py`) plus optional **manifest-bundled entries**
+  (`services/manifest.py::bundled_mods` / `bundled_assets` — only when
+  `server.download.manifest` is configured; a server-owned manifest mapped
+  through the config's `schema` + `routes` into catalog-shaped asset/mod
+  entries, validated by the exact catalog validators). `mods.mods_registry()` is
   network-free on non-forced calls (cache → empty list). Catalogs auto-refresh
   at most weekly (`catalog.CATALOG_TTL`): startup serves the persisted cache
   instantly (ADDONS via a preview snapshot posted before the verify scan) and
@@ -246,7 +252,11 @@ the QLocalServer guard remains authoritative there.
   local file → opt-in HEAD probe (`etag`/`last_modified`/`size` compared
   against the snapshot captured at install, cached under
   `"asset_probe_cache"`; any probe failure is conservative: never stale) →
-  nothing provided ⇒ never stale. A missing file is an install decision,
+  nothing provided ⇒ never stale. Manifest-bundled assets carry the
+  manifest's version cursor as their `version` (existence-gated staleness
+  in the overlay path) and their per-entry `sha256` is parsed/validated
+  but not yet enforced on download — see the manifest section below.
+  A missing file is an install decision,
   not an update. Downloads stream through the hardened transport with the
   SHA-1 computed on the fly and install via temp-file + rename. Essential
   assets auto-install like essential mods
@@ -283,29 +293,64 @@ the QLocalServer guard remains authoritative there.
   outside `ADDON_GIT_HOSTS` before opening an API connection or spawning
   `git ls-remote`.
 
+## Upstream manifest overlay (`services/manifest.py`)
+
+- A config may declare `server.download.manifest` (`url` + `schema` +
+  `routes`, validated by `core/launcher._parse_download_manifest`):
+  an upstream JSON file list the launcher overlays onto the client.
+  The engine is server-agnostic — all mapping lives in the config:
+  `schema` names the file-list / version / base-URL keys and the per-entry
+  `path` / `size` / `sha256` keys plus the `download_url` template
+  (`{base_url}{path}`); `routes` maps client-relative paths (case-sensitive
+  globs, first match wins) to `"asset"` or `"mod"` plus the static overlay
+  (`installation`, `register_dll`, `executable`, `probe`).
+- The module is PySide6-free: `parse_manifest()` (extract + validate,
+  `safe_relpath` paths, HTTPS-only URLs, 2 MiB fetch cap via
+  `secure_urlopen` + `read_capped`), `route_entry()`, `fetch_snapshot()`
+  (config-store cached under `__manifest_snapshot__`, offline serves cache),
+  `stale_overlay_entries()` / `manifest_update_available()` /
+  `remember_installed_version()`, `bundled_assets()` / `bundled_mods()`
+  (catalog-shaped entries named `manifest-<slug>`, ids override remote but
+  lose to repo/embedded/custom).
+- Client update: `VerifyWorker._manifest_verify()` runs before torrent and
+  owns the verdict when reachable (posts `TorrentReachable` +
+  `TorrentDiffReady(manifest:…)` / `TorrentUpToDate`); unreachable falls
+  through to torrent. `UpdateWorker` downloads `manifest:` paths first over
+  HTTPS from the manifest's own URLs, then any remaining torrent paths.
+- **Current limits (do not regress into claiming otherwise):** per-entry
+  `sha256` is parsed and shape-validated but NOT enforced — staleness is
+  existence-only and downloads are not hash-checked; chunk lists (if the
+  upstream manifest carries any) are ignored — whole-file `direct_file`
+  fetch. The version cursor is the only staleness signal.
+
 ## Client-update backends
 
 - Controllers are toolkit-agnostic: they post dataclass *events* to a shared
   `EventDispatcher` (`state/events.py`) from worker threads; they never touch
   UI code. The QML side (`ui/bridge.py`) converts events to Qt signals on the
   main thread, exposed to QML as properties by view-models.
-- Client updates are **torrent-only for incremental**
-  + single-zip HTTP fallback for first install: the active
+- Client updates are **torrent for the base client**
+  + optional **manifest overlay** + single-zip HTTP fallback for first
+  install: the active
   download source is `server.download.torrent` (`torrent_url`
   and/or `magnet` in `magnet:?xt=…`; HTTPS `.torrent` wins when
   both are set; optional `torrent.update` controls incremental —
   explicit `false` means first-time only, explicit `true` forces
   incremental, absent infers `bool(torrent_url)` so magnet-only
-  defaults to first-time-only) and `server.download.http.fallback`
-  (single `client.zip`/`rar`). Incremental updates go through
+  defaults to first-time-only), plus the optional
+  `server.download.manifest` overlay (server-owned files over the base
+  client, HTTPS from the manifest's own URLs, `manifest:`-prefixed stale
+  paths), and `server.download.http.fallback`
+  (single `client.zip`/`rar`). Base-client incremental updates go through
   `services/update_backend/torrent_update.py` (`TorrentVerifier` +
   `TorrentDownloader`); the piece hashes of the TLS-fetched
   `.torrent` (or magnet metadata that must hash to the configured
   btih) are the integrity guarantee. When torrent is unavailable
-  and no `WoW.exe` is present, `UpdateWorker` fetches the fallback
+  and no `WoW.exe`   is present, `UpdateWorker` fetches the fallback
   zip via HTTP and extracts per `server.download.content.type`
   (`folder`/`zip`/`rar`); incremental HTTP per-file `traverse()` no
-  longer exists.
+  longer exists (the manifest overlay is per-file HTTPS, not a
+  reintroduced traverse — it covers only manifest-listed paths).
 - The torrent root is **auto-detected** from the unique marker-file position
   in the torrent: the parent of the marker (case-insensitive) is the root
   prefix stripped from every torrent path when mapping to the selected WoW

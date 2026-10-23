@@ -24,7 +24,22 @@
       "http": {
         "fallback": "https://launcher.example.com/client/latest/client.zip"
       },
-      "content": { "type": "zip" }
+      "content": { "type": "zip" },
+      "manifest": {
+        "url": "https://launcher.example.com/api/manifest",
+        "schema": {
+          "files": "files",
+          "version": "contentVersion",
+          "base_url": "filesBaseUrl",
+          "entry": { "path": "path", "size": "size", "sha256": "sha256" },
+          "download_url": "{base_url}{path}"
+        },
+        "routes": [
+          { "match": "Data/*.MPQ", "as": "asset", "probe": false },
+          { "match": "*.dll", "as": "mod", "type": "mod",
+            "installation": "required", "register_dll": ["example.dll"] }
+        ]
+      }
     }
   },
   "discord_url": "https://discord.gg/example",

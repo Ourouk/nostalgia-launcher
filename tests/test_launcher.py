@@ -30,7 +30,7 @@ def test_valid_minimal_config():
     assert cfg.download_update is True
     assert cfg.download_content_type == "folder"
     assert cfg.has_torrent() is False
-    assert cfg.discord_url is None
+    assert cfg.community_url is None
 
 
 def test_explicit_endpoints_used_verbatim():
@@ -74,39 +74,39 @@ def test_explicit_endpoints_used_verbatim():
 
 
 @pytest.mark.parametrize("value", [None, "", "   "])
-def test_optional_discord_url_can_be_omitted_or_empty(value):
+def test_optional_community_url_can_be_omitted_or_empty(value):
     data = {"server": {"url": "https://srv.example"}}
     if value is not None:
-        data["discord_url"] = value
+        data["community_url"] = value
     cfg = _config(data)
     assert cfg is not None
-    assert cfg.discord_url is None
+    assert cfg.community_url is None
 
 
-def test_discord_url_accepts_https():
+def test_community_url_accepts_https():
     cfg = _config(
         {
             "server": {"url": "https://srv.example"},
-            "discord_url": " https://discord.gg/example/ ",
+            "community_url": " https://discord.gg/example/ ",
         }
     )
-    assert cfg.discord_url == "https://discord.gg/example"
+    assert cfg.community_url == "https://discord.gg/example"
 
 
 @pytest.mark.parametrize(
     "value", ["http://discord.gg/example", "discord.gg/example", 42]
 )
-def test_discord_url_rejects_invalid_nonempty_value(value):
+def test_community_url_rejects_invalid_nonempty_value(value):
     assert (
         _config(
             {
                 "server": {"url": "https://srv.example"},
-                "discord_url": value,
+                "community_url": value,
             }
         )
         is None
     )
-    assert "discord_url" in launcher.config_error()
+    assert "community_url" in launcher.config_error()
 
 
 def test_addons_registry_urls_override_order():
@@ -1106,3 +1106,129 @@ def test_base32_btih_magnet_accepted():
     )
     assert cfg is not None
     assert cfg.has_torrent() is True
+
+
+# ── server.download.manifest ─────────────────────────────────────────────────
+
+
+def _manifest_block(**over):
+    block = {
+        "url": "https://cdn.example/api/manifest",
+        "schema": {
+            "files": "files",
+            "version": "contentVersion",
+            "base_url": "filesBaseUrl",
+            "entry": {"path": "path", "size": "size", "sha256": "sha256"},
+            "download_url": "{base_url}{path}",
+        },
+        "routes": [{"match": "Data/*.MPQ", "as": "asset"}],
+    }
+    block.update(over)
+    return block
+
+
+def test_download_manifest_absent_is_none():
+    cfg = _config({"server": {"url": "https://srv.example"}})
+    assert cfg is not None
+    assert cfg.download_manifest is None
+
+
+def test_download_manifest_kept_verbatim():
+    cfg = _config(
+        {
+            "server": {
+                "url": "https://srv.example",
+                "download": {"manifest": _manifest_block()},
+            }
+        }
+    )
+    assert cfg is not None
+    assert cfg.download_manifest is not None
+    assert cfg.download_manifest["url"] == "https://cdn.example/api/manifest"
+    assert cfg.download_manifest["schema"]["files"] == "files"
+    assert cfg.download_manifest["routes"] == [
+        {"match": "Data/*.MPQ", "as": "asset"}
+    ]
+
+
+def test_download_manifest_rejects_non_https_url():
+    assert (
+        _config(
+            {
+                "server": {
+                    "url": "https://srv.example",
+                    "download": {
+                        "manifest": _manifest_block(
+                            url="http://cdn.example/api/manifest"
+                        )
+                    },
+                }
+            }
+        )
+        is None
+    )
+    assert "server.download.manifest.url" in launcher.config_error()
+
+
+def test_download_manifest_rejects_missing_schema_key():
+    bad_schema = {
+        "files": "files",
+        "version": "contentVersion",
+        # base_url missing
+        "entry": {"path": "path", "size": "size", "sha256": "sha256"},
+        "download_url": "{base_url}{path}",
+    }
+    assert (
+        _config(
+            {
+                "server": {
+                    "url": "https://srv.example",
+                    "download": {
+                        "manifest": _manifest_block(schema=bad_schema)
+                    },
+                }
+            }
+        )
+        is None
+    )
+    assert (
+        "server.download.manifest.schema.base_url" in launcher.config_error()
+    )
+
+
+def test_download_manifest_rejects_bad_route_target():
+    assert (
+        _config(
+            {
+                "server": {
+                    "url": "https://srv.example",
+                    "download": {
+                        "manifest": _manifest_block(
+                            routes=[{"match": "x", "as": "addon"}]
+                        )
+                    },
+                }
+            }
+        )
+        is None
+    )
+    assert "server.download.manifest.routes[0].as" in launcher.config_error()
+
+
+def test_download_manifest_rejects_mod_without_type():
+    assert (
+        _config(
+            {
+                "server": {
+                    "url": "https://srv.example",
+                    "download": {
+                        "manifest": _manifest_block(
+                            routes=[{"match": "x.dll", "as": "mod"}]
+                        )
+                    },
+                }
+            }
+        )
+        is None
+    )
+    assert "server.download.manifest.routes[0].type" in launcher.config_error()

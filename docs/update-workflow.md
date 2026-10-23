@@ -1,15 +1,22 @@
 # Client Update Workflow
 
-> Incremental updates are **torrent-only** (piece hashes); HTTP is a
-> **single-zip fallback for first install only**. No per-file HTTP
-> `traverse()`. Workers post typed dataclass events; the controller
-> mutates state; Qt renders via a 50 ms bridge drain.
+> Base-client incremental updates are **torrent-only** (piece hashes);
+> an optional **manifest overlay** (server-owned files over the base
+> client) downloads per-file over HTTPS from the manifest's own URLs;
+> HTTP is otherwise a **single-zip fallback for first install only**.
+> No per-file HTTP `traverse()`. Workers post typed dataclass events;
+> the controller mutates state; Qt renders via a 50 ms bridge drain.
 
 ## 0. Flowchart
 
 ```mermaid
 flowchart TD
-    START([start verify / update]) --> SRC{torrent locator}
+    START([start verify / update]) --> MAN{manifest configured}
+    MAN -->|yes, reachable| MOV[manifest overlay verdict<br/>TorrentDiffReady manifest:.. / TorrentUpToDate]
+    MAN -->|yes, unreachable| SRC
+    MAN -->|no| SRC{torrent locator}
+    MOV --> MUPD{update: manifest paths first<br/>HTTPS, then torrent remainder}
+    MUPD --> MOK[UpdateCompleted]
     SRC -->|no torrent_url or magnet| NT{WoW exe present}
     NT -->|yes| UTD1[VerificationUpToDate<br/>no incremental possible]
     NT -->|no, first install| FB1{fallback_url}
@@ -46,6 +53,7 @@ flowchart TD
 |---|---|---|
 | `VerifyWorker` / `UpdateWorker` | `services/update/workflow.py` | Background threads; own verify/update logic |
 | `TorrentVerifier` / `TorrentDownloader` | `services/update_backend/torrent_update.py` | libtorrent execution only, no policy |
+| `services/manifest.py` | `services/manifest.py` | server-agnostic manifest overlay: fetch/parse/route/bundled entries (`manifest:`-prefixed stale paths) |
 | `DownloadSource` / `_download_source()` | `services/update_backend/sources.py` | Resolve `torrent_url` / `magnet` / `fallback_url` from `server.download` |
 | `UpdateController` | `controllers/update.py` | Lifecycle owner; `_on_event` mutates `UpdateState`; `compute_readiness()` drives footer |
 | `ControllerBridge` | `ui/bridge.py` | Drains `EventDispatcher` every 50 ms → Qt signals |
@@ -59,9 +67,13 @@ UI → UpdateController.start_verify()/start_update()
 ```
 
 Config: `server.download.torrent.{torrent_url, magnet, update?}` +
+`server.download.manifest.{url, schema, routes}` (optional overlay) +
 `server.download.http.fallback` + `server.download.content.type`
 (`folder`/`zip`/`rar`). `.torrent` wins when both URL and magnet are set.
 `has_exe` = configured client exe (`server.client_executable`, default `WoW.exe`, case-insensitive) or external-launcher exe present.
+Manifest entries own a `manifest:`-prefixed stale namespace so the update
+path stays uniform; the manifest's `sha256` is parsed/validated but not
+yet enforced (existence-only staleness).
 
 ## 2. Source resolution
 
@@ -77,7 +89,16 @@ Config: `server.download.torrent.{torrent_url, magnet, update?}` +
 
 1. Post `Verifying…` progress; seed `WTF/Config.wtf` + `realmlist.wtf` if
    `overwrite_config` or missing.
-2. No `torrent_locator` or no libtorrent → `_handle_no_torrent()`:
+2. Manifest overlay first (`_manifest_verify()`), when
+   `server.download.manifest` is configured: fetch + parse the upstream
+   manifest (HTTPS, 2 MiB cap, `__manifest_snapshot__` cache, offline
+   serves cache); post `TorrentReachable`, then existence-compare listed
+   paths against the client and post `TorrentUpToDate` /
+   `TorrentDiffReady(manifest:…)` (sorted, `manifest:`-prefixed). A
+   reachable manifest owns the verdict (the torrent base is a
+   third-party client the manifest publisher does not version).
+   Unreachable manifest → fall through to the torrent path below.
+3. No `torrent_locator` or no libtorrent → `_handle_no_torrent()`:
    - existing install (`has_exe`) → `TorrentUnavailable` + `VerificationUpToDate`
      (nothing incremental to do; HTTP never patches an install);
    - first install → `TorrentUnavailable`; UPDATE offers the fallback zip if
@@ -106,9 +127,16 @@ Config: `server.download.torrent.{torrent_url, magnet, update?}` +
 
 ## 4. Update (`UpdateWorker.run`)
 
-Inputs: `torrent_wanted` (stale set from verify), `recovery_full` (full-client
+Inputs: `torrent_wanted` (stale set from verify, `manifest:`-prefixed
+entries first), `recovery_full` (full-client
 button; bypasses the `torrent.update` flag).
 
+- `manifest:` paths download first via `_manifest_overlay_download()`:
+  HTTPS from each entry's own `download_url` (`download_file` resume +
+  retry, per-file progress), `remove_wdb`, record version under
+  `__manifest_installed__`. Failure posts `UpdateFailed`. Manifest-only
+  stale set → `UpdateCompleted` without touching torrent.
+- Remaining (non-`manifest:`) paths flow to the torrent path unchanged:
 - `wanted == set()` → `TorrentUpToDate`, no-op.
 - `can_torrent = locator and libtorrent and torrent_update_allowed()`
   (flag skipped when `recovery_full`):

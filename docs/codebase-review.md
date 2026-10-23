@@ -341,7 +341,7 @@ the mirror-probe thread. All daemon threads. **[verified]**
 ### 6.1 `core/launcher.py` — process-global launcher configuration
 - **Purpose.** Validate/parse the single `nostalgia_launcher.json`,
   resolving every endpoint (manifest, client, news, mods, addons, torrent,
-  discord, theme). **No endpoint derivation and no mirrors** — every URL is a
+  community, theme). **No endpoint derivation and no mirrors** — every URL is a
   direct, fully-qualified link; client acquisition is described by the
   `server.download` block.
 - **Interface.** `dataclass LauncherConfig` (no `Mirror`); module functions
@@ -632,7 +632,7 @@ is shown (which itself fetches `servers.json` over HTTPS). **[verified]**
 
 **Optional.** `server.download` (`update` flag, `torrent.{torrent_url,magnet}`,
 `http.{manifest,client}`, `content.type`), `theme`
-(`C_*` colors + `logo` URL), `discord_url`, `addons_registry_urls`,
+(`C_*` colors + `logo` URL), `community_url`, `addons_registry_urls`,
 `realm`, `*_news_url`, `*_registry_url` overrides, top-level `mods[]`
 (embedded mod catalog entries; sanitized by `services.mods.embedded_mods()`,
 precedence custom > embedded > remote — see `docs/agents-architecture.md`).

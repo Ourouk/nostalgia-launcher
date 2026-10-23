@@ -85,7 +85,7 @@ acquisition is described entirely by the `server.download` block:
       "content": { "type": "zip" }
     }
   },
-  "discord_url": "https://discord.gg/example",
+  "community_url": "https://discord.gg/example",
   "theme": {
     "C_GOLD": "#d4a02f",
     "logo": "https://server.example/logo.png"
@@ -107,6 +107,16 @@ Key points:
   `torrent.update` controls incremental semantics — explicit `false` means
   first-time-only, explicit `true` forces incremental, absent infers
   `bool(torrent_url)` so magnet-only defaults to first-time-only.
+- The `server.download.manifest` block (optional) points at an upstream file
+  list the launcher layers over the base client: `url` (the manifest HTTPS
+  URL), `schema` (which keys hold the file list, the version cursor, the
+  base download URL, and each entry's `path` / `size` / `sha256`, plus the
+  `download_url` template combining base + path), and `routes` (which listed
+  files become launcher content — `"asset"` single files or `"mod"` add-ons,
+  matched by filename pattern, first match wins). Files owned by the upstream
+  list download individually over HTTPS during update; everything else still
+  goes through the torrent path. Each entry's `sha256` is checked for shape
+  when the list is read, and is not yet used to re-verify downloads.
 - The `server.download.http` block carries a **single** `fallback` URL
   (`client.zip`/`rar`). It is fetched only when no playable client (`WoW.exe`)
   is present. There is no per-file HTTP `traverse()` and no mirror failover.
@@ -153,10 +163,16 @@ The client-update engine lives in `services/update/workflow.py`
    streams the single zip with `httpx` + `tenacity` over HTTPS
    via `secure_urlopen`, then extracts per `content.type`. Otherwise the install
    cannot proceed and the controller offers a disabled VERIFY prompt.
-3. **Update (torrent-only)**: `UpdateWorker` bulk-downloads the stale set via
+   When an upstream manifest is configured, its listed files are verified
+   first (present-on-disk comparison) and their staleness overrides the
+   torrent verdict.
+3. **Update (torrent + manifest overlay)**: `UpdateWorker` first downloads
+   any upstream-manifest-owned files individually over HTTPS, then
+   bulk-downloads the remaining stale set via
    `TorrentDownloader` (selective piece priorities keep only gaps downloading;
    the TLS-fetched `.torrent` / btih-verified magnet metadata's piece hashes
-   are the integrity guarantee). On success it posts `UpdateCompleted` with
+   are the integrity guarantee for the base client). On success it posts
+   `UpdateCompleted` with
    the version read from `WoW.exe`.
 4. **Fallback download inside update**: the same single-zip `http.fallback`
    path is available from `UpdateWorker._http_fallback_download` when the

@@ -110,12 +110,15 @@ def fetch_mods_catalog(force=False) -> list | None:
 def mods_registry(force=False) -> list:
     """The effective mod registry — see ``catalog.layered_registry`` for
     the layer order. Empty when nothing is configured."""
+    from . import manifest as _manifest
+
     return catalog.layered_registry(
         "mods",
         catalog.validate_mod,
         catalog.MOD_MERGE_FIELDS,
         embedded_mods(),
         remote=fetch_mods_catalog(force=force),
+        bundled=_manifest.bundled_mods(),
     )
 
 

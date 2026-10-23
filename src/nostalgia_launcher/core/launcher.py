@@ -43,7 +43,7 @@ other endpoints.
       "mods": [],
       "addons": [],
       "assets": [],
-      "discord_url": "https://discord.gg/example",
+      "community_url": "https://discord.gg/example",
       "theme": { "C_GOLD": "#d4a02f", "logo": "https://server.example/logo.png" }
     }
 
@@ -65,7 +65,13 @@ acquisition:
   defaults to first-time-only, a ``torrent_url`` defaults to updatable.
 * ``http`` — optional ``fallback`` URL (single zip/rar) used when torrent
   is unavailable. The fallback is a direct download of the full client
-  archive, not a per-file manifest.
+  archive, not a per-file manifest. (``manifest``/``client`` keys under
+  ``http`` remain hard-removed — the overlay block is ``download.manifest``,
+  a sibling of ``torrent``/``http``, not a child of ``http``.)
+* ``manifest`` — optional upstream file-list overlay (``url`` + ``schema`` +
+  ``routes``; see ``services/manifest.py``). Server-owned files layered over
+  the base client, verified by existence and downloaded per-file over HTTPS.
+  Each entry's ``sha256`` is parsed and shape-validated but not yet enforced.
 * ``content`` — ``type`` is one of ``folder`` | ``zip`` | ``rar`` and describes
   how the delivered client is packaged. ``folder`` means the source already
   delivers extracted files; ``zip``/``rar`` means the acquired payload is an
@@ -134,7 +140,7 @@ class LauncherConfig:
     addons_registry_url: str = ""
     addons_registry_urls: list[str] = field(default_factory=list)
     assets_registry_url: str = ""
-    discord_url: str | None = None
+    community_url: str | None = None
     theme: dict | None = None
     addon_git_hosts: list[str] = field(default_factory=list)
     torrent_root_marker: str = "WoW.exe"
@@ -161,6 +167,12 @@ class LauncherConfig:
     download_fallback_url: str | None = None
     # How the delivered client is packaged: "folder" | "zip" | "rar".
     download_content_type: str = "folder"
+    # Optional upstream file manifest (chunked HTTP backends): where to
+    # fetch the file list, how to read it (key map + URL template), and
+    # how to route each manifest path into a launcher vertical
+    # ("asset" single file vs "mod" DLL/exe drop-in). Raw dict, kept
+    # verbatim when valid; None when the server has no manifest backend.
+    download_manifest: dict | None = None
 
     @property
     def configured(self) -> bool:
@@ -266,6 +278,110 @@ def _parse_root_marker(value: object) -> str:
 
 ALLOWED_CLIENT_VERSIONS = ("1.12.1", "2.4.3", "3.3.5a")
 
+# Manifest route targets: a manifest path becomes either an "asset"
+# (single file into the client folder) or a "mod" (DLL drop-in or
+# external launcher exe). Anything else is rejected.
+_MANIFEST_ROUTE_TARGETS = ("asset", "mod")
+
+
+def _parse_download_manifest(value: object) -> dict | None:
+    """Validate ``server.download.manifest`` — the upstream file-manifest
+    reader map. Returns the block verbatim when valid, None when absent,
+    and raises ValueError on a malformed block (fail fast: the parser
+    agent needs exact keys)."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(
+            "launcher config 'server.download.manifest' must be an object"
+        )
+    url = _https_url(value.get("url"))
+    if url is None:
+        raise ValueError(
+            "launcher config 'server.download.manifest.url' "
+            "must be an https URL"
+        )
+    schema = value.get("schema")
+    if not isinstance(schema, dict):
+        raise ValueError(
+            "launcher config 'server.download.manifest.schema' "
+            "must be an object"
+        )
+    for key in ("files", "version", "base_url", "download_url"):
+        v = schema.get(key)
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError(
+                "launcher config 'server.download.manifest.schema."
+                f"{key}' must be a non-empty string"
+            )
+    entry = schema.get("entry")
+    if not isinstance(entry, dict):
+        raise ValueError(
+            "launcher config 'server.download.manifest.schema.entry' "
+            "must be an object"
+        )
+    for key in ("path", "size", "sha256"):
+        v = entry.get(key)
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError(
+                "launcher config 'server.download.manifest.schema.entry."
+                f"{key}' must be a non-empty string"
+            )
+    routes = value.get("routes")
+    if not isinstance(routes, list) or not routes:
+        raise ValueError(
+            "launcher config 'server.download.manifest.routes' "
+            "must be a non-empty list"
+        )
+    for i, route in enumerate(routes):
+        where = f"server.download.manifest.routes[{i}]"
+        if not isinstance(route, dict):
+            raise ValueError(f"launcher config '{where}' must be an object")
+        match = route.get("match")
+        if not isinstance(match, str) or not match.strip():
+            raise ValueError(
+                f"launcher config '{where}.match' must be a non-empty string"
+            )
+        target = route.get("as")
+        if target not in _MANIFEST_ROUTE_TARGETS:
+            raise ValueError(
+                f"launcher config '{where}.as' must be one of "
+                f"{', '.join(_MANIFEST_ROUTE_TARGETS)} (got {target!r})"
+            )
+        if target == "mod":
+            mod_type = route.get("type")
+            if mod_type not in ("mod", "external-launcher"):
+                raise ValueError(
+                    f"launcher config '{where}.type' must be 'mod' or "
+                    f"'external-launcher' (got {mod_type!r})"
+                )
+            installation = route.get("installation")
+            if installation not in ("user_opt_in", "required"):
+                raise ValueError(
+                    f"launcher config '{where}.installation' must be "
+                    f"'user_opt_in' or 'required' (got {installation!r})"
+                )
+    return {
+        "url": url,
+        "schema": {
+            "files": schema["files"].strip(),
+            "version": schema["version"].strip(),
+            "base_url": schema["base_url"].strip(),
+            "entry": {
+                "path": entry["path"].strip(),
+                "size": entry["size"].strip(),
+                "sha256": entry["sha256"].strip(),
+            },
+            "download_url": schema["download_url"].strip(),
+        },
+        "routes": [
+            {k: v for k, v in r.items() if k != "_note"}
+            for r in routes
+            if isinstance(r, dict)
+        ],
+    }
+
+
 # Community defaults for when a server leaves a catalog URL blank.
 # One entry per client_version that actually has a community catalog; absent
 # versions mean "no community catalog" (checkbox will be grayed).
@@ -368,19 +484,21 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
 
     host = _host_of(_https_url(server.get("url")))
 
-    raw_discord_url = data.get("discord_url")
-    if raw_discord_url is None:
-        discord_url = None
-    elif isinstance(raw_discord_url, str) and raw_discord_url.strip():
-        discord_url = _https_url(raw_discord_url)
-        if discord_url is None:
+    raw_community_url = data.get("community_url")
+    if raw_community_url is None:
+        community_url = None
+    elif isinstance(raw_community_url, str) and raw_community_url.strip():
+        community_url = _https_url(raw_community_url)
+        if community_url is None:
             raise ValueError(
-                "launcher config 'discord_url' must be an https URL"
+                "launcher config 'community_url' must be an https URL"
             )
-    elif isinstance(raw_discord_url, str):
-        discord_url = None
+    elif isinstance(raw_community_url, str):
+        community_url = None
     else:
-        raise ValueError("launcher config 'discord_url' must be an https URL")
+        raise ValueError(
+            "launcher config 'community_url' must be an https URL"
+        )
 
     # Explicit, direct URLs only — no base_url suffix derivation.
     news_url = _https_url(server.get("news_url")) or ""
@@ -475,6 +593,7 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
             "use 'server.download.http.fallback' (single zip) with torrent as primary"
         )
     download_fallback_url = _https_url(http.get("fallback") or http.get("url"))
+    download_manifest = _parse_download_manifest(dl.get("manifest"))
 
     def _name_or_host(value) -> str:
         """A config-supplied display name, or the host fallback. Truthy
@@ -502,7 +621,7 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
         addons_registry_url=addons_registry_url,
         addons_registry_urls=addons_registry_urls,
         assets_registry_url=assets_registry_url,
-        discord_url=discord_url,
+        community_url=community_url,
         theme=theme,
         addon_git_hosts=addon_git_hosts,
         torrent_root_marker=torrent_root_marker,
@@ -515,6 +634,7 @@ def _derive(data: dict[str, object]) -> LauncherConfig:
         download_torrent_magnet=download_torrent_magnet,
         download_torrent_update=download_torrent_update,
         download_fallback_url=download_fallback_url,
+        download_manifest=download_manifest,
         download_content_type=content_type,
         client_version=client_version,
     )
@@ -837,9 +957,9 @@ def server_name() -> str:
     return c.server_name if c else ""
 
 
-def discord_url() -> str | None:
+def community_url() -> str | None:
     c = config()
-    return c.discord_url if c else None
+    return c.community_url if c else None
 
 
 def news_url() -> str:
@@ -928,6 +1048,14 @@ def download_torrent_url() -> str:
 def download_torrent_magnet() -> str:
     c = config()
     return c.download_torrent_magnet or "" if c else ""
+
+
+def download_manifest() -> dict | None:
+    """The validated ``server.download.manifest`` reader map (None when the
+    server has no manifest backend). Raw dict — the manifest parser agent
+    resolves its keys against the live upstream manifest."""
+    c = config()
+    return dict(c.download_manifest) if c and c.download_manifest else None
 
 
 def default_mods_url_for_version(version: str) -> str:
