@@ -48,12 +48,19 @@ def parse_version(v: str) -> tuple:
 
 def same_git_repo(a, b) -> bool:
     """Compare git URLs ignoring a trailing '.git' / slash and case."""
+    return normalize_git_url(a) == normalize_git_url(b)
 
-    def norm(u):
-        u = (u or "").rstrip("/")
-        return (u[:-4] if u.endswith(".git") else u).lower()
 
-    return norm(a) == norm(b)
+def normalize_git_url(url) -> str:
+    """Canonical form of a git URL for identity comparisons and index
+    keys: strip a trailing '.git' / slash, lowercase. Non-string input
+    yields ''."""
+    if not isinstance(url, str):
+        return ""
+    url = url.strip().rstrip("/")
+    if url.endswith(".git"):
+        url = url[:-4]
+    return url.lower()
 
 
 def redact_url(url: str) -> str:

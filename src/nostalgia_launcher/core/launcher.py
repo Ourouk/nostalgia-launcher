@@ -753,6 +753,67 @@ def store_local_repo(
     atomic_write_text(local_repo_path(kind), payload)
 
 
+def local_addons_index_path() -> str:
+    """The tracked-install index file for ADDONS, scoped to the active
+    profile. Function-local profiles import: profiles imports
+    LAUNCHER_FILE/CONTENT_KINDS from this module."""
+    from . import profiles
+
+    return profiles.active().local_addons_index_path()
+
+
+def load_local_addons_index() -> dict:
+    """Read the tracked-install index for ADDONS.
+
+    Returns ``{"repos": {...}, "orphans": [...]}``; a missing file yields
+    the empty index. A corrupt file logs and yields the empty index too —
+    the disk scan is authoritative and rebuilds it, so a bad index must
+    never be fatal."""
+    try:
+        with open(local_addons_index_path(), encoding="utf-8") as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        return {"repos": {}, "orphans": []}
+    except Exception as e:
+        log(f"  Addon install index is unreadable — rebuilding: {e}", "dim")
+        return {"repos": {}, "orphans": []}
+    if not isinstance(raw, dict):
+        log("  Addon install index is corrupt — rebuilding.", "dim")
+        return {"repos": {}, "orphans": []}
+    repos = raw.get("repos")
+    if not isinstance(repos, dict):
+        repos = {}
+    orphans = raw.get("orphans")
+    if not isinstance(orphans, list):
+        orphans = []
+    clean_repos = {
+        k: v
+        for k, v in repos.items()
+        if isinstance(k, str) and isinstance(v, dict)
+    }
+    clean_orphans = [o for o in orphans if isinstance(o, str)]
+    return {"repos": clean_repos, "orphans": clean_orphans}
+
+
+def store_local_addons_index(index: dict) -> None:
+    """Atomically write the tracked-install index for ADDONS."""
+    repos = index.get("repos") if isinstance(index, dict) else None
+    orphans = index.get("orphans") if isinstance(index, dict) else None
+    payload = (
+        json.dumps(
+            {
+                "version": 1,
+                "repos": repos if isinstance(repos, dict) else {},
+                "orphans": orphans if isinstance(orphans, list) else [],
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+    atomic_write_text(local_addons_index_path(), payload)
+
+
 def _split_and_strip(data: dict, final=None) -> dict:
     """Split the content sections of an import document out into their
     local repo files — rewriting each repo's "server" list to mirror the

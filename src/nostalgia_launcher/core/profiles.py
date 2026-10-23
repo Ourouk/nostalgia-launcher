@@ -73,6 +73,12 @@ class Profile:
         split."""
         return os.path.join(self.root, f"local_{kind}_repo.json")
 
+    def local_addons_index_path(self) -> str:
+        """The tracked-install index for ADDONS (`local_addons_index.json`):
+        per-repo group records + orphan folders, written on install /
+        removal / adoption."""
+        return os.path.join(self.root, "local_addons_index.json")
+
     def torrents_dir(self) -> str:
         """Torrent metadata/resume directory for this profile."""
         return os.path.join(self.root, "torrents")

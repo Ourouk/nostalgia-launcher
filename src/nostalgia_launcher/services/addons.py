@@ -439,7 +439,7 @@ def discover_repo_addons(
                 continue
             candidates.append((dirname, "/".join(parts[:-1]), interface))
     if root_stems:
-        # Single-addon repo (e.g. pfUI, ModernMapMarkers): the whole tree
+        # Single-addon repo (e.g. a lone UI overhaul): the whole tree
         # installs under each root stem; bundled nested libs are skipped.
         return [(stem, "") for stem in sorted(set(root_stems))]
     # Shallowest claimant wins; deeper nested duplicates are skipped.
@@ -759,7 +759,23 @@ def _install_archive_bytes(
     """Unpack archive bytes into Interface/AddOns with multi-addon
     discovery. ``git_style`` archives wrap everything under one top-level
     directory; prebuilt direct zips usually don't — fall back to the
-    unstripped layout so both install."""
+    unstripped layout so both install.
+
+    Two repo layouts are handled:
+
+    * contains-dirs — the repo ships ``<Dir>/<Dir>.toc`` subdirs; each
+      installs into its own ``Interface/AddOns/<Dir>`` (subdir mapping,
+      never nested inside the catalog folder).
+    * root-is-addon — the repo root IS the addon (``<Stem>.toc`` at the
+      archive root, e.g. ``ACP.toc`` for catalog folder ``Addon
+      Control Panel``); the whole tree is unpacked into
+      ``Interface/AddOns/<folder>`` (rename-on-clone). The toc stem
+      need not match the folder — the catalog's ``folder`` is the
+      explicit install slot.
+
+    Every requested folder is verified after unpack: the install
+    raises unless ``<folder>/<folder>.toc`` (case-insensitive) is on
+    disk."""
     flat = False
     try:
         discovered = discover_repo_addons(data, launcher.client_version())
@@ -779,15 +795,41 @@ def _install_archive_bytes(
         return [folder]
     by_name = {name: prefix for name, prefix in discovered}
     if wanted:
-        selected = [n for n in wanted if n in by_name]
-        names = selected or [name for name, _prefix in discovered]
+        # Explicit multi-folder request (controller group install):
+        # install each requested folder plus any co-shipped siblings
+        # from the same archive (DragonUI ⇒ DragonUI_Options) — a
+        # repo installs as a unit. A request for the single
+        # root-is-addon tree (empty prefix) renames the whole tree
+        # into the catalog folder; a pack-level row naming no
+        # discovered folder still installs the discovered set.
+        names = [n for n in wanted if n in by_name]
+        if not names and folder in (wanted or []):
+            root_stems = [n for n, p in discovered if p == ""]
+            if root_stems and folder not in by_name:
+                names = [folder]
+                by_name[folder] = by_name[root_stems[0]]
+        if not names:
+            names = [name for name, _prefix in discovered]
+        for name, _prefix in discovered:
+            if name not in names:
+                names.append(name)
     else:
-        names = (
-            [folder]
-            if folder in by_name
-            else [name for name, _prefix in discovered]
-        )
-    installed = []
+        # Single entry install: the catalog folder is the slot.
+        # A contains-dirs repo that ships the folder installs the
+        # folder plus its co-shipped siblings; a pack-level row (or
+        # a repo that moved) installs everything discovered; a
+        # root-is-addon repo renames the whole tree into the catalog
+        # folder even when the toc stem differs (ACP vs
+        # addon-control-panel).
+        if folder in by_name:
+            names = [name for name, _prefix in discovered]
+        elif any(p == "" for _n, p in discovered):
+            first_root = next(n for n, p in discovered if p == "")
+            names = [folder]
+            by_name[folder] = by_name[first_root]
+        else:
+            names = [name for name, _prefix in discovered]
+    installed_names = []
     for name in names:
         if flat:
             _sources_deploy.unpack_flat_prefix(
@@ -802,8 +844,33 @@ def _install_archive_bytes(
                 os.path.join(addons_path(client_dir), name),
             )
         log(f"  Installed addon {name}")
-        installed.append(name)
-    return installed
+        installed_names.append(name)
+    if wanted:
+        # Group install: verify only folders actually shipped by the
+        # repo (requested ∪ co-shipped siblings); a pack row naming
+        # a not-discovered folder still installs the discovered set.
+        for name in installed_names:
+            if name not in (wanted or []) and name not in by_name:
+                continue
+            toc_path, _kind = find_toc_for_folder(
+                os.path.join(addons_path(client_dir), name), name
+            )
+            if toc_path is None:
+                raise RuntimeError(
+                    f"Installed {name} but no {name}.toc found — "
+                    "the repo layout is not supported"
+                )
+        return installed_names
+    if folder in by_name or any(p == "" for _n, p in discovered):
+        # Already renamed above into `folder` and verified there.
+        return installed_names
+    # contains-dirs repo that does not ship the folder, and no pack
+    # fallback requested: the catalog row names the wrong install
+    # slot — fail loudly instead of installing strangers.
+    raise RuntimeError(
+        f"Installed {folder} but no {folder}.toc found — the repo "
+        "layout is not supported"
+    )
 
 
 def install_addon_files(
@@ -820,10 +887,14 @@ def install_addon_files(
     One Git repo often ships several addons (e.g. AtlasLoot's seven
     modules): every discovered `<folder>/<folder>.toc` is installed into
     its own directory. When ``wanted`` names are all discovered, only
-    those are installed; otherwise (a catalog row naming the pack rather
-    than a folder) every discovered addon is installed. A repo with its
-    `.toc` at the top level is a single addon — legacy whole-tree unpack
-    into ``folder`` applies.
+    those are installed; otherwise (a pack-level row) every discovered
+    addon is installed — callers pass the sibling folder list as
+    ``wanted``. A repo with its `.toc` at the top level is a single
+    addon — the whole tree unpacks into ``folder`` (rename-on-clone)
+    even when the toc stem differs (e.g. catalog ``Addon Control
+    Panel`` vs repo ``ACP.toc``). The catalog folder is the install
+    slot: a repo that neither ships the folder nor carries a root toc
+    raises instead of installing strangers.
     """
     log(f"  Downloading {folder} @ {sha[:10]}…")
     if not git_url or not is_allowed_git_url(git_url):
@@ -832,3 +903,106 @@ def install_addon_files(
     return _install_archive_bytes(
         client_dir, folder, data, wanted=wanted, git_style=True
     )
+
+
+# ── tracked-install index ─────────────────────────────────────────────────
+
+INDEX_SCHEMA_VERSION = 1
+
+
+def index_group_key(git=None, branch=None, ref=None, download_url=None) -> str:
+    """The index group key for one install source: ``git:<url>#<branch>#<ref>``
+    for repo installs, ``direct:<url>`` for prebuilt downloads. Mirrors the
+    controller's ``_group_recs`` split (same one-repo-one-unit grouping).
+    The git URL is normalized (see helpers.normalize_git_url) so
+    ``.../b`` and ``.../b.git`` share one group."""
+    if download_url:
+        return f"direct:{download_url}"
+    from ..core.helpers import normalize_git_url
+
+    return f"git:{normalize_git_url(git)}#{branch or ''}#{ref or ''}"
+
+
+def snapshot_toc_dir(addons_dir: str, folder: str) -> dict:
+    """Snapshot ``{folder: {mtime_ns, size, title}}`` entries for the .toc
+    of one installed addon folder (the whole-dir .toc, not per-file
+    hashes). ``{}`` when the folder has no loadable .toc. Never raises —
+    staleness is detected by comparing this snapshot on the next scan."""
+    snap: dict = {}
+    if not addons_dir or not folder:
+        return snap
+    dir_path = os.path.join(addons_dir, folder)
+    try:
+        toc_path, _kind = find_toc_for_folder(dir_path, folder)
+    except Exception:
+        return snap
+    if not toc_path:
+        return snap
+    try:
+        st = os.stat(toc_path)
+    except OSError:
+        return snap
+    try:
+        title = read_toc_file_cached(toc_path).get("Title")
+    except Exception:
+        title = None
+    snap[folder] = {
+        "mtime_ns": st.st_mtime_ns,
+        "size": st.st_size,
+        "title": title if isinstance(title, str) else "",
+    }
+    return snap
+
+
+def snapshot_toc_folders(addons_dir: str, folders) -> dict:
+    """Snapshot the .toc of every folder in ``folders`` into one dict."""
+    snap: dict = {}
+    for folder in folders or []:
+        if not isinstance(folder, str) or not folder:
+            continue
+        try:
+            snap.update(snapshot_toc_dir(addons_dir, folder))
+        except Exception:
+            continue
+    return snap
+
+
+def toc_snapshot_changed(
+    addons_dir: str, folder: str, snapshot: dict | None
+) -> bool:
+    """Whether an installed folder's .toc differs from its index snapshot
+    (mtime/size changed, snapshot missing, or toc unreadable). Never
+    raises — on doubt reports changed so the scan re-reads."""
+    if not isinstance(snapshot, dict):
+        return True
+    try:
+        toc_path, _kind = find_toc_for_folder(
+            os.path.join(addons_dir, folder), folder
+        )
+    except Exception:
+        return True
+    if not toc_path:
+        return True
+    try:
+        st = os.stat(toc_path)
+    except OSError:
+        return True
+    return (
+        snapshot.get("mtime_ns") != st.st_mtime_ns
+        or snapshot.get("size") != st.st_size
+    )
+
+
+def load_addons_index() -> dict:
+    """Load the tracked-install index (``{"repos", "orphans"}``); the
+    corrupt-tolerant ``launcher`` loader never raises."""
+    return launcher.load_local_addons_index()
+
+
+def store_addons_index(index: dict) -> None:
+    """Persist the tracked-install index. Best effort — a failed write
+    only means the next scan rebuilds it."""
+    try:
+        launcher.store_local_addons_index(index)
+    except Exception as e:
+        log(f"  Could not save addon install index: {e}", "dim")
