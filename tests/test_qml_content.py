@@ -154,6 +154,18 @@ def test_build_rows_pending_overrides_enabled():
     assert rows[0]["enabled"] is True
 
 
+def test_build_rows_marks_server_managed():
+    state = SimpleNamespace(records={}, pending={}, latest_versions={})
+    rows = build_rows(
+        [{"id": "manifest-x", "name": "X", "description": "d"}],
+        state,
+        version_of=lambda e, r, s: "unknown",
+        action_for=lambda eid: None,
+    )
+    assert rows[0]["serverManaged"] is True
+    assert "server" in rows[0]["description"]
+
+
 # ── model ─────────────────────────────────────────────────────────────
 
 

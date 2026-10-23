@@ -60,13 +60,14 @@ def test_trust_hosts_includes_manifest_host():
     assert "cdn.example" in trust_hosts(cfg)
 
 
-def test_trust_capabilities_lists_manifest_managed():
+def test_trust_capabilities_manifest_does_not_feed_tabs():
+    """Manifest routes feed the client overlay only — the community
+    tabs stay unconfigured while the client row advertises the overlay."""
     cfg = _manifest_config()
     caps = dict((k, d) for k, _, d in trust_capabilities(cfg))
     assert caps["client"] == "Client — manifest overlay only"
-    assert "2 manifest-managed" in caps["assets"]
-    assert "1 manifest-managed" in caps["mods"]
-    assert "Assets — " in caps["assets"]
+    assert caps["assets"] == "Assets — not configured"
+    assert caps["mods"] == "Mods — not configured"
 
 
 def test_trust_capabilities_no_manifest_unchanged():

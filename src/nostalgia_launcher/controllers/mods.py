@@ -1,10 +1,13 @@
 """Mods panel controller.
 
-Owns the MODS-panel business logic: the background latest-version fetch, the
-update-available count, the pending checkbox changes, and the
-install/uninstall/update worker. Publishes snapshots as ModsLoaded and the
-worker outcome as OperationFinished on the shared EventDispatcher; the Qt
-Mods panel renders them. No GUI toolkit.
+Owns the MODS-panel business logic for community mods: the background
+latest-version fetch, the update-available count, the pending checkbox
+changes, and the install/uninstall/update worker. Server-managed
+(manifest-bundled) entries never reach this layer — ``mods_registry``
+excludes them and the standard client update owns them. Publishes
+snapshots as ModsLoaded and the worker outcome as OperationFinished
+on the shared EventDispatcher; the Qt Mods panel renders them. No
+GUI toolkit.
 """
 
 from __future__ import annotations
@@ -85,6 +88,8 @@ class ModsController:
         """
 
         def worker():
+            from ..services import manifest as _manifest
+
             latest = {}
             try:
                 registry = mods.mods_registry(force=mods.catalog_is_stale())
@@ -94,6 +99,10 @@ class ModsController:
                 except Exception:
                     registry = []
             for mod in registry:
+                if _manifest.is_server_managed(mod):
+                    # No version lookup for server-managed entries —
+                    # the UPDATE tab owns their staleness.
+                    continue
                 try:
                     v = mods.fetch_mod_latest_version_cached(mod)
                 except Exception:
@@ -107,6 +116,20 @@ class ModsController:
         threading.Thread(target=worker, daemon=True).start()
 
     def toggle(self, mod_id: str, enabled: bool):
+        from ..services import manifest as _manifest
+
+        mod = next(
+            (m for m in mods.mods_registry() if m["id"] == mod_id), None
+        )
+        if mod is not None and _manifest.is_server_managed(mod):
+            self._dispatcher.post(
+                LogMessage(
+                    "Server-managed mod — updated via the UPDATE tab, "
+                    "not here.\n",
+                    "err",
+                )
+            )
+            return
         self.state.pending.setdefault(mod_id, ModPending()).enabled = enabled
 
     def reload_catalog(self) -> bool:
@@ -161,15 +184,21 @@ class ModsController:
 
     def action_for(self, mod_id: str) -> str | None:
         """'retry' when the mod is in an error state, 'update' when a newer
-        version is available, else None."""
-        rec = self.state.records.get(mod_id)
-        if rec is not None and rec.error:
-            return "retry"
+        version is available, else None. Server-managed entries never
+        offer actions — the UPDATE tab owns them."""
+        from ..services import manifest as _manifest
+
         mod = next(
             (m for m in mods.mods_registry() if m["id"] == mod_id), None
         )
-        if mod is None:
+        if mod is None or _manifest.is_server_managed(mod):
+            rec = self.state.records.get(mod_id)
+            if rec is not None and rec.error:
+                return "retry"
             return None
+        rec = self.state.records.get(mod_id)
+        if rec is not None and rec.error:
+            return "retry"
         live = {"latest_version": self.state.latest_versions.get(mod_id)}
         if mods.mod_update_available(
             mod, self._state_dict(mod_id) or {}, live
@@ -296,12 +325,16 @@ class ModsController:
         }
 
     def _refresh_updates_count(self):
+        from ..services import manifest as _manifest
+
         try:
             registry = mods.mods_registry()
         except Exception:
             registry = []
         count = 0
         for mod in registry:
+            if _manifest.is_server_managed(mod):
+                continue
             state = self._state_dict(mod["id"])
             if state is None or state.get("error"):
                 continue
@@ -334,6 +367,14 @@ class ModsController:
             for mod in ordered:
                 mid = mod["id"]
                 if only_mod_id is not None and mid != only_mod_id:
+                    continue
+                from ..services import manifest as _manifest
+
+                if _manifest.is_server_managed(mod):
+                    # Server-managed entries are owned by the standard
+                    # client update (verify → stale set → stage
+                    # download). The MODS tab never writes them — not
+                    # even a targeted retry.
                     continue
                 state = mods_cfg.get(mid, {})
 

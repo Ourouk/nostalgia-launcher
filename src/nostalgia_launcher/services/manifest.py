@@ -154,13 +154,36 @@ def route_entry(path: str, routes: list) -> dict | None:
 
 
 def bundled_assets(snapshot_entries: list[dict] | None = None) -> list:
-    """Manifest-routed asset entries (validated, catalog-shaped)."""
+    """Manifest-routed asset entries for the standard client update.
+
+    Server-managed install data — consumed by the UPDATE pipeline
+    (verify → stale set → stage download), NOT by the ASSETS tab.
+    The tab lists community entries only (see ``assets_registry``);
+    these entries never render there.
+    """
     return _bundled("asset", snapshot_entries)
 
 
 def bundled_mods(snapshot_entries: list[dict] | None = None) -> list:
-    """Manifest-routed mod entries (validated, catalog-shaped)."""
+    """Manifest-routed mod entries for the standard client update.
+
+    Server-managed install data — consumed by the UPDATE pipeline,
+    NOT by the MODS tab. See ``bundled_assets``.
+    """
     return _bundled("mod", snapshot_entries)
+
+
+def is_server_managed(entry: dict) -> bool:
+    """Whether a catalog-shaped entry is server-managed.
+
+    Manifest-routed bundled entries carry a ``manifest-`` id prefix.
+    Community registries (``mods_registry`` / ``assets_registry``)
+    exclude these entries, so the MODS/ASSETS tabs never see them —
+    this predicate is the defensive seam for any caller handed a
+    mixed list (e.g. a test double or a future merged view).
+    """
+    eid = entry.get("id", "") if isinstance(entry, dict) else ""
+    return isinstance(eid, str) and eid.startswith("manifest-")
 
 
 def _bundled(target: str, snapshot_entries: list[dict] | None = None) -> list:

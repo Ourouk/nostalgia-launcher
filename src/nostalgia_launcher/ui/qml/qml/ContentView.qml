@@ -157,14 +157,23 @@ ColumnLayout {
                 CheckBox {
                     Accessible.name: "Enable " + model.name
                     checked: model.enabled
+                    enabled: !(model.serverManaged || false)
                     onCheckedChanged: root.contentModel.toggleEntry(model.eid, checked)
                 }
                 Label {
                     text: "●"
                     font.pointSize: 8
                     color: appTheme.colors["C_GOLD"]
-                    visible: model.staged || false
+                    visible: (model.staged || false) && !(model.serverManaged || false)
                     Accessible.name: "Unapplied change for " + model.name
+                }
+                Label {
+                    text: "SERVER"
+                    font.pointSize: 8
+                    font.bold: true
+                    color: appTheme.colors["C_GOLD"]
+                    visible: model.serverManaged || false
+                    Accessible.name: "Server-managed entry for " + model.name
                 }
                 Label {
                     Layout.fillWidth: true
@@ -176,7 +185,7 @@ ColumnLayout {
                 }
                 Button {
                     text: model.action === "retry" ? "Retry" : "Update"
-                    visible: model.action !== "" && model.error === ""
+                    visible: model.action !== "" && model.error === "" && !(model.serverManaged || false)
                     enabled: !root.contentModel.busy
                     flat: true
                     onClicked: root.contentModel.actOn(model.eid)
@@ -217,7 +226,7 @@ ColumnLayout {
                 }
                 Button {
                     text: model.action === "retry" ? "Retry" : "Update"
-                    visible: model.action !== ""
+                    visible: model.action !== "" && !(model.serverManaged || false)
                     enabled: !root.contentModel.busy
                     flat: true
                     onClicked: root.contentModel.actOn(model.eid)

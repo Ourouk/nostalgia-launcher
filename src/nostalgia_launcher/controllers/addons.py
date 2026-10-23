@@ -415,12 +415,24 @@ class AddonsController:
                 "description": None,
                 "error": None,
             }
-            toc_path = os.path.join(ap, name, f"{name}.toc")
-            if not os.path.exists(toc_path):
+            toc_dir = os.path.join(ap, name)
+            toc_path, toc_kind = addons.find_toc_for_folder(toc_dir, name)
+            if toc_path is None:
                 rec.update(status="invalid", error="Missing .toc file")
                 installed[name] = rec
                 continue
             rec["toc"] = addons.read_toc_file_cached(toc_path)
+            if toc_kind == "single":
+                stem = os.path.basename(toc_path)[:-4]
+                rec.update(
+                    status="invalid",
+                    error=(
+                        f"Found {os.path.basename(toc_path)} — rename "
+                        f"folder to {stem} to load in-game"
+                    ),
+                )
+                installed[name] = rec
+                continue
             saved = records.get(name)
             saved_git = saved.get("git") if isinstance(saved, dict) else None
             avail = _lookup_available(

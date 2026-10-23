@@ -17,11 +17,26 @@ from PySide6.QtCore import (
 )
 
 
+def is_server_managed(entry: dict) -> bool:
+    """Whether a registry entry is server-managed (standard update owns it).
+
+    Mirrors ``services.manifest.is_server_managed`` without importing
+    services (this module must stay importable without Qt *and* without
+    pulling the manifest engine into the UI layer): manifest-routed
+    bundled entries carry a ``manifest-`` id prefix.
+    """
+    eid = entry.get("id", "") if isinstance(entry, dict) else ""
+    return isinstance(eid, str) and eid.startswith("manifest-")
+
+
 def build_rows(entries, state, *, version_of, action_for):
     """Flatten registry + state into role dicts, sorted by name.
 
-    `version_of(entry, rec, state) -> str`,
-    `action_for(eid) -> "retry" | "update" | None` come from the tab glue.
+    `version_of(entry, rec, state) -> str` and
+    `action_for(eid) -> "retry" | "update" | None` come from the tab
+    glue. Server-managed rows carry ``serverManaged: True`` — the QML
+    delegate renders them locked (badge, disabled checkbox, no action
+    button).
     """
     recs = getattr(state, "records", {}) or {}
     pending = getattr(state, "pending", {}) or {}
@@ -41,10 +56,18 @@ def build_rows(entries, state, *, version_of, action_for):
                 "eid": eid,
                 "name": entry.get("name", eid),
                 "version": version_of(entry, rec, state),
-                "description": entry.get("description", ""),
+                "description": (
+                    entry.get("description", "")
+                    + (
+                        " [server — updated via UPDATE]"
+                        if is_server_managed(entry)
+                        else ""
+                    )
+                ).strip(),
                 "repoUrl": entry.get("repo_url", ""),
                 "installed": bool(rec.present) if rec is not None else False,
                 "enabled": enabled,
+                "serverManaged": is_server_managed(entry),
                 "action": action_for(eid) or "",
                 "error": (rec.error if rec is not None else None) or "",
                 "staged": pend is not None,
@@ -162,6 +185,7 @@ class ContentListModel(QAbstractListModel):
     ErrorRole = Qt.ItemDataRole.UserRole + 8
     RepoUrlRole = Qt.ItemDataRole.UserRole + 9
     StagedRole = Qt.ItemDataRole.UserRole + 10
+    ServerManagedRole = Qt.ItemDataRole.UserRole + 11
 
     changed = Signal()
     scanningChanged = Signal()
@@ -212,6 +236,7 @@ class ContentListModel(QAbstractListModel):
             ContentListModel.ErrorRole: b"error",
             ContentListModel.RepoUrlRole: b"repoUrl",
             ContentListModel.StagedRole: b"staged",
+            ContentListModel.ServerManagedRole: b"serverManaged",
         }
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -229,6 +254,7 @@ class ContentListModel(QAbstractListModel):
             ContentListModel.ErrorRole: "error",
             ContentListModel.RepoUrlRole: "repoUrl",
             ContentListModel.StagedRole: "staged",
+            ContentListModel.ServerManagedRole: "serverManaged",
         }
         attr = _roles.get(int(role))
         return row.get(attr) if attr else None

@@ -99,6 +99,48 @@ def _install_folder(client, name):
 # ── verify ──────────────────────────────────────────────────────────────
 
 
+def test_verify_mismatched_folder_reports_rename_hint(
+    controller, cfg, tmp_path, wait_for_event
+):
+    client = str(tmp_path)
+    addon_dir = os.path.join(
+        client, "Interface", "AddOns", "WIM (WoW Instant Messenger)"
+    )
+    os.makedirs(addon_dir)
+    with open(os.path.join(addon_dir, "WIM.toc"), "w", encoding="utf-8") as f:
+        f.write("## Title: WIM\n")
+    assert controller.verify() is True
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
+
+    rec = controller.state.addons["WIM (WoW Instant Messenger)"]
+    assert rec.status == "invalid"
+    # Parser is stubbed by the shared fixture — non-empty proves the
+    # mismatched WIM.toc was actually read, not treated as missing.
+    assert rec.toc == {"Title": "X"}
+    assert "WIM.toc" in (rec.error or "")
+    assert "rename folder to wim" in (rec.error or "").lower()
+
+
+def test_verify_missing_toc_still_reports_missing(
+    controller, cfg, tmp_path, wait_for_event
+):
+    client = str(tmp_path)
+    os.makedirs(os.path.join(client, "Interface", "AddOns", "Empty"))
+
+    assert controller.verify() is True
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, AddonsLoaded)
+    )
+    wait_for_event.until_true(lambda: not controller.state.busy)
+
+    rec = controller.state.addons["Empty"]
+    assert rec.status == "invalid"
+    assert rec.error == "Missing .toc file"
+
+
 def test_verify_scans_and_posts_addons_loaded(
     controller, cfg, tmp_path, wait_for_event
 ):

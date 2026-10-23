@@ -74,6 +74,32 @@ def test_merge_assets_custom_overrides_remote_by_id():
     assert merged[0]["size"] == 7
 
 
+def test_dedupe_assets_by_dest_server_wins():
+    from nostalgia_launcher.services.catalog import dedupe_assets_by_dest
+
+    shadow = {"id": "patch-a", "dest": "Data/patch-A.MPQ"}
+    server = {"id": "manifest-data-patch-a-mpq", "dest": "Data/patch-A.MPQ"}
+    other = {"id": "other", "dest": "Data/other.MPQ"}
+    # Shadow first, server second — server still wins, one row survives.
+    assert [
+        r["id"] for r in dedupe_assets_by_dest([shadow, server, other])
+    ] == [
+        "manifest-data-patch-a-mpq",
+        "other",
+    ]
+    # Server first — shadow dropped outright.
+    assert [r["id"] for r in dedupe_assets_by_dest([server, shadow])] == [
+        "manifest-data-patch-a-mpq"
+    ]
+    # Case-insensitive dest match.
+    assert dedupe_assets_by_dest(
+        [dict(shadow, dest="data/PATCH-a.mpq"), server]
+    ) == [server]
+    # Distinct dests untouched; empty in → empty out.
+    assert dedupe_assets_by_dest([shadow, other]) == [shadow, other]
+    assert dedupe_assets_by_dest([]) == []
+
+
 # ── launcher config parsing ──────────────────────────────────────────────
 
 

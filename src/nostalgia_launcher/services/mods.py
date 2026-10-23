@@ -108,8 +108,13 @@ def fetch_mods_catalog(force=False) -> list | None:
 
 
 def mods_registry(force=False) -> list:
-    """The effective mod registry — see ``catalog.layered_registry`` for
-    the layer order. Empty when nothing is configured."""
+    """The effective mod registry: community entries plus server-managed
+    (manifest-bundled ``manifest-``) entries as read-only reference rows.
+
+    Server rows render with a badge and locked controls — the standard
+    client update (verify → stale set → stage download) is the only
+    writer. See ``catalog.layered_registry`` for the layer order.
+    Empty when nothing is configured."""
     from . import manifest as _manifest
 
     return catalog.layered_registry(
@@ -293,11 +298,21 @@ def registered_dlls(mod: dict) -> list:
 
 
 def scan_unknown_mods(client_dir: str, registry: list) -> list:
-    """dlls.txt entries no catalog mod claims (by register_dll, case-
-    insensitive) — mods the client loads that the launcher doesn't track."""
+    """dlls.txt entries no known mod claims (by register_dll, case-
+    insensitive) — mods the client loads that the launcher doesn't
+    track. Bundled/server-managed entries claim their DLLs too, so a
+    server DLL is never proposed for removal."""
     known = {
         d.strip().lower() for mod in registry for d in registered_dlls(mod)
     }
+    try:
+        from . import manifest as _manifest
+
+        for mod in _manifest.bundled_mods():
+            for d in registered_dlls(mod):
+                known.add(d.strip().lower())
+    except Exception:
+        pass
     return sorted(n for n in read_dlls_entries(client_dir) if n not in known)
 
 

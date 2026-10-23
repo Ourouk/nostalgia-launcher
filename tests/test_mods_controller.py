@@ -239,45 +239,34 @@ def test_toggle_updates_pending(controller):
     assert controller.state.pending["AlphaMod"].enabled is False
 
 
-# ── action_for ─────────────────────────────────────────────────────────
-
-
-def test_action_for_returns_retry_update_none(
-    controller, versions, cfg, wait_for_event
-):
-    cfg["mods"] = {
-        "AlphaMod": {"enabled": True, "installed_version": "1.0"},
-        "BetaMod": {
-            "enabled": True,
-            "installed_version": "1.0",
-            "error": "oops",
-        },
-    }
-    controller.state.records, controller.state.unknown = (
-        controller._load_records()
+def test_toggle_server_managed_refused(controller, registry, monkeypatch):
+    """Server-managed (manifest-) entries can't be toggled — the UPDATE
+    tab owns them."""
+    monkeypatch.setattr(
+        mc.mods,
+        "mods_registry",
+        lambda *a, **k: [
+            {"id": "manifest-patch", "name": "Patch", "source": {}}
+        ],
     )
-    versions["AlphaMod"] = "2.0"
-    controller.load_latest_versions()
-    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
-    assert controller.action_for("AlphaMod") == "update"
-    assert controller.action_for("BetaMod") == "retry"
-
-
-def test_action_for_none_when_up_to_date(
-    controller, versions, cfg, wait_for_event
-):
-    cfg["mods"] = {"AlphaMod": {"enabled": True, "installed_version": "1.0"}}
-    controller.state.records, controller.state.unknown = (
-        controller._load_records()
+    controller.toggle("manifest-patch", True)
+    assert "manifest-patch" not in controller.state.pending
+    posted = controller._dispatcher.drain()
+    assert any(
+        isinstance(e, LogMessage) and "Server-managed" in e.text
+        for e in posted
     )
-    versions["AlphaMod"] = "1.0"
-    controller.load_latest_versions()
-    wait_for_event(controller._dispatcher, lambda e: isinstance(e, ModsLoaded))
-    assert controller.action_for("AlphaMod") is None
 
 
-def test_action_for_unknown_mod_is_none(controller):
-    assert controller.action_for("NoSuchMod") is None
+def test_action_for_server_managed_is_none(controller, registry, monkeypatch):
+    monkeypatch.setattr(
+        mc.mods,
+        "mods_registry",
+        lambda *a, **k: [
+            {"id": "manifest-patch", "name": "Patch", "source": {}}
+        ],
+    )
+    assert controller.action_for("manifest-patch") is None
 
 
 # ── apply ──────────────────────────────────────────────────────────────

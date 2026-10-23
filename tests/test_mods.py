@@ -411,6 +411,27 @@ def test_scan_unknown_mods_lists_unclaimed_dlls(tmp_path):
     assert mods.scan_unknown_mods(str(client), registry) == ["mystery.dll"]
 
 
+def test_scan_unknown_mods_claims_bundled_server_dlls(tmp_path, monkeypatch):
+    """A server DLL (manifest-bundled) is claimed even when the visible
+    registry doesn't list it — never proposed for removal."""
+    import nostalgia_launcher.services.manifest as manifest
+
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "dlls.txt").write_text("EpochConnection.dll\nmystery.dll\n")
+    monkeypatch.setattr(
+        manifest,
+        "bundled_mods",
+        lambda *a, **k: [
+            {
+                "id": "manifest-epochconnection.dll",
+                "register_dll": ["EpochConnection.dll"],
+            }
+        ],
+    )
+    assert mods.scan_unknown_mods(str(client), []) == ["mystery.dll"]
+
+
 def test_remove_unknown_mod_removes_line_and_file(tmp_path):
     client = tmp_path / "client"
     client.mkdir()

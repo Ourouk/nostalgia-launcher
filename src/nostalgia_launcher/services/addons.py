@@ -614,6 +614,44 @@ def read_toc_file(path: str) -> dict:
     return toc
 
 
+def find_toc_for_folder(
+    dir_path: str, folder_name: str
+) -> tuple[str | None, str]:
+    """Locate the loadable .toc for an installed addon folder.
+
+    Returns ``(path, kind)`` with ``kind`` one of ``exact`` (folder-
+    named ``<folder>.toc``, case-insensitive), ``variant`` (a flavor
+    ``<folder>_<Suffix>.toc`` — the client probes these before the
+    default name), ``single`` (exactly one mismatched ``*.toc``, e.g.
+    ``WIM.toc`` inside ``WIM (WoW Instant Messenger)`` — parseable
+    but unloadable in-game until the folder is renamed),
+    ``missing`` (no ``*.toc`` at all) or ``ambiguous`` (several
+    mismatched candidates). One ``os.scandir``, never raises."""
+    try:
+        with os.scandir(dir_path) as it:
+            tocs = [
+                e.name
+                for e in it
+                if e.is_file(follow_symlinks=True)
+                and e.name.lower().endswith(".toc")
+            ]
+    except OSError:
+        return None, "missing"
+    if not tocs:
+        return None, "missing"
+    norm = folder_name.casefold()
+    for leaf in sorted(tocs):
+        if leaf[:-4].casefold() == norm:
+            return os.path.join(dir_path, leaf), "exact"
+    for leaf in sorted(tocs):
+        stem = leaf[:-4]
+        if stem.casefold().startswith(norm + "_"):
+            return os.path.join(dir_path, leaf), "variant"
+    if len(tocs) == 1:
+        return os.path.join(dir_path, tocs[0]), "single"
+    return None, "ambiguous"
+
+
 # In-memory TOC cache keyed by absolute .toc path: {path: (mtime_ns,
 # size, toc)}. Parsing is cheap but rescans (tab switches, retries,
 # settings reloads) re-read every file; unchanged files are served from

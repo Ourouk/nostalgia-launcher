@@ -518,6 +518,26 @@ class VerifyWorker(WorkerBase):
         stale = _manifest.stale_overlay_entries(
             self.out_dir, entries, self.log
         )
+        update_avail, version = _manifest.manifest_update_available(snapshot)
+        if update_avail and version:
+            # Version cursor moved since install: every manifest-listed
+            # file may have new content at a known-good path, so
+            # existence alone can't clear it — all entries go stale.
+            listed = sorted(
+                e["path"]
+                for e in entries
+                if isinstance(e, dict)
+                and isinstance(e.get("path"), str)
+                and e.get("path")
+            )
+            missing = set(stale)
+            stale = listed
+            self.log(
+                f"[manifest] Version cursor moved ({version}) — "
+                f"{len(listed)} file(s) refresh "
+                f"({len(missing)} missing).",
+                "acct",
+            )
         if not stale:
             self.log("Everything is up to date (manifest).", "ok")
             self._dispatcher.post(TorrentUpToDate())

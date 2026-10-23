@@ -94,14 +94,13 @@ def trust_hosts(config) -> list[str]:
 def _catalog_summary(
     explicit_url: bool, embedded: int, manifest: int = 0
 ) -> str:
-    """One-line description of where a content category comes from:
-    remote catalog URL(s), manifest-managed entries, embedded entries,
-    or a combination."""
+    """One-line description of where community content comes from:
+    remote catalog URL(s), embedded entries, or a combination.
+    Manifest-managed entries are deliberately excluded — the standard
+    client update owns them, not these tabs."""
     parts: list[str] = []
     if explicit_url:
         parts.append("catalog")
-    if manifest:
-        parts.append(f"{manifest} manifest-managed")
     if embedded:
         parts.append(f"{embedded} embedded")
     return " + ".join(parts) if parts else "not configured"
@@ -142,8 +141,9 @@ def trust_capabilities(config) -> list[tuple[str, bool, str]]:
     else:
         client_detail = "not configured"
     addon_urls = [u for u in (config.addons_registry_urls or []) if u]
-    manifest_assets, manifest_mods = _manifest_route_counts(config)
-    has_manifest_mods = manifest_mods > 0
+    # Server-managed entries don't count toward the community tabs —
+    # the standard client update owns them. The client row below still
+    # advertises the overlay itself.
     has_manifest_client_files = bool(
         getattr(config, "download_manifest", None)
     )
@@ -158,16 +158,11 @@ def trust_capabilities(config) -> list[tuple[str, bool, str]]:
         ("client", has_client, f"Client — {client_detail}"),
         (
             "mods",
-            bool(
-                config.mods_registry_url
-                or config.embedded_mods
-                or has_manifest_mods
-            ),
+            bool(config.mods_registry_url or config.embedded_mods),
             "Mods — "
             + _catalog_summary(
                 bool(config.mods_registry_url),
                 len(config.embedded_mods),
-                manifest_mods,
             ),
         ),
         (
@@ -178,16 +173,11 @@ def trust_capabilities(config) -> list[tuple[str, bool, str]]:
         ),
         (
             "assets",
-            bool(
-                config.assets_registry_url
-                or config.embedded_assets
-                or manifest_assets > 0
-            ),
+            bool(config.assets_registry_url or config.embedded_assets),
             "Assets — "
             + _catalog_summary(
                 bool(config.assets_registry_url),
                 len(config.embedded_assets or []),
-                manifest_assets,
             ),
         ),
         (

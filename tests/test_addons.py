@@ -175,6 +175,53 @@ def test_read_toc_file_missing(tmp_path):
     assert addons.read_toc_file(str(tmp_path / "nope.toc")) == {}
 
 
+def test_find_toc_for_folder(tmp_path):
+    exact = tmp_path / "Exact"
+    exact.mkdir()
+    (exact / "Exact.toc").write_text("## Title: Exact\n")
+    (exact / "other.TOC").write_text("## Title: Other\n")
+    path, kind = addons.find_toc_for_folder(str(exact), "exact")
+    assert kind == "exact"
+    assert path == str(exact / "Exact.toc")
+
+    variant = tmp_path / "Foo"
+    variant.mkdir()
+    (variant / "Foo_Vanilla.toc").write_text("## Title: Foo\n")
+    path, kind = addons.find_toc_for_folder(str(variant), "Foo")
+    assert kind == "variant"
+    assert path == str(variant / "Foo_Vanilla.toc")
+
+    single = tmp_path / "WIM (WoW Instant Messenger)"
+    single.mkdir()
+    (single / "WIM.toc").write_text("## Title: WIM\n")
+    path, kind = addons.find_toc_for_folder(
+        str(single), "WIM (WoW Instant Messenger)"
+    )
+    assert kind == "single"
+    assert path == str(single / "WIM.toc")
+
+    empty = tmp_path / "Empty"
+    empty.mkdir()
+    assert addons.find_toc_for_folder(str(empty), "Empty") == (
+        None,
+        "missing",
+    )
+
+    multi = tmp_path / "Multi"
+    multi.mkdir()
+    (multi / "A.toc").write_text("## Title: A\n")
+    (multi / "B.toc").write_text("## Title: B\n")
+    assert addons.find_toc_for_folder(str(multi), "Multi") == (
+        None,
+        "ambiguous",
+    )
+
+    assert addons.find_toc_for_folder(str(tmp_path / "Nope"), "Nope") == (
+        None,
+        "missing",
+    )
+
+
 def test_fetch_addons_catalog_cached(tmp_path, monkeypatch):
     config_store.configure(
         str(tmp_path / "config.json"), str(tmp_path / "cache.json")

@@ -524,6 +524,47 @@ def merge_by_key(remote: list, custom: list, fields) -> list:
     return list(by_id.values())
 
 
+def dedupe_assets_by_dest(entries: list, *, server_wins: bool = True) -> list:
+    """Drop shadow rows: same ``dest`` listed under two ids.
+
+    Community catalogs can list the same client-relative ``dest``
+    under two ids (e.g. an embedded entry and a catalog entry for the
+    same ``Data/patch-A.MPQ``). Only one row can own the file — with
+    ``server_wins`` (default) a ``manifest-`` claimant beats community
+    rows; otherwise first-come order wins. Comparison is
+    case-insensitive on the normalized dest; order is preserved.
+    """
+    seen: dict[str, dict] = {}
+    claimed: set[str] = set()
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        dest = entry.get("dest")
+        norm = (
+            dest.replace("\\", "/").strip().lower()
+            if isinstance(dest, str) and dest.strip()
+            else ""
+        )
+        eid = entry.get("id", "")
+        managed = isinstance(eid, str) and eid.startswith("manifest-")
+        if norm and norm in claimed:
+            continue
+        if norm and server_wins and managed:
+            for drop_id in [i for i, e in seen.items() if _dest_of(e) == norm]:
+                del seen[drop_id]
+            claimed.add(norm)
+        if eid and eid not in seen:
+            seen[eid] = entry
+    return list(seen.values())
+
+
+def _dest_of(entry: dict) -> str:
+    dest = entry.get("dest")
+    if not isinstance(dest, str) or not dest.strip():
+        return ""
+    return dest.replace("\\", "/").strip().lower()
+
+
 # ── asset entries ────────────────────────────────────────────────────────────
 
 

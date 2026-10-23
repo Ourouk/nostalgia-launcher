@@ -1,10 +1,14 @@
 """Assets panel controller.
 
-Owns the ASSETS-panel business logic: the background staleness refresh
-(probes run off-thread), the update-available count, pending checkbox
-changes and the install/uninstall/update worker. Publishes snapshots as
-AssetsLoaded and the worker outcome as OperationFinished("assets", …) on
-the shared EventDispatcher; the Qt panel renders them. No GUI toolkit.
+Owns the ASSETS-panel business logic for community assets: the
+background staleness refresh (probes run off-thread), the
+update-available count, pending checkbox changes and the
+install/uninstall/update worker. Server-managed (manifest-bundled)
+entries never reach this layer — ``assets_registry`` excludes them
+and the standard client update owns them. Publishes snapshots as
+AssetsLoaded and the worker outcome as OperationFinished("assets", …)
+on the shared EventDispatcher; the Qt panel renders them. No GUI
+toolkit.
 """
 
 from __future__ import annotations
@@ -212,10 +216,10 @@ class AssetsController:
 
     def action_for(self, asset_id: str) -> str | None:
         """'retry' when the asset is in an error state, 'update' when a
-        staleness verdict fired, else None. Runs on the GUI thread during
-        panel renders: it consults the cached background verdict when one
-        exists and otherwise computes a probe-free verdict — never a live
-        HEAD request."""
+        staleness verdict fired, else None. Runs on the GUI thread
+        during panel renders: it consults the cached background verdict
+        when one exists and otherwise computes a probe-free verdict —
+        never a live HEAD request."""
         rec = self.state.records.get(asset_id)
         if rec is not None and rec.error:
             return "retry"
