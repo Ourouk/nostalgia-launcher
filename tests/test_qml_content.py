@@ -361,6 +361,24 @@ def test_addon_tab_entries_strips_wow_colors():
     }
 
 
+def test_addon_tab_entries_prefers_rec_name():
+    from nostalgia_launcher.ui.qml.browse import addon_tab_entries
+
+    state = _addon_state(
+        addons={
+            "Bar": _addon_rec(
+                "Bar",
+                name="Bar Enhanced",
+                toc={"Title": "Bar", "Notes": "notes"},
+            )
+        }
+    )
+    (entry,) = addon_tab_entries(state)
+    assert entry["id"] == "Bar"
+    assert entry["name"] == "Bar Enhanced"
+    assert entry["description"] == "notes"
+
+
 def test_addon_tab_entries_falls_back_to_folder():
     from nostalgia_launcher.ui.qml.browse import addon_tab_entries
 

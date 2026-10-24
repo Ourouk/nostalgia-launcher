@@ -910,19 +910,6 @@ def install_addon_files(
 INDEX_SCHEMA_VERSION = 1
 
 
-def index_group_key(git=None, branch=None, ref=None, download_url=None) -> str:
-    """The index group key for one install source: ``git:<url>#<branch>#<ref>``
-    for repo installs, ``direct:<url>`` for prebuilt downloads. Mirrors the
-    controller's ``_group_recs`` split (same one-repo-one-unit grouping).
-    The git URL is normalized (see helpers.normalize_git_url) so
-    ``.../b`` and ``.../b.git`` share one group."""
-    if download_url:
-        return f"direct:{download_url}"
-    from ..core.helpers import normalize_git_url
-
-    return f"git:{normalize_git_url(git)}#{branch or ''}#{ref or ''}"
-
-
 def snapshot_toc_dir(addons_dir: str, folder: str) -> dict:
     """Snapshot ``{folder: {mtime_ns, size, title}}`` entries for the .toc
     of one installed addon folder (the whole-dir .toc, not per-file
@@ -993,8 +980,26 @@ def toc_snapshot_changed(
     )
 
 
+def unit_for_folder(index: dict, folder: str) -> tuple[str | None, dict]:
+    """The ``(entry-id, unit)`` owning ``folder`` in the tracked-install
+    index, or ``(None, {})``. The single lookup the whole scan uses:
+    catalog gives the id, the index maps id → folders. Never raises."""
+    try:
+        units = index.get("units")
+        if isinstance(units, dict):
+            for eid, unit in units.items():
+                if not isinstance(unit, dict):
+                    continue
+                folders = unit.get("folders")
+                if isinstance(folders, list) and folder in folders:
+                    return eid, unit
+    except Exception:
+        pass
+    return None, {}
+
+
 def load_addons_index() -> dict:
-    """Load the tracked-install index (``{"repos", "orphans"}``); the
+    """Load the tracked-install index (``{"units", "orphans"}``); the
     corrupt-tolerant ``launcher`` loader never raises."""
     return launcher.load_local_addons_index()
 

@@ -297,14 +297,30 @@ def _download_url(
 
 
 def validate_addon(entry: dict) -> dict | None:
-    """Sanitize one addon catalog entry; None when unusable."""
+    """Sanitize one addon catalog entry; None when unusable.
+
+    Identity is ``id`` (stable slug, dedupe/depends key); ``folder`` is
+    the explicit install slot (``Interface/AddOns/<folder>``). ``name``
+    is a display label only (falls back to ``folder``). Legacy
+    folder-only entries (no ``id``) are kept working: ``id`` falls
+    back to the folder slug so old catalogs and custom rows still
+    validate."""
     if not isinstance(entry, dict):
         return None
     from ..core.safety import safe_folder
 
-    name = _text(entry.get("name") or entry.get("folder"))
-    if not safe_folder(name):
+    folder = _text(entry.get("folder") or entry.get("name"))
+    if not safe_folder(folder):
         return None
+    raw_id = _text(entry.get("id"))
+    if entry.get("id") is not None and not safe_folder(raw_id):
+        # An explicit id that is not a safe slug poisons identity and
+        # depends resolution — fail closed rather than falling back.
+        return None
+    aid = raw_id or folder
+    if not safe_folder(aid):
+        return None
+    name = _text(entry.get("name")) or folder
     git = entry.get("git")
     git = git.strip() if isinstance(git, str) and git.strip() else None
     description = entry.get("description")
@@ -335,7 +351,9 @@ def validate_addon(entry: dict) -> dict | None:
         # drop it fail-closed like any other unusable entry.
         return None
     return {
+        "id": aid,
         "name": name,
+        "folder": folder,
         "git": git,
         "source_type": source_type,
         "download_url": download_url,
@@ -350,19 +368,25 @@ def validate_addon(entry: dict) -> dict | None:
 
 
 def merge_addons(remote: list, custom: list) -> list:
-    """Custom addon entries override remote ones by folder name; new folders
-    are appended. ``recommended`` / ``blocked`` flags OR together so a custom
-    file can only add them."""
-    by_folder = {a.get("name"): a for a in remote}
+    """Custom addon entries override remote ones by id; new ids are
+    appended. Sharing one ``folder`` declares a variant group (same
+    install slot, install = replace) — both rows are kept. ``name`` is
+    display-only and never a key. ``recommended`` / ``blocked`` flags
+    OR together so a custom file can only add them."""
+    by_id = {}
+    for a in remote:
+        eid = a.get("id") or a.get("folder") or a.get("name")
+        if eid:
+            by_id[eid] = a
     for entry in custom:
-        folder = entry.get("name")
-        if not folder:
+        eid = entry.get("id") or entry.get("folder") or entry.get("name")
+        if not eid:
             continue
-        base = by_folder.get(folder)
+        base = by_id.get(eid)
         if base is None:
-            by_folder[folder] = dict(entry)
+            by_id[eid] = dict(entry)
             continue
-        for key in ("git", "branch", "ref", "description"):
+        for key in ("git", "branch", "ref", "description", "folder", "name"):
             if entry.get(key) is not None:
                 base[key] = entry[key]
         for key in ("source_type", "download_url"):
@@ -374,7 +398,7 @@ def merge_addons(remote: list, custom: list) -> list:
             "recommended", False
         )
         base["blocked"] = base.get("blocked") or entry.get("blocked", False)
-    return list(by_folder.values())
+    return list(by_id.values())
 
 
 # ── mod entries ──────────────────────────────────────────────────────────────

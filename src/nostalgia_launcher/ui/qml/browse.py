@@ -226,9 +226,20 @@ def addon_tab_entries(state) -> list:
     entries = []
     for folder, rec in (getattr(state, "addons", {}) or {}).items():
         toc = getattr(rec, "toc", None) or {}
-        title = strip_wow_colors(toc.get("Title") or "") or folder
+        title = (
+            strip_wow_colors(
+                getattr(rec, "name", None)
+                or toc.get("Title")
+                or (toc.get(folder) or {}).get("Title")
+                or ""
+            )
+            or folder
+        )
         notes = strip_wow_colors(
-            toc.get("Notes") or getattr(rec, "description", None) or ""
+            getattr(rec, "description", None)
+            or toc.get("Notes")
+            or (toc.get(folder) or {}).get("Notes")
+            or ""
         )
         git = getattr(rec, "git", None) or ""
         if git.endswith(".git"):

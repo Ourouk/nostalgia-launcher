@@ -25,7 +25,7 @@ from .base import (
 
 # Which registered hook names each content type's catalogs may reference.
 # mods may use any hook; assets/addons currently allow none (their extra
-# behaviour — integrity pins, pfUI fixups — is intrinsic to their flows).
+# behaviour — integrity pins — is intrinsic to their flows).
 TYPE_HOOK_POLICY = {
     "mods": frozenset(hooks.names()),
     "assets": frozenset(),

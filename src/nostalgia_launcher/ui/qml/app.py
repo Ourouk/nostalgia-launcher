@@ -511,7 +511,7 @@ class QmlNostalgiaLauncherApp:
                         {
                             "id": rec.folder,
                             "name": strip_wow_colors(
-                                toc.get("Title") or rec.folder
+                                rec.name or toc.get("Title") or rec.folder
                             ),
                             "version": "",
                             "description": strip_wow_colors(

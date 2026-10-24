@@ -16,10 +16,16 @@ Dialog {
     objectName: "qmlSettingsDialog"
     title: "Settings"
     modal: true
-    // Fill the window: a four-tab working surface, not a confirmation.
-    width: parent.width
-    height: parent.height
+    // Fill 95% of the mother window; the tab container fills the dialog.
+    // No footer (the header ✕ closes).
+    width: parent.width * 0.95
+    height: parent.height * 0.95
     anchors.centerIn: parent
+    padding: 0
+    topPadding: 0
+    bottomPadding: 0
+    leftPadding: 0
+    rightPadding: 0
 
     header: ToolBar {
         background: Rectangle {
@@ -27,7 +33,7 @@ Dialog {
         }
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 18
+            anchors.leftMargin: 16
             anchors.rightMargin: 8
             Label {
                 Layout.fillWidth: true
@@ -77,8 +83,8 @@ Dialog {
                     anchors.right: parent.right
                     anchors.leftMargin: 16
                     anchors.rightMargin: 16
-                    anchors.topMargin: 12
-                    anchors.bottomMargin: 12
+                    anchors.topMargin: 16
+                    anchors.bottomMargin: 16
                     spacing: 8
                     Label {
                         text: "GAME FOLDER"
@@ -157,8 +163,8 @@ Dialog {
                     anchors.right: parent.right
                     anchors.leftMargin: 16
                     anchors.rightMargin: 16
-                    anchors.topMargin: 12
-                    anchors.bottomMargin: 12
+                    anchors.topMargin: 16
+                    anchors.bottomMargin: 16
                     spacing: 8
                     Label {
                         text: "DOWNLOAD SOURCE"
@@ -251,8 +257,8 @@ Dialog {
                     anchors.right: parent.right
                     anchors.leftMargin: 16
                     anchors.rightMargin: 16
-                    anchors.topMargin: 12
-                    anchors.bottomMargin: 12
+                    anchors.topMargin: 16
+                    anchors.bottomMargin: 16
                     spacing: 8
                     Label {
                         text: "PROFILES"
@@ -324,8 +330,8 @@ Dialog {
                     anchors.right: parent.right
                     anchors.leftMargin: 16
                     anchors.rightMargin: 16
-                    anchors.topMargin: 12
-                    anchors.bottomMargin: 12
+                    anchors.topMargin: 16
+                    anchors.bottomMargin: 16
                     spacing: 8
                     Label {
                         text: "TROUBLESHOOTING"
@@ -358,11 +364,8 @@ Dialog {
         }
     }
 
-    footer: DialogButtonBox {
-        standardButtons: DialogButtonBox.Close
-        onRejected: root.reject()
-    }
-
+    // No footer: the header ✕ closes (DialogButtonBox.Close added a
+    // full-width white bar that ate the bottom of every tab).
     FileDialog {
         id: folderPicker
         objectName: "qmlSettingsFolderPicker"

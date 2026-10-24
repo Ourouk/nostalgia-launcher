@@ -181,6 +181,8 @@ class AddonState:
 
     folder: str
     id: str | None = None
+    name: str | None = None
+    folders: list[str] = field(default_factory=list)
     status: str = "available"
     git: str | None = None
     branch: str | None = None
@@ -209,8 +211,12 @@ class AddonState:
         depends = rec.get("depends")
         if not isinstance(depends, list):
             depends = []
+        folders = rec.get("folders")
+        if not isinstance(folders, list):
+            folders = []
         # Other fields keep their raw values with isinstance guards.
         id_val = rec.get("id")
+        name_val = rec.get("name")
         git = rec.get("git")
         branch = rec.get("branch")
         ref = rec.get("ref")
@@ -221,6 +227,8 @@ class AddonState:
         return cls(
             folder=folder,
             id=id_val if isinstance(id_val, str) else None,
+            name=name_val if isinstance(name_val, str) else None,
+            folders=[f for f in folders if isinstance(f, str)],
             status=status,
             git=git if isinstance(git, str) else None,
             branch=branch if isinstance(branch, str) else None,
@@ -238,9 +246,18 @@ class AddonState:
         )
 
     def to_dict(self) -> dict:
-        return {
-            name: getattr(self, name) for name in self.__dataclass_fields__
-        }
+        out = {}
+        for name in self.__dataclass_fields__:
+            value = getattr(self, name)
+            # `name` and `folders` are derived/display data: omit them
+            # when unset so config records round-trip to their original
+            # shape (see test_addon_state_round_trips_dict).
+            if name == "name" and value is None:
+                continue
+            if name == "folders" and not value:
+                continue
+            out[name] = value
+        return out
 
 
 @dataclass

@@ -10,6 +10,7 @@ import pytest
 
 import nostalgia_launcher.core.config_store as config_store
 import nostalgia_launcher.services.addons as addons
+import nostalgia_launcher.services.catalog as catalog
 import nostalgia_launcher.services.sources.git_archive as git_archive
 
 
@@ -862,7 +863,7 @@ def _repo_redirect(tmp_path, monkeypatch):
 
 
 def test_addons_catalog_from_cache_full_precedence(tmp_path, monkeypatch):
-    """cache < repo.server < embedded < repo.custom (by folder)."""
+    """cache < repo.server < embedded < repo.custom (by id)."""
     from nostalgia_launcher.core import launcher
     from nostalgia_launcher.services import catalog as catalog_svc
 
@@ -1000,23 +1001,126 @@ def test_install_addon_files_multi_repo_selective(tmp_path, monkeypatch):
         "fetch_archive",
         lambda url, sha: payload,
     )
-    # The requested folder alone installs just itself…
+    # A single-folder request installs the folder plus co-shipped
+    # siblings from the same repo (one archive = one unit).
     assert addons.install_addon_files(
         str(client),
         "Pack",
         "https://github.com/a/pack",
         "abcd" * 10,
-    ) == ["Pack"]
+    ) == ["Pack", "PackExtra"]
     assert (client / "Interface" / "AddOns" / "Pack" / "core.lua").exists()
-    assert not (client / "Interface" / "AddOns" / "PackExtra").exists()
+    assert (client / "Interface" / "AddOns" / "PackExtra" / "x.lua").exists()
     # …while a pack-level row installs every discovered addon.
-    assert addons.install_addon_files(
+    out = addons.install_addon_files(
         str(client),
         "Pack Row",
         "https://github.com/a/pack",
         "abcd" * 10,
-    ) == ["Pack", "PackExtra"]
+        wanted=["Pack", "PackExtra"],
+    )
+    assert out == ["Pack", "PackExtra"]
     assert (client / "Interface" / "AddOns" / "PackExtra" / "x.lua").exists()
+
+
+def test_install_sibling_comes_along(tmp_path, monkeypatch):
+    """DragonUI layout: installing the main folder alone also installs
+    its options companion — one repo installs as a unit."""
+    client = tmp_path / "client"
+    payload = _pack_zip(
+        {
+            "sha/DragonUI/DragonUI.toc": "## Interface: 11200\n",
+            "sha/DragonUI/core.lua": "-- main",
+            "sha/DragonUI_Options/DragonUI_Options.toc": (
+                "## Interface: 11200\n"
+            ),
+            "sha/DragonUI_Options/opt.lua": "-- opts",
+        }
+    )
+    monkeypatch.setattr(
+        addons._GIT_BACKEND, "fetch_archive", lambda url, sha: payload
+    )
+    out = addons.install_addon_files(
+        str(client),
+        "DragonUI",
+        "https://github.com/NeticSoul/DragonUI.git",
+        "abcd" * 10,
+    )
+    assert out == ["DragonUI", "DragonUI_Options"]
+    assert (client / "Interface" / "AddOns" / "DragonUI" / "core.lua").exists()
+    assert (
+        client / "Interface" / "AddOns" / "DragonUI_Options" / "opt.lua"
+    ).exists()
+
+
+# ── id/folder contract + rename-on-clone + toc verify ────────────────────
+
+
+def test_validate_addon_id_folder_contract():
+    """id is the stable identity, folder the install slot, name a
+    display label (fallback chain keeps legacy rows valid)."""
+    cleaned = catalog.validate_addon(
+        {
+            "id": "addon-control-panel",
+            "name": "Addon Control Panel",
+            "folder": "Addon Control Panel",
+            "git": "https://github.com/x/acp",
+        }
+    )
+    assert cleaned["id"] == "addon-control-panel"
+    assert cleaned["folder"] == "Addon Control Panel"
+    assert cleaned["name"] == "Addon Control Panel"
+    # Legacy row without id/folder still validates via the name.
+    legacy = catalog.validate_addon(
+        {"name": "pfUI", "git": "https://github.com/x/pfUI"}
+    )
+    assert legacy["id"] == "pfUI"
+    assert legacy["folder"] == "pfUI"
+    # Bad ids / folders are refused.
+    assert catalog.validate_addon({"id": "../evil", "name": "x"}) is None
+    assert catalog.validate_addon({"id": "x", "folder": "a/b"}) is None
+
+
+def test_install_root_is_addon_renames_into_catalog_folder(
+    tmp_path, monkeypatch
+):
+    """ACP layout: root ``ACP.toc`` + files, catalog folder ``Addon
+    Control Panel`` — the whole tree installs renamed, verified via
+    <folder>/<folder>.toc (case-insensitive find)."""
+    client = tmp_path / "client"
+    payload = _pack_zip(
+        {
+            "acp-sha/ACP.toc": "## Interface: 30300\n## Title: ACP\n",
+            "acp-sha/core.lua": "-- code",
+        }
+    )
+    monkeypatch.setattr(
+        addons._GIT_BACKEND, "fetch_archive", lambda url, sha: payload
+    )
+    out = addons.install_addon_files(
+        str(client),
+        "Addon Control Panel",
+        "https://github.com/x/acp",
+        "abcd" * 10,
+    )
+    assert out == ["Addon Control Panel"]
+    dest = client / "Interface" / "AddOns" / "Addon Control Panel"
+    assert (dest / "ACP.toc").exists()
+    assert (dest / "core.lua").exists()
+
+
+def test_install_missing_toc_raises(tmp_path, monkeypatch):
+    """A repo shipping a *wrong* toc (no match for the folder at all)
+    raises instead of leaving a broken install behind."""
+    client = tmp_path / "client"
+    payload = _pack_zip({"pack-sha/Other/Other.toc": "## Title: Other\n"})
+    monkeypatch.setattr(
+        addons._GIT_BACKEND, "fetch_archive", lambda url, sha: payload
+    )
+    with pytest.raises(RuntimeError, match="no x.toc found"):
+        addons.install_addon_files(
+            str(client), "x", "https://github.com/a/x", "abcd" * 10
+        )
 
 
 def test_addon_repo_names_caches_per_sha(tmp_path, monkeypatch):

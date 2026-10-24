@@ -64,9 +64,6 @@ def backends(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(ac.addons, "addon_repo_names", lambda *a, **k: [])
     monkeypatch.setattr(
-        ac.pfui, "patch_pfui_default_profile", lambda client: None
-    )
-    monkeypatch.setattr(
         ac.addons, "read_toc_file", lambda path: {"Title": "X"}
     )
     monkeypatch.setattr(
@@ -864,37 +861,6 @@ def test_toggle_stores_addon_pending(controller):
     assert controller.state.pending == {"Foo": AddonPending(enabled=False)}
 
 
-def test_apply_marks_pfui_for_profile_patch(
-    controller, cfg, tmp_path, monkeypatch, wait_for_event
-):
-    client = str(tmp_path)
-    _install_folder(client, "pfUI")
-    cfg["out_dir"] = client
-    cfg["addons"] = {}
-    patched = []
-    monkeypatch.setattr(
-        ac.pfui,
-        "patch_pfui_default_profile",
-        lambda client: patched.append(client),
-    )
-    rec = {
-        "folder": "pfUI",
-        "status": "available",
-        "git": "https://github.com/a/pfui",
-        "branch": None,
-        "ref": None,
-        "toc": {},
-        "description": None,
-        "error": None,
-    }
-
-    assert controller.apply([rec]) is True
-    wait_for_event(
-        controller._dispatcher, lambda e: isinstance(e, OperationFinished)
-    )
-    assert patched == [client]
-
-
 # ── badge data ────────────────────────────────────────────────────────
 
 
@@ -1047,6 +1013,51 @@ def test_verify_sibling_unresolvable_is_unknown(
     assert rec.error == "Couldn't check for updates"
     assert "PackExtra" not in cfg.get("addons", {})
     assert controller.updates_count == 0
+
+
+def test_apply_pulls_in_addon_dependencies(
+    controller, cfg, tmp_path, monkeypatch, wait_for_event
+):
+    """apply() expands depends: addon:<id> transitively: installing
+    pfquest-epoch alone also installs pfquest-wotlk (the live case)."""
+    from nostalgia_launcher.state.events import OperationFinished
+
+    client = str(tmp_path)
+    cfg["out_dir"] = client
+    epoch = {
+        "folder": "pfQuest-epoch",
+        "id": "pfquest-epoch",
+        "status": "available",
+        "git": "https://github.com/Bennylavaa/pfQuest-epoch.git",
+        "branch": "main",
+        "ref": None,
+        "depends": ["addon:pfquest-wotlk"],
+    }
+    base = {
+        "folder": "pfQuest-wotlk",
+        "id": "pfquest-wotlk",
+        "status": "available",
+        "git": "https://github.com/shagu/pfQuest.git",
+        "branch": "master",
+        "ref": None,
+        "depends": [],
+    }
+    controller.state.available = [
+        AddonState.from_dict(epoch),
+        AddonState.from_dict(base),
+    ]
+    seen = []
+
+    def fake_install(client_dir, folder, git, sha, wanted=None):
+        seen.append(folder)
+        return [folder]
+
+    monkeypatch.setattr(ac.addons, "install_addon_files", fake_install)
+    assert controller.apply([dict(epoch)]) is True
+    wait_for_event(
+        controller._dispatcher, lambda e: isinstance(e, OperationFinished)
+    )
+    assert seen == ["pfQuest-epoch", "pfQuest-wotlk"]
 
 
 def test_apply_groups_same_repo_into_one_install(
@@ -1251,24 +1262,44 @@ def test_verify_case_variant_sibling_adopted_not_listed(
 
 
 def test_available_from_catalog_dedupes_case_variants(controller):
-    """Catalog carrying `Foo` + `foo` from the same repo yields one row
-    (last wins, mirroring merge_addons override order), never two."""
+    """Two catalog rows sharing one id collapse (last wins, mirroring
+    merge_addons override order), never two."""
     rows = controller._available_from_catalog(
         [
-            {"name": "Foo", "git": "https://github.com/x/a"},
-            {"name": "foo", "git": "https://github.com/x/a"},
+            {
+                "id": "foo",
+                "name": "Foo",
+                "folder": "Foo",
+                "git": "https://github.com/x/a",
+            },
+            {
+                "id": "foo",
+                "name": "foo",
+                "folder": "foo",
+                "git": "https://github.com/x/a",
+            },
         ]
     )
     assert [r["folder"] for r in rows] == ["foo"]
     assert rows[0]["git"] == "https://github.com/x/a"
 
 
-def test_available_from_catalog_keeps_different_repos(controller):
-    """Same spelling from two repos = two different addons — keep both."""
+def test_available_from_catalog_keeps_variant_group(controller):
+    """Same folder from two repos = variant group — keep both rows."""
     rows = controller._available_from_catalog(
         [
-            {"name": "Foo", "git": "https://github.com/x/a"},
-            {"name": "foo", "git": "https://github.com/y/b"},
+            {
+                "id": "a",
+                "name": "Foo",
+                "folder": "Foo",
+                "git": "https://github.com/x/a",
+            },
+            {
+                "id": "b",
+                "name": "foo",
+                "folder": "foo",
+                "git": "https://github.com/y/b",
+            },
         ]
     )
     assert sorted(r["folder"] for r in rows) == ["Foo", "foo"]

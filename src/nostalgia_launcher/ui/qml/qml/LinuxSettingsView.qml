@@ -12,9 +12,16 @@ Dialog {
     id: root
     title: "Linux (UMU) Settings"
     modal: true
-    width: Math.min(560, parent.width * 0.9)
-    height: Math.min(560, parent.height * 0.9)
+    // Fill 95% of the mother window; content fills the dialog edge
+    // to edge. No footer (the header ✕ closes).
+    width: parent.width * 0.95
+    height: parent.height * 0.95
     anchors.centerIn: parent
+    padding: 0
+    topPadding: 0
+    bottomPadding: 0
+    leftPadding: 0
+    rightPadding: 0
 
     header: ToolBar {
         background: Rectangle {
@@ -22,7 +29,7 @@ Dialog {
         }
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 18
+            anchors.leftMargin: 16
             anchors.rightMargin: 8
             Label {
                 Layout.fillWidth: true
@@ -49,7 +56,12 @@ Dialog {
         clip: true
         contentWidth: availableWidth
         ColumnLayout {
-            width: parent.width
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
+            anchors.topMargin: 16
+            anchors.bottomMargin: 16
             spacing: 8
             Label {
                 objectName: "qmlLinuxUmuHint"
@@ -184,10 +196,8 @@ Dialog {
         }
     }
 
-    footer: DialogButtonBox {
-        standardButtons: DialogButtonBox.Close
-    }
-
+    // No footer: the header ✕ closes (a Close button-box would add a
+    // full-width bar that eats the bottom of the dialog).
     FileDialog {
         id: umuPicker
         title: "Select umu-run binary"

@@ -240,7 +240,9 @@ def test_validate_mod_rejects_bad_repo_url():
 def test_merge_addons_custom_overrides_and_appends():
     remote = [
         {
+            "id": "a",
             "name": "A",
+            "folder": "A",
             "git": "https://github.com/x/A",
             "branch": None,
             "ref": None,
@@ -250,7 +252,9 @@ def test_merge_addons_custom_overrides_and_appends():
             "blocked": False,
         },
         {
+            "id": "b",
             "name": "B",
+            "folder": "B",
             "git": "https://github.com/x/B",
             "branch": None,
             "ref": None,
@@ -261,14 +265,49 @@ def test_merge_addons_custom_overrides_and_appends():
         },
     ]
     custom = [
-        {"name": "A", "git": "https://github.com/fork/A", "recommended": True},
-        {"name": "C", "git": "https://github.com/x/C"},
+        {
+            "id": "a",
+            "name": "A",
+            "folder": "A",
+            "git": "https://github.com/fork/A",
+            "recommended": True,
+        },
+        {
+            "id": "c",
+            "name": "C",
+            "folder": "C",
+            "git": "https://github.com/x/C",
+        },
     ]
-    merged = {a["name"]: a for a in catalog.merge_addons(remote, custom)}
-    assert merged["A"]["git"] == "https://github.com/fork/A"
-    assert merged["A"]["recommended"] is True
-    assert merged["B"]["git"] == "https://github.com/x/B"
-    assert merged["C"]["git"] == "https://github.com/x/C"
+    merged = {a["id"]: a for a in catalog.merge_addons(remote, custom)}
+    assert merged["a"]["git"] == "https://github.com/fork/A"
+    assert merged["a"]["recommended"] is True
+    assert merged["b"]["git"] == "https://github.com/x/B"
+    assert merged["c"]["git"] == "https://github.com/x/C"
+
+
+def test_merge_addons_variant_group_shares_folder():
+    """Same folder + different ids = variant group: both rows survive,
+    install = replace (last-write wins on disk, no merge)."""
+    remote = [
+        {
+            "id": "pfquest",
+            "name": "pfQuest",
+            "folder": "pfQuest",
+            "git": "https://github.com/shagu/pfQuest",
+        },
+    ]
+    custom = [
+        {
+            "id": "pfquest-classicapi",
+            "name": "pfQuest (ClassicAPI)",
+            "folder": "pfQuest",
+            "git": "https://github.com/brues-code/pfQuest",
+        },
+    ]
+    merged = catalog.merge_addons(remote, custom)
+    assert {a["id"] for a in merged} == {"pfquest", "pfquest-classicapi"}
+    assert all(a["folder"] == "pfQuest" for a in merged)
 
 
 # ── registry URL storage ─────────────────────────────────────────────────────
